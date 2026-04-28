@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "input.schema.json",
+  "title": "nexus-api-gen input schema",
+  "description": "Schema for the YAML input consumed by nexus-api-gen.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["nexusrpc", "services"],
+  "properties": {
+    "nexusrpc": {
+      "type": "string",
+      "description": "Version of the Nexus RPC input format.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "services": {
+      "type": "object",
+      "description": "Map of Nexus service names to service definitions.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/service"
+      }
+    }
+  },
+  "$defs": {
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "operations"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nexus endpoint used for the generated service client. WorkflowService commonly uses `__temporal_system`."
+        },
+        "operations": {
+          "type": "object",
+          "description": "Map of operation names to operation definitions.",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/operation"
+          }
+        },
+        "apis": {
+          "$ref": "#/$defs/serviceApis"
+        }
+      }
+    },
+    "serviceApis": {
+      "type": "object",
+      "description": "Optional map of ergonomic client APIs layered on top of operations.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/apiMethod"
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output"],
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/languageRefs"
+        },
+        "output": {
+          "$ref": "#/$defs/languageRefs"
+        }
+      }
+    },
+    "apiMethod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "input", "output"],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "#/$defs/apiMethodInput"
+        },
+        "output": {
+          "$ref": "#/$defs/apiMethodOutput"
+        }
+      }
+    },
+    "apiMethodInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "$pythonConverter"],
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/apiMethodProperty"
+          }
+        },
+        "$pythonConverter": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "apiMethodProperty": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": ["type"]
+        },
+        {
+          "required": ["$pythonType"]
+        }
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "positional": {
+          "type": "boolean"
+        },
+        "default": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "apiMethodOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$pythonRef", "$pythonConverter"],
+      "properties": {
+        "$pythonRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonConverter": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "languageRefs": {
+      "type": "object",
+      "description": "Map of language-specific type references for a request or response.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "$dotnetRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$goRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$javaRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$rubyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$typescriptRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

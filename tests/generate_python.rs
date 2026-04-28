@@ -1,0 +1,103 @@
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use nexus_api_gen::SupportFiles;
+use nexus_api_gen::descriptors::DescriptorIndex;
+use nexus_api_gen::generator::generate_source;
+use nexus_api_gen::language::Language;
+use nexus_api_gen::spec::ApiSpec;
+
+fn project_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn sample_fixture_dir(root: &std::path::Path) -> PathBuf {
+    root.join("tests/fixtures/python_sample")
+}
+
+fn uv_cache_dir() -> &'static str {
+    "/tmp/nexus-api-gen-uv-cache"
+}
+
+#[test]
+fn sample_generation_matches_checked_in_output() {
+    let root = project_root();
+    let fixture = sample_fixture_dir(&root);
+    let spec = ApiSpec::load(&fixture.join("input.yaml")).unwrap();
+    let descriptors = DescriptorIndex::load(&root.join("descriptors.bin")).unwrap();
+    let support = SupportFiles {
+        python: Some(fs::read_to_string(fixture.join("python_support.py")).unwrap()),
+    };
+    let rendered = generate_source(Language::Python, &spec, &descriptors, &support).unwrap();
+    let expected = fs::read_to_string(fixture.join("output.py")).unwrap();
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
+fn cli_generates_python_file() {
+    let root = project_root();
+    let fixture = sample_fixture_dir(&root);
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let output_path = std::env::temp_dir().join(format!("nexus-api-gen-{unique}.py"));
+
+    let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .args([
+            "generate",
+            "--lang",
+            "python",
+            "--input",
+            fixture.join("input.yaml").to_str().unwrap(),
+            "--descriptors",
+            root.join("descriptors.bin").to_str().unwrap(),
+            "--output",
+            output_path.to_str().unwrap(),
+            "--python-support",
+            fixture.join("python_support.py").to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+
+    assert!(status.success());
+
+    let rendered = fs::read_to_string(&output_path).unwrap();
+    let expected = fs::read_to_string(fixture.join("output.py")).unwrap();
+    assert_eq!(rendered, expected);
+
+    fs::remove_file(output_path).unwrap();
+}
+
+#[test]
+fn python_validation_app_type_checks_and_runs() {
+    let root = project_root();
+    let example_dir = root.join("examples/python-validation");
+
+    let build_status = Command::new("uv")
+        .current_dir(&example_dir)
+        .env("UV_CACHE_DIR", uv_cache_dir())
+        .args(["run", "build_output.py"])
+        .status()
+        .unwrap();
+    assert!(build_status.success());
+
+    let typecheck_status = Command::new("uv")
+        .current_dir(&example_dir)
+        .env("UV_CACHE_DIR", uv_cache_dir())
+        .args(["run", "basedpyright"])
+        .status()
+        .unwrap();
+    assert!(typecheck_status.success());
+
+    let run_status = Command::new("uv")
+        .current_dir(&example_dir)
+        .env("UV_CACHE_DIR", uv_cache_dir())
+        .args(["run", "main.py"])
+        .status()
+        .unwrap();
+    assert!(run_status.success());
+}

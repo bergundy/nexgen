@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=../../../input.schema.json
+
+nexusrpc: 1.0.0
+
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $dotnetRef: Temporalio.Api.WorkflowService.V1.SignalWithStartWorkflowExecutionRequest
+          $goRef: go.temporal.io/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest
+          $javaRef: io.temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $rubyRef: Temporalio::Api::WorkflowService::V1::SignalWithStartWorkflowExecutionRequest
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+        output:
+          $dotnetRef: Temporalio.Api.WorkflowService.V1.SignalWithStartWorkflowExecutionResponse
+          $goRef: go.temporal.io/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse
+          $javaRef: io.temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $rubyRef: Temporalio::Api::WorkflowService::V1::SignalWithStartWorkflowExecutionResponse
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+    apis:
+      SignalWithStartWorkflow:
+        operation: SignalWithStartWorkflowExecution
+        input:
+          type: object
+          properties:
+            workflow_id:
+              type: string
+              positional: true
+            signal:
+              type: string
+              $pythonType: str | collections.abc.Callable[..., object]
+            workflow:
+              type: string
+              $pythonType: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
+            retry_policy:
+              $pythonType: temporalio.common.RetryPolicy | None
+              default: null
+          $pythonConverter: build_signal_with_start_workflow_request
+        output:
+          $pythonRef: workflow.ExternalWorkflowHandle[object]
+          $pythonConverter: signal_with_start_workflow_response_to_external_workflow_handle
