@@ -12,6 +12,12 @@
       "description": "Version of the Nexus RPC input format.",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
     },
+    "support": {
+      "$ref": "#/$defs/support"
+    },
+    "types": {
+      "$ref": "#/$defs/apiPropertyTypes"
+    },
     "services": {
       "type": "object",
       "description": "Map of Nexus service names to service definitions.",
@@ -22,6 +28,17 @@
     }
   },
   "$defs": {
+    "support": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "$pythonFile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to Python support code appended to the generated module. Relative paths are resolved from the input YAML file."
+        }
+      }
+    },
     "service": {
       "type": "object",
       "additionalProperties": false,
@@ -51,6 +68,13 @@
       "minProperties": 1,
       "additionalProperties": {
         "$ref": "#/$defs/apiMethod"
+      }
+    },
+    "apiPropertyTypes": {
+      "type": "object",
+      "description": "Optional map of reusable API input property definitions addressable via `#/types/<name>`.",
+      "additionalProperties": {
+        "$ref": "#/$defs/apiMethodProperty"
       }
     },
     "operation": {
@@ -86,7 +110,7 @@
     "apiMethodInput": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "$pythonConverter"],
+      "required": ["type"],
       "properties": {
         "type": {
           "const": "object"
@@ -99,7 +123,8 @@
         },
         "$pythonConverter": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Optional explicit Python request converter. If omitted, generation may derive request construction from the referenced property types."
         }
       }
     },
@@ -108,6 +133,9 @@
       "additionalProperties": false,
       "anyOf": [
         {
+          "required": ["$ref"]
+        },
+        {
           "required": ["type"]
         },
         {
@@ -115,11 +143,27 @@
         }
       ],
       "properties": {
+        "$ref": {
+          "type": "string",
+          "pattern": "^#/types/.+"
+        },
         "type": {
           "type": "string",
           "minLength": 1
         },
         "$pythonType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonConverter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonOutputConverter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonDefault": {
           "type": "string",
           "minLength": 1
         },
@@ -139,7 +183,7 @@
     "apiMethodOutput": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["$pythonRef", "$pythonConverter"],
+      "required": ["$pythonRef"],
       "properties": {
         "$pythonRef": {
           "type": "string",
@@ -147,7 +191,8 @@
         },
         "$pythonConverter": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Optional explicit Python response converter. If omitted, generation may derive response conversion from the referenced property types."
         }
       }
     },

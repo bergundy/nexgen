@@ -40,7 +40,9 @@ pub enum Error {
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
 
-    #[error("python generation with `apis` entries requires `--python-support`")]
+    #[error(
+        "python generation with `apis` entries requires `support.$pythonFile` in the input yaml"
+    )]
     MissingPythonSupport,
 
     #[error("service `{service}` is missing an endpoint")]
@@ -86,6 +88,48 @@ pub enum Error {
 
     #[error("service `{service}` api `{api}` input is missing `$pythonConverter`")]
     MissingApiInputPythonConverter { service: String, api: String },
+
+    #[error(
+        "service `{service}` api `{api}` input property `{property}` has invalid `$ref` `{reference}`; expected `#/types/<name>`"
+    )]
+    InvalidApiInputPropertyRef {
+        service: String,
+        api: String,
+        property: String,
+        reference: String,
+    },
+
+    #[error(
+        "service `{service}` api `{api}` input property `{property}` references unknown type `{reference}`"
+    )]
+    UnknownApiInputPropertyRef {
+        service: String,
+        api: String,
+        property: String,
+        reference: String,
+    },
+
+    #[error(
+        "service `{service}` api `{api}` input property `{property}` references ambiguous type `{reference}`; matched {matches:?}"
+    )]
+    AmbiguousApiInputPropertyRef {
+        service: String,
+        api: String,
+        property: String,
+        reference: String,
+        matches: Vec<String>,
+    },
+
+    #[error(
+        "service `{service}` api `{api}` input property `{property}` references type `{reference}` recursively via {cycle:?}"
+    )]
+    RecursiveApiInputPropertyRef {
+        service: String,
+        api: String,
+        property: String,
+        reference: String,
+        cycle: Vec<String>,
+    },
 
     #[error(
         "service `{service}` api `{api}` input property `{property}` is missing both `type` and `$pythonType`"

@@ -10,10 +10,9 @@ def main() -> None:
     fixture_root = repo_root / "tests" / "fixtures" / "python_sample"
     input_path = fixture_root / "input.yaml"
     descriptor_path = repo_root / "descriptors.bin"
-    support_path = fixture_root / "python_support.py"
     destination = app_root / "output.py"
 
-    for path in (input_path, descriptor_path, support_path):
+    for path in (input_path, descriptor_path):
         if not path.exists():
             raise SystemExit(f"missing generator input: {path}")
 
@@ -30,8 +29,6 @@ def main() -> None:
             str(input_path),
             "--descriptors",
             str(descriptor_path),
-            "--python-support",
-            str(support_path),
             "--output",
             str(destination),
         ],

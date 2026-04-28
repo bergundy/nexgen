@@ -28,8 +28,6 @@ struct GenerateArgs {
     descriptors: PathBuf,
     #[arg(long)]
     output: PathBuf,
-    #[arg(long = "python-support")]
-    python_support: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -54,7 +52,6 @@ fn main() -> ExitCode {
             input_path: args.input,
             descriptor_path: args.descriptors,
             output_path: args.output,
-            python_support_path: args.python_support,
         }),
     };
 

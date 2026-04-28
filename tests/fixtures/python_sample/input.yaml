@@ -2,6 +2,32 @@
 
 nexusrpc: 1.0.0
 
+support:
+  $pythonFile: python_support.py
+
+types:
+  RetryPolicy:
+    $pythonType: temporalio.common.RetryPolicy | None
+    $pythonConverter: sdk_retry_policy_to_model
+    $pythonOutputConverter: retry_policy_model_to_sdk
+    default: null
+  TaskQueue:
+    type: string
+    $pythonType: str | None
+    $pythonConverter: sdk_task_queue_to_model
+    $pythonOutputConverter: task_queue_model_to_sdk
+    default: null
+  Duration:
+    $pythonType: timedelta | None
+    $pythonConverter: timedelta_to_model
+    $pythonOutputConverter: duration_model_to_timedelta
+    default: null
+  Priority:
+    $pythonType: temporalio.common.Priority
+    $pythonConverter: sdk_priority_to_model
+    $pythonOutputConverter: priority_model_to_sdk
+    $pythonDefault: temporalio.common.Priority.default
+
 services:
   WorkflowService:
     endpoint: __temporal_system
@@ -21,25 +47,110 @@ services:
           $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
           $rubyRef: Temporalio::Api::WorkflowService::V1::SignalWithStartWorkflowExecutionResponse
           $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+      RetryPolicyOperation:
+        input:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+        output:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+      ActivityOptionsOperation:
+        input:
+          $pythonRef: temporalio.api.activity.v1.ActivityOptions
+        output:
+          $pythonRef: temporalio.api.activity.v1.ActivityOptions
     apis:
       SignalWithStartWorkflow:
         operation: SignalWithStartWorkflowExecution
         input:
           type: object
           properties:
-            workflow_id:
-              type: string
+            workflow:
+              $pythonType: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]
               positional: true
             signal:
+              $pythonType: str | collections.abc.Callable[..., typing.Any]
+              positional: true
+            id:
               type: string
-              $pythonType: str | collections.abc.Callable[..., object]
-            workflow:
-              type: string
-              $pythonType: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
+            signal_args:
+              $pythonType: collections.abc.Sequence[typing.Any]
+              $pythonDefault: '()'
+            workflow_args:
+              $pythonType: collections.abc.Sequence[typing.Any]
+              $pythonDefault: '()'
+            task_queue:
+              $ref: '#/types/taskqueue'
+            execution_timeout:
+              $ref: '#/types/duration'
+            run_timeout:
+              $ref: '#/types/duration'
+            task_timeout:
+              $ref: '#/types/duration'
+            id_reuse_policy:
+              $pythonType: temporalio.common.WorkflowIDReusePolicy
+              $pythonDefault: temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE
+            id_conflict_policy:
+              $pythonType: temporalio.common.WorkflowIDConflictPolicy
+              $pythonDefault: temporalio.common.WorkflowIDConflictPolicy.UNSPECIFIED
             retry_policy:
-              $pythonType: temporalio.common.RetryPolicy | None
+              $ref: '#/types/retrypolicy'
+            cron_schedule:
+              type: string
+              default: ""
+            memo:
+              $pythonType: collections.abc.Mapping[str, typing.Any] | None
+              default: null
+            search_attributes:
+              $pythonType: temporalio.common.TypedSearchAttributes | None
+              default: null
+            static_summary:
+              $pythonType: str | None
+              default: null
+            static_details:
+              $pythonType: str | None
+              default: null
+            start_delay:
+              $ref: '#/types/duration'
+            request_id:
+              $pythonType: str | None
+              default: null
+            priority:
+              $ref: '#/types/priority'
+            versioning_override:
+              $pythonType: temporalio.common.VersioningOverride | None
               default: null
           $pythonConverter: build_signal_with_start_workflow_request
         output:
-          $pythonRef: workflow.ExternalWorkflowHandle[object]
+          $pythonRef: workflow.ExternalWorkflowHandle[typing.Any]
           $pythonConverter: signal_with_start_workflow_response_to_external_workflow_handle
+      RoundTripRetryPolicy:
+        operation: RetryPolicyOperation
+        input:
+          type: object
+          properties:
+            retry_policy:
+              $ref: '#/types/retrypolicy'
+              positional: true
+        output:
+          $pythonRef: temporalio.common.RetryPolicy | None
+      RoundTripActivityOptions:
+        operation: ActivityOptionsOperation
+        input:
+          type: object
+          properties:
+            task_queue:
+              $ref: '#/types/taskqueue'
+            schedule_to_close_timeout:
+              $ref: '#/types/duration'
+            schedule_to_start_timeout:
+              $ref: '#/types/duration'
+            start_to_close_timeout:
+              $ref: '#/types/duration'
+            heartbeat_timeout:
+              $ref: '#/types/duration'
+            retry_policy:
+              $ref: '#/types/retrypolicy'
+            priority:
+              $ref: '#/types/priority'
+        output:
+          $pythonRef: workflow.ActivityConfig
+          $pythonConverter: activity_options_model_to_config

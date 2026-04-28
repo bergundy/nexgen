@@ -12,7 +12,13 @@ use crate::language::Language;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiSpec {
     pub version: String,
+    pub support: SupportSpec,
     pub services: Vec<ServiceSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportSpec {
+    pub python_file: Option<String>,
 }
 
 impl ApiSpec {
@@ -82,8 +88,12 @@ pub struct ApiMethodInputSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiMethodPropertySpec {
     pub name: String,
+    pub type_name: Option<String>,
     pub schema_type: Option<String>,
     pub python_type: Option<String>,
+    pub python_converter: Option<String>,
+    pub python_output_converter: Option<String>,
+    pub python_default: Option<String>,
     pub default_value: Option<ApiMethodPropertyDefault>,
     pub positional: bool,
 }
@@ -124,7 +134,17 @@ impl Direction {
 struct RawApiSpec {
     #[serde(rename = "nexusrpc")]
     version: String,
+    #[serde(default)]
+    support: RawSupportSpec,
+    #[serde(default)]
+    types: IndexMap<String, RawApiMethodProperty>,
     services: IndexMap<String, RawService>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawSupportSpec {
+    #[serde(rename = "$pythonFile")]
+    python_file: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,14 +194,21 @@ struct RawApiMethodInput {
     python_converter: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RawApiMethodProperty {
+    #[serde(rename = "$ref")]
+    reference: Option<String>,
     #[serde(rename = "type")]
     schema_type: Option<String>,
     #[serde(rename = "$pythonType")]
     python_type: Option<String>,
-    #[serde(default)]
-    positional: bool,
+    #[serde(rename = "$pythonConverter")]
+    python_converter: Option<String>,
+    #[serde(rename = "$pythonOutputConverter")]
+    python_output_converter: Option<String>,
+    #[serde(rename = "$pythonDefault")]
+    python_default: Option<String>,
+    positional: Option<bool>,
     #[serde(
         default,
         rename = "default",
@@ -202,8 +229,14 @@ impl TryFrom<RawApiSpec> for ApiSpec {
     type Error = Error;
 
     fn try_from(raw: RawApiSpec) -> Result<Self> {
-        let services = raw
-            .services
+        let RawApiSpec {
+            version,
+            support,
+            types,
+            services,
+        } = raw;
+        let type_registry = ApiTypeRegistry::new(types);
+        let services = services
             .into_iter()
             .map(|(service_name, service)| {
                 let apis = service
@@ -215,24 +248,13 @@ impl TryFrom<RawApiSpec> for ApiSpec {
                             .properties
                             .into_iter()
                             .map(|(property_name, property)| {
-                                Ok(ApiMethodPropertySpec {
-                                    name: property_name.clone(),
-                                    schema_type: property.schema_type,
-                                    python_type: property.python_type,
-                                    default_value: property
-                                        .default_value
-                                        .map(|value| match value {
-                                            None => Ok(ApiMethodPropertyDefault::Null),
-                                            Some(value) => parse_api_property_default(
-                                                &service_name,
-                                                &api_name,
-                                                &property_name,
-                                                value,
-                                            ),
-                                        })
-                                        .transpose()?,
-                                    positional: property.positional,
-                                })
+                                build_api_method_property_spec(
+                                    &service_name,
+                                    &api_name,
+                                    &property_name,
+                                    &property,
+                                    &type_registry,
+                                )
                             })
                             .collect::<Result<Vec<_>>>()?;
 
@@ -270,10 +292,207 @@ impl TryFrom<RawApiSpec> for ApiSpec {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
-            version: raw.version,
+            version,
+            support: SupportSpec {
+                python_file: support.python_file,
+            },
             services,
         })
     }
+}
+
+#[derive(Debug, Default)]
+struct ResolvedApiMethodProperty {
+    type_name: Option<String>,
+    schema_type: Option<String>,
+    python_type: Option<String>,
+    python_converter: Option<String>,
+    python_output_converter: Option<String>,
+    python_default: Option<String>,
+    default_value: Option<ApiMethodPropertyDefault>,
+    positional: bool,
+}
+
+#[derive(Debug, Default)]
+struct ApiTypeRegistry {
+    entries: IndexMap<String, RawApiMethodProperty>,
+}
+
+impl ApiTypeRegistry {
+    fn new(entries: IndexMap<String, RawApiMethodProperty>) -> Self {
+        Self { entries }
+    }
+
+    fn resolve<'a>(
+        &'a self,
+        service: &str,
+        api: &str,
+        property: &str,
+        reference: &str,
+    ) -> Result<(&'a str, &'a RawApiMethodProperty)> {
+        let referenced_type = parse_api_property_reference(service, api, property, reference)?;
+        if let Some(entry) = self.entries.get_key_value(referenced_type.as_str()) {
+            return Ok((entry.0.as_str(), entry.1));
+        }
+
+        let matches = self
+            .entries
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case(&referenced_type))
+            .map(|(name, property)| (name.as_str(), property))
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [] => Err(Error::UnknownApiInputPropertyRef {
+                service: service.to_string(),
+                api: api.to_string(),
+                property: property.to_string(),
+                reference: reference.to_string(),
+            }),
+            [(name, property)] => Ok((*name, *property)),
+            _ => Err(Error::AmbiguousApiInputPropertyRef {
+                service: service.to_string(),
+                api: api.to_string(),
+                property: property.to_string(),
+                reference: reference.to_string(),
+                matches: matches
+                    .into_iter()
+                    .map(|(name, _)| name.to_string())
+                    .collect(),
+            }),
+        }
+    }
+}
+
+fn build_api_method_property_spec(
+    service: &str,
+    api: &str,
+    property_name: &str,
+    property: &RawApiMethodProperty,
+    type_registry: &ApiTypeRegistry,
+) -> Result<ApiMethodPropertySpec> {
+    let mut stack = Vec::new();
+    let resolved = resolve_api_method_property(
+        service,
+        api,
+        property_name,
+        property,
+        type_registry,
+        &mut stack,
+    )?;
+    if resolved.schema_type.is_none() && resolved.python_type.is_none() {
+        return Err(Error::MissingApiInputPropertyType {
+            service: service.to_string(),
+            api: api.to_string(),
+            property: property_name.to_string(),
+        });
+    }
+
+    Ok(ApiMethodPropertySpec {
+        name: property_name.to_string(),
+        type_name: resolved.type_name,
+        schema_type: resolved.schema_type,
+        python_type: resolved.python_type,
+        python_converter: resolved.python_converter,
+        python_output_converter: resolved.python_output_converter,
+        python_default: resolved.python_default,
+        default_value: resolved.default_value,
+        positional: resolved.positional,
+    })
+}
+
+fn resolve_api_method_property(
+    service: &str,
+    api: &str,
+    property_name: &str,
+    property: &RawApiMethodProperty,
+    type_registry: &ApiTypeRegistry,
+    stack: &mut Vec<String>,
+) -> Result<ResolvedApiMethodProperty> {
+    let mut resolved = if let Some(reference) = property.reference.as_deref() {
+        let (type_name, referenced_property) =
+            type_registry.resolve(service, api, property_name, reference)?;
+        if stack.iter().any(|entry| entry == type_name) {
+            let mut cycle = stack.clone();
+            cycle.push(type_name.to_string());
+            return Err(Error::RecursiveApiInputPropertyRef {
+                service: service.to_string(),
+                api: api.to_string(),
+                property: property_name.to_string(),
+                reference: reference.to_string(),
+                cycle,
+            });
+        }
+
+        stack.push(type_name.to_string());
+        let mut resolved = resolve_api_method_property(
+            service,
+            api,
+            property_name,
+            referenced_property,
+            type_registry,
+            stack,
+        )?;
+        if resolved.type_name.is_none() {
+            resolved.type_name = Some(type_name.to_string());
+        }
+        stack.pop();
+        resolved
+    } else {
+        ResolvedApiMethodProperty::default()
+    };
+
+    if let Some(schema_type) = property.schema_type.as_ref() {
+        resolved.schema_type = Some(schema_type.clone());
+    }
+    if let Some(python_type) = property.python_type.as_ref() {
+        resolved.python_type = Some(python_type.clone());
+    }
+    if let Some(python_converter) = property.python_converter.as_ref() {
+        resolved.python_converter = Some(python_converter.clone());
+    }
+    if let Some(python_output_converter) = property.python_output_converter.as_ref() {
+        resolved.python_output_converter = Some(python_output_converter.clone());
+    }
+    if let Some(python_default) = property.python_default.as_ref() {
+        resolved.python_default = Some(python_default.clone());
+    }
+    if let Some(default_value) = property.default_value.as_ref() {
+        resolved.default_value = Some(match default_value {
+            None => ApiMethodPropertyDefault::Null,
+            Some(value) => parse_api_property_default(service, api, property_name, value.clone())?,
+        });
+    }
+    if let Some(positional) = property.positional {
+        resolved.positional = positional;
+    }
+
+    Ok(resolved)
+}
+
+fn parse_api_property_reference(
+    service: &str,
+    api: &str,
+    property: &str,
+    reference: &str,
+) -> Result<String> {
+    let Some(pointer) = reference.strip_prefix("#/types/") else {
+        return Err(Error::InvalidApiInputPropertyRef {
+            service: service.to_string(),
+            api: api.to_string(),
+            property: property.to_string(),
+            reference: reference.to_string(),
+        });
+    };
+    if pointer.is_empty() {
+        return Err(Error::InvalidApiInputPropertyRef {
+            service: service.to_string(),
+            api: api.to_string(),
+            property: property.to_string(),
+            reference: reference.to_string(),
+        });
+    }
+
+    Ok(pointer.replace("~1", "/").replace("~0", "~"))
 }
 
 fn parse_api_property_default(
@@ -347,10 +566,116 @@ impl RawLanguageRefs {
 mod tests {
     use std::path::PathBuf;
 
-    use super::ApiSpec;
+    use crate::error::Error;
+
+    use super::{ApiMethodPropertyDefault, ApiSpec};
 
     #[test]
     fn parses_service_apis() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+support:
+  $pythonFile: python_support.py
+types:
+  RetryPolicy:
+    $pythonType: temporalio.common.RetryPolicy | None
+    $pythonConverter: sdk_retry_policy_to_model
+    $pythonOutputConverter: retry_policy_model_to_sdk
+    default: null
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+    apis:
+      SignalWithStartWorkflow:
+        operation: SignalWithStartWorkflowExecution
+        input:
+          type: object
+          properties:
+            workflow:
+              type: string
+              $pythonType: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
+              positional: true
+            id:
+              type: string
+            retry_policy:
+              $ref: '#/types/retrypolicy'
+          $pythonConverter: build_signal_with_start_workflow_request
+        output:
+          $pythonRef: workflow.ExternalWorkflowHandle[object]
+          $pythonConverter: signal_with_start_workflow_response_to_handle
+"#;
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        assert_eq!(
+            spec.support.python_file.as_deref(),
+            Some("python_support.py")
+        );
+        let service = &spec.services[0];
+        let api = &service.apis[0];
+
+        assert_eq!(service.name, "WorkflowService");
+        assert_eq!(service.apis.len(), 1);
+        assert_eq!(api.name, "SignalWithStartWorkflow");
+        assert_eq!(api.operation, "SignalWithStartWorkflowExecution");
+        assert_eq!(api.input.schema_type, "object");
+        assert_eq!(api.input.properties.len(), 3);
+        assert_eq!(api.input.properties[0].name, "workflow");
+        assert_eq!(
+            api.input.properties[0].python_type.as_deref(),
+            Some("str | collections.abc.Callable[..., collections.abc.Awaitable[object]]")
+        );
+        assert!(api.input.properties[0].positional);
+        assert_eq!(api.input.properties[1].name, "id");
+        assert_eq!(
+            api.input.properties[1].schema_type.as_deref(),
+            Some("string")
+        );
+        assert!(!api.input.properties[1].positional);
+        assert_eq!(api.input.properties[2].name, "retry_policy");
+        assert_eq!(
+            api.input.properties[2].type_name.as_deref(),
+            Some("RetryPolicy")
+        );
+        assert_eq!(api.input.properties[2].schema_type, None);
+        assert_eq!(
+            api.input.properties[2].python_type.as_deref(),
+            Some("temporalio.common.RetryPolicy | None")
+        );
+        assert_eq!(
+            api.input.properties[2].python_converter.as_deref(),
+            Some("sdk_retry_policy_to_model")
+        );
+        assert_eq!(
+            api.input.properties[2].python_output_converter.as_deref(),
+            Some("retry_policy_model_to_sdk")
+        );
+        assert_eq!(api.input.properties[2].python_default, None);
+        assert_eq!(
+            api.input.properties[2].default_value,
+            Some(ApiMethodPropertyDefault::Null)
+        );
+        assert!(!api.input.properties[2].positional);
+        assert_eq!(
+            api.input.python_converter.as_deref(),
+            Some("build_signal_with_start_workflow_request")
+        );
+        assert_eq!(
+            api.output.python_ref.as_deref(),
+            Some("workflow.ExternalWorkflowHandle[object]")
+        );
+        assert_eq!(
+            api.output.python_converter.as_deref(),
+            Some("signal_with_start_workflow_response_to_handle")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_type_reference() {
         let yaml = r#"
 nexusrpc: 1.0.0
 services:
@@ -368,63 +693,22 @@ services:
         input:
           type: object
           properties:
-            workflow_id:
-              type: string
-              positional: true
-            workflow:
-              type: string
-              $pythonType: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
             retry_policy:
-              $pythonType: temporalio.common.RetryPolicy | None
-              default: null
+              $ref: '#/types/RetryPolicy'
           $pythonConverter: build_signal_with_start_workflow_request
         output:
           $pythonRef: workflow.ExternalWorkflowHandle[object]
           $pythonConverter: signal_with_start_workflow_response_to_handle
 "#;
-        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
-        let service = &spec.services[0];
-        let api = &service.apis[0];
 
-        assert_eq!(service.name, "WorkflowService");
-        assert_eq!(service.apis.len(), 1);
-        assert_eq!(api.name, "SignalWithStartWorkflow");
-        assert_eq!(api.operation, "SignalWithStartWorkflowExecution");
-        assert_eq!(api.input.schema_type, "object");
-        assert_eq!(api.input.properties.len(), 3);
-        assert_eq!(api.input.properties[0].name, "workflow_id");
-        assert_eq!(
-            api.input.properties[0].schema_type.as_deref(),
-            Some("string")
-        );
-        assert!(api.input.properties[0].positional);
-        assert_eq!(
-            api.input.properties[1].python_type.as_deref(),
-            Some("str | collections.abc.Callable[..., collections.abc.Awaitable[object]]")
-        );
-        assert!(!api.input.properties[1].positional);
-        assert_eq!(api.input.properties[2].name, "retry_policy");
-        assert_eq!(api.input.properties[2].schema_type, None);
-        assert_eq!(
-            api.input.properties[2].python_type.as_deref(),
-            Some("temporalio.common.RetryPolicy | None")
-        );
-        assert_eq!(
-            api.input.properties[2].default_value,
-            Some(super::ApiMethodPropertyDefault::Null)
-        );
-        assert!(!api.input.properties[2].positional);
-        assert_eq!(
-            api.input.python_converter.as_deref(),
-            Some("build_signal_with_start_workflow_request")
-        );
-        assert_eq!(
-            api.output.python_ref.as_deref(),
-            Some("workflow.ExternalWorkflowHandle[object]")
-        );
-        assert_eq!(
-            api.output.python_converter.as_deref(),
-            Some("signal_with_start_workflow_response_to_handle")
-        );
+        let error = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::UnknownApiInputPropertyRef {
+                property,
+                reference,
+                ..
+            } if property == "retry_policy" && reference == "#/types/RetryPolicy"
+        ));
     }
 }

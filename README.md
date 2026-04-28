@@ -27,7 +27,6 @@ cargo run -- generate \
   --lang python \
   --input tests/fixtures/python_sample/input.yaml \
   --descriptors descriptors.bin \
-  --python-support tests/fixtures/python_sample/python_support.py \
   --output /tmp/output.py
 ```
 
@@ -41,9 +40,9 @@ services:
 
 The YAML schema is checked in at [input.schema.json](/Users/tconley/nexus-api-gen/input.schema.json).
 
-If `services.*.apis` are present, pass a Python support file whose converter symbols are named by
-the YAML. That file is appended to the generated module so the ergonomic client methods can call
-those converters directly.
+If `services.*.apis` are present, declare `support.$pythonFile` in the YAML. That file is resolved
+relative to the YAML file and appended to the generated module so the ergonomic client methods can
+call the converter symbols named by the spec directly.
 
 To validate the sample fixture with a small `uv` sample app:
 
