@@ -121,7 +121,16 @@
             "$ref": "#/$defs/apiMethodProperty"
           }
         },
-        "$pythonConverter": {
+        "$python": {
+          "$ref": "#/$defs/apiMethodInputPython"
+        }
+      }
+    },
+    "apiMethodInputPython": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "converter": {
           "type": "string",
           "minLength": 1,
           "description": "Optional explicit Python request converter. If omitted, generation may derive request construction from the referenced property types."
@@ -139,7 +148,12 @@
           "required": ["type"]
         },
         {
-          "required": ["$pythonType"]
+          "required": ["$python"],
+          "properties": {
+            "$python": {
+              "required": ["type"]
+            }
+          }
         }
       ],
       "properties": {
@@ -151,21 +165,8 @@
           "type": "string",
           "minLength": 1
         },
-        "$pythonType": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$pythonConverter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$pythonOutputConverter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$pythonDefault": {
-          "type": "string",
-          "minLength": 1
+        "$python": {
+          "$ref": "#/$defs/apiMethodPropertyPython"
         },
         "positional": {
           "type": "boolean"
@@ -180,16 +181,48 @@
         }
       }
     },
-    "apiMethodOutput": {
+    "apiMethodPropertyPython": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["$pythonRef"],
       "properties": {
-        "$pythonRef": {
+        "type": {
           "type": "string",
           "minLength": 1
         },
-        "$pythonConverter": {
+        "converter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outputConverter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "apiMethodOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$python"],
+      "properties": {
+        "$python": {
+          "$ref": "#/$defs/apiMethodOutputPython"
+        }
+      }
+    },
+    "apiMethodOutputPython": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "converter": {
           "type": "string",
           "minLength": 1,
           "description": "Optional explicit Python response converter. If omitted, generation may derive response conversion from the referenced property types."

@@ -1578,18 +1578,20 @@ mod tests {
         assert!(output.contains("if request is None:\n            request = RetryPolicyModel()"));
         assert!(output.contains("request = ActivityOptionsModel("));
         assert!(output.contains("task_queue=sdk_task_queue_to_model(task_queue),"));
-        assert!(output.contains(
-            "schedule_to_close_timeout=timedelta_to_model(schedule_to_close_timeout),"
-        ));
-        assert!(output.contains(
-            "schedule_to_start_timeout=timedelta_to_model(schedule_to_start_timeout),"
-        ));
-        assert!(output.contains(
-            "start_to_close_timeout=timedelta_to_model(start_to_close_timeout),"
-        ));
-        assert!(output.contains(
-            "heartbeat_timeout=timedelta_to_model(heartbeat_timeout),"
-        ));
+        assert!(
+            output.contains(
+                "schedule_to_close_timeout=timedelta_to_model(schedule_to_close_timeout),"
+            )
+        );
+        assert!(
+            output.contains(
+                "schedule_to_start_timeout=timedelta_to_model(schedule_to_start_timeout),"
+            )
+        );
+        assert!(
+            output.contains("start_to_close_timeout=timedelta_to_model(start_to_close_timeout),")
+        );
+        assert!(output.contains("heartbeat_timeout=timedelta_to_model(heartbeat_timeout),"));
         assert!(output.contains("priority=sdk_priority_to_model(priority),"));
         assert!(output.contains("id=id,"));
         assert!(output.contains("signal_args=signal_args,"));
@@ -1710,10 +1712,12 @@ services:
         input:
           type: object
           properties: {}
-          $pythonConverter: build_request
+          $python:
+            converter: build_request
         output:
-          $pythonRef: FriendlyResult
-          $pythonConverter: build_output
+          $python:
+            ref: FriendlyResult
+            converter: build_output
 "#;
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
         let descriptors = DescriptorIndex::load(
@@ -1753,10 +1757,12 @@ services:
         input:
           type: object
           properties: {}
-          $pythonConverter: ""
+          $python:
+            converter: ""
         output:
-          $pythonRef: FriendlyResult
-          $pythonConverter: build_output
+          $python:
+            ref: FriendlyResult
+            converter: build_output
 "#;
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
         let descriptors = DescriptorIndex::load(
@@ -1775,7 +1781,7 @@ services:
 
         assert_eq!(
             error.to_string(),
-            "service `ExampleService` api `FriendlyOperation` input is missing `$pythonConverter`"
+            "service `ExampleService` api `FriendlyOperation` input is missing `$python.converter`"
         );
     }
 
@@ -1799,16 +1805,18 @@ services:
           type: object
           properties:
             broken: {}
-          $pythonConverter: build_request
+          $python:
+            converter: build_request
         output:
-          $pythonRef: FriendlyResult
-          $pythonConverter: build_output
+          $python:
+            ref: FriendlyResult
+            converter: build_output
 "#;
         let error = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "service `ExampleService` api `FriendlyOperation` input property `broken` is missing both `type` and `$pythonType`"
+            "service `ExampleService` api `FriendlyOperation` input property `broken` is missing both `type` and `$python.type`"
         );
     }
 
@@ -1835,10 +1843,12 @@ services:
               type: string
               default:
                 nested: true
-          $pythonConverter: build_request
+          $python:
+            converter: build_request
         output:
-          $pythonRef: FriendlyResult
-          $pythonConverter: build_output
+          $python:
+            ref: FriendlyResult
+            converter: build_output
 "#;
         let error = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
 
@@ -1867,10 +1877,12 @@ services:
         input:
           type: object
           properties: {}
-          $pythonConverter: build_request
+          $python:
+            converter: build_request
         output:
-          $pythonRef: FriendlyResult
-          $pythonConverter: build_output
+          $python:
+            ref: FriendlyResult
+            converter: build_output
 "#;
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
         let descriptors = DescriptorIndex::load(

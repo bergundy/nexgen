@@ -190,8 +190,13 @@ struct RawApiMethodInput {
     schema_type: String,
     #[serde(default)]
     properties: IndexMap<String, RawApiMethodProperty>,
-    #[serde(rename = "$pythonConverter")]
-    python_converter: Option<String>,
+    #[serde(rename = "$python", default)]
+    python: RawPythonApiMethodInput,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+struct RawPythonApiMethodInput {
+    converter: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -200,14 +205,8 @@ struct RawApiMethodProperty {
     reference: Option<String>,
     #[serde(rename = "type")]
     schema_type: Option<String>,
-    #[serde(rename = "$pythonType")]
-    python_type: Option<String>,
-    #[serde(rename = "$pythonConverter")]
-    python_converter: Option<String>,
-    #[serde(rename = "$pythonOutputConverter")]
-    python_output_converter: Option<String>,
-    #[serde(rename = "$pythonDefault")]
-    python_default: Option<String>,
+    #[serde(rename = "$python", default)]
+    python: RawPythonApiMethodProperty,
     positional: Option<bool>,
     #[serde(
         default,
@@ -217,12 +216,28 @@ struct RawApiMethodProperty {
     default_value: Option<Option<Value>>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RawPythonApiMethodProperty {
+    #[serde(rename = "type")]
+    type_name: Option<String>,
+    converter: Option<String>,
+    #[serde(rename = "outputConverter")]
+    output_converter: Option<String>,
+    #[serde(rename = "default")]
+    default_expr: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawApiMethodOutput {
-    #[serde(rename = "$pythonRef")]
-    python_ref: Option<String>,
-    #[serde(rename = "$pythonConverter")]
-    python_converter: Option<String>,
+    #[serde(rename = "$python", default)]
+    python: RawPythonApiMethodOutput,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+struct RawPythonApiMethodOutput {
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+    converter: Option<String>,
 }
 
 impl TryFrom<RawApiSpec> for ApiSpec {
@@ -264,11 +279,11 @@ impl TryFrom<RawApiSpec> for ApiSpec {
                             input: ApiMethodInputSpec {
                                 schema_type: api.input.schema_type,
                                 properties,
-                                python_converter: api.input.python_converter,
+                                python_converter: api.input.python.converter,
                             },
                             output: ApiMethodOutputSpec {
-                                python_ref: api.output.python_ref,
-                                python_converter: api.output.python_converter,
+                                python_ref: api.output.python.reference,
+                                python_converter: api.output.python.converter,
                             },
                         })
                     })
@@ -444,16 +459,16 @@ fn resolve_api_method_property(
     if let Some(schema_type) = property.schema_type.as_ref() {
         resolved.schema_type = Some(schema_type.clone());
     }
-    if let Some(python_type) = property.python_type.as_ref() {
+    if let Some(python_type) = property.python.type_name.as_ref() {
         resolved.python_type = Some(python_type.clone());
     }
-    if let Some(python_converter) = property.python_converter.as_ref() {
+    if let Some(python_converter) = property.python.converter.as_ref() {
         resolved.python_converter = Some(python_converter.clone());
     }
-    if let Some(python_output_converter) = property.python_output_converter.as_ref() {
+    if let Some(python_output_converter) = property.python.output_converter.as_ref() {
         resolved.python_output_converter = Some(python_output_converter.clone());
     }
-    if let Some(python_default) = property.python_default.as_ref() {
+    if let Some(python_default) = property.python.default_expr.as_ref() {
         resolved.python_default = Some(python_default.clone());
     }
     if let Some(default_value) = property.default_value.as_ref() {
@@ -578,9 +593,10 @@ support:
   $pythonFile: python_support.py
 types:
   RetryPolicy:
-    $pythonType: temporalio.common.RetryPolicy | None
-    $pythonConverter: sdk_retry_policy_to_model
-    $pythonOutputConverter: retry_policy_model_to_sdk
+    $python:
+      type: temporalio.common.RetryPolicy | None
+      converter: sdk_retry_policy_to_model
+      outputConverter: retry_policy_model_to_sdk
     default: null
 services:
   WorkflowService:
@@ -599,16 +615,19 @@ services:
           properties:
             workflow:
               type: string
-              $pythonType: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
+              $python:
+                type: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
               positional: true
             id:
               type: string
             retry_policy:
               $ref: '#/types/retrypolicy'
-          $pythonConverter: build_signal_with_start_workflow_request
+          $python:
+            converter: build_signal_with_start_workflow_request
         output:
-          $pythonRef: workflow.ExternalWorkflowHandle[object]
-          $pythonConverter: signal_with_start_workflow_response_to_handle
+          $python:
+            ref: workflow.ExternalWorkflowHandle[object]
+            converter: signal_with_start_workflow_response_to_handle
 "#;
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
         assert_eq!(
@@ -695,10 +714,12 @@ services:
           properties:
             retry_policy:
               $ref: '#/types/RetryPolicy'
-          $pythonConverter: build_signal_with_start_workflow_request
+          $python:
+            converter: build_signal_with_start_workflow_request
         output:
-          $pythonRef: workflow.ExternalWorkflowHandle[object]
-          $pythonConverter: signal_with_start_workflow_response_to_handle
+          $python:
+            ref: workflow.ExternalWorkflowHandle[object]
+            converter: signal_with_start_workflow_response_to_handle
 "#;
 
         let error = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();

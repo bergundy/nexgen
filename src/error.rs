@@ -86,7 +86,7 @@ pub enum Error {
         input_type: String,
     },
 
-    #[error("service `{service}` api `{api}` input is missing `$pythonConverter`")]
+    #[error("service `{service}` api `{api}` input is missing `$python.converter`")]
     MissingApiInputPythonConverter { service: String, api: String },
 
     #[error(
@@ -132,7 +132,7 @@ pub enum Error {
     },
 
     #[error(
-        "service `{service}` api `{api}` input property `{property}` is missing both `type` and `$pythonType`"
+        "service `{service}` api `{api}` input property `{property}` is missing both `type` and `$python.type`"
     )]
     MissingApiInputPropertyType {
         service: String,
@@ -149,9 +149,9 @@ pub enum Error {
         property: String,
     },
 
-    #[error("service `{service}` api `{api}` output is missing `$pythonRef`")]
+    #[error("service `{service}` api `{api}` output is missing `$python.ref`")]
     MissingApiOutputPythonRef { service: String, api: String },
 
-    #[error("service `{service}` api `{api}` output is missing `$pythonConverter`")]
+    #[error("service `{service}` api `{api}` output is missing `$python.converter`")]
     MissingApiOutputPythonConverter { service: String, api: String },
 }
