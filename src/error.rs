@@ -45,6 +45,11 @@ pub enum Error {
     )]
     MissingPythonSupport,
 
+    #[error(
+        "typescript generation with renderable `apis` entries requires `support.$typescriptFile` in the input yaml"
+    )]
+    MissingTypeScriptSupport,
+
     #[error("service `{service}` is missing an endpoint")]
     MissingServiceEndpoint { service: String },
 
@@ -66,6 +71,20 @@ pub enum Error {
 
     #[error("Python reference `{reference}` is ambiguous; matched {matches:?}")]
     AmbiguousPythonRef {
+        reference: String,
+        matches: Vec<String>,
+    },
+
+    #[error(
+        "invalid TypeScript reference `{reference}`: expected `@scope/module.path.TypeName` or `package.path.TypeName`"
+    )]
+    InvalidTypeScriptRef { reference: String },
+
+    #[error("TypeScript reference `{reference}` could not be resolved to a proto message")]
+    UnresolvedTypeScriptRef { reference: String },
+
+    #[error("TypeScript reference `{reference}` is ambiguous; matched {matches:?}")]
+    AmbiguousTypeScriptRef {
         reference: String,
         matches: Vec<String>,
     },
@@ -132,7 +151,7 @@ pub enum Error {
     },
 
     #[error(
-        "service `{service}` api `{api}` input property `{property}` is missing both `type` and `$python.type`"
+        "service `{service}` api `{api}` input property `{property}` is missing `type`, `$python.type`, and `$typescript.type`"
     )]
     MissingApiInputPropertyType {
         service: String,
@@ -154,4 +173,13 @@ pub enum Error {
 
     #[error("service `{service}` api `{api}` output is missing `$python.converter`")]
     MissingApiOutputPythonConverter { service: String, api: String },
+
+    #[error("service `{service}` api `{api}` output is missing `$typescript.ref`")]
+    MissingApiOutputTypeScriptRef { service: String, api: String },
+
+    #[error("service `{service}` api `{api}` input is missing `$typescript.converter`")]
+    MissingApiInputTypeScriptConverter { service: String, api: String },
+
+    #[error("service `{service}` api `{api}` output is missing `$typescript.converter`")]
+    MissingApiOutputTypeScriptConverter { service: String, api: String },
 }

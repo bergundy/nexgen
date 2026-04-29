@@ -122,6 +122,55 @@ impl DescriptorIndex {
                 .collect(),
         })
     }
+
+    pub fn resolve_typescript_ref(&self, reference: &str) -> Result<&MessageMetadata> {
+        let (module_path, type_name) =
+            split_module_and_type(reference).ok_or_else(|| Error::InvalidTypeScriptRef {
+                reference: reference.to_string(),
+            })?;
+
+        let mut candidates = Vec::new();
+        candidates.push(format!("{module_path}.{type_name}"));
+
+        if let Some(normalized) = normalize_typescript_module(module_path) {
+            candidates.push(format!("{normalized}.{type_name}"));
+        }
+
+        candidates.sort();
+        candidates.dedup();
+
+        for candidate in &candidates {
+            if let Some(message) = self.message(candidate) {
+                return Ok(message);
+            }
+        }
+
+        let suffix = format!(".{type_name}");
+        let mut matches: Vec<&MessageMetadata> = self
+            .messages
+            .values()
+            .filter(|message| message.full_name.ends_with(&suffix))
+            .collect();
+
+        if matches.len() == 1 {
+            return Ok(matches.remove(0));
+        }
+
+        if matches.is_empty() {
+            return Err(Error::UnresolvedTypeScriptRef {
+                reference: reference.to_string(),
+            });
+        }
+
+        matches.sort_by(|left, right| left.full_name.cmp(&right.full_name));
+        Err(Error::AmbiguousTypeScriptRef {
+            reference: reference.to_string(),
+            matches: matches
+                .into_iter()
+                .map(|message| message.full_name.clone())
+                .collect(),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +272,16 @@ fn normalize_temporalio_module(module_path: &str) -> Option<String> {
         .map(|suffix| format!("temporal.{suffix}"))
 }
 
+fn normalize_typescript_module(module_path: &str) -> Option<String> {
+    if let Some(suffix) = module_path.strip_prefix("@temporalio/api/") {
+        return Some(format!("temporal.api.{}", suffix.replace('/', ".")));
+    }
+    if let Some(suffix) = module_path.strip_prefix("@temporalio/proto/") {
+        return Some(suffix.replace('/', "."));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -236,6 +295,22 @@ mod tests {
         let message = index
             .resolve_python_ref(
                 "temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest",
+            )
+            .unwrap();
+
+        assert_eq!(
+            message.full_name,
+            "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+        );
+    }
+
+    #[test]
+    fn resolves_sample_typescript_reference() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let index = DescriptorIndex::load(&root.join("descriptors.bin")).unwrap();
+        let message = index
+            .resolve_typescript_ref(
+                "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest",
             )
             .unwrap();
 

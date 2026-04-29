@@ -10,7 +10,11 @@ fn project_root() -> PathBuf {
 }
 
 fn sample_fixture_dir(root: &std::path::Path) -> PathBuf {
-    root.join("tests/fixtures/python_sample")
+    root.join("tests/fixtures/sample")
+}
+
+fn sample_python_output_path(fixture: &std::path::Path) -> PathBuf {
+    fixture.join("python/output.py")
 }
 
 fn uv_cache_dir() -> &'static str {
@@ -27,7 +31,7 @@ fn sample_generation_matches_checked_in_output() {
         root.join("descriptors.bin"),
     )
     .unwrap();
-    let expected = fs::read_to_string(fixture.join("output.py")).unwrap();
+    let expected = fs::read_to_string(sample_python_output_path(&fixture)).unwrap();
 
     assert_eq!(rendered, expected);
 }
@@ -60,7 +64,7 @@ fn cli_generates_python_file() {
     assert!(status.success());
 
     let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(fixture.join("output.py")).unwrap();
+    let expected = fs::read_to_string(sample_python_output_path(&fixture)).unwrap();
     assert_eq!(rendered, expected);
 
     fs::remove_file(output_path).unwrap();

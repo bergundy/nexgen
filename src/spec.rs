@@ -19,6 +19,7 @@ pub struct ApiSpec {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SupportSpec {
     pub python_file: Option<String>,
+    pub typescript_file: Option<String>,
 }
 
 impl ApiSpec {
@@ -83,6 +84,7 @@ pub struct ApiMethodInputSpec {
     pub schema_type: String,
     pub properties: Vec<ApiMethodPropertySpec>,
     pub python_converter: Option<String>,
+    pub typescript_converter: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +96,12 @@ pub struct ApiMethodPropertySpec {
     pub python_converter: Option<String>,
     pub python_output_converter: Option<String>,
     pub python_default: Option<String>,
+    pub typescript_name: Option<String>,
+    pub typescript_type: Option<String>,
+    pub typescript_converter: Option<String>,
+    pub typescript_output_converter: Option<String>,
+    pub typescript_default: Option<String>,
+    pub typescript_positional: Option<bool>,
     pub default_value: Option<ApiMethodPropertyDefault>,
     pub positional: bool,
 }
@@ -111,6 +119,8 @@ pub enum ApiMethodPropertyDefault {
 pub struct ApiMethodOutputSpec {
     pub python_ref: Option<String>,
     pub python_converter: Option<String>,
+    pub typescript_ref: Option<String>,
+    pub typescript_converter: Option<String>,
 }
 
 pub type LanguageRefMap = BTreeMap<Language, String>;
@@ -145,6 +155,8 @@ struct RawApiSpec {
 struct RawSupportSpec {
     #[serde(rename = "$pythonFile")]
     python_file: Option<String>,
+    #[serde(rename = "$typescriptFile")]
+    typescript_file: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,10 +204,17 @@ struct RawApiMethodInput {
     properties: IndexMap<String, RawApiMethodProperty>,
     #[serde(rename = "$python", default)]
     python: RawPythonApiMethodInput,
+    #[serde(rename = "$typescript", default)]
+    typescript: RawTypeScriptApiMethodInput,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
 struct RawPythonApiMethodInput {
+    converter: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+struct RawTypeScriptApiMethodInput {
     converter: Option<String>,
 }
 
@@ -207,6 +226,8 @@ struct RawApiMethodProperty {
     schema_type: Option<String>,
     #[serde(rename = "$python", default)]
     python: RawPythonApiMethodProperty,
+    #[serde(rename = "$typescript", default)]
+    typescript: RawTypeScriptApiMethodProperty,
     positional: Option<bool>,
     #[serde(
         default,
@@ -227,14 +248,36 @@ struct RawPythonApiMethodProperty {
     default_expr: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RawTypeScriptApiMethodProperty {
+    name: Option<String>,
+    #[serde(rename = "type")]
+    type_name: Option<String>,
+    converter: Option<String>,
+    #[serde(rename = "outputConverter")]
+    output_converter: Option<String>,
+    #[serde(rename = "default")]
+    default_expr: Option<String>,
+    positional: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawApiMethodOutput {
     #[serde(rename = "$python", default)]
     python: RawPythonApiMethodOutput,
+    #[serde(rename = "$typescript", default)]
+    typescript: RawTypeScriptApiMethodOutput,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
 struct RawPythonApiMethodOutput {
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+    converter: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+struct RawTypeScriptApiMethodOutput {
     #[serde(rename = "ref")]
     reference: Option<String>,
     converter: Option<String>,
@@ -280,10 +323,13 @@ impl TryFrom<RawApiSpec> for ApiSpec {
                                 schema_type: api.input.schema_type,
                                 properties,
                                 python_converter: api.input.python.converter,
+                                typescript_converter: api.input.typescript.converter,
                             },
                             output: ApiMethodOutputSpec {
                                 python_ref: api.output.python.reference,
                                 python_converter: api.output.python.converter,
+                                typescript_ref: api.output.typescript.reference,
+                                typescript_converter: api.output.typescript.converter,
                             },
                         })
                     })
@@ -310,6 +356,7 @@ impl TryFrom<RawApiSpec> for ApiSpec {
             version,
             support: SupportSpec {
                 python_file: support.python_file,
+                typescript_file: support.typescript_file,
             },
             services,
         })
@@ -324,6 +371,12 @@ struct ResolvedApiMethodProperty {
     python_converter: Option<String>,
     python_output_converter: Option<String>,
     python_default: Option<String>,
+    typescript_name: Option<String>,
+    typescript_type: Option<String>,
+    typescript_converter: Option<String>,
+    typescript_output_converter: Option<String>,
+    typescript_default: Option<String>,
+    typescript_positional: Option<bool>,
     default_value: Option<ApiMethodPropertyDefault>,
     positional: bool,
 }
@@ -394,7 +447,10 @@ fn build_api_method_property_spec(
         type_registry,
         &mut stack,
     )?;
-    if resolved.schema_type.is_none() && resolved.python_type.is_none() {
+    if resolved.schema_type.is_none()
+        && resolved.python_type.is_none()
+        && resolved.typescript_type.is_none()
+    {
         return Err(Error::MissingApiInputPropertyType {
             service: service.to_string(),
             api: api.to_string(),
@@ -410,6 +466,12 @@ fn build_api_method_property_spec(
         python_converter: resolved.python_converter,
         python_output_converter: resolved.python_output_converter,
         python_default: resolved.python_default,
+        typescript_name: resolved.typescript_name,
+        typescript_type: resolved.typescript_type,
+        typescript_converter: resolved.typescript_converter,
+        typescript_output_converter: resolved.typescript_output_converter,
+        typescript_default: resolved.typescript_default,
+        typescript_positional: resolved.typescript_positional,
         default_value: resolved.default_value,
         positional: resolved.positional,
     })
@@ -470,6 +532,24 @@ fn resolve_api_method_property(
     }
     if let Some(python_default) = property.python.default_expr.as_ref() {
         resolved.python_default = Some(python_default.clone());
+    }
+    if let Some(typescript_type) = property.typescript.type_name.as_ref() {
+        resolved.typescript_type = Some(typescript_type.clone());
+    }
+    if let Some(typescript_name) = property.typescript.name.as_ref() {
+        resolved.typescript_name = Some(typescript_name.clone());
+    }
+    if let Some(typescript_converter) = property.typescript.converter.as_ref() {
+        resolved.typescript_converter = Some(typescript_converter.clone());
+    }
+    if let Some(typescript_output_converter) = property.typescript.output_converter.as_ref() {
+        resolved.typescript_output_converter = Some(typescript_output_converter.clone());
+    }
+    if let Some(typescript_default) = property.typescript.default_expr.as_ref() {
+        resolved.typescript_default = Some(typescript_default.clone());
+    }
+    if let Some(typescript_positional) = property.typescript.positional {
+        resolved.typescript_positional = Some(typescript_positional);
     }
     if let Some(default_value) = property.default_value.as_ref() {
         resolved.default_value = Some(match default_value {
@@ -590,7 +670,7 @@ mod tests {
         let yaml = r#"
 nexusrpc: 1.0.0
 support:
-  $pythonFile: python_support.py
+  $pythonFile: python/support.py
 types:
   RetryPolicy:
     $python:
@@ -617,11 +697,17 @@ services:
               type: string
               $python:
                 type: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
+              $typescript:
+                name: workflowTypeOrFunc
               positional: true
             id:
               type: string
             retry_policy:
               $ref: '#/types/retrypolicy'
+            signal:
+              type: string
+              $typescript:
+                positional: false
           $python:
             converter: build_signal_with_start_workflow_request
         output:
@@ -632,7 +718,7 @@ services:
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
         assert_eq!(
             spec.support.python_file.as_deref(),
-            Some("python_support.py")
+            Some("python/support.py")
         );
         let service = &spec.services[0];
         let api = &service.apis[0];
@@ -642,11 +728,15 @@ services:
         assert_eq!(api.name, "SignalWithStartWorkflow");
         assert_eq!(api.operation, "SignalWithStartWorkflowExecution");
         assert_eq!(api.input.schema_type, "object");
-        assert_eq!(api.input.properties.len(), 3);
+        assert_eq!(api.input.properties.len(), 4);
         assert_eq!(api.input.properties[0].name, "workflow");
         assert_eq!(
             api.input.properties[0].python_type.as_deref(),
             Some("str | collections.abc.Callable[..., collections.abc.Awaitable[object]]")
+        );
+        assert_eq!(
+            api.input.properties[0].typescript_name.as_deref(),
+            Some("workflowTypeOrFunc")
         );
         assert!(api.input.properties[0].positional);
         assert_eq!(api.input.properties[1].name, "id");
@@ -679,6 +769,8 @@ services:
             Some(ApiMethodPropertyDefault::Null)
         );
         assert!(!api.input.properties[2].positional);
+        assert_eq!(api.input.properties[3].name, "signal");
+        assert_eq!(api.input.properties[3].typescript_positional, Some(false));
         assert_eq!(
             api.input.python_converter.as_deref(),
             Some("build_signal_with_start_workflow_request")

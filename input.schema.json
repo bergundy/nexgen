@@ -36,6 +36,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Path to Python support code appended to the generated module. Relative paths are resolved from the input YAML file."
+        },
+        "$typescriptFile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to TypeScript support code appended to the generated module. Relative paths are resolved from the input YAML file."
         }
       }
     },
@@ -123,6 +128,9 @@
         },
         "$python": {
           "$ref": "#/$defs/apiMethodInputPython"
+        },
+        "$typescript": {
+          "$ref": "#/$defs/apiMethodInputTypeScript"
         }
       }
     },
@@ -134,6 +142,17 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional explicit Python request converter. If omitted, generation may derive request construction from the referenced property types."
+        }
+      }
+    },
+    "apiMethodInputTypeScript": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "converter": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional explicit TypeScript request converter. If omitted, generation may derive request construction from the referenced property types."
         }
       }
     },
@@ -154,6 +173,14 @@
               "required": ["type"]
             }
           }
+        },
+        {
+          "required": ["$typescript"],
+          "properties": {
+            "$typescript": {
+              "required": ["type"]
+            }
+          }
         }
       ],
       "properties": {
@@ -167,6 +194,9 @@
         },
         "$python": {
           "$ref": "#/$defs/apiMethodPropertyPython"
+        },
+        "$typescript": {
+          "$ref": "#/$defs/apiMethodPropertyTypeScript"
         },
         "positional": {
           "type": "boolean"
@@ -203,13 +233,52 @@
         }
       }
     },
+    "apiMethodPropertyTypeScript": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "converter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outputConverter": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
+        },
+        "positional": {
+          "type": "boolean"
+        }
+      }
+    },
     "apiMethodOutput": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["$python"],
+      "anyOf": [
+        {
+          "required": ["$python"]
+        },
+        {
+          "required": ["$typescript"]
+        }
+      ],
       "properties": {
         "$python": {
           "$ref": "#/$defs/apiMethodOutputPython"
+        },
+        "$typescript": {
+          "$ref": "#/$defs/apiMethodOutputTypeScript"
         }
       }
     },
@@ -226,6 +295,22 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional explicit Python response converter. If omitted, generation may derive response conversion from the referenced property types."
+        }
+      }
+    },
+    "apiMethodOutputTypeScript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "converter": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional explicit TypeScript response converter. If omitted, generation may derive response conversion from the referenced property types."
         }
       }
     },

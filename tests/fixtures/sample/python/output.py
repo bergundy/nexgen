@@ -872,12 +872,6 @@ class WorkflowServiceClient:
             request.to_proto(),
         )
 
-    @staticmethod
-    def signal_with_start_workflow_execution_response_from_proto(
-        proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse,
-    ) -> SignalWithStartWorkflowExecutionResponseModel:
-        return SignalWithStartWorkflowExecutionResponseModel.from_proto(proto)
-
     async def retry_policy_operation(
         self,
         request: RetryPolicyModel,
@@ -889,12 +883,6 @@ class WorkflowServiceClient:
             request.to_proto(),
         )
 
-    @staticmethod
-    def retry_policy_operation_response_from_proto(
-        proto: temporalio.api.common.v1.RetryPolicy,
-    ) -> RetryPolicyModel:
-        return RetryPolicyModel.from_proto(proto)
-
     async def activity_options_operation(
         self,
         request: ActivityOptionsModel,
@@ -905,12 +893,6 @@ class WorkflowServiceClient:
             WorkflowService.activity_options_operation,
             request.to_proto(),
         )
-
-    @staticmethod
-    def activity_options_operation_response_from_proto(
-        proto: temporalio.api.activity.v1.ActivityOptions,
-    ) -> ActivityOptionsModel:
-        return ActivityOptionsModel.from_proto(proto)
 
     async def signal_with_start_workflow(
         self,
@@ -962,7 +944,7 @@ class WorkflowServiceClient:
         )
         handle = await self.signal_with_start_workflow_execution(request)
         response_proto = await handle
-        response = self.signal_with_start_workflow_execution_response_from_proto(response_proto)
+        response = SignalWithStartWorkflowExecutionResponseModel.from_proto(response_proto)
         return signal_with_start_workflow_response_to_external_workflow_handle(
             request=request,
             response=response,
@@ -977,7 +959,7 @@ class WorkflowServiceClient:
             request = RetryPolicyModel()
         handle = await self.retry_policy_operation(request)
         response_proto = await handle
-        response = self.retry_policy_operation_response_from_proto(response_proto)
+        response = RetryPolicyModel.from_proto(response_proto)
         return retry_policy_model_to_sdk(response)
 
     async def round_trip_activity_options(
@@ -1002,7 +984,7 @@ class WorkflowServiceClient:
         )
         handle = await self.activity_options_operation(request)
         response_proto = await handle
-        response = self.activity_options_operation_response_from_proto(response_proto)
+        response = ActivityOptionsModel.from_proto(response_proto)
         return activity_options_model_to_config(
             request=request,
             response=response,

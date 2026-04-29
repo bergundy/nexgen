@@ -3,8 +3,9 @@
 Small `uv`-managed app for validating the generated Python output.
 
 The build step runs `nexus-api-gen` against the sample fixture in
-`tests/fixtures/python_sample/` and writes a fresh local `output.py` build artifact into this
+`tests/fixtures/sample/` and writes a fresh local `output.py` build artifact into this
 example directory so the application and `basedpyright` both validate the same generated module.
+The fixture keeps Python-specific files under `tests/fixtures/sample/python/`.
 
 The sample validates:
 

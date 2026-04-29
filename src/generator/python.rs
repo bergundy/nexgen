@@ -112,6 +112,7 @@ struct RenderedOperation<'a> {
 struct RenderedApi {
     attr_name: String,
     operation_attr_name: String,
+    operation_output_model_name: String,
     output_ref: String,
     request_strategy: RenderedApiRequestStrategy,
     response_strategy: RenderedApiResponseStrategy,
@@ -321,6 +322,7 @@ fn resolve_api(
     Ok(RenderedApi {
         attr_name: python_ident(&api.name.to_snake_case()),
         operation_attr_name: operation.attr_name.clone(),
+        operation_output_model_name: operation.output_model_name.clone(),
         output_ref: output_ref.to_string(),
         request_strategy,
         response_strategy,
@@ -1278,20 +1280,7 @@ fn render_operation_client_methods(
     output.push_str(&operation.attr_name);
     output.push_str(",\n");
     output.push_str("            request.to_proto(),\n");
-    output.push_str("        )\n\n");
-    output.push_str("    @staticmethod\n");
-    output.push_str("    def ");
-    output.push_str(&operation.attr_name);
-    output.push_str("_response_from_proto(\n");
-    output.push_str("        proto: ");
-    output.push_str(operation.output_ref);
-    output.push_str(",\n");
-    output.push_str("    ) -> ");
-    output.push_str(&operation.output_model_name);
-    output.push_str(":\n");
-    output.push_str("        return ");
-    output.push_str(&operation.output_model_name);
-    output.push_str(".from_proto(proto)\n");
+    output.push_str("        )\n");
 }
 
 fn render_api_client_method(output: &mut String, api: &RenderedApi) {
@@ -1326,9 +1315,9 @@ fn render_api_client_method(output: &mut String, api: &RenderedApi) {
     output.push_str(&api.operation_attr_name);
     output.push_str("(request)\n");
     output.push_str("        response_proto = await handle\n");
-    output.push_str("        response = self.");
-    output.push_str(&api.operation_attr_name);
-    output.push_str("_response_from_proto(response_proto)\n");
+    output.push_str("        response = ");
+    output.push_str(&api.operation_output_model_name);
+    output.push_str(".from_proto(response_proto)\n");
     render_api_response(output, &api.response_strategy);
 }
 
@@ -1500,20 +1489,26 @@ mod tests {
     use crate::spec::ApiSpec;
 
     fn sample_fixture_dir(root: &std::path::Path) -> PathBuf {
-        root.join("tests/fixtures/python_sample")
+        root.join("tests/fixtures/sample")
+    }
+
+    fn sample_python_fixture_dir(fixture: &std::path::Path) -> PathBuf {
+        fixture.join("python")
     }
 
     #[test]
     fn renders_sample_output() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let fixture = sample_fixture_dir(&root);
+        let python_fixture = sample_python_fixture_dir(&fixture);
         let spec = ApiSpec::load(&fixture.join("input.yaml")).unwrap();
         let descriptors = DescriptorIndex::load(&root.join("descriptors.bin")).unwrap();
         let support = SupportFiles {
-            python: Some(std::fs::read_to_string(fixture.join("python_support.py")).unwrap()),
+            python: Some(std::fs::read_to_string(python_fixture.join("support.py")).unwrap()),
+            typescript: None,
         };
         let output = generate_source(Language::Python, &spec, &descriptors, &support).unwrap();
-        let expected = std::fs::read_to_string(fixture.join("output.py")).unwrap();
+        let expected = std::fs::read_to_string(python_fixture.join("output.py")).unwrap();
 
         assert_eq!(output, expected);
     }
@@ -1522,10 +1517,12 @@ mod tests {
     fn renders_pythonic_dataclass_and_client_api() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let fixture = sample_fixture_dir(&root);
+        let python_fixture = sample_python_fixture_dir(&fixture);
         let spec = ApiSpec::load(&fixture.join("input.yaml")).unwrap();
         let descriptors = DescriptorIndex::load(&root.join("descriptors.bin")).unwrap();
         let support = SupportFiles {
-            python: Some(std::fs::read_to_string(fixture.join("python_support.py")).unwrap()),
+            python: Some(std::fs::read_to_string(python_fixture.join("support.py")).unwrap()),
+            typescript: None,
         };
         let output = generate_source(Language::Python, &spec, &descriptors, &support).unwrap();
 
@@ -1775,6 +1772,7 @@ services:
             &descriptors,
             &SupportFiles {
                 python: Some(String::new()),
+                typescript: None,
             },
         )
         .unwrap_err();
@@ -1816,7 +1814,7 @@ services:
 
         assert_eq!(
             error.to_string(),
-            "service `ExampleService` api `FriendlyOperation` input property `broken` is missing both `type` and `$python.type`"
+            "service `ExampleService` api `FriendlyOperation` input property `broken` is missing `type`, `$python.type`, and `$typescript.type`"
         );
     }
 
@@ -1895,6 +1893,7 @@ services:
             &descriptors,
             &SupportFiles {
                 python: Some(String::new()),
+                typescript: None,
             },
         )
         .unwrap_err();

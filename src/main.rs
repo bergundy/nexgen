@@ -33,12 +33,14 @@ struct GenerateArgs {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum CliLanguage {
     Python,
+    Typescript,
 }
 
 impl From<CliLanguage> for Language {
     fn from(value: CliLanguage) -> Self {
         match value {
             CliLanguage::Python => Language::Python,
+            CliLanguage::Typescript => Language::TypeScript,
         }
     }
 }

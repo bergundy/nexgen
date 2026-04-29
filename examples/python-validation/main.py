@@ -308,10 +308,8 @@ async def main() -> None:
             request
         )
         response_proto = await response_handle
-        response = (
-            output.WorkflowServiceClient.signal_with_start_workflow_execution_response_from_proto(
-                response_proto
-            )
+        response = output.SignalWithStartWorkflowExecutionResponseModel.from_proto(
+            response_proto
         )
         ergonomic_handle = await workflow_client.signal_with_start_workflow(
             ExampleWorkflow.run,

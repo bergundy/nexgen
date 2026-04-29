@@ -7,7 +7,7 @@ import subprocess
 def main() -> None:
     app_root = Path(__file__).resolve().parent
     repo_root = app_root.parent.parent
-    fixture_root = repo_root / "tests" / "fixtures" / "python_sample"
+    fixture_root = repo_root / "tests" / "fixtures" / "sample"
     input_path = fixture_root / "input.yaml"
     descriptor_path = repo_root / "descriptors.bin"
     destination = app_root / "output.py"

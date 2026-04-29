@@ -16,6 +16,7 @@ use spec::ApiSpec;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SupportFiles {
     pub python: Option<String>,
+    pub typescript: Option<String>,
 }
 
 pub struct GenerateRequest {
@@ -69,9 +70,15 @@ fn load_support_files(spec: &ApiSpec, input_path: &Path) -> Result<SupportFiles>
         .python_file
         .as_deref()
         .map(|path| resolve_support_path(base_dir, path));
+    let typescript_support_path = spec
+        .support
+        .typescript_file
+        .as_deref()
+        .map(|path| resolve_support_path(base_dir, path));
 
     Ok(SupportFiles {
         python: load_optional_file(python_support_path.as_deref())?,
+        typescript: load_optional_file(typescript_support_path.as_deref())?,
     })
 }
 

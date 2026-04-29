@@ -1,4 +1,5 @@
 mod python;
+mod typescript;
 
 use crate::SupportFiles;
 use crate::descriptors::DescriptorIndex;
@@ -24,6 +25,7 @@ pub fn generate_source(
 ) -> Result<String> {
     match language {
         Language::Python => python::PythonBackend.generate(spec, descriptors, support),
+        Language::TypeScript => typescript::TypeScriptBackend.generate(spec, descriptors, support),
         language => Err(Error::UnsupportedLanguage { language }),
     }
 }
