@@ -114,6 +114,10 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("request: common.RetryPolicy,"));
     assert!(rendered.contains("// Included from support.$typescriptFile"));
     assert!(rendered.contains("export function retryPolicyFromProto("));
+    assert!(rendered.contains(
+        "const result = await handle.result();\n    return workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined);"
+    ));
+    assert!(rendered.contains("  ): Promise<workflow.ExternalWorkflowHandle> {"));
     assert!(!rendered.contains("SignalWithStartWorkflowExecutionRequest = {\n  fromProto("));
     assert!(!rendered.contains("export interface RetryPolicy"));
     assert!(!rendered.contains("signalWithStartWorkflow("));

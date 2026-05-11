@@ -665,11 +665,13 @@ export class WorkflowServiceClient {
 
   public async signalWithStartWorkflowExecution(
     request: SignalWithStartWorkflowExecutionRequest,
-  ): Promise<workflow.NexusOperationHandle<temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionResponse>> {
-    return await this.client.startOperation(
+  ): Promise<workflow.ExternalWorkflowHandle> {
+    const handle = await this.client.startOperation(
       WorkflowService.operations.signalWithStartWorkflowExecution,
       SignalWithStartWorkflowExecutionRequest.toProto(request) ?? {},
     );
+    const result = await handle.result();
+    return workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined);
   }
 
   public async retryPolicyOperation(

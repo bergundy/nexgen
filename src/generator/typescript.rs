@@ -94,6 +94,8 @@ struct RenderedOperation<'a> {
     output_proto_ref: String,
     input_annotation: String,
     input_to_proto_expr: String,
+    output_annotation: String,
+    output_transform_expr: Option<String>,
 }
 
 #[derive(Debug)]
@@ -250,6 +252,7 @@ fn resolve_operation<'a>(
         models,
         uses_long,
     );
+    let output_transform = operation.output_transform(Language::TypeScript);
 
     Ok(RenderedOperation {
         name: operation.name.as_str(),
@@ -258,6 +261,10 @@ fn resolve_operation<'a>(
         output_proto_ref: message_typescript_interface_ref(output_message),
         input_annotation: input_conversion.annotation.clone(),
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
+        output_annotation: output_transform
+            .map(|transform| transform.type_name.clone())
+            .unwrap_or_else(|| message_typescript_interface_ref(output_message)),
+        output_transform_expr: output_transform.map(|transform| transform.transform.clone()),
     })
 }
 
@@ -1050,7 +1057,6 @@ fn render_module(
     output.push_str("  }\n");
     output.push_str("  return value;\n");
     output.push_str("}\n");
-
     if !enums.is_empty() {
         output.push('\n');
         for enumeration in enums {
@@ -1241,10 +1247,17 @@ fn render_operation_client_methods(
     output.push_str("    request: ");
     output.push_str(&operation.input_annotation);
     output.push_str(",\n");
-    output.push_str("  ): Promise<workflow.NexusOperationHandle<");
-    output.push_str(&operation.output_proto_ref);
-    output.push_str(">> {\n");
-    output.push_str("    return await this.client.startOperation(\n");
+    if operation.output_transform_expr.is_some() {
+        output.push_str("  ): Promise<");
+        output.push_str(&operation.output_annotation);
+        output.push_str("> {\n");
+        output.push_str("    const handle = await this.client.startOperation(\n");
+    } else {
+        output.push_str("  ): Promise<workflow.NexusOperationHandle<");
+        output.push_str(&operation.output_annotation);
+        output.push_str(">> {\n");
+        output.push_str("    return await this.client.startOperation(\n");
+    }
     output.push_str("      ");
     output.push_str(service_name);
     output.push_str(".operations.");
@@ -1254,6 +1267,12 @@ fn render_operation_client_methods(
     output.push_str(&operation.input_to_proto_expr);
     output.push_str(",\n");
     output.push_str("    );\n");
+    if let Some(transform_expr) = &operation.output_transform_expr {
+        output.push_str("    const result = await handle.result();\n");
+        output.push_str("    return ");
+        output.push_str(transform_expr);
+        output.push_str(";\n");
+    }
     output.push_str("  }\n");
 }
 

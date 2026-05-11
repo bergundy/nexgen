@@ -94,6 +94,8 @@ struct RenderedOperation<'a> {
     input_type_parameters: Vec<PythonTypeParameterSpec>,
     input_annotation: String,
     input_to_proto_expr: String,
+    output_annotation: String,
+    output_transform_expr: Option<String>,
     unpacked_input: Option<RenderedUnpackedInput>,
 }
 
@@ -151,6 +153,7 @@ struct RenderedUnpackedInput {
     model_name: String,
     type_parameters: Vec<PythonTypeParameterSpec>,
     fields: Vec<RenderedUnpackedInputField>,
+    workflow_function: Option<RenderedWorkflowFunctionField>,
 }
 
 #[derive(Debug)]
@@ -158,6 +161,14 @@ struct RenderedUnpackedInputField {
     attr_name: String,
     annotation: String,
     default_kind: PythonFieldDefaultKind,
+}
+
+#[derive(Debug)]
+struct RenderedWorkflowFunctionField {
+    callable_field_name: String,
+    args_field_name: String,
+    args_type_parameter: String,
+    result_annotation: String,
 }
 
 #[derive(Debug)]
@@ -298,6 +309,7 @@ fn resolve_operation<'a>(
         enums,
         models,
     );
+    let output_transform = operation.output_transform(Language::Python);
     Ok(RenderedOperation {
         name: operation.name.as_str(),
         attr_name: python_ident(&operation.name.to_snake_case()),
@@ -313,6 +325,10 @@ fn resolve_operation<'a>(
             )
         },
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
+        output_annotation: output_transform
+            .map(|transform| transform.type_name.clone())
+            .unwrap_or_else(|| output_ref.to_string()),
+        output_transform_expr: output_transform.map(|transform| transform.transform.clone()),
         unpacked_input: models
             .get(&input_message.full_name)
             .filter(|_| {
@@ -334,6 +350,19 @@ fn resolve_operation<'a>(
                         default_kind: field.default_kind,
                     })
                     .collect(),
+                workflow_function: spec
+                    .type_override(&input_message.full_name)
+                    .and_then(|type_override| type_override.python_generated_model())
+                    .and_then(|python_model| {
+                        python_model.workflow_functions.iter().next().map(
+                            |(field_name, workflow_function)| RenderedWorkflowFunctionField {
+                                callable_field_name: python_ident(field_name),
+                                args_field_name: python_ident(&workflow_function.args_field),
+                                args_type_parameter: workflow_function.args_type_parameter.clone(),
+                                result_annotation: workflow_function.result_type.clone(),
+                            },
+                        )
+                    }),
             }),
     })
 }
@@ -554,6 +583,7 @@ fn build_field(
                     "dict[{}, {}]",
                     map_info.key_type.annotation, map_info.value_type.annotation
                 ),
+                false,
             ),
             default_kind: PythonFieldDefaultKind::EmptyDict,
             default_expr: Some("dataclasses.field(default_factory=dict)".to_string()),
@@ -576,6 +606,7 @@ fn build_field(
                 &message.full_name,
                 proto_name,
                 format!("list[{}]", resolved_type.annotation),
+                false,
             ),
             default_kind: PythonFieldDefaultKind::EmptyList,
             default_expr: Some("dataclasses.field(default_factory=list)".to_string()),
@@ -594,6 +625,7 @@ fn build_field(
                 &message.full_name,
                 proto_name,
                 resolved_type.annotation.clone(),
+                false,
             ),
             default_kind: PythonFieldDefaultKind::Required,
             default_expr: None,
@@ -621,7 +653,8 @@ fn build_field(
             spec,
             &message.full_name,
             proto_name,
-            format!("{} | None", resolved_type.annotation),
+            resolved_type.annotation.clone(),
+            true,
         ),
         default_kind: PythonFieldDefaultKind::None,
         default_expr: Some("None".to_string()),
@@ -676,13 +709,56 @@ fn python_field_annotation(
     spec: &ApiSpec,
     message_name: &str,
     field_name: &str,
-    default_annotation: String,
+    default_base_annotation: String,
+    is_optional: bool,
 ) -> String {
-    spec.type_override(message_name)
+    let Some(python_model) = spec
+        .type_override(message_name)
         .and_then(|type_override| type_override.python_generated_model())
-        .and_then(|python_model| python_model.field_annotation(field_name))
-        .map(str::to_string)
-        .unwrap_or(default_annotation)
+    else {
+        return if is_optional {
+            format!("{default_base_annotation} | None")
+        } else {
+            default_base_annotation
+        };
+    };
+
+    if let Some(workflow_function) = python_model.workflow_function(field_name) {
+        return workflow_function_annotation(
+            &workflow_function.args_type_parameter,
+            &workflow_function.result_type,
+        );
+    }
+
+    if let Some(callable_field) = python_model.workflow_function_for_args_field(field_name) {
+        let args_annotation =
+            workflow_function_args_annotation(&callable_field.args_type_parameter);
+        return if is_optional {
+            format!("{args_annotation} | None")
+        } else {
+            args_annotation
+        };
+    }
+
+    if let Some(annotation) = python_model.field_annotation(field_name) {
+        return annotation.to_string();
+    }
+
+    if is_optional {
+        format!("{default_base_annotation} | None")
+    } else {
+        default_base_annotation
+    }
+}
+
+fn workflow_function_annotation(args_type_parameter: &str, result_annotation: &str) -> String {
+    format!(
+        "str | collections.abc.Callable[[typing.Any, *{args_type_parameter}], collections.abc.Awaitable[{result_annotation}]]"
+    )
+}
+
+fn workflow_function_args_annotation(args_type_parameter: &str) -> String {
+    format!("tuple[*{args_type_parameter}]")
 }
 
 fn repeated_from_proto_expr(resolved_type: &ResolvedFieldType, proto_name: &str) -> String {
@@ -1423,7 +1499,6 @@ fn render_module(
             module_imports.extend(field.imports.module_imports.iter().cloned());
         }
     }
-
     let mut output = String::new();
     output.push_str(GENERATED_HEADER);
     output.push('\n');
@@ -1453,7 +1528,6 @@ fn render_module(
             output.push('\n');
         }
     }
-
     let mut wrote_section = false;
     if !enums.is_empty() {
         output.push_str("\n\n");
@@ -1728,6 +1802,151 @@ fn render_unpacked_input_type(output: &mut String, unpacked_input: &RenderedUnpa
     }
 }
 
+#[derive(Clone, Copy)]
+enum WorkflowFunctionOverloadKind {
+    StringName,
+    ZeroArgCallable,
+    NonZeroCallable,
+}
+
+fn render_workflow_function_unpacked_overloads(
+    output: &mut String,
+    operation: &RenderedOperation<'_>,
+    unpacked_input: &RenderedUnpackedInput,
+) {
+    let workflow_function = unpacked_input
+        .workflow_function
+        .as_ref()
+        .expect("workflow function overloads require workflow function metadata");
+    let shared_type_parameters =
+        workflow_function_overload_type_parameters(unpacked_input, workflow_function);
+
+    render_workflow_function_unpacked_overload(
+        output,
+        operation,
+        unpacked_input,
+        &shared_type_parameters,
+        workflow_function,
+        WorkflowFunctionOverloadKind::StringName,
+    );
+    output.push('\n');
+    render_workflow_function_unpacked_overload(
+        output,
+        operation,
+        unpacked_input,
+        &shared_type_parameters,
+        workflow_function,
+        WorkflowFunctionOverloadKind::ZeroArgCallable,
+    );
+    output.push('\n');
+
+    let mut nonzero_type_parameters = shared_type_parameters;
+    nonzero_type_parameters.push("FirstWorkflowArg".to_string());
+    nonzero_type_parameters.push("*RemainingWorkflowArgs".to_string());
+    render_workflow_function_unpacked_overload(
+        output,
+        operation,
+        unpacked_input,
+        &nonzero_type_parameters,
+        workflow_function,
+        WorkflowFunctionOverloadKind::NonZeroCallable,
+    );
+}
+
+fn render_workflow_function_unpacked_overload(
+    output: &mut String,
+    operation: &RenderedOperation<'_>,
+    unpacked_input: &RenderedUnpackedInput,
+    type_parameters: &[String],
+    workflow_function: &RenderedWorkflowFunctionField,
+    kind: WorkflowFunctionOverloadKind,
+) {
+    output.push_str("    @typing.overload\n");
+    output.push_str("    async def ");
+    output.push_str(&operation.attr_name);
+    output.push_str("_args");
+    render_python_raw_type_parameter_list(output, type_parameters);
+    output.push_str("(\n");
+    output.push_str("        self,\n");
+    output.push_str("        *,\n");
+
+    for field in &unpacked_input.fields {
+        if field.attr_name == workflow_function.callable_field_name {
+            output.push_str("        ");
+            output.push_str(&field.attr_name);
+            output.push_str(": ");
+            output.push_str(&workflow_function_overload_callable_annotation(
+                workflow_function,
+                kind,
+            ));
+            if field.default_kind != PythonFieldDefaultKind::Required {
+                output.push_str(" = ...");
+            }
+            output.push_str(",\n");
+            continue;
+        }
+
+        if field.attr_name == workflow_function.args_field_name {
+            match kind {
+                WorkflowFunctionOverloadKind::StringName => {
+                    output.push_str("        ");
+                    output.push_str(&field.attr_name);
+                    output.push_str(": tuple[typing.Any, ...] | None = ...,\n");
+                }
+                WorkflowFunctionOverloadKind::ZeroArgCallable => {}
+                WorkflowFunctionOverloadKind::NonZeroCallable => {
+                    output.push_str("        ");
+                    output.push_str(&field.attr_name);
+                    output.push_str(": tuple[FirstWorkflowArg, *RemainingWorkflowArgs],\n");
+                }
+            }
+            continue;
+        }
+
+        output.push_str("        ");
+        output.push_str(&field.attr_name);
+        output.push_str(": ");
+        output.push_str(&field.annotation);
+        if field.default_kind != PythonFieldDefaultKind::Required {
+            output.push_str(" = ...");
+        }
+        output.push_str(",\n");
+    }
+
+    output.push_str("    ) -> ");
+    output.push_str(&operation.output_annotation);
+    output.push_str(": ...\n");
+}
+
+fn workflow_function_overload_type_parameters(
+    unpacked_input: &RenderedUnpackedInput,
+    workflow_function: &RenderedWorkflowFunctionField,
+) -> Vec<String> {
+    unpacked_input
+        .type_parameters
+        .iter()
+        .filter(|parameter| parameter.name != workflow_function.args_type_parameter)
+        .map(python_type_parameter_use)
+        .collect()
+}
+
+fn workflow_function_overload_callable_annotation(
+    workflow_function: &RenderedWorkflowFunctionField,
+    kind: WorkflowFunctionOverloadKind,
+) -> String {
+    match kind {
+        WorkflowFunctionOverloadKind::StringName => "str".to_string(),
+        WorkflowFunctionOverloadKind::ZeroArgCallable => format!(
+            "collections.abc.Callable[[typing.Any], collections.abc.Awaitable[{}]]",
+            workflow_function.result_annotation
+        ),
+        WorkflowFunctionOverloadKind::NonZeroCallable => format!(
+            "collections.abc.Callable[[typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs], collections.abc.Awaitable[{}]]",
+            workflow_function.result_annotation
+        ),
+    }
+}
+
 fn render_service(output: &mut String, service: &RenderedService<'_>) {
     output.push_str("@service\n");
     output.push_str("class ");
@@ -1793,6 +2012,10 @@ fn render_operation_client_methods(
     render_request_only_client_method(output, service_name, operation);
     if let Some(unpacked_input) = &operation.unpacked_input {
         output.push('\n');
+        if unpacked_input.workflow_function.is_some() {
+            render_workflow_function_unpacked_overloads(output, operation, unpacked_input);
+            output.push('\n');
+        }
         render_unpacked_operation_client_method(output, operation, unpacked_input);
     }
 }
@@ -1810,12 +2033,19 @@ fn render_request_only_client_method(
     output.push_str("        request: ");
     output.push_str(&operation.input_annotation);
     output.push_str(",\n");
-    output.push_str("    ) -> workflow.NexusOperationHandle[\n");
-    output.push_str("        ");
-    output.push_str(operation.output_ref);
-    output.push_str(",\n");
-    output.push_str("    ]:\n");
-    output.push_str("        return await self._client.start_operation(\n");
+    if operation.output_transform_expr.is_some() {
+        output.push_str("    ) -> ");
+        output.push_str(&operation.output_annotation);
+        output.push_str(":\n");
+        output.push_str("        handle = await self._client.start_operation(\n");
+    } else {
+        output.push_str("    ) -> workflow.NexusOperationHandle[\n");
+        output.push_str("        ");
+        output.push_str(&operation.output_annotation);
+        output.push_str(",\n");
+        output.push_str("    ]:\n");
+        output.push_str("        return await self._client.start_operation(\n");
+    }
     output.push_str("            ");
     output.push_str(service_name);
     output.push('.');
@@ -1825,6 +2055,12 @@ fn render_request_only_client_method(
     output.push_str(&operation.input_to_proto_expr);
     output.push_str(",\n");
     output.push_str("        )\n");
+    if let Some(transform_expr) = &operation.output_transform_expr {
+        output.push_str("        result = await handle\n");
+        output.push_str("        return ");
+        output.push_str(transform_expr);
+        output.push('\n');
+    }
 }
 
 fn render_unpacked_operation_client_method(
@@ -1832,6 +2068,11 @@ fn render_unpacked_operation_client_method(
     operation: &RenderedOperation<'_>,
     unpacked_input: &RenderedUnpackedInput,
 ) {
+    if unpacked_input.workflow_function.is_some() {
+        render_workflow_function_unpacked_implementation(output, operation, unpacked_input);
+        return;
+    }
+
     let kwargs_annotation = python_parameterized_model_annotation(
         &unpacked_input.kwargs_type_name,
         &unpacked_input.type_parameters,
@@ -1846,26 +2087,153 @@ fn render_unpacked_operation_client_method(
     output.push_str("        **kwargs: typing.Unpack[");
     output.push_str(&kwargs_annotation);
     output.push_str("],\n");
-    output.push_str("    ) -> workflow.NexusOperationHandle[\n");
-    output.push_str("        ");
-    output.push_str(operation.output_ref);
-    output.push_str(",\n");
-    output.push_str("    ]:\n");
-    output.push_str("        request = ");
-    output.push_str(&python_parameterized_model_annotation(
-        &unpacked_input.model_name,
-        &unpacked_input.type_parameters,
-    ));
+    if operation.output_transform_expr.is_some() {
+        output.push_str("    ) -> ");
+        output.push_str(&operation.output_annotation);
+        output.push_str(":\n");
+    } else {
+        output.push_str("    ) -> workflow.NexusOperationHandle[\n");
+        output.push_str("        ");
+        output.push_str(&operation.output_annotation);
+        output.push_str(",\n");
+        output.push_str("    ]:\n");
+    }
+    output.push_str("        request: typing.Any = ");
+    output.push_str(&unpacked_input.model_name);
     output.push_str("(**kwargs)\n");
     output.push_str("        return await self.");
     output.push_str(&operation.attr_name);
     output.push_str("(request)\n");
 }
 
+fn render_workflow_function_unpacked_implementation(
+    output: &mut String,
+    operation: &RenderedOperation<'_>,
+    unpacked_input: &RenderedUnpackedInput,
+) {
+    let workflow_function = unpacked_input
+        .workflow_function
+        .as_ref()
+        .expect("workflow function implementation requires workflow function metadata");
+    let shared_type_parameters =
+        workflow_function_overload_type_parameters(unpacked_input, workflow_function);
+
+    output.push_str("    async def ");
+    output.push_str(&operation.attr_name);
+    output.push_str("_args");
+    render_python_raw_type_parameter_list(output, &shared_type_parameters);
+    output.push_str("(\n");
+    output.push_str("        self,\n");
+    output.push_str("        *,\n");
+
+    for field in &unpacked_input.fields {
+        output.push_str("        ");
+        output.push_str(&field.attr_name);
+        output.push_str(": ");
+        if field.attr_name == workflow_function.callable_field_name {
+            output.push_str(&workflow_function_implementation_callable_annotation(
+                workflow_function,
+            ));
+        } else if field.attr_name == workflow_function.args_field_name {
+            output.push_str("tuple[typing.Any, ...] | None");
+        } else {
+            output.push_str(&field.annotation);
+        }
+        if let Some(default_expr) = python_parameter_default_expr(field.default_kind) {
+            output.push_str(" = ");
+            output.push_str(default_expr);
+        }
+        output.push_str(",\n");
+    }
+
+    if operation.output_transform_expr.is_some() {
+        output.push_str("    ) -> ");
+        output.push_str(&operation.output_annotation);
+        output.push_str(":\n");
+    } else {
+        output.push_str("    ) -> workflow.NexusOperationHandle[\n");
+        output.push_str("        ");
+        output.push_str(&operation.output_annotation);
+        output.push_str(",\n");
+        output.push_str("    ]:\n");
+    }
+
+    output.push_str("        request = ");
+    output.push_str(&workflow_function_implementation_model_annotation(
+        unpacked_input,
+        workflow_function,
+    ));
+    output.push_str("(\n");
+    for field in &unpacked_input.fields {
+        output.push_str("            ");
+        output.push_str(&field.attr_name);
+        output.push('=');
+        output.push_str(&field.attr_name);
+        output.push_str(",\n");
+    }
+    output.push_str("        )\n");
+    output.push_str("        return await self.");
+    output.push_str(&operation.attr_name);
+    output.push_str("(request)\n");
+}
+
+fn workflow_function_implementation_model_annotation(
+    unpacked_input: &RenderedUnpackedInput,
+    workflow_function: &RenderedWorkflowFunctionField,
+) -> String {
+    let type_arguments = unpacked_input
+        .type_parameters
+        .iter()
+        .map(|parameter| {
+            if parameter.name == workflow_function.args_type_parameter {
+                "*tuple[typing.Any, ...]".to_string()
+            } else {
+                python_type_parameter_use(parameter)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if type_arguments.is_empty() {
+        unpacked_input.model_name.clone()
+    } else {
+        format!(
+            "{}[{}]",
+            unpacked_input.model_name,
+            type_arguments.join(", ")
+        )
+    }
+}
+
+fn workflow_function_implementation_callable_annotation(
+    workflow_function: &RenderedWorkflowFunctionField,
+) -> String {
+    format!(
+        "str | collections.abc.Callable[..., collections.abc.Awaitable[{}]]",
+        workflow_function.result_annotation
+    )
+}
+
+fn python_parameter_default_expr(default_kind: PythonFieldDefaultKind) -> Option<&'static str> {
+    match default_kind {
+        PythonFieldDefaultKind::Required => None,
+        PythonFieldDefaultKind::None => Some("None"),
+        PythonFieldDefaultKind::EmptyList => Some("[]"),
+        PythonFieldDefaultKind::EmptyDict => Some("{}"),
+    }
+}
+
 fn render_python_type_parameter_list(
     output: &mut String,
     type_parameters: &[PythonTypeParameterSpec],
 ) {
+    let type_parameter_uses = type_parameters
+        .iter()
+        .map(python_type_parameter_use)
+        .collect::<Vec<_>>();
+    render_python_raw_type_parameter_list(output, &type_parameter_uses);
+}
+
+fn render_python_raw_type_parameter_list(output: &mut String, type_parameters: &[String]) {
     if type_parameters.is_empty() {
         return;
     }
@@ -1875,7 +2243,7 @@ fn render_python_type_parameter_list(
         if index > 0 {
             output.push_str(", ");
         }
-        output.push_str(&python_type_parameter_use(parameter));
+        output.push_str(parameter);
     }
     output.push(']');
 }
@@ -2028,6 +2396,10 @@ mod tests {
         assert!(output.contains("input: tuple[*WorkflowArgs] | None = None"));
         assert!(!output.contains("namespace: str | None = None"));
         assert!(output.contains("message.namespace = workflow.info().namespace"));
+        assert!(output.contains("result = await handle"));
+        assert!(output.contains(
+            "return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
+        ));
         assert!(
             output.contains("signal_input: collections.abc.Sequence[typing.Any] | None = None")
         );
@@ -2075,17 +2447,34 @@ mod tests {
         assert!(!output.contains("link_to_proto("));
         assert!(output.contains("async def signal_with_start_workflow_execution[*WorkflowArgs]("));
         assert!(output.contains("request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]"));
+        assert!(output.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
         assert!(output.contains(
             "class SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs](typing.TypedDict, total=False):"
         ));
         assert!(output.contains("workflow_id: typing.Required[str]"));
         assert!(output.contains("input: tuple[*WorkflowArgs] | None"));
-        assert!(
-            output.contains("async def signal_with_start_workflow_execution_args[*WorkflowArgs](")
-        );
+        assert!(output.contains("    @typing.overload"));
+        assert!(output.contains("workflow_type: str,"));
+        assert!(output.contains("input: tuple[typing.Any, ...] | None = ...,"));
         assert!(output.contains(
-            "**kwargs: typing.Unpack[SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs]],"
+            "workflow_type: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
         ));
+        assert!(output.contains(
+            "async def signal_with_start_workflow_execution_args[FirstWorkflowArg, *RemainingWorkflowArgs]("
+        ));
+        assert!(output.contains("input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],"));
+        assert!(output.contains("async def signal_with_start_workflow_execution_args("));
+        assert!(output.contains("        *,"));
+        assert!(output.contains(
+            "workflow_type: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
+        ));
+        assert!(output.contains("input: tuple[typing.Any, ...] | None = None,"));
+        assert!(output.contains(
+            "request = SignalWithStartWorkflowExecutionRequest[*tuple[typing.Any, ...]]("
+        ));
+        assert!(output.contains("workflow_type=workflow_type,"));
+        assert!(output.contains("input=input,"));
+        assert!(output.contains("return await self.signal_with_start_workflow_execution(request)"));
         assert!(!output.contains("SignalWithStartWorkflowExecutionRequest.from_proto"));
         assert!(!output.contains(
             "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"

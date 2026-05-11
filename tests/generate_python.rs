@@ -124,13 +124,36 @@ fn python_request_models_are_write_only() {
     assert!(!rendered.contains("namespace: str | None = None"));
     assert!(!rendered.contains("namespace: str | None"));
     assert!(rendered.contains("message.namespace = workflow.info().namespace"));
+    assert!(rendered.contains("result = await handle"));
+    assert!(rendered.contains(
+        "return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
+    ));
     assert!(rendered.contains("async def signal_with_start_workflow_execution[*WorkflowArgs]("));
     assert!(rendered.contains("request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]"));
-    assert!(
-        rendered.contains("async def signal_with_start_workflow_execution_args[*WorkflowArgs](")
-    );
+    assert!(rendered.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
+    assert!(rendered.contains("async def signal_with_start_workflow_execution_args("));
+    assert!(rendered.contains("    @typing.overload"));
+    assert!(rendered.contains("workflow_type: str,"));
+    assert!(rendered.contains("input: tuple[typing.Any, ...] | None = ...,"));
     assert!(rendered.contains(
-        "**kwargs: typing.Unpack[SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs]],"
+        "workflow_type: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
     ));
+    assert!(rendered.contains(
+        "async def signal_with_start_workflow_execution_args[FirstWorkflowArg, *RemainingWorkflowArgs]("
+    ));
+    assert!(rendered.contains("input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],"));
+    assert!(rendered.contains("        *,"));
+    assert!(rendered.contains(
+        "workflow_type: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
+    ));
+    assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None,"));
+    assert!(
+        rendered.contains(
+            "request = SignalWithStartWorkflowExecutionRequest[*tuple[typing.Any, ...]]("
+        )
+    );
+    assert!(rendered.contains("workflow_type=workflow_type,"));
+    assert!(rendered.contains("input=input,"));
+    assert!(rendered.contains("return await self.signal_with_start_workflow_execution(request)"));
     assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
 }

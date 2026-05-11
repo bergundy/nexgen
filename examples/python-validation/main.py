@@ -52,6 +52,22 @@ class FakeOperationHandle:
         return wait_for_result().__await__()
 
 
+class FakeExternalWorkflowHandle:
+    id: str
+    run_id: str | None
+
+    def __init__(self, workflow_id: str, run_id: str | None) -> None:
+        self.id = workflow_id
+        self.run_id = run_id
+
+    async def signal(self, signal: object, *args: object) -> None:
+        _ = signal
+        _ = args
+
+    async def cancel(self) -> None:
+        return None
+
+
 class FakePayloadConverter:
     @staticmethod
     def _encode(value: object) -> bytes:
@@ -101,30 +117,40 @@ class FakeNexusClient:
             assert input.signal_name == "wake_up"
             assert input.workflow_type.name == "ExampleWorkflow"
             assert input.task_queue.name == "demo-task-queue"
-            assert input.HasField("input")
-            assert [payload.data for payload in input.input.payloads] == [
-                b"int:7",
-                b"str:'nexus'",
-            ]
-            assert input.workflow_execution_timeout.seconds == 30
-            assert input.retry_policy.maximum_attempts == 3
-            assert input.workflow_id_reuse_policy == int(
-                temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
-            )
-            assert input.workflow_id_conflict_policy == int(
-                temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING
-            )
-            assert input.priority.priority_key == 4
-            assert input.priority.fairness_key == "tenant-a"
-            assert input.priority.fairness_weight == 2.5
-            assert input.memo.fields["category"].data == b"str:'payments'"
-            assert input.memo.fields["attempt"].data == b"int:7"
-            assert "CustomKeywordField" in input.search_attributes.indexed_fields
-            assert input.user_metadata.summary.data == b"str:'Nightly sync'"
-            assert input.user_metadata.details.data == b"str:'Processes 42 records'"
-            assert input.versioning_override.HasField("pinned")
-            assert input.versioning_override.pinned.version.deployment_name == "payments"
-            assert input.versioning_override.pinned.version.build_id == "build-42"
+            if input.HasField("input"):
+                assert [payload.data for payload in input.input.payloads] == [
+                    b"int:7",
+                    b"str:'nexus'",
+                ]
+                assert input.workflow_execution_timeout.seconds == 30
+                assert input.retry_policy.maximum_attempts == 3
+                assert input.workflow_id_reuse_policy == int(
+                    temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+                )
+                assert input.workflow_id_conflict_policy == int(
+                    temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING
+                )
+                assert input.priority.priority_key == 4
+                assert input.priority.fairness_key == "tenant-a"
+                assert input.priority.fairness_weight == 2.5
+                assert input.memo.fields["category"].data == b"str:'payments'"
+                assert input.memo.fields["attempt"].data == b"int:7"
+                assert "CustomKeywordField" in input.search_attributes.indexed_fields
+                assert input.user_metadata.summary.data == b"str:'Nightly sync'"
+                assert input.user_metadata.details.data == b"str:'Processes 42 records'"
+                assert input.versioning_override.HasField("pinned")
+                assert input.versioning_override.pinned.version.deployment_name == "payments"
+                assert input.versioning_override.pinned.version.build_id == "build-42"
+            else:
+                assert not input.HasField("workflow_execution_timeout")
+                assert not input.HasField("retry_policy")
+                assert input.workflow_id_reuse_policy == 0
+                assert input.workflow_id_conflict_policy == 0
+                assert not input.HasField("priority")
+                assert len(input.memo.fields) == 0
+                assert len(input.search_attributes.indexed_fields) == 0
+                assert not input.HasField("user_metadata")
+                assert not input.HasField("versioning_override")
 
             response = workflowservice_v1.SignalWithStartWorkflowExecutionResponse()
             response.run_id = "run-123"
@@ -283,6 +309,7 @@ async def main() -> None:
     fake_client = FakeNexusClient()
     fake_payload_converter = FakePayloadConverter()
     created_clients: list[tuple[type[object], str]] = []
+    created_external_handles: list[FakeExternalWorkflowHandle] = []
 
     def fake_create_nexus_client(*, service: type[object], endpoint: str) -> FakeNexusClient:
         created_clients.append((service, endpoint))
@@ -297,10 +324,24 @@ async def main() -> None:
     def fake_workflow_info() -> FakeWorkflowInfo:
         return FakeWorkflowInfo()
 
+    def fake_get_external_workflow_handle(
+        workflow_id: str,
+        *,
+        run_id: str | None = None,
+    ) -> FakeExternalWorkflowHandle:
+        handle = FakeExternalWorkflowHandle(workflow_id, run_id)
+        created_external_handles.append(handle)
+        return handle
+
     workflow_module = output.workflow  # pyright: ignore[reportPrivateLocalImportUsage]
     setattr(workflow_module, "create_nexus_client", fake_create_nexus_client)
     setattr(workflow_module, "payload_converter", fake_workflow_payload_converter)
     setattr(workflow_module, "info", fake_workflow_info)
+    setattr(
+        workflow_module,
+        "get_external_workflow_handle",
+        fake_get_external_workflow_handle,
+    )
     client = output.WorkflowServiceClient()
 
     assert created_clients == [(output.WorkflowService, "__temporal_system")]
@@ -366,45 +407,56 @@ async def main() -> None:
     assert request_proto.versioning_override.pinned.version.deployment_name == "payments"
     assert len(request_proto.links) == 0
 
-    signal_request_kwargs: output.SignalWithStartWorkflowExecutionRequestArgs[
-        int, str
-    ] = {
-        "workflow_type": ExampleWorkflow.run,
-        "workflow_id": "workflow-123",
-        "task_queue": "demo-task-queue",
-        "signal_name": "wake_up",
-        "input": (7, "nexus"),
-        "workflow_execution_timeout": datetime.timedelta(seconds=30),
-        "retry_policy": retry_policy,
-        "workflow_id_reuse_policy": temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
-        "workflow_id_conflict_policy": temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
-        "memo": {"category": "payments", "attempt": 7},
-        "search_attributes": typed_search_attributes,
-        "user_metadata": output.UserMetadata(
+    signal_workflow_handle = await client.signal_with_start_workflow_execution(
+        request
+    )
+    _ = typing.assert_type(
+        signal_workflow_handle,
+        temporalio.workflow.ExternalWorkflowHandle[typing.Any],
+    )
+    assert signal_workflow_handle.id == "workflow-123"
+    assert signal_workflow_handle.run_id == "run-123"
+
+    signal_workflow_handle_from_args = await client.signal_with_start_workflow_execution_args(
+        workflow_type=ExampleWorkflow.run,
+        workflow_id="workflow-123",
+        task_queue="demo-task-queue",
+        signal_name="wake_up",
+        input=(7, "nexus"),
+        workflow_execution_timeout=datetime.timedelta(seconds=30),
+        retry_policy=retry_policy,
+        workflow_id_reuse_policy=temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+        workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
+        memo={"category": "payments", "attempt": 7},
+        search_attributes=typed_search_attributes,
+        user_metadata=output.UserMetadata(
             summary="Nightly sync",
             details="Processes 42 records",
         ),
-        "priority": priority,
-        "versioning_override": versioning_override,
-    }
+        priority=priority,
+        versioning_override=versioning_override,
+    )
+    _ = typing.assert_type(
+        signal_workflow_handle_from_args,
+        temporalio.workflow.ExternalWorkflowHandle[typing.Any],
+    )
+    assert signal_workflow_handle_from_args.id == "workflow-123"
+    assert signal_workflow_handle_from_args.run_id == "run-123"
 
-    signal_handle = await client.signal_with_start_workflow_execution(
-        request
+    minimal_signal_workflow_handle = (
+        await client.signal_with_start_workflow_execution_args(
+            workflow_type="ExampleWorkflow",
+            workflow_id="workflow-123",
+            task_queue="demo-task-queue",
+            signal_name="wake_up",
+        )
     )
-    signal_response = output.SignalWithStartWorkflowExecutionResponse.from_proto(
-        await signal_handle
+    _ = typing.assert_type(
+        minimal_signal_workflow_handle,
+        temporalio.workflow.ExternalWorkflowHandle[typing.Any],
     )
-    assert signal_response.run_id == "run-123"
-    assert signal_response.started is True
-
-    signal_handle_from_args = await client.signal_with_start_workflow_execution_args(
-        **signal_request_kwargs
-    )
-    signal_response_from_args = output.SignalWithStartWorkflowExecutionResponse.from_proto(
-        await signal_handle_from_args
-    )
-    assert signal_response_from_args.run_id == "run-123"
-    assert signal_response_from_args.started is True
+    assert minimal_signal_workflow_handle.id == "workflow-123"
+    assert minimal_signal_workflow_handle.run_id == "run-123"
 
     retry_handle = await client.retry_policy_operation(retry_policy)
     retry_round_trip = output.retry_policy_from_proto(await retry_handle)
@@ -418,7 +470,12 @@ async def main() -> None:
     assert activity_response.schedule_to_close_timeout == datetime.timedelta(seconds=7)
     assert activity_response.priority == priority
 
-    assert len(fake_client.calls) == 4
+    assert len(fake_client.calls) == 5
+    assert [handle.id for handle in created_external_handles] == [
+        "workflow-123",
+        "workflow-123",
+        "workflow-123",
+    ]
     print(
         "Generated Python-native model overrides, payload encoding helpers, required-field validation, low-level operation wrappers, and registry metadata look correct"
     )

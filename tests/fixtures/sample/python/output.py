@@ -461,21 +461,147 @@ class WorkflowServiceClient:
     async def signal_with_start_workflow_execution[*WorkflowArgs](
         self,
         request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs],
-    ) -> workflow.NexusOperationHandle[
-        temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse,
-    ]:
-        return await self._client.start_operation(
+    ) -> workflow.ExternalWorkflowHandle[typing.Any]:
+        handle = await self._client.start_operation(
             WorkflowService.signal_with_start_workflow_execution,
             request.to_proto(),
         )
+        result = await handle
+        return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)
 
-    async def signal_with_start_workflow_execution_args[*WorkflowArgs](
+    @typing.overload
+    async def signal_with_start_workflow_execution_args(
         self,
-        **kwargs: typing.Unpack[SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs]],
-    ) -> workflow.NexusOperationHandle[
-        temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse,
-    ]:
-        request = SignalWithStartWorkflowExecutionRequest[*WorkflowArgs](**kwargs)
+        *,
+        workflow_id: str,
+        workflow_type: str,
+        task_queue: str,
+        input: tuple[typing.Any, ...] | None = ...,
+        workflow_execution_timeout: timedelta | None = ...,
+        workflow_run_timeout: timedelta | None = ...,
+        workflow_task_timeout: timedelta | None = ...,
+        identity: str | None = ...,
+        request_id: str | None = ...,
+        workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = ...,
+        workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = ...,
+        signal_name: str,
+        signal_input: collections.abc.Sequence[typing.Any] | None = ...,
+        control: str | None = ...,
+        retry_policy: temporalio.common.RetryPolicy | None = ...,
+        cron_schedule: str | None = ...,
+        memo: collections.abc.Mapping[str, typing.Any] | None = ...,
+        search_attributes: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes | None = ...,
+        workflow_start_delay: timedelta | None = ...,
+        user_metadata: UserMetadata | None = ...,
+        versioning_override: temporalio.common.VersioningOverride | None = ...,
+        priority: temporalio.common.Priority | None = ...,
+    ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
+
+    @typing.overload
+    async def signal_with_start_workflow_execution_args(
+        self,
+        *,
+        workflow_id: str,
+        workflow_type: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],
+        task_queue: str,
+        workflow_execution_timeout: timedelta | None = ...,
+        workflow_run_timeout: timedelta | None = ...,
+        workflow_task_timeout: timedelta | None = ...,
+        identity: str | None = ...,
+        request_id: str | None = ...,
+        workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = ...,
+        workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = ...,
+        signal_name: str,
+        signal_input: collections.abc.Sequence[typing.Any] | None = ...,
+        control: str | None = ...,
+        retry_policy: temporalio.common.RetryPolicy | None = ...,
+        cron_schedule: str | None = ...,
+        memo: collections.abc.Mapping[str, typing.Any] | None = ...,
+        search_attributes: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes | None = ...,
+        workflow_start_delay: timedelta | None = ...,
+        user_metadata: UserMetadata | None = ...,
+        versioning_override: temporalio.common.VersioningOverride | None = ...,
+        priority: temporalio.common.Priority | None = ...,
+    ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
+
+    @typing.overload
+    async def signal_with_start_workflow_execution_args[FirstWorkflowArg, *RemainingWorkflowArgs](
+        self,
+        *,
+        workflow_id: str,
+        workflow_type: collections.abc.Callable[[typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs], collections.abc.Awaitable[typing.Any]],
+        task_queue: str,
+        input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+        workflow_execution_timeout: timedelta | None = ...,
+        workflow_run_timeout: timedelta | None = ...,
+        workflow_task_timeout: timedelta | None = ...,
+        identity: str | None = ...,
+        request_id: str | None = ...,
+        workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = ...,
+        workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = ...,
+        signal_name: str,
+        signal_input: collections.abc.Sequence[typing.Any] | None = ...,
+        control: str | None = ...,
+        retry_policy: temporalio.common.RetryPolicy | None = ...,
+        cron_schedule: str | None = ...,
+        memo: collections.abc.Mapping[str, typing.Any] | None = ...,
+        search_attributes: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes | None = ...,
+        workflow_start_delay: timedelta | None = ...,
+        user_metadata: UserMetadata | None = ...,
+        versioning_override: temporalio.common.VersioningOverride | None = ...,
+        priority: temporalio.common.Priority | None = ...,
+    ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
+
+    async def signal_with_start_workflow_execution_args(
+        self,
+        *,
+        workflow_id: str,
+        workflow_type: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],
+        task_queue: str,
+        input: tuple[typing.Any, ...] | None = None,
+        workflow_execution_timeout: timedelta | None = None,
+        workflow_run_timeout: timedelta | None = None,
+        workflow_task_timeout: timedelta | None = None,
+        identity: str | None = None,
+        request_id: str | None = None,
+        workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = None,
+        workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = None,
+        signal_name: str,
+        signal_input: collections.abc.Sequence[typing.Any] | None = None,
+        control: str | None = None,
+        retry_policy: temporalio.common.RetryPolicy | None = None,
+        cron_schedule: str | None = None,
+        memo: collections.abc.Mapping[str, typing.Any] | None = None,
+        search_attributes: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes | None = None,
+        workflow_start_delay: timedelta | None = None,
+        user_metadata: UserMetadata | None = None,
+        versioning_override: temporalio.common.VersioningOverride | None = None,
+        priority: temporalio.common.Priority | None = None,
+    ) -> workflow.ExternalWorkflowHandle[typing.Any]:
+        request = SignalWithStartWorkflowExecutionRequest[*tuple[typing.Any, ...]](
+            workflow_id=workflow_id,
+            workflow_type=workflow_type,
+            task_queue=task_queue,
+            input=input,
+            workflow_execution_timeout=workflow_execution_timeout,
+            workflow_run_timeout=workflow_run_timeout,
+            workflow_task_timeout=workflow_task_timeout,
+            identity=identity,
+            request_id=request_id,
+            workflow_id_reuse_policy=workflow_id_reuse_policy,
+            workflow_id_conflict_policy=workflow_id_conflict_policy,
+            signal_name=signal_name,
+            signal_input=signal_input,
+            control=control,
+            retry_policy=retry_policy,
+            cron_schedule=cron_schedule,
+            memo=memo,
+            search_attributes=search_attributes,
+            workflow_start_delay=workflow_start_delay,
+            user_metadata=user_metadata,
+            versioning_override=versioning_override,
+            priority=priority,
+        )
         return await self.signal_with_start_workflow_execution(request)
 
     async def retry_policy_operation(
@@ -506,7 +632,7 @@ class WorkflowServiceClient:
     ) -> workflow.NexusOperationHandle[
         temporalio.api.activity.v1.ActivityOptions,
     ]:
-        request = ActivityOptions(**kwargs)
+        request: typing.Any = ActivityOptions(**kwargs)
         return await self.activity_options_operation(request)
 
 

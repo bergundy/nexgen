@@ -57,7 +57,61 @@
           "$ref": "#/$defs/languageRefs"
         },
         "output": {
-          "$ref": "#/$defs/languageRefs"
+          "$ref": "#/$defs/operationOutput"
+        }
+      }
+    },
+    "operationOutput": {
+      "type": "object",
+      "description": "Language-specific output refs plus optional generated-client output transforms.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "$dotnetRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$goRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$javaRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$pythonRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$rubyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$typescriptRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "$python": {
+          "$ref": "#/$defs/operationOutputTransform"
+        },
+        "$typescript": {
+          "$ref": "#/$defs/operationOutputTransform"
+        }
+      }
+    },
+    "operationOutputTransform": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Generated client return type for the transformed operation result."
+        },
+        "transform": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Language expression that converts `result` into the transformed output value. The request object is available as `request`."
         }
       }
     },
@@ -195,7 +249,7 @@
     },
     "languageModelFieldOverrides": {
       "type": "object",
-      "description": "Optional per-field language-specific overrides for a generated message model. `type` changes only the emitted annotation; `source` hides the field from the generated model in that language and provides the serializer expression instead.",
+      "description": "Optional per-field language-specific overrides for a generated message model. `type` changes only the emitted annotation; `source` hides the field from the generated model in that language and provides the serializer expression instead. Python also supports structured `workflow_function` metadata for workflow callable fields.",
       "additionalProperties": {
         "$ref": "#/$defs/languageModelFieldOverride"
       }
@@ -213,6 +267,31 @@
           "type": "string",
           "minLength": 1,
           "description": "Language expression used to populate this field during serialization instead of exposing it in the generated model."
+        },
+        "workflow_function": {
+          "$ref": "#/$defs/pythonWorkflowFunctionField"
+        }
+      }
+    },
+    "pythonWorkflowFunctionField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["args", "result", "argsField"],
+      "properties": {
+        "args": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the Python `TypeVarTuple` that represents the workflow arguments."
+        },
+        "result": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Python annotation for the workflow result type. The generated callable annotation wraps this in `collections.abc.Awaitable[...]`."
+        },
+        "argsField": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the field on the same message that carries the workflow argument tuple."
         }
       }
     },

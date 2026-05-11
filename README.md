@@ -20,7 +20,8 @@ Current status:
   `TypedDict`
 - the generator supports top-level `types` overrides for required and omitted fields,
   language-specific whole-type substitutions such as `RetryPolicy`, `WorkflowType`, and
-  `TaskQueue`, per-language sourced fields, and Python-only generic model annotations
+  `TaskQueue`, per-language sourced fields, operation output transforms, and Python-only generic
+  model annotations
 
 The checked-in sample fixture lives under `tests/fixtures/sample/` and includes:
 
@@ -55,13 +56,19 @@ services:
   WorkflowService:
     endpoint: __temporal_system
     operations:
-      RetryPolicyOperation:
+      SignalWithStartWorkflowExecution:
         input:
-          $pythonRef: temporalio.api.common.v1.RetryPolicy
-          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
         output:
-          $pythonRef: temporalio.api.common.v1.RetryPolicy
-          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+          $python:
+            type: workflow.ExternalWorkflowHandle[typing.Any]
+            transform: workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)
+          $typescript:
+            type: workflow.ExternalWorkflowHandle
+            transform: workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)
 ```
 
 Use `support` plus `types` to customize generated message and enum types. Support files are
@@ -99,9 +106,10 @@ types:
         namespace:
           source: workflow.info().namespace
         workflow_type:
-          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
-        input:
-          type: tuple[*WorkflowArgs] | None
+          workflow_function:
+            args: WorkflowArgs
+            result: typing.Any
+            argsField: input
     $typescript:
       fields:
         namespace:
@@ -131,14 +139,25 @@ implementations do not read or write them.
 
 For generated Python message models, `$python.typeParameters` and `$python.fields.<name>.type`
 customize the emitted class and field annotations without changing the descriptor-driven proto
-conversion logic. This is useful for request-only models such as
-`SignalWithStartWorkflowExecutionRequest`, where `workflow_type` and `input` can share a
-`TypeVarTuple` declared in YAML.
+conversion logic. Python also supports structured workflow callable metadata:
+
+- `$python.fields.<name>.workflow_function` marks a field as a workflow callable and ties it to a
+  `TypeVarTuple` plus an args field on the same message via `argsField`
+
+This is useful for request-only models such as `SignalWithStartWorkflowExecutionRequest`, where
+`workflow_type` and `input` can share a `TypeVarTuple` declared in YAML while still letting the
+generator emit stricter overloads for the unpacked args API.
 
 Use `$python.fields.<name>.source` or `$typescript.fields.<name>.source` to populate a field from
 the runtime instead of exposing it in the generated model for that language. Sourced fields are
 serialized with the configured expression and are only supported on input-only generated models in
 that language.
+
+Use `services.<service>.operations.<operation>.output.$python` or `.$typescript` to transform an
+operation result into a more native language-level handle or value. Output transforms require both
+`type` and `transform`. The generated client awaits the raw operation handle, then evaluates the
+transform with `request` bound to the generated request value and `result` bound to the raw
+operation result for that language.
 
 When an operation input uses a generated Python request dataclass, the generated Python client
 emits the normal request-taking method plus a separate `*_args` helper that accepts unpacked

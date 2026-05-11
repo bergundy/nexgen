@@ -56,9 +56,10 @@ types:
         namespace:
           source: workflow.info().namespace
         workflow_type:
-          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
-        input:
-          type: tuple[*WorkflowArgs] | None
+          workflow_function:
+            args: WorkflowArgs
+            result: typing.Any
+            argsField: input
     $typescript:
       fields:
         namespace:
@@ -84,6 +85,12 @@ services:
         output:
           $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
           $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+          $python:
+            type: workflow.ExternalWorkflowHandle[typing.Any]
+            transform: workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)
+          $typescript:
+            type: workflow.ExternalWorkflowHandle
+            transform: workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)
       RetryPolicyOperation:
         input:
           $pythonRef: temporalio.api.common.v1.RetryPolicy

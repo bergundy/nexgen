@@ -1,4 +1,5 @@
 import * as common from '@temporalio/common';
+import type { ExternalWorkflowHandle } from '@temporalio/workflow';
 
 import {
   ActivityOptions,
@@ -40,7 +41,8 @@ const nestedRetryLimit = roundTrippedActivity?.retryPolicy.maximumAttempts;
 const requestNamespace: string | undefined = requestProto.namespace;
 const client = new WorkflowServiceClient();
 const retryHandle = client.retryPolicyOperation(retryPolicy);
-const signalHandle = client.signalWithStartWorkflowExecution(request);
+const signalHandle: Promise<ExternalWorkflowHandle> =
+  client.signalWithStartWorkflowExecution(request);
 
 // @ts-expect-error sourced fields are not part of the generated request surface
 request.namespace;

@@ -53,6 +53,15 @@ pub enum Error {
         direction: &'static str,
     },
 
+    #[error(
+        "service `{service}` operation `{operation}` output is missing required `{language}` `type` or `transform` field"
+    )]
+    IncompleteOperationOutputTransform {
+        service: String,
+        operation: String,
+        language: Language,
+    },
+
     #[error("invalid Python reference `{reference}`: expected `module.path.TypeName`")]
     InvalidPythonRef { reference: String },
 
@@ -106,7 +115,7 @@ pub enum Error {
     },
 
     #[error(
-        "type override for `{type_name}.{field}` is missing required `{language}` field customization; expected `type` or `source`"
+        "type override for `{type_name}.{field}` is missing required `{language}` field customization; expected one of `type`, `source`, or `workflow_function`"
     )]
     IncompleteTypeOverrideLanguageField {
         type_name: String,
@@ -123,6 +132,24 @@ pub enum Error {
         language: Language,
         property: &'static str,
         conflicting_property: &'static str,
+    },
+
+    #[error("type override for `{message}.{field}` cannot use `{language}` field `{property}`")]
+    UnsupportedTypeOverrideLanguageFieldProperty {
+        message: String,
+        field: String,
+        language: Language,
+        property: &'static str,
+    },
+
+    #[error(
+        "type override for `{message}.{field}` has invalid Python field `{property}`: {reason}"
+    )]
+    InvalidPythonTypeOverrideField {
+        message: String,
+        field: String,
+        property: &'static str,
+        reason: String,
     },
 
     #[error("type override for `{message}.{field}` cannot be marked required: {reason}")]

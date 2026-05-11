@@ -123,6 +123,7 @@ pub struct OperationSpec {
     pub name: String,
     pub input_refs: LanguageRefMap,
     pub output_refs: LanguageRefMap,
+    pub output_transforms: BTreeMap<Language, OperationOutputTransformSpec>,
 }
 
 impl OperationSpec {
@@ -133,6 +134,16 @@ impl OperationSpec {
         }
         .map(String::as_str)
     }
+
+    pub fn output_transform(&self, language: Language) -> Option<&OperationOutputTransformSpec> {
+        self.output_transforms.get(&language)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationOutputTransformSpec {
+    pub type_name: String,
+    pub transform: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -204,6 +215,7 @@ pub struct PythonGeneratedModelSpec {
     pub type_parameters: Vec<PythonTypeParameterSpec>,
     pub field_annotations: BTreeMap<String, String>,
     pub field_sources: BTreeMap<String, String>,
+    pub workflow_functions: BTreeMap<String, PythonWorkflowFunctionFieldSpec>,
 }
 
 impl PythonGeneratedModelSpec {
@@ -211,6 +223,7 @@ impl PythonGeneratedModelSpec {
         self.type_parameters.is_empty()
             && self.field_annotations.is_empty()
             && self.field_sources.is_empty()
+            && self.workflow_functions.is_empty()
     }
 
     pub fn field_annotation(&self, field_name: &str) -> Option<&str> {
@@ -219,6 +232,19 @@ impl PythonGeneratedModelSpec {
 
     pub fn field_source(&self, field_name: &str) -> Option<&str> {
         self.field_sources.get(field_name).map(String::as_str)
+    }
+
+    pub fn workflow_function(&self, field_name: &str) -> Option<&PythonWorkflowFunctionFieldSpec> {
+        self.workflow_functions.get(field_name)
+    }
+
+    pub fn workflow_function_for_args_field(
+        &self,
+        field_name: &str,
+    ) -> Option<&PythonWorkflowFunctionFieldSpec> {
+        self.workflow_functions
+            .values()
+            .find(|workflow_function| workflow_function.args_field == field_name)
     }
 }
 
@@ -252,6 +278,13 @@ pub struct PythonTypeParameterSpec {
 pub enum PythonTypeParameterKind {
     TypeVar,
     TypeVarTuple,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PythonWorkflowFunctionFieldSpec {
+    pub args_type_parameter: String,
+    pub result_type: String,
+    pub args_field: String,
 }
 
 pub type LanguageRefMap = BTreeMap<Language, String>;
@@ -311,7 +344,26 @@ struct RawService {
 #[derive(Debug, Deserialize)]
 struct RawOperation {
     input: RawLanguageRefs,
-    output: RawLanguageRefs,
+    output: RawOperationOutput,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOperationOutput {
+    #[serde(flatten)]
+    refs: RawLanguageRefs,
+    #[serde(rename = "$python", default)]
+    python: RawOperationOutputTransform,
+    #[serde(rename = "$typescript", default)]
+    typescript: RawOperationOutputTransform,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOperationOutputTransform {
+    #[serde(rename = "type")]
+    type_name: Option<String>,
+    transform: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -364,6 +416,17 @@ struct RawLanguageFieldOverride {
     #[serde(rename = "type")]
     type_name: Option<String>,
     source: Option<String>,
+    #[serde(rename = "workflow_function")]
+    workflow_function: Option<RawPythonWorkflowFunctionField>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPythonWorkflowFunctionField {
+    args: String,
+    result: String,
+    #[serde(rename = "argsField")]
+    args_field: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -389,18 +452,29 @@ impl TryFrom<RawApiSpec> for ApiSpec {
             .services
             .into_iter()
             .map(|(service_name, service)| {
+                let operations = service
+                    .operations
+                    .into_iter()
+                    .map(|(name, operation)| {
+                        let output_transforms = build_operation_output_transforms(
+                            &service_name,
+                            &name,
+                            &operation.output,
+                        )?;
+                        let output_refs = operation.output.refs.into_language_map();
+                        Ok(OperationSpec {
+                            output_transforms,
+                            name,
+                            input_refs: operation.input.into_language_map(),
+                            output_refs,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
                 Ok(ServiceSpec {
                     name: service_name,
                     endpoint: service.endpoint,
-                    operations: service
-                        .operations
-                        .into_iter()
-                        .map(|(name, operation)| OperationSpec {
-                            name,
-                            input_refs: operation.input.into_language_map(),
-                            output_refs: operation.output.into_language_map(),
-                        })
-                        .collect(),
+                    operations,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -491,13 +565,14 @@ fn build_python_generated_model(
         });
     }
 
-    let (field_annotations, field_sources) =
-        build_generated_model_fields(type_name, Language::Python, &raw.fields)?;
+    let (field_annotations, field_sources, workflow_functions) =
+        build_python_generated_model_fields(type_name, &raw.fields)?;
 
     Ok(PythonGeneratedModelSpec {
         type_parameters,
         field_annotations,
         field_sources,
+        workflow_functions,
     })
 }
 
@@ -530,6 +605,77 @@ fn build_typescript_generated_model(
     })
 }
 
+fn build_python_generated_model_fields(
+    type_name: &str,
+    fields: &IndexMap<String, RawLanguageFieldOverride>,
+) -> Result<(
+    BTreeMap<String, String>,
+    BTreeMap<String, String>,
+    BTreeMap<String, PythonWorkflowFunctionFieldSpec>,
+)> {
+    let mut field_annotations = BTreeMap::new();
+    let mut field_sources = BTreeMap::new();
+    let mut workflow_functions = BTreeMap::new();
+
+    for (field_name, field_override) in fields {
+        if field_override.type_name.is_some() && field_override.source.is_some() {
+            return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: type_name.to_string(),
+                field: field_name.clone(),
+                language: Language::Python,
+                property: "type",
+                conflicting_property: "source",
+            });
+        }
+        if field_override.type_name.is_some() && field_override.workflow_function.is_some() {
+            return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: type_name.to_string(),
+                field: field_name.clone(),
+                language: Language::Python,
+                property: "type",
+                conflicting_property: "workflow_function",
+            });
+        }
+        if field_override.source.is_some() && field_override.workflow_function.is_some() {
+            return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: type_name.to_string(),
+                field: field_name.clone(),
+                language: Language::Python,
+                property: "source",
+                conflicting_property: "workflow_function",
+            });
+        }
+
+        if let Some(type_name_override) = &field_override.type_name {
+            field_annotations.insert(field_name.clone(), type_name_override.clone());
+            continue;
+        }
+        if let Some(source) = &field_override.source {
+            field_sources.insert(field_name.clone(), source.clone());
+            continue;
+        }
+        if let Some(workflow_function) = &field_override.workflow_function {
+            workflow_functions.insert(
+                field_name.clone(),
+                PythonWorkflowFunctionFieldSpec {
+                    args_type_parameter: workflow_function.args.clone(),
+                    result_type: workflow_function.result.clone(),
+                    args_field: workflow_function.args_field.clone(),
+                },
+            );
+            continue;
+        }
+
+        return Err(Error::IncompleteTypeOverrideLanguageField {
+            type_name: type_name.to_string(),
+            field: field_name.clone(),
+            language: Language::Python,
+        });
+    }
+
+    Ok((field_annotations, field_sources, workflow_functions))
+}
+
 fn build_generated_model_fields(
     type_name: &str,
     language: Language,
@@ -539,6 +685,14 @@ fn build_generated_model_fields(
     let mut field_sources = BTreeMap::new();
 
     for (field_name, field_override) in fields {
+        if field_override.workflow_function.is_some() {
+            return Err(Error::UnsupportedTypeOverrideLanguageFieldProperty {
+                message: type_name.to_string(),
+                field: field_name.clone(),
+                language,
+                property: "workflow_function",
+            });
+        }
         match (&field_override.type_name, &field_override.source) {
             (Some(_), Some(_)) => {
                 return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
@@ -566,6 +720,58 @@ fn build_generated_model_fields(
     }
 
     Ok((field_annotations, field_sources))
+}
+
+fn build_operation_output_transforms(
+    service_name: &str,
+    operation_name: &str,
+    output: &RawOperationOutput,
+) -> Result<BTreeMap<Language, OperationOutputTransformSpec>> {
+    let mut transforms = BTreeMap::new();
+
+    if let Some(transform) = build_operation_output_transform(
+        service_name,
+        operation_name,
+        Language::Python,
+        output.python.clone(),
+    )? {
+        transforms.insert(Language::Python, transform);
+    }
+    if let Some(transform) = build_operation_output_transform(
+        service_name,
+        operation_name,
+        Language::TypeScript,
+        output.typescript.clone(),
+    )? {
+        transforms.insert(Language::TypeScript, transform);
+    }
+
+    Ok(transforms)
+}
+
+fn build_operation_output_transform(
+    service_name: &str,
+    operation_name: &str,
+    language: Language,
+    raw: RawOperationOutputTransform,
+) -> Result<Option<OperationOutputTransformSpec>> {
+    let has_values = raw.type_name.is_some() || raw.transform.is_some();
+    if !has_values {
+        return Ok(None);
+    }
+
+    let (Some(type_name), Some(transform)) = (raw.type_name, raw.transform) else {
+        return Err(Error::IncompleteOperationOutputTransform {
+            service: service_name.to_string(),
+            operation: operation_name.to_string(),
+            language,
+        });
+    };
+
+    Ok(Some(OperationOutputTransformSpec {
+        type_name,
+        transform,
+    }))
 }
 
 fn build_language_override(
@@ -661,6 +867,13 @@ fn validate_message_type_override(
             Language::Python,
             python_usage,
         )?;
+        validate_python_workflow_function_fields(
+            message_name,
+            type_override,
+            python_model,
+            message,
+            python_usage,
+        )?;
     }
     if let Some(typescript_model) = type_override.typescript_generated_model() {
         validate_language_generated_model_fields(
@@ -753,6 +966,111 @@ fn validate_language_generated_model_fields(
     Ok(())
 }
 
+fn validate_python_workflow_function_fields(
+    message_name: &str,
+    type_override: &TypeOverrideSpec,
+    python_model: &PythonGeneratedModelSpec,
+    message: &MessageMetadata,
+    usage: MessageUsage,
+) -> Result<()> {
+    if python_model.workflow_functions.is_empty() {
+        return Ok(());
+    }
+
+    if usage.output {
+        let field = python_model
+            .workflow_functions
+            .keys()
+            .next()
+            .map(String::as_str)
+            .expect("workflow function fields should not be empty");
+        return Err(Error::InvalidPythonTypeOverrideField {
+            message: message_name.to_string(),
+            field: field.to_string(),
+            property: "workflow_function",
+            reason: "workflow function fields are only supported on input-only generated models"
+                .to_string(),
+        });
+    }
+
+    if python_model.workflow_functions.len() > 1 {
+        let field = python_model
+            .workflow_functions
+            .keys()
+            .next()
+            .expect("workflow functions should not be empty");
+        return Err(Error::InvalidPythonTypeOverrideField {
+            message: message_name.to_string(),
+            field: field.clone(),
+            property: "workflow_function",
+            reason: "only one workflow_function field is currently supported".to_string(),
+        });
+    }
+
+    for (field_name, workflow_function) in &python_model.workflow_functions {
+        validate_model_override_field(message_name, field_name, message)?;
+        let Some(type_parameter) = python_model
+            .type_parameters
+            .iter()
+            .find(|parameter| parameter.name == workflow_function.args_type_parameter)
+        else {
+            return Err(Error::InvalidPythonTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+                property: "workflow_function",
+                reason: format!(
+                    "args references unknown Python type parameter `{}`",
+                    workflow_function.args_type_parameter
+                ),
+            });
+        };
+        if type_parameter.kind != PythonTypeParameterKind::TypeVarTuple {
+            return Err(Error::InvalidPythonTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+                property: "workflow_function",
+                reason: format!(
+                    "args must reference a Python TypeVarTuple, not `{}`",
+                    workflow_function.args_type_parameter
+                ),
+            });
+        }
+        if workflow_function.args_field == *field_name {
+            return Err(Error::InvalidPythonTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+                property: "workflow_function",
+                reason: "argsField must point to a different field".to_string(),
+            });
+        }
+        validate_model_override_field(message_name, &workflow_function.args_field, message)?;
+        if type_override
+            .omitted_fields
+            .contains(&workflow_function.args_field)
+        {
+            return Err(Error::OmittedCustomizedTypeOverrideField {
+                message: message_name.to_string(),
+                field: workflow_function.args_field.clone(),
+                language: Language::Python,
+            });
+        }
+        if type_override
+            .required_fields
+            .contains(&workflow_function.args_field)
+        {
+            return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: message_name.to_string(),
+                field: workflow_function.args_field.clone(),
+                language: Language::Python,
+                property: "workflow_function",
+                conflicting_property: "required",
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_enum_type_override(
     enumeration_name: &str,
     type_override: &TypeOverrideSpec,
@@ -777,7 +1095,8 @@ fn validate_enum_type_override(
                 property: "typeParameters",
             });
         }
-        if !python_model.field_annotations.is_empty() {
+        if !python_model.field_annotations.is_empty() || !python_model.workflow_functions.is_empty()
+        {
             return Err(Error::UnsupportedLanguageTypeOverrideProperty {
                 type_name: enumeration_name.to_string(),
                 language: Language::Python,
@@ -923,6 +1242,7 @@ mod tests {
 
     use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
+    use crate::language::Language;
 
     use super::ApiSpec;
 
@@ -960,9 +1280,10 @@ types:
         namespace:
           source: workflow.info().namespace
         workflow_type:
-          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
-        input:
-          type: tuple[*WorkflowArgs]
+          workflow_function:
+            args: WorkflowArgs
+            result: typing.Any
+            argsField: input
     $typescript:
       fields:
         namespace:
@@ -974,6 +1295,19 @@ services:
   WorkflowService:
     endpoint: __temporal_system
     operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+          $python:
+            type: workflow.ExternalWorkflowHandle[typing.Any]
+            transform: workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)
+          $typescript:
+            type: workflow.ExternalWorkflowHandle
+            transform: workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)
       RetryPolicyOperation:
         input:
           $pythonRef: temporalio.api.common.v1.RetryPolicy
@@ -1022,24 +1356,45 @@ services:
         let python_model = signal_with_start.python_generated_model().unwrap();
         assert_eq!(python_model.type_parameters.len(), 1);
         assert_eq!(python_model.type_parameters[0].name, "WorkflowArgs");
-        assert_eq!(
-            python_model.field_annotation("workflow_type"),
-            Some(
-                "str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]"
-            )
-        );
-        assert_eq!(
-            python_model.field_annotation("input"),
-            Some("tuple[*WorkflowArgs]")
-        );
+        assert_eq!(python_model.field_annotation("workflow_type"), None);
+        assert_eq!(python_model.field_annotation("input"), None);
         assert_eq!(
             python_model.field_source("namespace"),
             Some("workflow.info().namespace")
+        );
+        let workflow_function = python_model.workflow_function("workflow_type").unwrap();
+        assert_eq!(workflow_function.args_type_parameter, "WorkflowArgs");
+        assert_eq!(workflow_function.result_type, "typing.Any");
+        assert_eq!(workflow_function.args_field, "input");
+        assert!(
+            python_model
+                .workflow_function_for_args_field("input")
+                .is_some()
         );
         let typescript_model = signal_with_start.typescript_generated_model().unwrap();
         assert_eq!(
             typescript_model.field_source("namespace"),
             Some("workflow.workflowInfo().namespace")
+        );
+        let signal_with_start_operation = spec
+            .services
+            .first()
+            .unwrap()
+            .operation("SignalWithStartWorkflowExecution")
+            .unwrap();
+        assert_eq!(
+            signal_with_start_operation
+                .output_transform(Language::Python)
+                .unwrap()
+                .type_name,
+            "workflow.ExternalWorkflowHandle[typing.Any]"
+        );
+        assert_eq!(
+            signal_with_start_operation
+                .output_transform(Language::TypeScript)
+                .unwrap()
+                .transform,
+            "workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
         );
         let workflow_id_reuse_policy = spec
             .type_override("temporal.api.enums.v1.WorkflowIdReusePolicy")
@@ -1111,6 +1466,35 @@ services:
             retry_policy.typescript.as_ref().unwrap().to_proto,
             "customRetryPolicyToProto"
         );
+    }
+
+    #[test]
+    fn rejects_incomplete_operation_output_transform() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $python:
+            type: workflow.ExternalWorkflowHandle[typing.Any]
+"#;
+
+        let err = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::IncompleteOperationOutputTransform {
+                service,
+                operation,
+                language: crate::language::Language::Python,
+            } if service == "WorkflowService" && operation == "SignalWithStartWorkflowExecution"
+        ));
     }
 
     #[test]
@@ -1357,7 +1741,7 @@ services:
     }
 
     #[test]
-    fn validates_python_model_generics_and_field_annotations() {
+    fn validates_python_model_generics_and_workflow_function_fields() {
         let yaml = r#"
 nexusrpc: 1.0.0
 types:
@@ -1368,9 +1752,10 @@ types:
           kind: TypeVarTuple
       fields:
         workflow_type:
-          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
-        input:
-          type: tuple[*WorkflowArgs]
+          workflow_function:
+            args: WorkflowArgs
+            result: typing.Any
+            argsField: input
 services:
   WorkflowService:
     endpoint: __temporal_system
@@ -1386,6 +1771,140 @@ services:
         let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
 
         spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn rejects_python_workflow_function_unknown_args_field() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        workflow_type:
+          workflow_function:
+            args: WorkflowArgs
+            result: typing.Any
+            argsField: missing_input
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnknownTypeOverrideField {
+                message,
+                field,
+                ..
+            } if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                && field == "missing_input"
+        ));
+    }
+
+    #[test]
+    fn rejects_python_workflow_function_unknown_type_parameter() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        workflow_type:
+          workflow_function:
+            args: UnknownArgs
+            result: typing.Any
+            argsField: input
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::InvalidPythonTypeOverrideField {
+                message,
+                field,
+                property,
+                ..
+            } if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                && field == "workflow_type"
+                && property == "workflow_function"
+        ));
+    }
+
+    #[test]
+    fn rejects_required_python_workflow_function_args_field() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    required:
+      - input
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        workflow_type:
+          workflow_function:
+            args: WorkflowArgs
+            result: typing.Any
+            argsField: input
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message,
+                field,
+                language: crate::language::Language::Python,
+                property,
+                conflicting_property,
+            } if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                && field == "input"
+                && property == "workflow_function"
+                && conflicting_property == "required"
+        ));
     }
 
     #[test]
