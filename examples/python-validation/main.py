@@ -96,6 +96,7 @@ class FakeNexusClient:
                 input,
                 workflowservice_v1.SignalWithStartWorkflowExecutionRequest,
             )
+            assert input.namespace == "workflow-namespace"
             assert input.workflow_id == "workflow-123"
             assert input.signal_name == "wake_up"
             assert input.workflow_type.name == "ExampleWorkflow"
@@ -161,13 +162,14 @@ def assert_missing_required_field(
         raise AssertionError(f"expected required field validation for {owner_and_field}")
 
 
-def make_signal_request(
+def make_signal_request[*WorkflowArgs](
     *,
-    workflow_type: str | Callable[..., Awaitable[typing.Any]] = ExampleWorkflow.run,
+    workflow_type: str
+    | Callable[[typing.Any, *WorkflowArgs], Awaitable[typing.Any]] = ExampleWorkflow.run,
     workflow_id: str = "workflow-123",
     task_queue: str = "demo-task-queue",
     signal_name: str = "wake_up",
-) -> output.SignalWithStartWorkflowExecutionRequest:
+) -> output.SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]:
     return output.SignalWithStartWorkflowExecutionRequest(
         workflow_type=workflow_type,
         workflow_id=workflow_id,
@@ -191,6 +193,7 @@ async def main() -> None:
     assert registry[("WorkflowService", "RetryPolicyOperation")] is retry_operation
     assert registry[("WorkflowService", "ActivityOptionsOperation")] is activity_operation
     assert hasattr(output, "SignalWithStartWorkflowExecutionRequest")
+    assert hasattr(output, "SignalWithStartWorkflowExecutionRequestArgs")
     assert not hasattr(output.SignalWithStartWorkflowExecutionRequest, "from_proto")
     assert not hasattr(output, "SignalWithStartWorkflowExecutionRequestTyped")
     assert not hasattr(output, "RetryPolicy")
@@ -288,14 +291,23 @@ async def main() -> None:
     def fake_workflow_payload_converter() -> FakePayloadConverter:
         return fake_payload_converter
 
+    class FakeWorkflowInfo:
+        namespace: str = "workflow-namespace"
+
+    def fake_workflow_info() -> FakeWorkflowInfo:
+        return FakeWorkflowInfo()
+
     workflow_module = output.workflow  # pyright: ignore[reportPrivateLocalImportUsage]
     setattr(workflow_module, "create_nexus_client", fake_create_nexus_client)
     setattr(workflow_module, "payload_converter", fake_workflow_payload_converter)
+    setattr(workflow_module, "info", fake_workflow_info)
     client = output.WorkflowServiceClient()
 
     assert created_clients == [(output.WorkflowService, "__temporal_system")]
 
-    request: output.SignalWithStartWorkflowExecutionRequest = output.SignalWithStartWorkflowExecutionRequest(
+    request: output.SignalWithStartWorkflowExecutionRequest[
+        int, str
+    ] = output.SignalWithStartWorkflowExecutionRequest(
         workflow_type=ExampleWorkflow.run,
         workflow_id="workflow-123",
         task_queue="demo-task-queue",
@@ -314,9 +326,17 @@ async def main() -> None:
         priority=priority,
         versioning_override=versioning_override,
     )
+    _ = typing.assert_type(
+        request.workflow_type,
+        str | Callable[[typing.Any, int, str], Awaitable[typing.Any]],
+    )
+    _ = typing.assert_type(request.input, tuple[int, str] | None)
     assert "header" not in request.__dataclass_fields__
     assert "links" not in request.__dataclass_fields__
+    assert "namespace" not in request.__dataclass_fields__
+    assert "namespace" not in output.SignalWithStartWorkflowExecutionRequestArgs.__annotations__
     request_proto = request.to_proto()
+    assert request_proto.namespace == "workflow-namespace"
     assert request_proto.workflow_type.name == "ExampleWorkflow"
     assert request_proto.workflow_id == "workflow-123"
     assert request_proto.task_queue.name == "demo-task-queue"
@@ -346,12 +366,45 @@ async def main() -> None:
     assert request_proto.versioning_override.pinned.version.deployment_name == "payments"
     assert len(request_proto.links) == 0
 
-    signal_handle = await client.signal_with_start_workflow_execution(request)
+    signal_request_kwargs: output.SignalWithStartWorkflowExecutionRequestArgs[
+        int, str
+    ] = {
+        "workflow_type": ExampleWorkflow.run,
+        "workflow_id": "workflow-123",
+        "task_queue": "demo-task-queue",
+        "signal_name": "wake_up",
+        "input": (7, "nexus"),
+        "workflow_execution_timeout": datetime.timedelta(seconds=30),
+        "retry_policy": retry_policy,
+        "workflow_id_reuse_policy": temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+        "workflow_id_conflict_policy": temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
+        "memo": {"category": "payments", "attempt": 7},
+        "search_attributes": typed_search_attributes,
+        "user_metadata": output.UserMetadata(
+            summary="Nightly sync",
+            details="Processes 42 records",
+        ),
+        "priority": priority,
+        "versioning_override": versioning_override,
+    }
+
+    signal_handle = await client.signal_with_start_workflow_execution(
+        request
+    )
     signal_response = output.SignalWithStartWorkflowExecutionResponse.from_proto(
         await signal_handle
     )
     assert signal_response.run_id == "run-123"
     assert signal_response.started is True
+
+    signal_handle_from_args = await client.signal_with_start_workflow_execution_args(
+        **signal_request_kwargs
+    )
+    signal_response_from_args = output.SignalWithStartWorkflowExecutionResponse.from_proto(
+        await signal_handle_from_args
+    )
+    assert signal_response_from_args.run_id == "run-123"
+    assert signal_response_from_args.started is True
 
     retry_handle = await client.retry_policy_operation(retry_policy)
     retry_round_trip = output.retry_policy_from_proto(await retry_handle)
@@ -365,7 +418,7 @@ async def main() -> None:
     assert activity_response.schedule_to_close_timeout == datetime.timedelta(seconds=7)
     assert activity_response.priority == priority
 
-    assert len(fake_client.calls) == 3
+    assert len(fake_client.calls) == 4
     print(
         "Generated Python-native model overrides, payload encoding helpers, required-field validation, low-level operation wrappers, and registry metadata look correct"
     )

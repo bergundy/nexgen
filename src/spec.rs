@@ -40,9 +40,21 @@ impl ApiSpec {
     }
 
     pub fn validate_type_overrides(&self, descriptors: &DescriptorIndex) -> Result<()> {
+        let python_usages = self.language_message_usages(descriptors, Language::Python)?;
+        let typescript_usages = self.language_message_usages(descriptors, Language::TypeScript)?;
         for (type_name, type_override) in &self.types {
             if let Some(message) = descriptors.message(type_name) {
-                validate_message_type_override(type_name, type_override, message, descriptors)?;
+                validate_message_type_override(
+                    type_name,
+                    type_override,
+                    message,
+                    descriptors,
+                    python_usages.get(type_name).copied().unwrap_or_default(),
+                    typescript_usages
+                        .get(type_name)
+                        .copied()
+                        .unwrap_or_default(),
+                )?;
             } else if descriptors.enumeration(type_name).is_some() {
                 validate_enum_type_override(type_name, type_override)?;
             } else {
@@ -54,6 +66,35 @@ impl ApiSpec {
 
         Ok(())
     }
+
+    fn language_message_usages(
+        &self,
+        descriptors: &DescriptorIndex,
+        language: Language,
+    ) -> Result<BTreeMap<String, MessageUsage>> {
+        let mut usages: BTreeMap<String, MessageUsage> = BTreeMap::new();
+
+        for service in &self.services {
+            for operation in &service.operations {
+                if let Some(reference) = operation.language_ref(language, Direction::Input) {
+                    let message = resolve_message_for_language(descriptors, language, reference)?;
+                    usages.entry(message.full_name.clone()).or_default().input = true;
+                }
+                if let Some(reference) = operation.language_ref(language, Direction::Output) {
+                    let message = resolve_message_for_language(descriptors, language, reference)?;
+                    usages.entry(message.full_name.clone()).or_default().output = true;
+                }
+            }
+        }
+
+        Ok(usages)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+struct MessageUsage {
+    input: bool,
+    output: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,7 +140,9 @@ pub struct TypeOverrideSpec {
     pub required_fields: BTreeSet<String>,
     pub omitted_fields: BTreeSet<String>,
     pub python: Option<LanguageOverrideSpec>,
+    pub python_model: PythonGeneratedModelSpec,
     pub typescript: Option<LanguageOverrideSpec>,
+    pub typescript_model: TypeScriptGeneratedModelSpec,
 }
 
 impl TypeOverrideSpec {
@@ -111,10 +154,39 @@ impl TypeOverrideSpec {
         self.omitted_fields.contains(field_name)
     }
 
+    pub fn is_field_hidden(&self, language: Language, field_name: &str) -> bool {
+        self.omitted_fields.contains(field_name)
+            || self.field_source(language, field_name).is_some()
+    }
+
     pub fn language_override(&self, language: Language) -> Option<&LanguageOverrideSpec> {
         match language {
             Language::Python => self.python.as_ref(),
             Language::TypeScript => self.typescript.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn python_generated_model(&self) -> Option<&PythonGeneratedModelSpec> {
+        if self.python_model.is_empty() {
+            None
+        } else {
+            Some(&self.python_model)
+        }
+    }
+
+    pub fn typescript_generated_model(&self) -> Option<&TypeScriptGeneratedModelSpec> {
+        if self.typescript_model.is_empty() {
+            None
+        } else {
+            Some(&self.typescript_model)
+        }
+    }
+
+    pub fn field_source(&self, language: Language, field_name: &str) -> Option<&str> {
+        match language {
+            Language::Python => self.python_generated_model()?.field_source(field_name),
+            Language::TypeScript => self.typescript_generated_model()?.field_source(field_name),
             _ => None,
         }
     }
@@ -125,6 +197,61 @@ pub struct LanguageOverrideSpec {
     pub type_name: String,
     pub from_proto: String,
     pub to_proto: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PythonGeneratedModelSpec {
+    pub type_parameters: Vec<PythonTypeParameterSpec>,
+    pub field_annotations: BTreeMap<String, String>,
+    pub field_sources: BTreeMap<String, String>,
+}
+
+impl PythonGeneratedModelSpec {
+    pub fn is_empty(&self) -> bool {
+        self.type_parameters.is_empty()
+            && self.field_annotations.is_empty()
+            && self.field_sources.is_empty()
+    }
+
+    pub fn field_annotation(&self, field_name: &str) -> Option<&str> {
+        self.field_annotations.get(field_name).map(String::as_str)
+    }
+
+    pub fn field_source(&self, field_name: &str) -> Option<&str> {
+        self.field_sources.get(field_name).map(String::as_str)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TypeScriptGeneratedModelSpec {
+    pub field_annotations: BTreeMap<String, String>,
+    pub field_sources: BTreeMap<String, String>,
+}
+
+impl TypeScriptGeneratedModelSpec {
+    pub fn is_empty(&self) -> bool {
+        self.field_annotations.is_empty() && self.field_sources.is_empty()
+    }
+
+    pub fn field_annotation(&self, field_name: &str) -> Option<&str> {
+        self.field_annotations.get(field_name).map(String::as_str)
+    }
+
+    pub fn field_source(&self, field_name: &str) -> Option<&str> {
+        self.field_sources.get(field_name).map(String::as_str)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PythonTypeParameterSpec {
+    pub name: String,
+    pub kind: PythonTypeParameterKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PythonTypeParameterKind {
+    TypeVar,
+    TypeVarTuple,
 }
 
 pub type LanguageRefMap = BTreeMap<Language, String>;
@@ -141,6 +268,18 @@ impl Direction {
             Self::Input => "input",
             Self::Output => "output",
         }
+    }
+}
+
+fn resolve_message_for_language<'a>(
+    descriptors: &'a DescriptorIndex,
+    language: Language,
+    reference: &str,
+) -> Result<&'a MessageMetadata> {
+    match language {
+        Language::Python => descriptors.resolve_python_ref(reference),
+        Language::TypeScript => descriptors.resolve_typescript_ref(reference),
+        language => Err(Error::UnsupportedLanguage { language }),
     }
 }
 
@@ -205,6 +344,7 @@ struct RawTypeOverride {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawLanguageOverride {
     #[serde(rename = "type")]
     type_name: Option<String>,
@@ -212,6 +352,33 @@ struct RawLanguageOverride {
     from_proto: Option<String>,
     #[serde(rename = "toProto")]
     to_proto: Option<String>,
+    #[serde(rename = "typeParameters", default)]
+    type_parameters: Vec<RawPythonTypeParameter>,
+    #[serde(default)]
+    fields: IndexMap<String, RawLanguageFieldOverride>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLanguageFieldOverride {
+    #[serde(rename = "type")]
+    type_name: Option<String>,
+    source: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPythonTypeParameter {
+    name: String,
+    kind: RawPythonTypeParameterKind,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum RawPythonTypeParameterKind {
+    #[serde(rename = "TypeVar")]
+    TypeVar,
+    #[serde(rename = "TypeVarTuple")]
+    TypeVarTuple,
 }
 
 impl TryFrom<RawApiSpec> for ApiSpec {
@@ -243,21 +410,30 @@ impl TryFrom<RawApiSpec> for ApiSpec {
             .into_iter()
             .map(|(type_name, type_override)| {
                 let normalized_type_name = type_name.trim_start_matches('.').to_string();
+                let python = build_language_override(
+                    &normalized_type_name,
+                    Language::Python,
+                    type_override.python.clone(),
+                )?;
+                let python_model =
+                    build_python_generated_model(&normalized_type_name, &type_override.python)?;
+                let typescript_model = build_typescript_generated_model(
+                    &normalized_type_name,
+                    &type_override.typescript,
+                )?;
                 Ok((
                     normalized_type_name.clone(),
                     TypeOverrideSpec {
                         required_fields: type_override.required.into_iter().collect(),
                         omitted_fields: type_override.omit.into_iter().collect(),
-                        python: build_language_override(
-                            &normalized_type_name,
-                            Language::Python,
-                            type_override.python.clone(),
-                        )?,
+                        python,
+                        python_model,
                         typescript: build_language_override(
                             &normalized_type_name,
                             Language::TypeScript,
                             type_override.typescript.clone(),
                         )?,
+                        typescript_model,
                     },
                 ))
             })
@@ -273,6 +449,123 @@ impl TryFrom<RawApiSpec> for ApiSpec {
             types,
         })
     }
+}
+
+fn build_python_generated_model(
+    type_name: &str,
+    raw: &RawLanguageOverride,
+) -> Result<PythonGeneratedModelSpec> {
+    if raw.type_name.is_some() && !raw.type_parameters.is_empty() {
+        return Err(Error::ConflictingTypeOverrideLanguageProperties {
+            type_name: type_name.to_string(),
+            language: Language::Python,
+            property: "typeParameters",
+            conflicting_property: "type",
+        });
+    }
+    if raw.type_name.is_some() && !raw.fields.is_empty() {
+        return Err(Error::ConflictingTypeOverrideLanguageProperties {
+            type_name: type_name.to_string(),
+            language: Language::Python,
+            property: "fields",
+            conflicting_property: "type",
+        });
+    }
+
+    let mut seen_parameter_names = BTreeSet::new();
+    let mut type_parameters = Vec::with_capacity(raw.type_parameters.len());
+    for parameter in &raw.type_parameters {
+        if !seen_parameter_names.insert(parameter.name.clone()) {
+            return Err(Error::DuplicateTypeOverrideLanguageParameter {
+                type_name: type_name.to_string(),
+                language: Language::Python,
+                parameter: parameter.name.clone(),
+            });
+        }
+        type_parameters.push(PythonTypeParameterSpec {
+            name: parameter.name.clone(),
+            kind: match parameter.kind {
+                RawPythonTypeParameterKind::TypeVar => PythonTypeParameterKind::TypeVar,
+                RawPythonTypeParameterKind::TypeVarTuple => PythonTypeParameterKind::TypeVarTuple,
+            },
+        });
+    }
+
+    let (field_annotations, field_sources) =
+        build_generated_model_fields(type_name, Language::Python, &raw.fields)?;
+
+    Ok(PythonGeneratedModelSpec {
+        type_parameters,
+        field_annotations,
+        field_sources,
+    })
+}
+
+fn build_typescript_generated_model(
+    type_name: &str,
+    raw: &RawLanguageOverride,
+) -> Result<TypeScriptGeneratedModelSpec> {
+    if !raw.type_parameters.is_empty() {
+        return Err(Error::UnsupportedLanguageTypeOverrideProperty {
+            type_name: type_name.to_string(),
+            language: Language::TypeScript,
+            property: "typeParameters",
+        });
+    }
+    if raw.type_name.is_some() && !raw.fields.is_empty() {
+        return Err(Error::ConflictingTypeOverrideLanguageProperties {
+            type_name: type_name.to_string(),
+            language: Language::TypeScript,
+            property: "fields",
+            conflicting_property: "type",
+        });
+    }
+
+    let (field_annotations, field_sources) =
+        build_generated_model_fields(type_name, Language::TypeScript, &raw.fields)?;
+
+    Ok(TypeScriptGeneratedModelSpec {
+        field_annotations,
+        field_sources,
+    })
+}
+
+fn build_generated_model_fields(
+    type_name: &str,
+    language: Language,
+    fields: &IndexMap<String, RawLanguageFieldOverride>,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>)> {
+    let mut field_annotations = BTreeMap::new();
+    let mut field_sources = BTreeMap::new();
+
+    for (field_name, field_override) in fields {
+        match (&field_override.type_name, &field_override.source) {
+            (Some(_), Some(_)) => {
+                return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                    message: type_name.to_string(),
+                    field: field_name.clone(),
+                    language,
+                    property: "type",
+                    conflicting_property: "source",
+                });
+            }
+            (Some(type_name_override), None) => {
+                field_annotations.insert(field_name.clone(), type_name_override.clone());
+            }
+            (None, Some(source)) => {
+                field_sources.insert(field_name.clone(), source.clone());
+            }
+            (None, None) => {
+                return Err(Error::IncompleteTypeOverrideLanguageField {
+                    type_name: type_name.to_string(),
+                    field: field_name.clone(),
+                    language,
+                });
+            }
+        }
+    }
+
+    Ok((field_annotations, field_sources))
 }
 
 fn build_language_override(
@@ -349,12 +642,36 @@ fn validate_message_type_override(
     type_override: &TypeOverrideSpec,
     message: &MessageMetadata,
     descriptors: &DescriptorIndex,
+    python_usage: MessageUsage,
+    typescript_usage: MessageUsage,
 ) -> Result<()> {
     for field_name in &type_override.required_fields {
         validate_model_required_field(message_name, field_name, message, descriptors)?;
     }
     for field_name in &type_override.omitted_fields {
         validate_model_override_field(message_name, field_name, message)?;
+    }
+    if let Some(python_model) = type_override.python_generated_model() {
+        validate_language_generated_model_fields(
+            message_name,
+            type_override,
+            &python_model.field_annotations,
+            &python_model.field_sources,
+            message,
+            Language::Python,
+            python_usage,
+        )?;
+    }
+    if let Some(typescript_model) = type_override.typescript_generated_model() {
+        validate_language_generated_model_fields(
+            message_name,
+            type_override,
+            &typescript_model.field_annotations,
+            &typescript_model.field_sources,
+            message,
+            Language::TypeScript,
+            typescript_usage,
+        )?;
     }
     for field_name in type_override
         .required_fields
@@ -363,6 +680,73 @@ fn validate_message_type_override(
         return Err(Error::ConflictingTypeOverrideField {
             message: message_name.to_string(),
             field: field_name.to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_language_generated_model_fields(
+    message_name: &str,
+    type_override: &TypeOverrideSpec,
+    field_annotations: &BTreeMap<String, String>,
+    field_sources: &BTreeMap<String, String>,
+    message: &MessageMetadata,
+    language: Language,
+    usage: MessageUsage,
+) -> Result<()> {
+    for field_name in field_annotations.keys() {
+        validate_model_override_field(message_name, field_name, message)?;
+        if type_override.omitted_fields.contains(field_name) {
+            return Err(Error::OmittedCustomizedTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.to_string(),
+                language,
+            });
+        }
+    }
+
+    for field_name in field_sources.keys() {
+        validate_model_override_field(message_name, field_name, message)?;
+        if type_override.omitted_fields.contains(field_name) {
+            return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: message_name.to_string(),
+                field: field_name.to_string(),
+                language,
+                property: "source",
+                conflicting_property: "omit",
+            });
+        }
+        if type_override.required_fields.contains(field_name) {
+            return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: message_name.to_string(),
+                field: field_name.to_string(),
+                language,
+                property: "source",
+                conflicting_property: "required",
+            });
+        }
+        if usage.output {
+            return Err(Error::UnsupportedSourcedTypeField {
+                message: message_name.to_string(),
+                field: field_name.to_string(),
+                language,
+                reason: "sourced fields are only supported on input-only generated models"
+                    .to_string(),
+            });
+        }
+    }
+
+    for field_name in field_annotations
+        .keys()
+        .filter(|field_name| field_sources.contains_key(*field_name))
+    {
+        return Err(Error::ConflictingTypeOverrideLanguageFieldProperties {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+            language,
+            property: "type",
+            conflicting_property: "source",
         });
     }
 
@@ -384,6 +768,33 @@ fn validate_enum_type_override(
             enumeration: enumeration_name.to_string(),
             property: "omit",
         });
+    }
+    if let Some(python_model) = type_override.python_generated_model() {
+        if !python_model.type_parameters.is_empty() {
+            return Err(Error::UnsupportedLanguageTypeOverrideProperty {
+                type_name: enumeration_name.to_string(),
+                language: Language::Python,
+                property: "typeParameters",
+            });
+        }
+        if !python_model.field_annotations.is_empty() {
+            return Err(Error::UnsupportedLanguageTypeOverrideProperty {
+                type_name: enumeration_name.to_string(),
+                language: Language::Python,
+                property: "fields",
+            });
+        }
+    }
+    if let Some(typescript_model) = type_override.typescript_generated_model() {
+        if !typescript_model.field_annotations.is_empty()
+            || !typescript_model.field_sources.is_empty()
+        {
+            return Err(Error::UnsupportedLanguageTypeOverrideProperty {
+                type_name: enumeration_name.to_string(),
+                language: Language::TypeScript,
+                property: "fields",
+            });
+        }
     }
 
     Ok(())
@@ -541,6 +952,21 @@ types:
   temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
     omit:
       - header
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        namespace:
+          source: workflow.info().namespace
+        workflow_type:
+          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
+        input:
+          type: tuple[*WorkflowArgs]
+    $typescript:
+      fields:
+        namespace:
+          source: workflow.workflowInfo().namespace
   temporal.api.enums.v1.WorkflowIdReusePolicy:
     $python:
       type: temporalio.common.WorkflowIDReusePolicy
@@ -593,6 +1019,28 @@ services:
             )
             .unwrap();
         assert!(signal_with_start.is_field_omitted("header"));
+        let python_model = signal_with_start.python_generated_model().unwrap();
+        assert_eq!(python_model.type_parameters.len(), 1);
+        assert_eq!(python_model.type_parameters[0].name, "WorkflowArgs");
+        assert_eq!(
+            python_model.field_annotation("workflow_type"),
+            Some(
+                "str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]"
+            )
+        );
+        assert_eq!(
+            python_model.field_annotation("input"),
+            Some("tuple[*WorkflowArgs]")
+        );
+        assert_eq!(
+            python_model.field_source("namespace"),
+            Some("workflow.info().namespace")
+        );
+        let typescript_model = signal_with_start.typescript_generated_model().unwrap();
+        assert_eq!(
+            typescript_model.field_source("namespace"),
+            Some("workflow.workflowInfo().namespace")
+        );
         let workflow_id_reuse_policy = spec
             .type_override("temporal.api.enums.v1.WorkflowIdReusePolicy")
             .unwrap();
@@ -808,6 +1256,82 @@ services:
     }
 
     #[test]
+    fn rejects_conflicting_typescript_field_customization_properties() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    $typescript:
+      fields:
+        namespace:
+          type: string
+          source: workflow.workflowInfo().namespace
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+        output:
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+"#;
+
+        let err = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message: type_name,
+                field,
+                language: crate::language::Language::TypeScript,
+                property,
+                conflicting_property,
+            } if type_name == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                && field == "namespace"
+                && property == "type"
+                && conflicting_property == "source"
+        ));
+    }
+
+    #[test]
+    fn rejects_python_model_customization_with_whole_type_override() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.Payloads:
+    $python:
+      type: collections.abc.Sequence[typing.Any]
+      typeParameters:
+        - name: PayloadArgs
+          kind: TypeVarTuple
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let err = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ConflictingTypeOverrideLanguageProperties {
+                type_name,
+                language: crate::language::Language::Python,
+                property,
+                conflicting_property,
+            } if type_name == "temporal.api.common.v1.Payloads"
+                && property == "typeParameters"
+                && conflicting_property == "type"
+        ));
+    }
+
+    #[test]
     fn validates_required_model_fields() {
         let yaml = r#"
 nexusrpc: 1.0.0
@@ -824,6 +1348,38 @@ services:
           $pythonRef: temporalio.api.activity.v1.ActivityOptions
         output:
           $pythonRef: temporalio.api.activity.v1.ActivityOptions
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn validates_python_model_generics_and_field_annotations() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        workflow_type:
+          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
+        input:
+          type: tuple[*WorkflowArgs]
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
 "#;
 
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
@@ -964,6 +1520,157 @@ services:
         let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
 
         spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn validates_sourced_model_fields() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    $python:
+      fields:
+        namespace:
+          source: workflow.info().namespace
+    $typescript:
+      fields:
+        namespace:
+          source: workflow.workflowInfo().namespace
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn rejects_omitted_sourced_field() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    omit:
+      - namespace
+    $python:
+      fields:
+        namespace:
+          source: workflow.info().namespace
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ConflictingTypeOverrideLanguageFieldProperties {
+                message,
+                field,
+                language: crate::language::Language::Python,
+                property,
+                conflicting_property,
+            } if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                && field == "namespace"
+                && property == "source"
+                && conflicting_property == "omit"
+        ));
+    }
+
+    #[test]
+    fn rejects_sourced_field_on_output_model() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse:
+    $python:
+      fields:
+        run_id:
+          source: workflow.info().workflow_id
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnsupportedSourcedTypeField {
+                message,
+                field,
+                language: crate::language::Language::Python,
+                reason,
+            } if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+                && field == "run_id"
+                && reason == "sourced fields are only supported on input-only generated models"
+        ));
+    }
+
+    #[test]
+    fn rejects_omitted_python_customized_field() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    omit:
+      - input
+    $python:
+      fields:
+        input:
+          type: tuple[*WorkflowArgs]
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::OmittedCustomizedTypeOverrideField {
+                message,
+                field,
+                language: crate::language::Language::Python,
+            } if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                && field == "input"
+        ));
     }
 
     #[test]

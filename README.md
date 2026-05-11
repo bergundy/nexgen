@@ -15,8 +15,12 @@ Current status:
   with `toProto`, while other models remain bidirectional with `fromProto`
 - generated service clients expose low-level operation wrappers that call `start_operation` /
   `startOperation`
-- the generator supports top-level `models` overrides for required fields and language-specific
-  whole-message substitutions such as `RetryPolicy`, `WorkflowType`, and `TaskQueue`
+- generated Python clients can call generated request-model operations either with the request
+  dataclass directly or through a separate `*_args` helper typed by a generated companion
+  `TypedDict`
+- the generator supports top-level `types` overrides for required and omitted fields,
+  language-specific whole-type substitutions such as `RetryPolicy`, `WorkflowType`, and
+  `TaskQueue`, per-language sourced fields, and Python-only generic model annotations
 
 The checked-in sample fixture lives under `tests/fixtures/sample/` and includes:
 
@@ -86,6 +90,22 @@ types:
   temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
     omit:
       - header
+      - links
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        namespace:
+          source: workflow.info().namespace
+        workflow_type:
+          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
+        input:
+          type: tuple[*WorkflowArgs] | None
+    $typescript:
+      fields:
+        namespace:
+          source: workflow.workflowInfo().namespace
   temporal.api.activity.v1.ActivityOptions:
     required:
       - retry_policy
@@ -108,6 +128,22 @@ fields validate as non-empty values. Enum type overrides reject `required` and `
 Use `omit` to remove proto fields from the generated model surface entirely. Omitted fields are not
 rendered into generated Python or TypeScript models, and generated `to_proto` / `from_proto`
 implementations do not read or write them.
+
+For generated Python message models, `$python.typeParameters` and `$python.fields.<name>.type`
+customize the emitted class and field annotations without changing the descriptor-driven proto
+conversion logic. This is useful for request-only models such as
+`SignalWithStartWorkflowExecutionRequest`, where `workflow_type` and `input` can share a
+`TypeVarTuple` declared in YAML.
+
+Use `$python.fields.<name>.source` or `$typescript.fields.<name>.source` to populate a field from
+the runtime instead of exposing it in the generated model for that language. Sourced fields are
+serialized with the configured expression and are only supported on input-only generated models in
+that language.
+
+When an operation input uses a generated Python request dataclass, the generated Python client
+emits the normal request-taking method plus a separate `*_args` helper that accepts unpacked
+keyword arguments typed by a generated `<RequestName>Args` `TypedDict`. Whole-type overrides such
+as `RetryPolicy` continue to use the direct request value only.
 
 The YAML schema is checked in at [input.schema.json](/Users/tconley/nexus-api-gen/input.schema.json).
 

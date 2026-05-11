@@ -37,13 +37,18 @@ const roundTrippedActivity = ActivityOptions.fromProto(activityProto);
 const serviceName: string = WorkflowService.name;
 const retryLimit = retryPolicy.maximumAttempts;
 const nestedRetryLimit = roundTrippedActivity?.retryPolicy.maximumAttempts;
+const requestNamespace: string | undefined = requestProto.namespace;
 const client = new WorkflowServiceClient();
 const retryHandle = client.retryPolicyOperation(retryPolicy);
 const signalHandle = client.signalWithStartWorkflowExecution(request);
 
+// @ts-expect-error sourced fields are not part of the generated request surface
+request.namespace;
+
 void serviceName;
 void retryLimit;
 void nestedRetryLimit;
+void requestNamespace;
 void requestProto;
 void retryHandle;
 void signalHandle;

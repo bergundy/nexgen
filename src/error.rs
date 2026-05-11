@@ -96,6 +96,35 @@ pub enum Error {
     #[error("type override for `{message}.{field}` cannot be both required and omitted")]
     ConflictingTypeOverrideField { message: String, field: String },
 
+    #[error(
+        "type override for `{message}.{field}` cannot be omitted and customized with `{language}` field annotations"
+    )]
+    OmittedCustomizedTypeOverrideField {
+        message: String,
+        field: String,
+        language: Language,
+    },
+
+    #[error(
+        "type override for `{type_name}.{field}` is missing required `{language}` field customization; expected `type` or `source`"
+    )]
+    IncompleteTypeOverrideLanguageField {
+        type_name: String,
+        field: String,
+        language: Language,
+    },
+
+    #[error(
+        "type override for `{message}.{field}` cannot combine `{language}` field `{property}` with `{conflicting_property}`"
+    )]
+    ConflictingTypeOverrideLanguageFieldProperties {
+        message: String,
+        field: String,
+        language: Language,
+        property: &'static str,
+        conflicting_property: &'static str,
+    },
+
     #[error("type override for `{message}.{field}` cannot be marked required: {reason}")]
     UnsupportedRequiredTypeField {
         message: String,
@@ -103,9 +132,43 @@ pub enum Error {
         reason: String,
     },
 
+    #[error(
+        "type override for `{message}.{field}` cannot use `{language}` field `source`: {reason}"
+    )]
+    UnsupportedSourcedTypeField {
+        message: String,
+        field: String,
+        language: Language,
+        reason: String,
+    },
+
     #[error("type override for enum `{enumeration}` cannot use `{property}`")]
     UnsupportedEnumTypeOverrideProperty {
         enumeration: String,
         property: &'static str,
+    },
+
+    #[error("type override `{type_name}` cannot use `{language}` `{property}`")]
+    UnsupportedLanguageTypeOverrideProperty {
+        type_name: String,
+        language: Language,
+        property: &'static str,
+    },
+
+    #[error(
+        "type override `{type_name}` cannot combine `{language}` `{property}` with `{conflicting_property}`"
+    )]
+    ConflictingTypeOverrideLanguageProperties {
+        type_name: String,
+        language: Language,
+        property: &'static str,
+        conflicting_property: &'static str,
+    },
+
+    #[error("type override `{type_name}` uses duplicate `{language}` type parameter `{parameter}`")]
+    DuplicateTypeOverrideLanguageParameter {
+        type_name: String,
+        language: Language,
+        parameter: String,
     },
 }

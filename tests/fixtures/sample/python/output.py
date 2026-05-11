@@ -216,13 +216,12 @@ def versioning_override_to_proto(
 
 
 @dataclasses.dataclass(slots=True)
-class SignalWithStartWorkflowExecutionRequest:
+class SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]:
     workflow_id: str
-    workflow_type: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]
+    workflow_type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
     task_queue: str
     signal_name: str
-    namespace: str | None = None
-    input: collections.abc.Sequence[typing.Any] | None = None
+    input: tuple[*WorkflowArgs] | None = None
     workflow_execution_timeout: timedelta | None = None
     workflow_run_timeout: timedelta | None = None
     workflow_task_timeout: timedelta | None = None
@@ -243,8 +242,6 @@ class SignalWithStartWorkflowExecutionRequest:
 
     def to_proto(self) -> temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
         message = temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest()
-        if self.namespace is not None:
-            message.namespace = self.namespace
         workflow_id_value: object | None = getattr(self, "workflow_id", None)
         if workflow_id_value is None:
             raise ValueError("missing required field SignalWithStartWorkflowExecutionRequest.workflow_id")
@@ -297,6 +294,7 @@ class SignalWithStartWorkflowExecutionRequest:
             message.versioning_override.CopyFrom(versioning_override_to_proto(self.versioning_override))
         if self.priority is not None:
             message.priority.CopyFrom(priority_to_proto(self.priority))
+        message.namespace = workflow.info().namespace
         return message
 
 
@@ -400,6 +398,41 @@ class ActivityOptions:
         return message
 
 
+class ActivityOptionsArgs(typing.TypedDict, total=False):
+    task_queue: str | None
+    schedule_to_close_timeout: timedelta | None
+    schedule_to_start_timeout: timedelta | None
+    start_to_close_timeout: timedelta | None
+    heartbeat_timeout: timedelta | None
+    retry_policy: typing.Required[temporalio.common.RetryPolicy]
+    priority: temporalio.common.Priority | None
+
+
+class SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs](typing.TypedDict, total=False):
+    workflow_id: typing.Required[str]
+    workflow_type: typing.Required[str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]]
+    task_queue: typing.Required[str]
+    input: tuple[*WorkflowArgs] | None
+    workflow_execution_timeout: timedelta | None
+    workflow_run_timeout: timedelta | None
+    workflow_task_timeout: timedelta | None
+    identity: str | None
+    request_id: str | None
+    workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None
+    workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None
+    signal_name: typing.Required[str]
+    signal_input: collections.abc.Sequence[typing.Any] | None
+    control: str | None
+    retry_policy: temporalio.common.RetryPolicy | None
+    cron_schedule: str | None
+    memo: collections.abc.Mapping[str, typing.Any] | None
+    search_attributes: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes | None
+    workflow_start_delay: timedelta | None
+    user_metadata: UserMetadata | None
+    versioning_override: temporalio.common.VersioningOverride | None
+    priority: temporalio.common.Priority | None
+
+
 @service
 class WorkflowService:
     signal_with_start_workflow_execution: Operation[
@@ -425,9 +458,9 @@ class WorkflowServiceClient:
             endpoint="__temporal_system",
         )
 
-    async def signal_with_start_workflow_execution(
+    async def signal_with_start_workflow_execution[*WorkflowArgs](
         self,
-        request: SignalWithStartWorkflowExecutionRequest,
+        request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs],
     ) -> workflow.NexusOperationHandle[
         temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse,
     ]:
@@ -435,6 +468,15 @@ class WorkflowServiceClient:
             WorkflowService.signal_with_start_workflow_execution,
             request.to_proto(),
         )
+
+    async def signal_with_start_workflow_execution_args[*WorkflowArgs](
+        self,
+        **kwargs: typing.Unpack[SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs]],
+    ) -> workflow.NexusOperationHandle[
+        temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse,
+    ]:
+        request = SignalWithStartWorkflowExecutionRequest[*WorkflowArgs](**kwargs)
+        return await self.signal_with_start_workflow_execution(request)
 
     async def retry_policy_operation(
         self,
@@ -457,6 +499,15 @@ class WorkflowServiceClient:
             WorkflowService.activity_options_operation,
             request.to_proto(),
         )
+
+    async def activity_options_operation_args(
+        self,
+        **kwargs: typing.Unpack[ActivityOptionsArgs],
+    ) -> workflow.NexusOperationHandle[
+        temporalio.api.activity.v1.ActivityOptions,
+    ]:
+        request = ActivityOptions(**kwargs)
+        return await self.activity_options_operation(request)
 
 
 __nexus_operation_registry__: dict[

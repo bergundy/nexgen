@@ -115,7 +115,22 @@ fn python_request_models_are_write_only() {
     assert!(!rendered.contains(
         "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
     ));
-    assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest:"));
-    assert!(rendered.contains("input: collections.abc.Sequence[typing.Any] | None = None"));
+    assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]:"));
+    assert!(rendered.contains("input: tuple[*WorkflowArgs] | None = None"));
+    assert!(rendered.contains(
+        "class SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs](typing.TypedDict, total=False):"
+    ));
+    assert!(rendered.contains("workflow_id: typing.Required[str]"));
+    assert!(!rendered.contains("namespace: str | None = None"));
+    assert!(!rendered.contains("namespace: str | None"));
+    assert!(rendered.contains("message.namespace = workflow.info().namespace"));
+    assert!(rendered.contains("async def signal_with_start_workflow_execution[*WorkflowArgs]("));
+    assert!(rendered.contains("request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]"));
+    assert!(
+        rendered.contains("async def signal_with_start_workflow_execution_args[*WorkflowArgs](")
+    );
+    assert!(rendered.contains(
+        "**kwargs: typing.Unpack[SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs]],"
+    ));
     assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
 }

@@ -94,10 +94,10 @@
           "$ref": "#/$defs/modelOmittedFields"
         },
         "$python": {
-          "$ref": "#/$defs/modelLanguageOverride"
+          "$ref": "#/$defs/pythonTypeOverride"
         },
         "$typescript": {
-          "$ref": "#/$defs/modelLanguageOverride"
+          "$ref": "#/$defs/typescriptTypeOverride"
         }
       }
     },
@@ -119,7 +119,7 @@
       },
       "uniqueItems": true
     },
-    "modelLanguageOverride": {
+    "pythonTypeOverride": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -137,6 +137,82 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
+        },
+        "typeParameters": {
+          "$ref": "#/$defs/pythonTypeParameters"
+        },
+        "fields": {
+          "$ref": "#/$defs/languageModelFieldOverrides"
+        }
+      }
+    },
+    "typescriptTypeOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required language-native replacement type."
+        },
+        "fromProto": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
+        },
+        "toProto": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
+        },
+        "fields": {
+          "$ref": "#/$defs/languageModelFieldOverrides"
+        }
+      }
+    },
+    "pythonTypeParameters": {
+      "type": "array",
+      "description": "Optional inline generic parameters for a generated Python model. These are only valid on generated message models, not on whole-type replacements.",
+      "items": {
+        "$ref": "#/$defs/pythonTypeParameter"
+      },
+      "uniqueItems": true
+    },
+    "pythonTypeParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["TypeVar", "TypeVarTuple"]
+        }
+      }
+    },
+    "languageModelFieldOverrides": {
+      "type": "object",
+      "description": "Optional per-field language-specific overrides for a generated message model. `type` changes only the emitted annotation; `source` hides the field from the generated model in that language and provides the serializer expression instead.",
+      "additionalProperties": {
+        "$ref": "#/$defs/languageModelFieldOverride"
+      }
+    },
+    "languageModelFieldOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact language annotation to emit for this field."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Language expression used to populate this field during serialization instead of exposing it in the generated model."
         }
       }
     },

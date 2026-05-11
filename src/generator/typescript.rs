@@ -113,6 +113,7 @@ struct RenderedModel {
     name: String,
     capabilities: ModelCapabilities,
     fields: Vec<RenderedField>,
+    sourced_fields: Vec<RenderedSourcedField>,
 }
 
 #[derive(Debug)]
@@ -121,6 +122,12 @@ struct RenderedField {
     annotation: String,
     optional: bool,
     from_proto_expr: String,
+    to_proto_expr: String,
+}
+
+#[derive(Debug)]
+struct RenderedSourcedField {
+    name: String,
     to_proto_expr: String,
 }
 
@@ -336,6 +343,7 @@ fn ensure_model(
             name: message_model_name(&message.full_name),
             capabilities: requested_capabilities,
             fields: Vec::new(),
+            sourced_fields: Vec::new(),
         },
     );
 
@@ -350,15 +358,49 @@ fn ensure_model(
                 .expect("descriptor fields should be named");
             !spec
                 .type_override(&message.full_name)
-                .is_some_and(|type_override| type_override.is_field_omitted(proto_name))
+                .is_some_and(|type_override| {
+                    type_override.is_field_hidden(Language::TypeScript, proto_name)
+                })
         })
         .map(|field| build_field(message, field, spec, descriptors, enums, models, uses_long))
+        .collect();
+
+    let sourced_fields = message
+        .descriptor
+        .field
+        .iter()
+        .filter_map(|field| {
+            let proto_name = field
+                .name
+                .as_deref()
+                .expect("descriptor fields should be named");
+            spec.type_override(&message.full_name)
+                .and_then(|type_override| {
+                    type_override.field_source(Language::TypeScript, proto_name)
+                })
+                .map(|source_expr| {
+                    build_sourced_field(
+                        message,
+                        field,
+                        source_expr,
+                        spec,
+                        descriptors,
+                        enums,
+                        models,
+                        uses_long,
+                    )
+                })
+        })
         .collect();
 
     models
         .get_mut(&message.full_name)
         .expect("model should be inserted before recursive field resolution")
         .fields = fields;
+    models
+        .get_mut(&message.full_name)
+        .expect("model should be inserted before recursive field resolution")
+        .sourced_fields = sourced_fields;
 }
 
 fn ensure_enum(enumeration: &EnumMetadata, enums: &mut IndexMap<String, RenderedEnum>) {
@@ -402,7 +444,12 @@ fn build_field(
         *uses_long |= map_info.value_type.uses_long;
         return RenderedField {
             name: field_name.clone(),
-            annotation: format!("Record<string, {}>", map_info.value_type.annotation),
+            annotation: typescript_field_annotation(
+                spec,
+                &message.full_name,
+                proto_name,
+                format!("Record<string, {}>", map_info.value_type.annotation),
+            ),
             optional: true,
             from_proto_expr: map_value_from_proto_expr(&map_info.value_type, &field_name),
             to_proto_expr: map_value_to_proto_expr(&map_info.value_type, &field_name),
@@ -417,7 +464,12 @@ fn build_field(
     if label == Some(Label::Repeated) {
         return RenderedField {
             name: field_name.clone(),
-            annotation: format!("{}[]", resolved_type.annotation),
+            annotation: typescript_field_annotation(
+                spec,
+                &message.full_name,
+                proto_name,
+                format!("{}[]", resolved_type.annotation),
+            ),
             optional: true,
             from_proto_expr: repeated_from_proto_expr(&resolved_type, &field_name),
             to_proto_expr: repeated_to_proto_expr(&resolved_type, &field_name),
@@ -427,7 +479,12 @@ fn build_field(
     if required {
         return RenderedField {
             name: field_name.clone(),
-            annotation: resolved_type.annotation.clone(),
+            annotation: typescript_field_annotation(
+                spec,
+                &message.full_name,
+                proto_name,
+                resolved_type.annotation.clone(),
+            ),
             optional: false,
             from_proto_expr: required_from_proto_expr(
                 &resolved_type,
@@ -441,11 +498,65 @@ fn build_field(
 
     RenderedField {
         name: field_name.clone(),
-        annotation: resolved_type.annotation.clone(),
+        annotation: typescript_field_annotation(
+            spec,
+            &message.full_name,
+            proto_name,
+            resolved_type.annotation.clone(),
+        ),
         optional: true,
         from_proto_expr: optional_from_proto_expr(&resolved_type, &field_name),
         to_proto_expr: optional_to_proto_expr(&resolved_type, &field_name),
     }
+}
+
+fn build_sourced_field(
+    _message: &MessageMetadata,
+    field: &FieldDescriptorProto,
+    source_expr: &str,
+    spec: &ApiSpec,
+    descriptors: &DescriptorIndex,
+    enums: &mut IndexMap<String, RenderedEnum>,
+    models: &mut IndexMap<String, RenderedModel>,
+    uses_long: &mut bool,
+) -> RenderedSourcedField {
+    let field_name = typescript_field_name(field);
+
+    if let Some(map_info) = map_field_info(field, spec, descriptors, enums, models, uses_long) {
+        *uses_long |= map_info.value_type.uses_long;
+        return RenderedSourcedField {
+            name: field_name.clone(),
+            to_proto_expr: map_value_to_proto_expr_from_expr(&map_info.value_type, source_expr),
+        };
+    }
+
+    let resolved_type = resolve_field_type(field, spec, descriptors, enums, models, uses_long);
+    *uses_long |= resolved_type.uses_long;
+
+    if field_label(field) == Some(Label::Repeated) {
+        return RenderedSourcedField {
+            name: field_name.clone(),
+            to_proto_expr: repeated_to_proto_expr_from_expr(&resolved_type, source_expr),
+        };
+    }
+
+    RenderedSourcedField {
+        name: field_name,
+        to_proto_expr: optional_to_proto_expr_from_expr(&resolved_type, source_expr),
+    }
+}
+
+fn typescript_field_annotation(
+    spec: &ApiSpec,
+    message_name: &str,
+    field_name: &str,
+    default_annotation: String,
+) -> String {
+    spec.type_override(message_name)
+        .and_then(|type_override| type_override.typescript_generated_model())
+        .and_then(|typescript_model| typescript_model.field_annotation(field_name))
+        .map(str::to_string)
+        .unwrap_or(default_annotation)
 }
 
 fn repeated_from_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -> String {
@@ -467,9 +578,13 @@ fn repeated_from_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str)
 }
 
 fn repeated_to_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -> String {
+    repeated_to_proto_expr_from_expr(resolved_type, &format!("model.{field_name}"))
+}
+
+fn repeated_to_proto_expr_from_expr(resolved_type: &ResolvedFieldType, value_expr: &str) -> String {
     match resolved_type.kind {
         ResolvedFieldKind::Message => format!(
-            "model.{field_name}?.map((value) => {})",
+            "{value_expr}?.map((value) => {})",
             resolved_type
                 .message_conversion
                 .as_ref()
@@ -477,10 +592,10 @@ fn repeated_to_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -
                 .to_proto_expr("value")
         ),
         ResolvedFieldKind::Enum => format!(
-            "model.{field_name}?.map((value) => {})",
+            "{value_expr}?.map((value) => {})",
             enum_to_proto_expr(resolved_type, "value")
         ),
-        _ => format!("model.{field_name}?.slice()"),
+        _ => format!("{value_expr}?.slice()"),
     }
 }
 
@@ -501,7 +616,14 @@ fn map_value_from_proto_expr(map_value_type: &ResolvedFieldType, field_name: &st
 }
 
 fn map_value_to_proto_expr(map_value_type: &ResolvedFieldType, field_name: &str) -> String {
-    let value_expr = match map_value_type.kind {
+    map_value_to_proto_expr_from_expr(map_value_type, &format!("model.{field_name}"))
+}
+
+fn map_value_to_proto_expr_from_expr(
+    map_value_type: &ResolvedFieldType,
+    value_expr: &str,
+) -> String {
+    let mapped_value_expr = match map_value_type.kind {
         ResolvedFieldKind::Message => map_value_type
             .message_conversion
             .as_ref()
@@ -511,7 +633,7 @@ fn map_value_to_proto_expr(map_value_type: &ResolvedFieldType, field_name: &str)
         _ => "value".to_string(),
     };
     format!(
-        "model.{field_name} == null ? undefined : Object.fromEntries(Object.entries(model.{field_name} as Record<string, any>).map(([key, value]: [string, any]) => [key, {value_expr}]))"
+        "{value_expr} == null ? undefined : Object.fromEntries(Object.entries({value_expr} as Record<string, any>).map(([key, value]: [string, any]) => [key, {mapped_value_expr}]))"
     )
 }
 
@@ -608,20 +730,24 @@ fn optional_from_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str)
 }
 
 fn optional_to_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -> String {
+    optional_to_proto_expr_from_expr(resolved_type, &format!("model.{field_name}"))
+}
+
+fn optional_to_proto_expr_from_expr(resolved_type: &ResolvedFieldType, value_expr: &str) -> String {
     match resolved_type.kind {
         ResolvedFieldKind::Message => format!(
-            "model.{field_name} == null ? undefined : {}",
+            "{value_expr} == null ? undefined : {}",
             resolved_type
                 .message_conversion
                 .as_ref()
                 .expect("message conversion should be present")
-                .to_proto_expr(&format!("model.{field_name}"))
+                .to_proto_expr(value_expr)
         ),
         ResolvedFieldKind::Enum => format!(
-            "model.{field_name} == null ? undefined : {}",
-            enum_to_proto_expr(resolved_type, &format!("model.{field_name}"))
+            "{value_expr} == null ? undefined : {}",
+            enum_to_proto_expr(resolved_type, value_expr)
         ),
-        _ => format!("model.{field_name}"),
+        _ => value_expr.to_string(),
     }
 }
 
@@ -1025,11 +1151,18 @@ fn render_model(output: &mut String, model: &RenderedModel) {
         output.push_str("    if (model == null) {\n");
         output.push_str("      return undefined;\n");
         output.push_str("    }\n");
-        if model.fields.is_empty() {
+        if model.fields.is_empty() && model.sourced_fields.is_empty() {
             output.push_str("    return {};\n");
         } else {
             output.push_str("    return {\n");
             for field in &model.fields {
+                output.push_str("      ");
+                output.push_str(&field.name);
+                output.push_str(": ");
+                output.push_str(&field.to_proto_expr);
+                output.push_str(",\n");
+            }
+            for field in &model.sourced_fields {
                 output.push_str("      ");
                 output.push_str(&field.name);
                 output.push_str(": ");
@@ -1262,6 +1395,8 @@ mod tests {
         assert!(output.contains("workflowId: string;"));
         assert!(output.contains("taskQueue: TaskQueue;"));
         assert!(output.contains("signalName: string;"));
+        assert!(!output.contains("namespace?: string;"));
+        assert!(output.contains("namespace: workflow.workflowInfo().namespace,"));
         assert!(output.contains("retryPolicy: common.RetryPolicy;"));
         assert!(output.contains("requiredField(model.workflowType"));
         assert!(output.contains("requiredField(model.retryPolicy"));

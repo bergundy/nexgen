@@ -48,6 +48,21 @@ types:
     omit:
       - header
       - links
+    $python:
+      typeParameters:
+        - name: WorkflowArgs
+          kind: TypeVarTuple
+      fields:
+        namespace:
+          source: workflow.info().namespace
+        workflow_type:
+          type: str | collections.abc.Callable[[typing.Any, *WorkflowArgs], collections.abc.Awaitable[typing.Any]]
+        input:
+          type: tuple[*WorkflowArgs] | None
+    $typescript:
+      fields:
+        namespace:
+          source: workflow.workflowInfo().namespace
   temporal.api.activity.v1.ActivityOptions:
     required:
       - retry_policy

@@ -64,7 +64,6 @@ export enum VersioningBehavior {
 
 
 export interface SignalWithStartWorkflowExecutionRequest {
-  namespace?: string;
   workflowId: string;
   workflowType: WorkflowType;
   taskQueue: TaskQueue;
@@ -97,7 +96,6 @@ export const SignalWithStartWorkflowExecutionRequest = {
       return undefined;
     }
     return {
-      namespace: model.namespace,
       workflowId: requiredField(model.workflowId, "SignalWithStartWorkflowExecutionRequest", "workflowId"),
       workflowType: WorkflowType.toProto(requiredField(model.workflowType, "SignalWithStartWorkflowExecutionRequest", "workflowType")) ?? {},
       taskQueue: TaskQueue.toProto(requiredField(model.taskQueue, "SignalWithStartWorkflowExecutionRequest", "taskQueue")) ?? {},
@@ -120,6 +118,7 @@ export const SignalWithStartWorkflowExecutionRequest = {
       userMetadata: model.userMetadata == null ? undefined : UserMetadata.toProto(model.userMetadata) ?? {},
       versioningOverride: model.versioningOverride == null ? undefined : VersioningOverride.toProto(model.versioningOverride) ?? {},
       priority: model.priority == null ? undefined : Priority.toProto(model.priority) ?? {},
+      namespace: workflow.workflowInfo().namespace,
     };
   }
 };
