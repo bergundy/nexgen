@@ -7,7 +7,9 @@ use nexus_api_gen::{GenerateRequest, generate_to_file};
 
 #[derive(Parser)]
 #[command(name = "nexus-api-gen")]
-#[command(about = "Generate language-specific Nexus APIs from YAML and protobuf descriptors")]
+#[command(
+    about = "Generate language-specific Nexus operation bindings from YAML and protobuf descriptors"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

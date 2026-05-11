@@ -7,243 +7,27 @@ import type { google, temporal } from '@temporalio/proto';
 import * as workflow from '@temporalio/workflow';
 
 // Included from support.$typescriptFile
-import { mapToPayloads, toPayloads } from '@temporalio/common/lib/converter/payload-converter.js';
-import { encodeUnifiedSearchAttributes } from '@temporalio/common/lib/converter/payload-search-attributes.js';
-import { userMetadataToPayload } from '@temporalio/common/lib/user-metadata.js';
-import { getActivator } from '@temporalio/workflow/lib/global-attributes.js';
-
-function signalName(signal: string | workflow.SignalDefinition<any[]>): string {
-  return typeof signal === 'string' ? signal : signal.name;
+export function retryPolicyFromProto(
+  proto: temporal.api.common.v1.IRetryPolicy,
+): common.RetryPolicy {
+  return common.decompileRetryPolicy(proto) ?? {};
 }
 
-export function buildSignalWithStartWorkflowRequest({
-  workflowTypeOrFunc,
-  signal,
-  workflowId,
-  signalArgs,
-  args,
-  taskQueue,
-  workflowExecutionTimeout,
-  workflowRunTimeout,
-  workflowTaskTimeout,
-  workflowIdReusePolicy,
-  workflowIdConflictPolicy,
-  retry,
-  cronSchedule,
-  memo,
-  typedSearchAttributes,
-  staticSummary,
-  staticDetails,
-  startDelay,
-  requestId,
-  priority,
-  versioningOverride,
-}: {
-  workflowTypeOrFunc: string | workflow.Workflow;
-  signal: string | workflow.SignalDefinition<any[]>;
-  workflowId: string;
-  signalArgs: readonly unknown[];
-  args: readonly unknown[];
-  taskQueue: string | undefined;
-  workflowExecutionTimeout: common.Duration | undefined;
-  workflowRunTimeout: common.Duration | undefined;
-  workflowTaskTimeout: common.Duration | undefined;
-  workflowIdReusePolicy: workflow.WorkflowIdReusePolicy;
-  workflowIdConflictPolicy: workflow.WorkflowIdConflictPolicy | undefined;
-  retry: common.RetryPolicy | undefined;
-  cronSchedule: string;
-  memo: Record<string, unknown> | undefined;
-  typedSearchAttributes: common.TypedSearchAttributes | common.SearchAttributePair[] | undefined;
-  staticSummary: string | undefined;
-  staticDetails: string | undefined;
-  startDelay: common.Duration | undefined;
-  requestId: string | undefined;
-  priority: common.Priority;
-  versioningOverride: common.VersioningOverride | undefined;
-}): SignalWithStartWorkflowExecutionRequestModel {
-  const activator = getActivator();
-  const info = workflow.workflowInfo();
-  const request = {
-    namespace: info.namespace,
-    workflowId,
-    workflowType: {
-      name: common.extractWorkflowType(workflowTypeOrFunc),
-    },
-    input: args.length
-      ? {
-          payloads: toPayloads(activator.payloadConverter, ...args),
-        }
-      : undefined,
-    signalName: signalName(signal),
-    signalInput: signalArgs.length
-      ? {
-          payloads: toPayloads(activator.payloadConverter, ...signalArgs),
-        }
-      : undefined,
-    taskQueue: {
-      kind: TaskQueueKind.TASK_QUEUE_KIND_NORMAL,
-      name: taskQueue ?? info.taskQueue,
-    },
-    workflowExecutionTimeout:
-      workflowExecutionTimeout == null ? undefined : common.msToTs(workflowExecutionTimeout),
-    workflowRunTimeout:
-      workflowRunTimeout == null ? undefined : common.msToTs(workflowRunTimeout),
-    workflowTaskTimeout:
-      workflowTaskTimeout == null ? undefined : common.msToTs(workflowTaskTimeout),
-    requestId,
-    workflowIdReusePolicy:
-      common.encodeWorkflowIdReusePolicy(workflowIdReusePolicy) as WorkflowIdReusePolicy,
-    workflowIdConflictPolicy:
-      workflowIdConflictPolicy == null
-        ? undefined
-        : (common.encodeWorkflowIdConflictPolicy(workflowIdConflictPolicy) as WorkflowIdConflictPolicy),
-    retryPolicy: retry == null ? undefined : common.compileRetryPolicy(retry),
-    cronSchedule,
-    memo:
-      memo == null
-        ? undefined
-        : {
-            fields: mapToPayloads(activator.payloadConverter, memo),
-          },
-    searchAttributes:
-      typedSearchAttributes == null
-        ? undefined
-        : {
-            indexedFields: encodeUnifiedSearchAttributes(undefined, typedSearchAttributes),
-          },
-    userMetadata: userMetadataToPayload(
-      activator.payloadConverter,
-      staticSummary,
-      staticDetails,
-    ),
-    priority: common.compilePriority(priority),
-    workflowStartDelay: startDelay == null ? undefined : common.msToTs(startDelay),
-    versioningOverride: versioningOverrideToProto(versioningOverride),
-  };
-  return SignalWithStartWorkflowExecutionRequestModel.fromProto(request) ?? {};
+export function retryPolicyToProto(
+  retryPolicy: common.RetryPolicy,
+): temporal.api.common.v1.IRetryPolicy {
+  return common.compileRetryPolicy(retryPolicy);
 }
 
-export function sdkRetryPolicyToModel(
-  retryPolicy: common.RetryPolicy | undefined,
-): RetryPolicyModel | undefined {
-  if (retryPolicy == null) {
-    return undefined;
+function requiredField<T>(
+  value: T | null | undefined,
+  owner: string,
+  field: string,
+): T {
+  if (value == null) {
+    throw new Error(`missing required field ${owner}.${field}`);
   }
-  return RetryPolicyModel.fromProto(common.compileRetryPolicy(retryPolicy));
-}
-
-export function retryPolicyModelToSdk(
-  retryPolicy: RetryPolicyModel | undefined,
-): common.RetryPolicy | undefined {
-  return common.decompileRetryPolicy(RetryPolicyModel.toProto(retryPolicy));
-}
-
-export function sdkTaskQueueToModel(
-  taskQueue: string | undefined,
-): TaskQueueModel | undefined {
-  if (taskQueue == null) {
-    return undefined;
-  }
-  return { name: taskQueue };
-}
-
-export function taskQueueModelToSdk(
-  taskQueue: TaskQueueModel | undefined,
-): string | undefined {
-  return taskQueue?.name;
-}
-
-export function durationToModel(
-  duration: common.Duration | undefined,
-): DurationModel | undefined {
-  if (duration == null) {
-    return undefined;
-  }
-  return DurationModel.fromProto(common.msToTs(duration));
-}
-
-export function durationModelToDuration(
-  duration: DurationModel | undefined,
-): common.Duration | undefined {
-  return common.optionalTsToMs(DurationModel.toProto(duration));
-}
-
-export function sdkPriorityToModel(priority: common.Priority): PriorityModel {
-  return PriorityModel.fromProto(common.compilePriority(priority)) ?? {};
-}
-
-export function priorityModelToSdk(
-  priority: PriorityModel | undefined,
-): common.Priority {
-  return common.decodePriority(PriorityModel.toProto(priority));
-}
-
-function versioningOverrideToProto(
-  versioningOverride: common.VersioningOverride | undefined,
-): VersioningOverrideModel | undefined {
-  if (versioningOverride == null) {
-    return undefined;
-  }
-  if (versioningOverride === 'AUTO_UPGRADE') {
-    return {
-      behavior: VersioningBehavior.VERSIONING_BEHAVIOR_AUTO_UPGRADE,
-      autoUpgrade: true,
-    };
-  }
-  return {
-    behavior: VersioningBehavior.VERSIONING_BEHAVIOR_PINNED,
-    pinnedVersion: common.toCanonicalString(versioningOverride.pinnedTo),
-    pinned: {
-      version: {
-        buildId: versioningOverride.pinnedTo.buildId,
-        deploymentName: versioningOverride.pinnedTo.deploymentName,
-      },
-      behavior:
-        PinnedOverrideBehavior.PINNED_OVERRIDE_BEHAVIOR_PINNED,
-    },
-  };
-}
-
-export function signalWithStartWorkflowResponseToExternalWorkflowHandle({
-  request,
-  response,
-}: {
-  request: SignalWithStartWorkflowExecutionRequestModel;
-  response: SignalWithStartWorkflowExecutionResponseModel;
-}): workflow.ExternalWorkflowHandle {
-  if (request.workflowId == null) {
-    throw new TypeError('workflowId must be set to build an ExternalWorkflowHandle');
-  }
-  return workflow.getExternalWorkflowHandle(request.workflowId, response.runId);
-}
-
-export function activityOptionsModelToOptions({
-  request,
-  response,
-}: {
-  request: ActivityOptionsModel;
-  response: ActivityOptionsModel;
-}): workflow.ActivityOptions {
-  const taskQueue = response.taskQueue ?? request.taskQueue;
-  const scheduleToCloseTimeout =
-    response.scheduleToCloseTimeout ?? request.scheduleToCloseTimeout;
-  const scheduleToStartTimeout =
-    response.scheduleToStartTimeout ?? request.scheduleToStartTimeout;
-  const startToCloseTimeout =
-    response.startToCloseTimeout ?? request.startToCloseTimeout;
-  const heartbeatTimeout =
-    response.heartbeatTimeout ?? request.heartbeatTimeout;
-  const retryPolicy = response.retryPolicy ?? request.retryPolicy;
-  const priority = response.priority ?? request.priority;
-  return {
-    taskQueue: taskQueueModelToSdk(taskQueue),
-    scheduleToCloseTimeout: durationModelToDuration(scheduleToCloseTimeout),
-    scheduleToStartTimeout: durationModelToDuration(scheduleToStartTimeout),
-    startToCloseTimeout: durationModelToDuration(startToCloseTimeout),
-    heartbeatTimeout: durationModelToDuration(heartbeatTimeout),
-    retry: retryPolicyModelToSdk(retryPolicy),
-    priority: priorityModelToSdk(priority),
-  };
+  return value;
 }
 
 export enum TaskQueueKind {
@@ -267,69 +51,6 @@ export enum WorkflowIdConflictPolicy {
   WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING = 3,
 }
 
-export enum EventType {
-  EVENT_TYPE_UNSPECIFIED = 0,
-  EVENT_TYPE_WORKFLOW_EXECUTION_STARTED = 1,
-  EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED = 2,
-  EVENT_TYPE_WORKFLOW_EXECUTION_FAILED = 3,
-  EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT = 4,
-  EVENT_TYPE_WORKFLOW_TASK_SCHEDULED = 5,
-  EVENT_TYPE_WORKFLOW_TASK_STARTED = 6,
-  EVENT_TYPE_WORKFLOW_TASK_COMPLETED = 7,
-  EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT = 8,
-  EVENT_TYPE_WORKFLOW_TASK_FAILED = 9,
-  EVENT_TYPE_ACTIVITY_TASK_SCHEDULED = 10,
-  EVENT_TYPE_ACTIVITY_TASK_STARTED = 11,
-  EVENT_TYPE_ACTIVITY_TASK_COMPLETED = 12,
-  EVENT_TYPE_ACTIVITY_TASK_FAILED = 13,
-  EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT = 14,
-  EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED = 15,
-  EVENT_TYPE_ACTIVITY_TASK_CANCELED = 16,
-  EVENT_TYPE_TIMER_STARTED = 17,
-  EVENT_TYPE_TIMER_FIRED = 18,
-  EVENT_TYPE_TIMER_CANCELED = 19,
-  EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED = 20,
-  EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED = 21,
-  EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED = 22,
-  EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED = 23,
-  EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED = 24,
-  EVENT_TYPE_MARKER_RECORDED = 25,
-  EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED = 26,
-  EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED = 27,
-  EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW = 28,
-  EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED = 29,
-  EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED = 30,
-  EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED = 31,
-  EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED = 32,
-  EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED = 33,
-  EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED = 34,
-  EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT = 35,
-  EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED = 36,
-  EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED = 37,
-  EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED = 38,
-  EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED = 39,
-  EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES = 40,
-  EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED = 47,
-  EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED = 41,
-  EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED = 42,
-  EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED = 43,
-  EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY = 44,
-  EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY = 45,
-  EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED = 46,
-  EVENT_TYPE_NEXUS_OPERATION_SCHEDULED = 48,
-  EVENT_TYPE_NEXUS_OPERATION_STARTED = 49,
-  EVENT_TYPE_NEXUS_OPERATION_COMPLETED = 50,
-  EVENT_TYPE_NEXUS_OPERATION_FAILED = 51,
-  EVENT_TYPE_NEXUS_OPERATION_CANCELED = 52,
-  EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT = 53,
-  EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED = 54,
-  EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED = 55,
-  EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED = 56,
-  EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED = 57,
-  EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED = 58,
-  EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED = 59,
-}
-
 export enum PinnedOverrideBehavior {
   PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED = 0,
   PINNED_OVERRIDE_BEHAVIOR_PINNED = 1,
@@ -342,114 +63,75 @@ export enum VersioningBehavior {
 }
 
 
-export interface SignalWithStartWorkflowExecutionRequestModel {
+export interface SignalWithStartWorkflowExecutionRequest {
   namespace?: string;
-  workflowId?: string;
-  workflowType?: WorkflowTypeModel;
-  taskQueue?: TaskQueueModel;
-  input?: PayloadsModel;
-  workflowExecutionTimeout?: DurationModel;
-  workflowRunTimeout?: DurationModel;
-  workflowTaskTimeout?: DurationModel;
+  workflowId: string;
+  workflowType: WorkflowType;
+  taskQueue: TaskQueue;
+  input?: Payloads;
+  workflowExecutionTimeout?: Duration;
+  workflowRunTimeout?: Duration;
+  workflowTaskTimeout?: Duration;
   identity?: string;
   requestId?: string;
   workflowIdReusePolicy?: WorkflowIdReusePolicy;
   workflowIdConflictPolicy?: WorkflowIdConflictPolicy;
-  signalName?: string;
-  signalInput?: PayloadsModel;
+  signalName: string;
+  signalInput?: Payloads;
   control?: string;
-  retryPolicy?: RetryPolicyModel;
+  retryPolicy?: common.RetryPolicy;
   cronSchedule?: string;
-  memo?: MemoModel;
-  searchAttributes?: SearchAttributesModel;
-  header?: HeaderModel;
-  workflowStartDelay?: DurationModel;
-  userMetadata?: UserMetadataModel;
-  links?: LinkModel[];
-  versioningOverride?: VersioningOverrideModel;
-  priority?: PriorityModel;
+  memo?: Memo;
+  searchAttributes?: SearchAttributes;
+  workflowStartDelay?: Duration;
+  userMetadata?: UserMetadata;
+  versioningOverride?: VersioningOverride;
+  priority?: Priority;
 }
 
-export const SignalWithStartWorkflowExecutionRequestModel = {
-  fromProto(
-    proto: any,
-  ): SignalWithStartWorkflowExecutionRequestModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      namespace: proto.namespace ?? undefined,
-      workflowId: proto.workflowId ?? undefined,
-      workflowType: WorkflowTypeModel.fromProto(proto.workflowType),
-      taskQueue: TaskQueueModel.fromProto(proto.taskQueue),
-      input: PayloadsModel.fromProto(proto.input),
-      workflowExecutionTimeout: DurationModel.fromProto(proto.workflowExecutionTimeout),
-      workflowRunTimeout: DurationModel.fromProto(proto.workflowRunTimeout),
-      workflowTaskTimeout: DurationModel.fromProto(proto.workflowTaskTimeout),
-      identity: proto.identity ?? undefined,
-      requestId: proto.requestId ?? undefined,
-      workflowIdReusePolicy: proto.workflowIdReusePolicy == null ? undefined : (proto.workflowIdReusePolicy as WorkflowIdReusePolicy),
-      workflowIdConflictPolicy: proto.workflowIdConflictPolicy == null ? undefined : (proto.workflowIdConflictPolicy as WorkflowIdConflictPolicy),
-      signalName: proto.signalName ?? undefined,
-      signalInput: PayloadsModel.fromProto(proto.signalInput),
-      control: proto.control ?? undefined,
-      retryPolicy: RetryPolicyModel.fromProto(proto.retryPolicy),
-      cronSchedule: proto.cronSchedule ?? undefined,
-      memo: MemoModel.fromProto(proto.memo),
-      searchAttributes: SearchAttributesModel.fromProto(proto.searchAttributes),
-      header: HeaderModel.fromProto(proto.header),
-      workflowStartDelay: DurationModel.fromProto(proto.workflowStartDelay),
-      userMetadata: UserMetadataModel.fromProto(proto.userMetadata),
-      links: proto.links?.map((value: any) => LinkModel.fromProto(value) ?? {}),
-      versioningOverride: VersioningOverrideModel.fromProto(proto.versioningOverride),
-      priority: PriorityModel.fromProto(proto.priority),
-    };
-  },
-
+export const SignalWithStartWorkflowExecutionRequest = {
   toProto(
-    model: SignalWithStartWorkflowExecutionRequestModel | null | undefined,
+    model: SignalWithStartWorkflowExecutionRequest | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
       namespace: model.namespace,
-      workflowId: model.workflowId,
-      workflowType: WorkflowTypeModel.toProto(model.workflowType),
-      taskQueue: TaskQueueModel.toProto(model.taskQueue),
-      input: PayloadsModel.toProto(model.input),
-      workflowExecutionTimeout: DurationModel.toProto(model.workflowExecutionTimeout),
-      workflowRunTimeout: DurationModel.toProto(model.workflowRunTimeout),
-      workflowTaskTimeout: DurationModel.toProto(model.workflowTaskTimeout),
+      workflowId: requiredField(model.workflowId, "SignalWithStartWorkflowExecutionRequest", "workflowId"),
+      workflowType: WorkflowType.toProto(requiredField(model.workflowType, "SignalWithStartWorkflowExecutionRequest", "workflowType")) ?? {},
+      taskQueue: TaskQueue.toProto(requiredField(model.taskQueue, "SignalWithStartWorkflowExecutionRequest", "taskQueue")) ?? {},
+      input: model.input == null ? undefined : Payloads.toProto(model.input) ?? {},
+      workflowExecutionTimeout: model.workflowExecutionTimeout == null ? undefined : Duration.toProto(model.workflowExecutionTimeout) ?? {},
+      workflowRunTimeout: model.workflowRunTimeout == null ? undefined : Duration.toProto(model.workflowRunTimeout) ?? {},
+      workflowTaskTimeout: model.workflowTaskTimeout == null ? undefined : Duration.toProto(model.workflowTaskTimeout) ?? {},
       identity: model.identity,
       requestId: model.requestId,
-      workflowIdReusePolicy: model.workflowIdReusePolicy == null ? undefined : (model.workflowIdReusePolicy as number),
-      workflowIdConflictPolicy: model.workflowIdConflictPolicy == null ? undefined : (model.workflowIdConflictPolicy as number),
-      signalName: model.signalName,
-      signalInput: PayloadsModel.toProto(model.signalInput),
+      workflowIdReusePolicy: model.workflowIdReusePolicy == null ? undefined : model.workflowIdReusePolicy as number,
+      workflowIdConflictPolicy: model.workflowIdConflictPolicy == null ? undefined : model.workflowIdConflictPolicy as number,
+      signalName: requiredField(model.signalName, "SignalWithStartWorkflowExecutionRequest", "signalName"),
+      signalInput: model.signalInput == null ? undefined : Payloads.toProto(model.signalInput) ?? {},
       control: model.control,
-      retryPolicy: RetryPolicyModel.toProto(model.retryPolicy),
+      retryPolicy: model.retryPolicy == null ? undefined : retryPolicyToProto(model.retryPolicy),
       cronSchedule: model.cronSchedule,
-      memo: MemoModel.toProto(model.memo),
-      searchAttributes: SearchAttributesModel.toProto(model.searchAttributes),
-      header: HeaderModel.toProto(model.header),
-      workflowStartDelay: DurationModel.toProto(model.workflowStartDelay),
-      userMetadata: UserMetadataModel.toProto(model.userMetadata),
-      links: model.links?.map((value) => LinkModel.toProto(value) ?? {}),
-      versioningOverride: VersioningOverrideModel.toProto(model.versioningOverride),
-      priority: PriorityModel.toProto(model.priority),
+      memo: model.memo == null ? undefined : Memo.toProto(model.memo) ?? {},
+      searchAttributes: model.searchAttributes == null ? undefined : SearchAttributes.toProto(model.searchAttributes) ?? {},
+      workflowStartDelay: model.workflowStartDelay == null ? undefined : Duration.toProto(model.workflowStartDelay) ?? {},
+      userMetadata: model.userMetadata == null ? undefined : UserMetadata.toProto(model.userMetadata) ?? {},
+      versioningOverride: model.versioningOverride == null ? undefined : VersioningOverride.toProto(model.versioningOverride) ?? {},
+      priority: model.priority == null ? undefined : Priority.toProto(model.priority) ?? {},
     };
-  },
+  }
 };
 
-export interface WorkflowTypeModel {
+export interface WorkflowType {
   name?: string;
 }
 
-export const WorkflowTypeModel = {
+export const WorkflowType = {
   fromProto(
     proto: any,
-  ): WorkflowTypeModel | undefined {
+  ): WorkflowType | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -459,7 +141,7 @@ export const WorkflowTypeModel = {
   },
 
   toProto(
-    model: WorkflowTypeModel | null | undefined,
+    model: WorkflowType | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -467,93 +149,93 @@ export const WorkflowTypeModel = {
     return {
       name: model.name,
     };
-  },
+  }
 };
 
-export interface TaskQueueModel {
+export interface TaskQueue {
   name?: string;
   kind?: TaskQueueKind;
   normalName?: string;
 }
 
-export const TaskQueueModel = {
+export const TaskQueue = {
   fromProto(
     proto: any,
-  ): TaskQueueModel | undefined {
+  ): TaskQueue | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
       name: proto.name ?? undefined,
-      kind: proto.kind == null ? undefined : (proto.kind as TaskQueueKind),
+      kind: proto.kind == null ? undefined : proto.kind as TaskQueueKind,
       normalName: proto.normalName ?? undefined,
     };
   },
 
   toProto(
-    model: TaskQueueModel | null | undefined,
+    model: TaskQueue | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
       name: model.name,
-      kind: model.kind == null ? undefined : (model.kind as number),
+      kind: model.kind == null ? undefined : model.kind as number,
       normalName: model.normalName,
     };
-  },
+  }
 };
 
-export interface PayloadsModel {
-  payloads?: PayloadModel[];
+export interface Payloads {
+  payloads?: Payload[];
 }
 
-export const PayloadsModel = {
+export const Payloads = {
   fromProto(
     proto: any,
-  ): PayloadsModel | undefined {
+  ): Payloads | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      payloads: proto.payloads?.map((value: any) => PayloadModel.fromProto(value) ?? {}),
+      payloads: proto.payloads?.map((value: any) => Payload.fromProto(value)),
     };
   },
 
   toProto(
-    model: PayloadsModel | null | undefined,
+    model: Payloads | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      payloads: model.payloads?.map((value) => PayloadModel.toProto(value) ?? {}),
+      payloads: model.payloads?.map((value) => Payload.toProto(value) ?? {}),
     };
-  },
+  }
 };
 
-export interface PayloadModel {
+export interface Payload {
   metadata?: Record<string, Uint8Array>;
   data?: Uint8Array;
-  externalPayloads?: ExternalPayloadDetailsModel[];
+  externalPayloads?: ExternalPayloadDetails[];
 }
 
-export const PayloadModel = {
+export const Payload = {
   fromProto(
     proto: any,
-  ): PayloadModel | undefined {
+  ): Payload | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
       metadata: proto.metadata == null ? undefined : (Object.fromEntries(Object.entries(proto.metadata as Record<string, any>).map(([key, value]: [string, any]) => [key, value as Uint8Array])) as Record<string, Uint8Array>),
       data: proto.data ?? undefined,
-      externalPayloads: proto.externalPayloads?.map((value: any) => ExternalPayloadDetailsModel.fromProto(value) ?? {}),
+      externalPayloads: proto.externalPayloads?.map((value: any) => ExternalPayloadDetails.fromProto(value)),
     };
   },
 
   toProto(
-    model: PayloadModel | null | undefined,
+    model: Payload | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -561,19 +243,19 @@ export const PayloadModel = {
     return {
       metadata: model.metadata == null ? undefined : Object.fromEntries(Object.entries(model.metadata as Record<string, any>).map(([key, value]: [string, any]) => [key, value])),
       data: model.data,
-      externalPayloads: model.externalPayloads?.map((value) => ExternalPayloadDetailsModel.toProto(value) ?? {}),
+      externalPayloads: model.externalPayloads?.map((value) => ExternalPayloadDetails.toProto(value) ?? {}),
     };
-  },
+  }
 };
 
-export interface ExternalPayloadDetailsModel {
+export interface ExternalPayloadDetails {
   sizeBytes?: Long;
 }
 
-export const ExternalPayloadDetailsModel = {
+export const ExternalPayloadDetails = {
   fromProto(
     proto: any,
-  ): ExternalPayloadDetailsModel | undefined {
+  ): ExternalPayloadDetails | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -583,7 +265,7 @@ export const ExternalPayloadDetailsModel = {
   },
 
   toProto(
-    model: ExternalPayloadDetailsModel | null | undefined,
+    model: ExternalPayloadDetails | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -591,18 +273,18 @@ export const ExternalPayloadDetailsModel = {
     return {
       sizeBytes: model.sizeBytes,
     };
-  },
+  }
 };
 
-export interface DurationModel {
+export interface Duration {
   seconds?: Long;
   nanos?: number;
 }
 
-export const DurationModel = {
+export const Duration = {
   fromProto(
     proto: any,
-  ): DurationModel | undefined {
+  ): Duration | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -613,7 +295,7 @@ export const DurationModel = {
   },
 
   toProto(
-    model: DurationModel | null | undefined,
+    model: Duration | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -622,405 +304,176 @@ export const DurationModel = {
       seconds: model.seconds,
       nanos: model.nanos,
     };
-  },
+  }
 };
 
-export interface RetryPolicyModel {
-  initialInterval?: DurationModel;
-  backoffCoefficient?: number;
-  maximumInterval?: DurationModel;
-  maximumAttempts?: number;
-  nonRetryableErrorTypes?: string[];
+export interface Memo {
+  fields?: Record<string, Payload>;
 }
 
-export const RetryPolicyModel = {
+export const Memo = {
   fromProto(
     proto: any,
-  ): RetryPolicyModel | undefined {
+  ): Memo | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      initialInterval: DurationModel.fromProto(proto.initialInterval),
-      backoffCoefficient: proto.backoffCoefficient ?? undefined,
-      maximumInterval: DurationModel.fromProto(proto.maximumInterval),
-      maximumAttempts: proto.maximumAttempts ?? undefined,
-      nonRetryableErrorTypes: proto.nonRetryableErrorTypes?.slice(),
+      fields: proto.fields == null ? undefined : (Object.fromEntries(Object.entries(proto.fields as Record<string, any>).map(([key, value]: [string, any]) => [key, Payload.fromProto(value)])) as Record<string, Payload>),
     };
   },
 
   toProto(
-    model: RetryPolicyModel | null | undefined,
+    model: Memo | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      initialInterval: DurationModel.toProto(model.initialInterval),
-      backoffCoefficient: model.backoffCoefficient,
-      maximumInterval: DurationModel.toProto(model.maximumInterval),
-      maximumAttempts: model.maximumAttempts,
-      nonRetryableErrorTypes: model.nonRetryableErrorTypes?.slice(),
+      fields: model.fields == null ? undefined : Object.fromEntries(Object.entries(model.fields as Record<string, any>).map(([key, value]: [string, any]) => [key, Payload.toProto(value) ?? {}])),
     };
-  },
+  }
 };
 
-export interface MemoModel {
-  fields?: Record<string, PayloadModel>;
+export interface SearchAttributes {
+  indexedFields?: Record<string, Payload>;
 }
 
-export const MemoModel = {
+export const SearchAttributes = {
   fromProto(
     proto: any,
-  ): MemoModel | undefined {
+  ): SearchAttributes | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      fields: proto.fields == null ? undefined : (Object.fromEntries(Object.entries(proto.fields as Record<string, any>).map(([key, value]: [string, any]) => [key, PayloadModel.fromProto(value) ?? {}])) as Record<string, PayloadModel>),
+      indexedFields: proto.indexedFields == null ? undefined : (Object.fromEntries(Object.entries(proto.indexedFields as Record<string, any>).map(([key, value]: [string, any]) => [key, Payload.fromProto(value)])) as Record<string, Payload>),
     };
   },
 
   toProto(
-    model: MemoModel | null | undefined,
+    model: SearchAttributes | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      fields: model.fields == null ? undefined : Object.fromEntries(Object.entries(model.fields as Record<string, any>).map(([key, value]: [string, any]) => [key, PayloadModel.toProto(value) ?? {}])),
+      indexedFields: model.indexedFields == null ? undefined : Object.fromEntries(Object.entries(model.indexedFields as Record<string, any>).map(([key, value]: [string, any]) => [key, Payload.toProto(value) ?? {}])),
     };
-  },
+  }
 };
 
-export interface SearchAttributesModel {
-  indexedFields?: Record<string, PayloadModel>;
+export interface UserMetadata {
+  summary?: Payload;
+  details?: Payload;
 }
 
-export const SearchAttributesModel = {
+export const UserMetadata = {
   fromProto(
     proto: any,
-  ): SearchAttributesModel | undefined {
+  ): UserMetadata | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      indexedFields: proto.indexedFields == null ? undefined : (Object.fromEntries(Object.entries(proto.indexedFields as Record<string, any>).map(([key, value]: [string, any]) => [key, PayloadModel.fromProto(value) ?? {}])) as Record<string, PayloadModel>),
+      summary: proto.summary == null ? undefined : Payload.fromProto(proto.summary),
+      details: proto.details == null ? undefined : Payload.fromProto(proto.details),
     };
   },
 
   toProto(
-    model: SearchAttributesModel | null | undefined,
+    model: UserMetadata | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      indexedFields: model.indexedFields == null ? undefined : Object.fromEntries(Object.entries(model.indexedFields as Record<string, any>).map(([key, value]: [string, any]) => [key, PayloadModel.toProto(value) ?? {}])),
+      summary: model.summary == null ? undefined : Payload.toProto(model.summary) ?? {},
+      details: model.details == null ? undefined : Payload.toProto(model.details) ?? {},
     };
-  },
+  }
 };
 
-export interface HeaderModel {
-  fields?: Record<string, PayloadModel>;
-}
-
-export const HeaderModel = {
-  fromProto(
-    proto: any,
-  ): HeaderModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      fields: proto.fields == null ? undefined : (Object.fromEntries(Object.entries(proto.fields as Record<string, any>).map(([key, value]: [string, any]) => [key, PayloadModel.fromProto(value) ?? {}])) as Record<string, PayloadModel>),
-    };
-  },
-
-  toProto(
-    model: HeaderModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      fields: model.fields == null ? undefined : Object.fromEntries(Object.entries(model.fields as Record<string, any>).map(([key, value]: [string, any]) => [key, PayloadModel.toProto(value) ?? {}])),
-    };
-  },
-};
-
-export interface UserMetadataModel {
-  summary?: PayloadModel;
-  details?: PayloadModel;
-}
-
-export const UserMetadataModel = {
-  fromProto(
-    proto: any,
-  ): UserMetadataModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      summary: PayloadModel.fromProto(proto.summary),
-      details: PayloadModel.fromProto(proto.details),
-    };
-  },
-
-  toProto(
-    model: UserMetadataModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      summary: PayloadModel.toProto(model.summary),
-      details: PayloadModel.toProto(model.details),
-    };
-  },
-};
-
-export interface LinkModel {
-  workflowEvent?: WorkflowEventModel;
-  batchJob?: BatchJobModel;
-}
-
-export const LinkModel = {
-  fromProto(
-    proto: any,
-  ): LinkModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      workflowEvent: WorkflowEventModel.fromProto(proto.workflowEvent),
-      batchJob: BatchJobModel.fromProto(proto.batchJob),
-    };
-  },
-
-  toProto(
-    model: LinkModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      workflowEvent: WorkflowEventModel.toProto(model.workflowEvent),
-      batchJob: BatchJobModel.toProto(model.batchJob),
-    };
-  },
-};
-
-export interface WorkflowEventModel {
-  namespace?: string;
-  workflowId?: string;
-  runId?: string;
-  eventRef?: EventReferenceModel;
-  requestIdRef?: RequestIdReferenceModel;
-}
-
-export const WorkflowEventModel = {
-  fromProto(
-    proto: any,
-  ): WorkflowEventModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      namespace: proto.namespace ?? undefined,
-      workflowId: proto.workflowId ?? undefined,
-      runId: proto.runId ?? undefined,
-      eventRef: EventReferenceModel.fromProto(proto.eventRef),
-      requestIdRef: RequestIdReferenceModel.fromProto(proto.requestIdRef),
-    };
-  },
-
-  toProto(
-    model: WorkflowEventModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      namespace: model.namespace,
-      workflowId: model.workflowId,
-      runId: model.runId,
-      eventRef: EventReferenceModel.toProto(model.eventRef),
-      requestIdRef: RequestIdReferenceModel.toProto(model.requestIdRef),
-    };
-  },
-};
-
-export interface EventReferenceModel {
-  eventId?: Long;
-  eventType?: EventType;
-}
-
-export const EventReferenceModel = {
-  fromProto(
-    proto: any,
-  ): EventReferenceModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      eventId: proto.eventId ?? undefined,
-      eventType: proto.eventType == null ? undefined : (proto.eventType as EventType),
-    };
-  },
-
-  toProto(
-    model: EventReferenceModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      eventId: model.eventId,
-      eventType: model.eventType == null ? undefined : (model.eventType as number),
-    };
-  },
-};
-
-export interface RequestIdReferenceModel {
-  requestId?: string;
-  eventType?: EventType;
-}
-
-export const RequestIdReferenceModel = {
-  fromProto(
-    proto: any,
-  ): RequestIdReferenceModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      requestId: proto.requestId ?? undefined,
-      eventType: proto.eventType == null ? undefined : (proto.eventType as EventType),
-    };
-  },
-
-  toProto(
-    model: RequestIdReferenceModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      requestId: model.requestId,
-      eventType: model.eventType == null ? undefined : (model.eventType as number),
-    };
-  },
-};
-
-export interface BatchJobModel {
-  jobId?: string;
-}
-
-export const BatchJobModel = {
-  fromProto(
-    proto: any,
-  ): BatchJobModel | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      jobId: proto.jobId ?? undefined,
-    };
-  },
-
-  toProto(
-    model: BatchJobModel | null | undefined,
-  ): any {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      jobId: model.jobId,
-    };
-  },
-};
-
-export interface VersioningOverrideModel {
-  pinned?: PinnedOverrideModel;
+export interface VersioningOverride {
+  pinned?: PinnedOverride;
   autoUpgrade?: boolean;
   behavior?: VersioningBehavior;
-  deployment?: DeploymentModel;
+  deployment?: Deployment;
   pinnedVersion?: string;
 }
 
-export const VersioningOverrideModel = {
+export const VersioningOverride = {
   fromProto(
     proto: any,
-  ): VersioningOverrideModel | undefined {
+  ): VersioningOverride | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      pinned: PinnedOverrideModel.fromProto(proto.pinned),
+      pinned: proto.pinned == null ? undefined : PinnedOverride.fromProto(proto.pinned),
       autoUpgrade: proto.autoUpgrade ?? undefined,
-      behavior: proto.behavior == null ? undefined : (proto.behavior as VersioningBehavior),
-      deployment: DeploymentModel.fromProto(proto.deployment),
+      behavior: proto.behavior == null ? undefined : proto.behavior as VersioningBehavior,
+      deployment: proto.deployment == null ? undefined : Deployment.fromProto(proto.deployment),
       pinnedVersion: proto.pinnedVersion ?? undefined,
     };
   },
 
   toProto(
-    model: VersioningOverrideModel | null | undefined,
+    model: VersioningOverride | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      pinned: PinnedOverrideModel.toProto(model.pinned),
+      pinned: model.pinned == null ? undefined : PinnedOverride.toProto(model.pinned) ?? {},
       autoUpgrade: model.autoUpgrade,
-      behavior: model.behavior == null ? undefined : (model.behavior as number),
-      deployment: DeploymentModel.toProto(model.deployment),
+      behavior: model.behavior == null ? undefined : model.behavior as number,
+      deployment: model.deployment == null ? undefined : Deployment.toProto(model.deployment) ?? {},
       pinnedVersion: model.pinnedVersion,
     };
-  },
+  }
 };
 
-export interface PinnedOverrideModel {
+export interface PinnedOverride {
   behavior?: PinnedOverrideBehavior;
-  version?: WorkerDeploymentVersionModel;
+  version?: WorkerDeploymentVersion;
 }
 
-export const PinnedOverrideModel = {
+export const PinnedOverride = {
   fromProto(
     proto: any,
-  ): PinnedOverrideModel | undefined {
+  ): PinnedOverride | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      behavior: proto.behavior == null ? undefined : (proto.behavior as PinnedOverrideBehavior),
-      version: WorkerDeploymentVersionModel.fromProto(proto.version),
+      behavior: proto.behavior == null ? undefined : proto.behavior as PinnedOverrideBehavior,
+      version: proto.version == null ? undefined : WorkerDeploymentVersion.fromProto(proto.version),
     };
   },
 
   toProto(
-    model: PinnedOverrideModel | null | undefined,
+    model: PinnedOverride | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      behavior: model.behavior == null ? undefined : (model.behavior as number),
-      version: WorkerDeploymentVersionModel.toProto(model.version),
+      behavior: model.behavior == null ? undefined : model.behavior as number,
+      version: model.version == null ? undefined : WorkerDeploymentVersion.toProto(model.version) ?? {},
     };
-  },
+  }
 };
 
-export interface WorkerDeploymentVersionModel {
+export interface WorkerDeploymentVersion {
   buildId?: string;
   deploymentName?: string;
 }
 
-export const WorkerDeploymentVersionModel = {
+export const WorkerDeploymentVersion = {
   fromProto(
     proto: any,
-  ): WorkerDeploymentVersionModel | undefined {
+  ): WorkerDeploymentVersion | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -1031,7 +484,7 @@ export const WorkerDeploymentVersionModel = {
   },
 
   toProto(
-    model: WorkerDeploymentVersionModel | null | undefined,
+    model: WorkerDeploymentVersion | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -1040,18 +493,18 @@ export const WorkerDeploymentVersionModel = {
       buildId: model.buildId,
       deploymentName: model.deploymentName,
     };
-  },
+  }
 };
 
-export interface DeploymentModel {
+export interface Deployment {
   seriesName?: string;
   buildId?: string;
 }
 
-export const DeploymentModel = {
+export const Deployment = {
   fromProto(
     proto: any,
-  ): DeploymentModel | undefined {
+  ): Deployment | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -1062,7 +515,7 @@ export const DeploymentModel = {
   },
 
   toProto(
-    model: DeploymentModel | null | undefined,
+    model: Deployment | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -1071,19 +524,19 @@ export const DeploymentModel = {
       seriesName: model.seriesName,
       buildId: model.buildId,
     };
-  },
+  }
 };
 
-export interface PriorityModel {
+export interface Priority {
   priorityKey?: number;
   fairnessKey?: string;
   fairnessWeight?: number;
 }
 
-export const PriorityModel = {
+export const Priority = {
   fromProto(
     proto: any,
-  ): PriorityModel | undefined {
+  ): Priority | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -1095,7 +548,7 @@ export const PriorityModel = {
   },
 
   toProto(
-    model: PriorityModel | null | undefined,
+    model: Priority | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -1105,18 +558,18 @@ export const PriorityModel = {
       fairnessKey: model.fairnessKey,
       fairnessWeight: model.fairnessWeight,
     };
-  },
+  }
 };
 
-export interface SignalWithStartWorkflowExecutionResponseModel {
+export interface SignalWithStartWorkflowExecutionResponse {
   runId?: string;
   started?: boolean;
 }
 
-export const SignalWithStartWorkflowExecutionResponseModel = {
+export const SignalWithStartWorkflowExecutionResponse = {
   fromProto(
     proto: any,
-  ): SignalWithStartWorkflowExecutionResponseModel | undefined {
+  ): SignalWithStartWorkflowExecutionResponse | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -1127,7 +580,7 @@ export const SignalWithStartWorkflowExecutionResponseModel = {
   },
 
   toProto(
-    model: SignalWithStartWorkflowExecutionResponseModel | null | undefined,
+    model: SignalWithStartWorkflowExecutionResponse | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
@@ -1136,88 +589,54 @@ export const SignalWithStartWorkflowExecutionResponseModel = {
       runId: model.runId,
       started: model.started,
     };
-  },
+  }
 };
 
-export interface ActivityOptionsModel {
-  taskQueue?: TaskQueueModel;
-  scheduleToCloseTimeout?: DurationModel;
-  scheduleToStartTimeout?: DurationModel;
-  startToCloseTimeout?: DurationModel;
-  heartbeatTimeout?: DurationModel;
-  retryPolicy?: RetryPolicyModel;
-  priority?: PriorityModel;
+export interface ActivityOptions {
+  taskQueue?: TaskQueue;
+  scheduleToCloseTimeout?: Duration;
+  scheduleToStartTimeout?: Duration;
+  startToCloseTimeout?: Duration;
+  heartbeatTimeout?: Duration;
+  retryPolicy: common.RetryPolicy;
+  priority?: Priority;
 }
 
-export const ActivityOptionsModel = {
+export const ActivityOptions = {
   fromProto(
     proto: any,
-  ): ActivityOptionsModel | undefined {
+  ): ActivityOptions | undefined {
     if (proto == null) {
       return undefined;
     }
     return {
-      taskQueue: TaskQueueModel.fromProto(proto.taskQueue),
-      scheduleToCloseTimeout: DurationModel.fromProto(proto.scheduleToCloseTimeout),
-      scheduleToStartTimeout: DurationModel.fromProto(proto.scheduleToStartTimeout),
-      startToCloseTimeout: DurationModel.fromProto(proto.startToCloseTimeout),
-      heartbeatTimeout: DurationModel.fromProto(proto.heartbeatTimeout),
-      retryPolicy: RetryPolicyModel.fromProto(proto.retryPolicy),
-      priority: PriorityModel.fromProto(proto.priority),
+      taskQueue: proto.taskQueue == null ? undefined : TaskQueue.fromProto(proto.taskQueue),
+      scheduleToCloseTimeout: proto.scheduleToCloseTimeout == null ? undefined : Duration.fromProto(proto.scheduleToCloseTimeout),
+      scheduleToStartTimeout: proto.scheduleToStartTimeout == null ? undefined : Duration.fromProto(proto.scheduleToStartTimeout),
+      startToCloseTimeout: proto.startToCloseTimeout == null ? undefined : Duration.fromProto(proto.startToCloseTimeout),
+      heartbeatTimeout: proto.heartbeatTimeout == null ? undefined : Duration.fromProto(proto.heartbeatTimeout),
+      retryPolicy: requiredField(retryPolicyFromProto(requiredField(proto.retryPolicy, "ActivityOptions", "retryPolicy")), "ActivityOptions", "retryPolicy"),
+      priority: proto.priority == null ? undefined : Priority.fromProto(proto.priority),
     };
   },
 
   toProto(
-    model: ActivityOptionsModel | null | undefined,
+    model: ActivityOptions | null | undefined,
   ): any {
     if (model == null) {
       return undefined;
     }
     return {
-      taskQueue: TaskQueueModel.toProto(model.taskQueue),
-      scheduleToCloseTimeout: DurationModel.toProto(model.scheduleToCloseTimeout),
-      scheduleToStartTimeout: DurationModel.toProto(model.scheduleToStartTimeout),
-      startToCloseTimeout: DurationModel.toProto(model.startToCloseTimeout),
-      heartbeatTimeout: DurationModel.toProto(model.heartbeatTimeout),
-      retryPolicy: RetryPolicyModel.toProto(model.retryPolicy),
-      priority: PriorityModel.toProto(model.priority),
+      taskQueue: model.taskQueue == null ? undefined : TaskQueue.toProto(model.taskQueue) ?? {},
+      scheduleToCloseTimeout: model.scheduleToCloseTimeout == null ? undefined : Duration.toProto(model.scheduleToCloseTimeout) ?? {},
+      scheduleToStartTimeout: model.scheduleToStartTimeout == null ? undefined : Duration.toProto(model.scheduleToStartTimeout) ?? {},
+      startToCloseTimeout: model.startToCloseTimeout == null ? undefined : Duration.toProto(model.startToCloseTimeout) ?? {},
+      heartbeatTimeout: model.heartbeatTimeout == null ? undefined : Duration.toProto(model.heartbeatTimeout) ?? {},
+      retryPolicy: retryPolicyToProto(requiredField(model.retryPolicy, "ActivityOptions", "retryPolicy")),
+      priority: model.priority == null ? undefined : Priority.toProto(model.priority) ?? {},
     };
-  },
+  }
 };
-
-
-export interface WorkflowServiceSignalWithStartWorkflowOptions {
-  signal: string | workflow.SignalDefinition<any[]>;
-  workflowId: string;
-  signalArgs?: readonly unknown[];
-  args?: readonly unknown[];
-  taskQueue?: string;
-  workflowExecutionTimeout?: common.Duration;
-  workflowRunTimeout?: common.Duration;
-  workflowTaskTimeout?: common.Duration;
-  workflowIdReusePolicy?: workflow.WorkflowIdReusePolicy;
-  workflowIdConflictPolicy?: workflow.WorkflowIdConflictPolicy;
-  retry?: common.RetryPolicy;
-  cronSchedule?: string;
-  memo?: Record<string, unknown>;
-  typedSearchAttributes?: common.TypedSearchAttributes | common.SearchAttributePair[];
-  staticSummary?: string;
-  staticDetails?: string;
-  startDelay?: common.Duration;
-  requestId?: string;
-  priority?: common.Priority;
-  versioningOverride?: common.VersioningOverride;
-}
-
-export interface WorkflowServiceRoundTripActivityOptionsOptions {
-  taskQueue?: string;
-  scheduleToCloseTimeout?: common.Duration;
-  scheduleToStartTimeout?: common.Duration;
-  startToCloseTimeout?: common.Duration;
-  heartbeatTimeout?: common.Duration;
-  retryPolicy?: common.RetryPolicy;
-  priority?: common.Priority;
-}
 
 
 export const WorkflowService = nexus.service('WorkflowService', {
@@ -1246,121 +665,29 @@ export class WorkflowServiceClient {
   }
 
   public async signalWithStartWorkflowExecution(
-    request: SignalWithStartWorkflowExecutionRequestModel,
+    request: SignalWithStartWorkflowExecutionRequest,
   ): Promise<workflow.NexusOperationHandle<temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionResponse>> {
     return await this.client.startOperation(
       WorkflowService.operations.signalWithStartWorkflowExecution,
-      SignalWithStartWorkflowExecutionRequestModel.toProto(request) ?? {},
+      SignalWithStartWorkflowExecutionRequest.toProto(request) ?? {},
     );
   }
 
   public async retryPolicyOperation(
-    request: RetryPolicyModel,
+    request: common.RetryPolicy,
   ): Promise<workflow.NexusOperationHandle<temporal.api.common.v1.IRetryPolicy>> {
     return await this.client.startOperation(
       WorkflowService.operations.retryPolicyOperation,
-      RetryPolicyModel.toProto(request) ?? {},
+      retryPolicyToProto(request),
     );
   }
 
   public async activityOptionsOperation(
-    request: ActivityOptionsModel,
+    request: ActivityOptions,
   ): Promise<workflow.NexusOperationHandle<temporal.api.activity.v1.IActivityOptions>> {
     return await this.client.startOperation(
       WorkflowService.operations.activityOptionsOperation,
-      ActivityOptionsModel.toProto(request) ?? {},
+      ActivityOptions.toProto(request) ?? {},
     );
-  }
-
-  public async signalWithStartWorkflow(
-    workflowTypeOrFunc: string | workflow.Workflow,
-    options: WorkflowServiceSignalWithStartWorkflowOptions,
-  ): Promise<workflow.ExternalWorkflowHandle> {
-    const {
-      signal,
-      workflowId,
-      signalArgs = [],
-      args = [],
-      taskQueue,
-      workflowExecutionTimeout,
-      workflowRunTimeout,
-      workflowTaskTimeout,
-      workflowIdReusePolicy = workflow.WorkflowIdReusePolicy.ALLOW_DUPLICATE,
-      workflowIdConflictPolicy = workflow.WorkflowIdConflictPolicy.USE_EXISTING,
-      retry,
-      cronSchedule = "",
-      memo,
-      typedSearchAttributes,
-      staticSummary,
-      staticDetails,
-      startDelay,
-      requestId,
-      priority = {},
-      versioningOverride,
-    } = options;
-    const request = buildSignalWithStartWorkflowRequest({
-      workflowTypeOrFunc: workflowTypeOrFunc,
-      signal: signal,
-      workflowId: workflowId,
-      signalArgs: signalArgs,
-      args: args,
-      taskQueue: taskQueue,
-      workflowExecutionTimeout: workflowExecutionTimeout,
-      workflowRunTimeout: workflowRunTimeout,
-      workflowTaskTimeout: workflowTaskTimeout,
-      workflowIdReusePolicy: workflowIdReusePolicy,
-      workflowIdConflictPolicy: workflowIdConflictPolicy,
-      retry: retry,
-      cronSchedule: cronSchedule,
-      memo: memo,
-      typedSearchAttributes: typedSearchAttributes,
-      staticSummary: staticSummary,
-      staticDetails: staticDetails,
-      startDelay: startDelay,
-      requestId: requestId,
-      priority: priority,
-      versioningOverride: versioningOverride,
-    });
-    const handle = await this.signalWithStartWorkflowExecution(request);
-    const responseProto = await handle.result();
-    const response = SignalWithStartWorkflowExecutionResponseModel.fromProto(responseProto) ?? {};
-    return signalWithStartWorkflowResponseToExternalWorkflowHandle({ request, response });
-  }
-
-  public async roundTripRetryPolicy(
-    retryPolicy: common.RetryPolicy | undefined = undefined,
-  ): Promise<common.RetryPolicy | undefined> {
-    const request = sdkRetryPolicyToModel(retryPolicy) ?? {};
-    const handle = await this.retryPolicyOperation(request);
-    const responseProto = await handle.result();
-    const response = RetryPolicyModel.fromProto(responseProto) ?? {};
-    return retryPolicyModelToSdk(response);
-  }
-
-  public async roundTripActivityOptions(
-    options: WorkflowServiceRoundTripActivityOptionsOptions = {},
-  ): Promise<workflow.ActivityOptions> {
-    const {
-      taskQueue,
-      scheduleToCloseTimeout,
-      scheduleToStartTimeout,
-      startToCloseTimeout,
-      heartbeatTimeout,
-      retryPolicy,
-      priority = {},
-    } = options;
-    const request: ActivityOptionsModel = {
-      taskQueue: sdkTaskQueueToModel(taskQueue),
-      scheduleToCloseTimeout: durationToModel(scheduleToCloseTimeout),
-      scheduleToStartTimeout: durationToModel(scheduleToStartTimeout),
-      startToCloseTimeout: durationToModel(startToCloseTimeout),
-      heartbeatTimeout: durationToModel(heartbeatTimeout),
-      retryPolicy: sdkRetryPolicyToModel(retryPolicy),
-      priority: sdkPriorityToModel(priority),
-    };
-    const handle = await this.activityOptionsOperation(request);
-    const responseProto = await handle.result();
-    const response = ActivityOptionsModel.fromProto(responseProto) ?? {};
-    return activityOptionsModelToOptions({ request, response });
   }
 }

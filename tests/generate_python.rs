@@ -99,3 +99,23 @@ fn python_validation_app_type_checks_and_runs() {
         .unwrap();
     assert!(run_status.success());
 }
+
+#[test]
+fn python_request_models_are_write_only() {
+    let root = project_root();
+    let fixture = sample_fixture_dir(&root);
+    let rendered = generate_to_string(
+        nexus_api_gen::language::Language::Python,
+        fixture.join("input.yaml"),
+        root.join("descriptors.bin"),
+    )
+    .unwrap();
+
+    assert!(!rendered.contains("SignalWithStartWorkflowExecutionRequest.from_proto"));
+    assert!(!rendered.contains(
+        "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
+    ));
+    assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest:"));
+    assert!(rendered.contains("input: collections.abc.Sequence[typing.Any] | None = None"));
+    assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
+}

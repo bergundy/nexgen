@@ -3,110 +3,60 @@
 nexusrpc: 1.0.0
 
 support:
-  $pythonFile: python/support.py
-  $typescriptFile: typescript/support.ts
+  $pythonFile: python/model_overrides.py
+  $typescriptFile: typescript/model_overrides.ts
 
 types:
-  RetryPolicy:
+  temporal.api.common.v1.RetryPolicy:
     $python:
-      type: temporalio.common.RetryPolicy | None
-      converter: sdk_retry_policy_to_model
-      outputConverter: retry_policy_model_to_sdk
+      type: temporalio.common.RetryPolicy
     $typescript:
-      type: common.RetryPolicy | undefined
-      converter: sdkRetryPolicyToModel
-      outputConverter: retryPolicyModelToSdk
-    default: null
-  TaskQueue:
-    type: string
-    $python:
-      type: str | None
-      converter: sdk_task_queue_to_model
-      outputConverter: task_queue_model_to_sdk
-    $typescript:
-      type: string | undefined
-      converter: sdkTaskQueueToModel
-      outputConverter: taskQueueModelToSdk
-    default: null
-  Duration:
-    $python:
-      type: timedelta | None
-      converter: timedelta_to_model
-      outputConverter: duration_model_to_timedelta
-    $typescript:
-      type: common.Duration | undefined
-      converter: durationToModel
-      outputConverter: durationModelToDuration
-    default: null
-  Priority:
-    $python:
-      type: temporalio.common.Priority
-      converter: sdk_priority_to_model
-      outputConverter: priority_model_to_sdk
-      default: temporalio.common.Priority.default
-    $typescript:
-      type: common.Priority
-      converter: sdkPriorityToModel
-      outputConverter: priorityModelToSdk
-      default: '{}'
-  WorkflowIdReusePolicy:
-    $python:
-      type: temporalio.common.WorkflowIDReusePolicy
-      default: temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE
-    $typescript:
-      type: workflow.WorkflowIdReusePolicy
-      default: workflow.WorkflowIdReusePolicy.ALLOW_DUPLICATE
-  WorkflowIdConflictPolicy:
-    $python:
-      type: temporalio.common.WorkflowIDConflictPolicy
-      default: temporalio.common.WorkflowIDConflictPolicy.UNSPECIFIED
-    $typescript:
-      type: workflow.WorkflowIdConflictPolicy | undefined
-      default: workflow.WorkflowIdConflictPolicy.USE_EXISTING
-  CronSchedule:
-    type: string
-    default: ""
-  Memo:
-    $python:
-      type: collections.abc.Mapping[str, typing.Any] | None
-    $typescript:
-      type: Record<string, unknown> | undefined
-    default: null
-  SearchAttributes:
-    $python:
-      type: temporalio.common.TypedSearchAttributes | None
-    $typescript:
-      type: common.TypedSearchAttributes | common.SearchAttributePair[] | undefined
-    default: null
-  StaticSummary:
-    $python:
-      type: str | None
-    $typescript:
-      type: string | undefined
-    default: null
-  StaticDetails:
-    $python:
-      type: str | None
-    $typescript:
-      type: string | undefined
-    default: null
-  RequestId:
-    $python:
-      type: str | None
-    $typescript:
-      type: string | undefined
-    default: null
-  VersioningOverride:
-    $python:
-      type: temporalio.common.VersioningOverride | None
-    $typescript:
-      type: common.VersioningOverride | undefined
-    default: null
-  Workflow:
+      type: common.RetryPolicy
+  temporal.api.common.v1.WorkflowType:
     $python:
       type: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]
-    $typescript:
-      type: string | workflow.Workflow
+  temporal.api.taskqueue.v1.TaskQueue:
+    $python:
+      type: str
+  temporal.api.common.v1.Payload:
+    $python:
+      type: typing.Any
+  temporal.api.common.v1.Payloads:
+    $python:
+      type: collections.abc.Sequence[typing.Any]
+  temporal.api.common.v1.Memo:
+    $python:
+      type: collections.abc.Mapping[str, typing.Any]
+  temporal.api.common.v1.SearchAttributes:
+    $python:
+      type: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes
+  temporal.api.common.v1.Priority:
+    $python:
+      type: temporalio.common.Priority
+  temporal.api.workflow.v1.VersioningOverride:
+    $python:
+      type: temporalio.common.VersioningOverride
+  google.protobuf.Duration:
+    $python:
+      type: timedelta
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    required:
+      - workflow_type
+      - workflow_id
+      - task_queue
+      - signal_name
+    omit:
+      - header
+      - links
+  temporal.api.activity.v1.ActivityOptions:
+    required:
+      - retry_policy
+  temporal.api.enums.v1.WorkflowIdReusePolicy:
+    $python:
+      type: temporalio.common.WorkflowIDReusePolicy
+  temporal.api.enums.v1.WorkflowIdConflictPolicy:
+    $python:
+      type: temporalio.common.WorkflowIDConflictPolicy
 
 services:
   WorkflowService:
@@ -114,18 +64,10 @@ services:
     operations:
       SignalWithStartWorkflowExecution:
         input:
-          $dotnetRef: Temporalio.Api.WorkflowService.V1.SignalWithStartWorkflowExecutionRequest
-          $goRef: go.temporal.io/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest
-          $javaRef: io.temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
           $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
-          $rubyRef: Temporalio::Api::WorkflowService::V1::SignalWithStartWorkflowExecutionRequest
           $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
         output:
-          $dotnetRef: Temporalio.Api.WorkflowService.V1.SignalWithStartWorkflowExecutionResponse
-          $goRef: go.temporal.io/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse
-          $javaRef: io.temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
           $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
-          $rubyRef: Temporalio::Api::WorkflowService::V1::SignalWithStartWorkflowExecutionResponse
           $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
       RetryPolicyOperation:
         input:
@@ -141,136 +83,3 @@ services:
         output:
           $pythonRef: temporalio.api.activity.v1.ActivityOptions
           $typescriptRef: "@temporalio/api/activity/v1.ActivityOptions"
-    apis:
-      SignalWithStartWorkflow:
-        operation: SignalWithStartWorkflowExecution
-        input:
-          type: object
-          properties:
-            workflow:
-              $ref: '#/types/workflow'
-              $typescript:
-                name: workflowTypeOrFunc
-              positional: true
-            signal:
-              $python:
-                type: str | collections.abc.Callable[..., typing.Any]
-              $typescript:
-                type: string | workflow.SignalDefinition<any[]>
-                positional: false
-              positional: true
-            id:
-              type: string
-              $typescript:
-                name: workflowId
-            signal_args:
-              $python:
-                type: collections.abc.Sequence[typing.Any]
-                default: '()'
-              $typescript:
-                type: readonly unknown[]
-                default: '[]'
-            workflow_args:
-              $python:
-                type: collections.abc.Sequence[typing.Any]
-                default: '()'
-              $typescript:
-                name: args
-                type: readonly unknown[]
-                default: '[]'
-            task_queue:
-              $ref: '#/types/taskqueue'
-            execution_timeout:
-              $ref: '#/types/duration'
-              $typescript:
-                name: workflowExecutionTimeout
-            run_timeout:
-              $ref: '#/types/duration'
-              $typescript:
-                name: workflowRunTimeout
-            task_timeout:
-              $ref: '#/types/duration'
-              $typescript:
-                name: workflowTaskTimeout
-            id_reuse_policy:
-              $ref: '#/types/workflowidreusepolicy'
-              $typescript:
-                name: workflowIdReusePolicy
-            id_conflict_policy:
-              $ref: '#/types/workflowidconflictpolicy'
-              $typescript:
-                name: workflowIdConflictPolicy
-            retry_policy:
-              $ref: '#/types/retrypolicy'
-              $typescript:
-                name: retry
-            cron_schedule:
-              $ref: '#/types/cronschedule'
-            memo:
-              $ref: '#/types/memo'
-            search_attributes:
-              $ref: '#/types/searchattributes'
-              $typescript:
-                name: typedSearchAttributes
-            static_summary:
-              $ref: '#/types/staticsummary'
-            static_details:
-              $ref: '#/types/staticdetails'
-            start_delay:
-              $ref: '#/types/duration'
-            request_id:
-              $ref: '#/types/requestid'
-            priority:
-              $ref: '#/types/priority'
-            versioning_override:
-              $ref: '#/types/versioningoverride'
-          $python:
-            converter: build_signal_with_start_workflow_request
-          $typescript:
-            converter: buildSignalWithStartWorkflowRequest
-        output:
-          $python:
-            ref: workflow.ExternalWorkflowHandle[typing.Any]
-            converter: signal_with_start_workflow_response_to_external_workflow_handle
-          $typescript:
-            ref: workflow.ExternalWorkflowHandle
-            converter: signalWithStartWorkflowResponseToExternalWorkflowHandle
-      RoundTripRetryPolicy:
-        operation: RetryPolicyOperation
-        input:
-          type: object
-          properties:
-            retry_policy:
-              $ref: '#/types/retrypolicy'
-              positional: true
-        output:
-          $python:
-            ref: temporalio.common.RetryPolicy | None
-          $typescript:
-            ref: common.RetryPolicy | undefined
-      RoundTripActivityOptions:
-        operation: ActivityOptionsOperation
-        input:
-          type: object
-          properties:
-            task_queue:
-              $ref: '#/types/taskqueue'
-            schedule_to_close_timeout:
-              $ref: '#/types/duration'
-            schedule_to_start_timeout:
-              $ref: '#/types/duration'
-            start_to_close_timeout:
-              $ref: '#/types/duration'
-            heartbeat_timeout:
-              $ref: '#/types/duration'
-            retry_policy:
-              $ref: '#/types/retrypolicy'
-            priority:
-              $ref: '#/types/priority'
-        output:
-          $python:
-            ref: workflow.ActivityConfig
-            converter: activity_options_model_to_config
-          $typescript:
-            ref: workflow.ActivityOptions
-            converter: activityOptionsModelToOptions

@@ -96,7 +96,7 @@ fn typescript_validation_app_type_checks() {
 }
 
 #[test]
-fn typescript_optional_interface_properties_omit_redundant_undefined() {
+fn typescript_renders_required_fields_and_custom_message_types() {
     let root = project_root();
     let fixture = sample_fixture_dir(&root);
     let rendered = generate_to_string(
@@ -106,31 +106,16 @@ fn typescript_optional_interface_properties_omit_redundant_undefined() {
     )
     .unwrap();
 
-    assert!(rendered.contains("taskQueue?: string;"));
-    assert!(rendered.contains("retry?: common.RetryPolicy;"));
-    assert!(rendered.contains(
-        "typedSearchAttributes?: common.TypedSearchAttributes | common.SearchAttributePair[];"
-    ));
-    assert!(!rendered.contains("taskQueue?: string | undefined;"));
-    assert!(!rendered.contains("retry?: common.RetryPolicy | undefined;"));
-}
-
-#[test]
-fn typescript_signal_with_start_uses_plain_generated_shape() {
-    let root = project_root();
-    let fixture = sample_fixture_dir(&root);
-    let rendered = generate_to_string(
-        nexus_api_gen::language::Language::TypeScript,
-        fixture.join("input.yaml"),
-        root.join("descriptors.bin"),
-    )
-    .unwrap();
-
-    assert!(rendered.contains("export interface WorkflowServiceSignalWithStartWorkflowOptions {"));
-    assert!(rendered.contains("signal: string | workflow.SignalDefinition<any[]>;"));
-    assert!(rendered.contains("signalArgs?: readonly unknown[];"));
-    assert!(rendered.contains("workflowTypeOrFunc: string | workflow.Workflow,"));
-    assert!(rendered.contains("options: WorkflowServiceSignalWithStartWorkflowOptions,"));
-    assert!(!rendered.contains("workflow.WithWorkflowArgs<"));
-    assert!(!rendered.contains("SignalArgs extends any[] = []"));
+    assert!(rendered.contains("workflowType: WorkflowType;"));
+    assert!(rendered.contains("workflowId: string;"));
+    assert!(rendered.contains("taskQueue: TaskQueue;"));
+    assert!(rendered.contains("signalName: string;"));
+    assert!(rendered.contains("retryPolicy: common.RetryPolicy;"));
+    assert!(rendered.contains("request: common.RetryPolicy,"));
+    assert!(rendered.contains("// Included from support.$typescriptFile"));
+    assert!(rendered.contains("export function retryPolicyFromProto("));
+    assert!(!rendered.contains("SignalWithStartWorkflowExecutionRequest = {\n  fromProto("));
+    assert!(!rendered.contains("export interface RetryPolicy"));
+    assert!(!rendered.contains("signalWithStartWorkflow("));
+    assert!(!rendered.contains("from './model_overrides.ts'"));
 }

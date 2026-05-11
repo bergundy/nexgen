@@ -1,11 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use heck::{ToLowerCamelCase, ToSnakeCase};
 use indexmap::IndexMap;
-use serde::{Deserialize, Deserializer};
-use serde_yaml::Value;
+use prost_types::FieldDescriptorProto;
+use prost_types::field_descriptor_proto::{Label, Type};
+use serde::Deserialize;
 
+use crate::descriptors::{DescriptorIndex, MessageMetadata};
 use crate::error::{Error, Result};
 use crate::language::Language;
 
@@ -14,12 +17,7 @@ pub struct ApiSpec {
     pub version: String,
     pub support: SupportSpec,
     pub services: Vec<ServiceSpec>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SupportSpec {
-    pub python_file: Option<String>,
-    pub typescript_file: Option<String>,
+    pub types: BTreeMap<String, TypeOverrideSpec>,
 }
 
 impl ApiSpec {
@@ -36,6 +34,26 @@ impl ApiSpec {
             serde_yaml::from_str(input).map_err(|source| Error::YamlParse { path, source })?;
         Self::try_from(raw)
     }
+
+    pub fn type_override(&self, type_name: &str) -> Option<&TypeOverrideSpec> {
+        self.types.get(type_name.trim_start_matches('.'))
+    }
+
+    pub fn validate_type_overrides(&self, descriptors: &DescriptorIndex) -> Result<()> {
+        for (type_name, type_override) in &self.types {
+            if let Some(message) = descriptors.message(type_name) {
+                validate_message_type_override(type_name, type_override, message, descriptors)?;
+            } else if descriptors.enumeration(type_name).is_some() {
+                validate_enum_type_override(type_name, type_override)?;
+            } else {
+                return Err(Error::UnknownTypeOverride {
+                    type_name: type_name.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +61,6 @@ pub struct ServiceSpec {
     pub name: String,
     pub endpoint: Option<String>,
     pub operations: Vec<OperationSpec>,
-    pub apis: Vec<ApiMethodSpec>,
 }
 
 impl ServiceSpec {
@@ -52,6 +69,12 @@ impl ServiceSpec {
             .iter()
             .find(|operation| operation.name == name)
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupportSpec {
+    pub python_file: Option<String>,
+    pub typescript_file: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,56 +94,37 @@ impl OperationSpec {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApiMethodSpec {
-    pub name: String,
-    pub operation: String,
-    pub input: ApiMethodInputSpec,
-    pub output: ApiMethodOutputSpec,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TypeOverrideSpec {
+    pub required_fields: BTreeSet<String>,
+    pub omitted_fields: BTreeSet<String>,
+    pub python: Option<LanguageOverrideSpec>,
+    pub typescript: Option<LanguageOverrideSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApiMethodInputSpec {
-    pub schema_type: String,
-    pub properties: Vec<ApiMethodPropertySpec>,
-    pub python_converter: Option<String>,
-    pub typescript_converter: Option<String>,
+impl TypeOverrideSpec {
+    pub fn is_field_required(&self, field_name: &str) -> bool {
+        self.required_fields.contains(field_name)
+    }
+
+    pub fn is_field_omitted(&self, field_name: &str) -> bool {
+        self.omitted_fields.contains(field_name)
+    }
+
+    pub fn language_override(&self, language: Language) -> Option<&LanguageOverrideSpec> {
+        match language {
+            Language::Python => self.python.as_ref(),
+            Language::TypeScript => self.typescript.as_ref(),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApiMethodPropertySpec {
-    pub name: String,
-    pub type_name: Option<String>,
-    pub schema_type: Option<String>,
-    pub python_type: Option<String>,
-    pub python_converter: Option<String>,
-    pub python_output_converter: Option<String>,
-    pub python_default: Option<String>,
-    pub typescript_name: Option<String>,
-    pub typescript_type: Option<String>,
-    pub typescript_converter: Option<String>,
-    pub typescript_output_converter: Option<String>,
-    pub typescript_default: Option<String>,
-    pub typescript_positional: Option<bool>,
-    pub default_value: Option<ApiMethodPropertyDefault>,
-    pub positional: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ApiMethodPropertyDefault {
-    Null,
-    Bool(bool),
-    Integer(i64),
-    Float(String),
-    String(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApiMethodOutputSpec {
-    pub python_ref: Option<String>,
-    pub python_converter: Option<String>,
-    pub typescript_ref: Option<String>,
-    pub typescript_converter: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageOverrideSpec {
+    pub type_name: String,
+    pub from_proto: String,
+    pub to_proto: String,
 }
 
 pub type LanguageRefMap = BTreeMap<Language, String>;
@@ -147,7 +151,7 @@ struct RawApiSpec {
     #[serde(default)]
     support: RawSupportSpec,
     #[serde(default)]
-    types: IndexMap<String, RawApiMethodProperty>,
+    types: IndexMap<String, RawTypeOverride>,
     services: IndexMap<String, RawService>,
 }
 
@@ -163,8 +167,6 @@ struct RawSupportSpec {
 struct RawService {
     endpoint: Option<String>,
     operations: IndexMap<String, RawOperation>,
-    #[serde(default)]
-    apis: IndexMap<String, RawApiMethod>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,152 +191,37 @@ struct RawLanguageRefs {
     typescript_ref: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawApiMethod {
-    operation: String,
-    input: RawApiMethodInput,
-    output: RawApiMethodOutput,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawApiMethodInput {
-    #[serde(rename = "type")]
-    schema_type: String,
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTypeOverride {
     #[serde(default)]
-    properties: IndexMap<String, RawApiMethodProperty>,
+    required: Vec<String>,
+    #[serde(default)]
+    omit: Vec<String>,
     #[serde(rename = "$python", default)]
-    python: RawPythonApiMethodInput,
+    python: RawLanguageOverride,
     #[serde(rename = "$typescript", default)]
-    typescript: RawTypeScriptApiMethodInput,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-struct RawPythonApiMethodInput {
-    converter: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-struct RawTypeScriptApiMethodInput {
-    converter: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawApiMethodProperty {
-    #[serde(rename = "$ref")]
-    reference: Option<String>,
-    #[serde(rename = "type")]
-    schema_type: Option<String>,
-    #[serde(rename = "$python", default)]
-    python: RawPythonApiMethodProperty,
-    #[serde(rename = "$typescript", default)]
-    typescript: RawTypeScriptApiMethodProperty,
-    positional: Option<bool>,
-    #[serde(
-        default,
-        rename = "default",
-        deserialize_with = "deserialize_optional_default_value"
-    )]
-    default_value: Option<Option<Value>>,
+    typescript: RawLanguageOverride,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-struct RawPythonApiMethodProperty {
+struct RawLanguageOverride {
     #[serde(rename = "type")]
     type_name: Option<String>,
-    converter: Option<String>,
-    #[serde(rename = "outputConverter")]
-    output_converter: Option<String>,
-    #[serde(rename = "default")]
-    default_expr: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct RawTypeScriptApiMethodProperty {
-    name: Option<String>,
-    #[serde(rename = "type")]
-    type_name: Option<String>,
-    converter: Option<String>,
-    #[serde(rename = "outputConverter")]
-    output_converter: Option<String>,
-    #[serde(rename = "default")]
-    default_expr: Option<String>,
-    positional: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawApiMethodOutput {
-    #[serde(rename = "$python", default)]
-    python: RawPythonApiMethodOutput,
-    #[serde(rename = "$typescript", default)]
-    typescript: RawTypeScriptApiMethodOutput,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-struct RawPythonApiMethodOutput {
-    #[serde(rename = "ref")]
-    reference: Option<String>,
-    converter: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-struct RawTypeScriptApiMethodOutput {
-    #[serde(rename = "ref")]
-    reference: Option<String>,
-    converter: Option<String>,
+    #[serde(rename = "fromProto")]
+    from_proto: Option<String>,
+    #[serde(rename = "toProto")]
+    to_proto: Option<String>,
 }
 
 impl TryFrom<RawApiSpec> for ApiSpec {
     type Error = Error;
 
     fn try_from(raw: RawApiSpec) -> Result<Self> {
-        let RawApiSpec {
-            version,
-            support,
-            types,
-            services,
-        } = raw;
-        let type_registry = ApiTypeRegistry::new(types);
-        let services = services
+        let services = raw
+            .services
             .into_iter()
             .map(|(service_name, service)| {
-                let apis = service
-                    .apis
-                    .into_iter()
-                    .map(|(api_name, api)| {
-                        let properties = api
-                            .input
-                            .properties
-                            .into_iter()
-                            .map(|(property_name, property)| {
-                                build_api_method_property_spec(
-                                    &service_name,
-                                    &api_name,
-                                    &property_name,
-                                    &property,
-                                    &type_registry,
-                                )
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-
-                        Ok(ApiMethodSpec {
-                            name: api_name,
-                            operation: api.operation,
-                            input: ApiMethodInputSpec {
-                                schema_type: api.input.schema_type,
-                                properties,
-                                python_converter: api.input.python.converter,
-                                typescript_converter: api.input.typescript.converter,
-                            },
-                            output: ApiMethodOutputSpec {
-                                python_ref: api.output.python.reference,
-                                python_converter: api.output.python.converter,
-                                typescript_ref: api.output.typescript.reference,
-                                typescript_converter: api.output.typescript.converter,
-                            },
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-
                 Ok(ServiceSpec {
                     name: service_name,
                     endpoint: service.endpoint,
@@ -347,287 +234,249 @@ impl TryFrom<RawApiSpec> for ApiSpec {
                             output_refs: operation.output.into_language_map(),
                         })
                         .collect(),
-                    apis,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let types = raw
+            .types
+            .into_iter()
+            .map(|(type_name, type_override)| {
+                let normalized_type_name = type_name.trim_start_matches('.').to_string();
+                Ok((
+                    normalized_type_name.clone(),
+                    TypeOverrideSpec {
+                        required_fields: type_override.required.into_iter().collect(),
+                        omitted_fields: type_override.omit.into_iter().collect(),
+                        python: build_language_override(
+                            &normalized_type_name,
+                            Language::Python,
+                            type_override.python.clone(),
+                        )?,
+                        typescript: build_language_override(
+                            &normalized_type_name,
+                            Language::TypeScript,
+                            type_override.typescript.clone(),
+                        )?,
+                    },
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+
         Ok(Self {
-            version,
+            version: raw.version,
             support: SupportSpec {
-                python_file: support.python_file,
-                typescript_file: support.typescript_file,
+                python_file: raw.support.python_file,
+                typescript_file: raw.support.typescript_file,
             },
             services,
+            types,
         })
     }
 }
 
-#[derive(Debug, Default)]
-struct ResolvedApiMethodProperty {
-    type_name: Option<String>,
-    schema_type: Option<String>,
-    python_type: Option<String>,
-    python_converter: Option<String>,
-    python_output_converter: Option<String>,
-    python_default: Option<String>,
-    typescript_name: Option<String>,
-    typescript_type: Option<String>,
-    typescript_converter: Option<String>,
-    typescript_output_converter: Option<String>,
-    typescript_default: Option<String>,
-    typescript_positional: Option<bool>,
-    default_value: Option<ApiMethodPropertyDefault>,
-    positional: bool,
+fn build_language_override(
+    type_name: &str,
+    language: Language,
+    raw: RawLanguageOverride,
+) -> Result<Option<LanguageOverrideSpec>> {
+    build_language_override_inner(
+        raw,
+        || Error::IncompleteTypeLanguageOverride {
+            type_name: type_name.to_string(),
+            language,
+        },
+        type_name,
+        language,
+    )
 }
 
-#[derive(Debug, Default)]
-struct ApiTypeRegistry {
-    entries: IndexMap<String, RawApiMethodProperty>,
-}
-
-impl ApiTypeRegistry {
-    fn new(entries: IndexMap<String, RawApiMethodProperty>) -> Self {
-        Self { entries }
+fn build_language_override_inner<F>(
+    raw: RawLanguageOverride,
+    missing_type_error: F,
+    target_name: &str,
+    language: Language,
+) -> Result<Option<LanguageOverrideSpec>>
+where
+    F: FnOnce() -> Error,
+{
+    let has_values = raw.type_name.is_some() || raw.from_proto.is_some() || raw.to_proto.is_some();
+    if !has_values {
+        return Ok(None);
     }
 
-    fn resolve<'a>(
-        &'a self,
-        service: &str,
-        api: &str,
-        property: &str,
-        reference: &str,
-    ) -> Result<(&'a str, &'a RawApiMethodProperty)> {
-        let referenced_type = parse_api_property_reference(service, api, property, reference)?;
-        if let Some(entry) = self.entries.get_key_value(referenced_type.as_str()) {
-            return Ok((entry.0.as_str(), entry.1));
-        }
+    let Some(type_name) = raw.type_name else {
+        return Err(missing_type_error());
+    };
 
-        let matches = self
-            .entries
-            .iter()
-            .filter(|(name, _)| name.eq_ignore_ascii_case(&referenced_type))
-            .map(|(name, property)| (name.as_str(), property))
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [] => Err(Error::UnknownApiInputPropertyRef {
-                service: service.to_string(),
-                api: api.to_string(),
-                property: property.to_string(),
-                reference: reference.to_string(),
-            }),
-            [(name, property)] => Ok((*name, *property)),
-            _ => Err(Error::AmbiguousApiInputPropertyRef {
-                service: service.to_string(),
-                api: api.to_string(),
-                property: property.to_string(),
-                reference: reference.to_string(),
-                matches: matches
-                    .into_iter()
-                    .map(|(name, _)| name.to_string())
-                    .collect(),
-            }),
-        }
+    Ok(Some(LanguageOverrideSpec {
+        type_name,
+        from_proto: raw.from_proto.unwrap_or_else(|| {
+            default_converter_name(target_name, language, ConverterDirection::FromProto)
+        }),
+        to_proto: raw.to_proto.unwrap_or_else(|| {
+            default_converter_name(target_name, language, ConverterDirection::ToProto)
+        }),
+    }))
+}
+
+#[derive(Copy, Clone)]
+enum ConverterDirection {
+    FromProto,
+    ToProto,
+}
+
+fn default_converter_name(name: &str, language: Language, direction: ConverterDirection) -> String {
+    let name = name
+        .rsplit('.')
+        .next()
+        .expect("converter name source should have a final segment");
+    match language {
+        Language::Python => match direction {
+            ConverterDirection::FromProto => format!("{}_from_proto", name.to_snake_case()),
+            ConverterDirection::ToProto => format!("{}_to_proto", name.to_snake_case()),
+        },
+        Language::TypeScript => match direction {
+            ConverterDirection::FromProto => format!("{}FromProto", name.to_lower_camel_case()),
+            ConverterDirection::ToProto => format!("{}ToProto", name.to_lower_camel_case()),
+        },
+        _ => unreachable!("unsupported language override"),
     }
 }
 
-fn build_api_method_property_spec(
-    service: &str,
-    api: &str,
-    property_name: &str,
-    property: &RawApiMethodProperty,
-    type_registry: &ApiTypeRegistry,
-) -> Result<ApiMethodPropertySpec> {
-    let mut stack = Vec::new();
-    let resolved = resolve_api_method_property(
-        service,
-        api,
-        property_name,
-        property,
-        type_registry,
-        &mut stack,
-    )?;
-    if resolved.schema_type.is_none()
-        && resolved.python_type.is_none()
-        && resolved.typescript_type.is_none()
+fn validate_message_type_override(
+    message_name: &str,
+    type_override: &TypeOverrideSpec,
+    message: &MessageMetadata,
+    descriptors: &DescriptorIndex,
+) -> Result<()> {
+    for field_name in &type_override.required_fields {
+        validate_model_required_field(message_name, field_name, message, descriptors)?;
+    }
+    for field_name in &type_override.omitted_fields {
+        validate_model_override_field(message_name, field_name, message)?;
+    }
+    for field_name in type_override
+        .required_fields
+        .intersection(&type_override.omitted_fields)
     {
-        return Err(Error::MissingApiInputPropertyType {
-            service: service.to_string(),
-            api: api.to_string(),
-            property: property_name.to_string(),
+        return Err(Error::ConflictingTypeOverrideField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
         });
     }
 
-    Ok(ApiMethodPropertySpec {
-        name: property_name.to_string(),
-        type_name: resolved.type_name,
-        schema_type: resolved.schema_type,
-        python_type: resolved.python_type,
-        python_converter: resolved.python_converter,
-        python_output_converter: resolved.python_output_converter,
-        python_default: resolved.python_default,
-        typescript_name: resolved.typescript_name,
-        typescript_type: resolved.typescript_type,
-        typescript_converter: resolved.typescript_converter,
-        typescript_output_converter: resolved.typescript_output_converter,
-        typescript_default: resolved.typescript_default,
-        typescript_positional: resolved.typescript_positional,
-        default_value: resolved.default_value,
-        positional: resolved.positional,
+    Ok(())
+}
+
+fn validate_enum_type_override(
+    enumeration_name: &str,
+    type_override: &TypeOverrideSpec,
+) -> Result<()> {
+    if !type_override.required_fields.is_empty() {
+        return Err(Error::UnsupportedEnumTypeOverrideProperty {
+            enumeration: enumeration_name.to_string(),
+            property: "required",
+        });
+    }
+    if !type_override.omitted_fields.is_empty() {
+        return Err(Error::UnsupportedEnumTypeOverrideProperty {
+            enumeration: enumeration_name.to_string(),
+            property: "omit",
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_model_override_field<'a>(
+    message_name: &str,
+    field_name: &str,
+    message: &'a MessageMetadata,
+) -> Result<&'a FieldDescriptorProto> {
+    message
+        .descriptor
+        .field
+        .iter()
+        .find(|field| field.name.as_deref() == Some(field_name))
+        .ok_or_else(|| Error::UnknownTypeOverrideField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+        })
+}
+
+fn validate_model_required_field(
+    message_name: &str,
+    field_name: &str,
+    message: &MessageMetadata,
+    descriptors: &DescriptorIndex,
+) -> Result<()> {
+    let field = validate_model_override_field(message_name, field_name, message)?;
+    let field_type = field_type(field);
+
+    if field_label(field) == Some(Label::Repeated) {
+        let reason = if field_is_map(field, descriptors) {
+            "map fields cannot be marked required"
+        } else {
+            "repeated fields cannot be marked required"
+        };
+        return Err(Error::UnsupportedRequiredTypeField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+            reason: reason.to_string(),
+        });
+    }
+
+    if field_has_presence(field, field_type) || field_supports_required_without_presence(field_type)
+    {
+        return Ok(());
+    }
+
+    Err(Error::UnsupportedRequiredTypeField {
+        message: message_name.to_string(),
+        field: field_name.to_string(),
+        reason: "field must support presence or be a string/bytes scalar".to_string(),
     })
 }
 
-fn resolve_api_method_property(
-    service: &str,
-    api: &str,
-    property_name: &str,
-    property: &RawApiMethodProperty,
-    type_registry: &ApiTypeRegistry,
-    stack: &mut Vec<String>,
-) -> Result<ResolvedApiMethodProperty> {
-    let mut resolved = if let Some(reference) = property.reference.as_deref() {
-        let (type_name, referenced_property) =
-            type_registry.resolve(service, api, property_name, reference)?;
-        if stack.iter().any(|entry| entry == type_name) {
-            let mut cycle = stack.clone();
-            cycle.push(type_name.to_string());
-            return Err(Error::RecursiveApiInputPropertyRef {
-                service: service.to_string(),
-                api: api.to_string(),
-                property: property_name.to_string(),
-                reference: reference.to_string(),
-                cycle,
-            });
-        }
+fn field_is_map(field: &FieldDescriptorProto, descriptors: &DescriptorIndex) -> bool {
+    if field_label(field) != Some(Label::Repeated) || field_type(field) != Some(Type::Message) {
+        return false;
+    }
 
-        stack.push(type_name.to_string());
-        let mut resolved = resolve_api_method_property(
-            service,
-            api,
-            property_name,
-            referenced_property,
-            type_registry,
-            stack,
-        )?;
-        if resolved.type_name.is_none() {
-            resolved.type_name = Some(type_name.to_string());
-        }
-        stack.pop();
-        resolved
-    } else {
-        ResolvedApiMethodProperty::default()
+    let Some(entry_name) = field.type_name.as_deref() else {
+        return false;
+    };
+    let Some(entry) = descriptors.message(entry_name.trim_start_matches('.')) else {
+        return false;
     };
 
-    if let Some(schema_type) = property.schema_type.as_ref() {
-        resolved.schema_type = Some(schema_type.clone());
-    }
-    if let Some(python_type) = property.python.type_name.as_ref() {
-        resolved.python_type = Some(python_type.clone());
-    }
-    if let Some(python_converter) = property.python.converter.as_ref() {
-        resolved.python_converter = Some(python_converter.clone());
-    }
-    if let Some(python_output_converter) = property.python.output_converter.as_ref() {
-        resolved.python_output_converter = Some(python_output_converter.clone());
-    }
-    if let Some(python_default) = property.python.default_expr.as_ref() {
-        resolved.python_default = Some(python_default.clone());
-    }
-    if let Some(typescript_type) = property.typescript.type_name.as_ref() {
-        resolved.typescript_type = Some(typescript_type.clone());
-    }
-    if let Some(typescript_name) = property.typescript.name.as_ref() {
-        resolved.typescript_name = Some(typescript_name.clone());
-    }
-    if let Some(typescript_converter) = property.typescript.converter.as_ref() {
-        resolved.typescript_converter = Some(typescript_converter.clone());
-    }
-    if let Some(typescript_output_converter) = property.typescript.output_converter.as_ref() {
-        resolved.typescript_output_converter = Some(typescript_output_converter.clone());
-    }
-    if let Some(typescript_default) = property.typescript.default_expr.as_ref() {
-        resolved.typescript_default = Some(typescript_default.clone());
-    }
-    if let Some(typescript_positional) = property.typescript.positional {
-        resolved.typescript_positional = Some(typescript_positional);
-    }
-    if let Some(default_value) = property.default_value.as_ref() {
-        resolved.default_value = Some(match default_value {
-            None => ApiMethodPropertyDefault::Null,
-            Some(value) => parse_api_property_default(service, api, property_name, value.clone())?,
-        });
-    }
-    if let Some(positional) = property.positional {
-        resolved.positional = positional;
-    }
-
-    Ok(resolved)
+    entry
+        .descriptor
+        .options
+        .as_ref()
+        .and_then(|options| options.map_entry)
+        .unwrap_or(false)
 }
 
-fn parse_api_property_reference(
-    service: &str,
-    api: &str,
-    property: &str,
-    reference: &str,
-) -> Result<String> {
-    let Some(pointer) = reference.strip_prefix("#/types/") else {
-        return Err(Error::InvalidApiInputPropertyRef {
-            service: service.to_string(),
-            api: api.to_string(),
-            property: property.to_string(),
-            reference: reference.to_string(),
-        });
-    };
-    if pointer.is_empty() {
-        return Err(Error::InvalidApiInputPropertyRef {
-            service: service.to_string(),
-            api: api.to_string(),
-            property: property.to_string(),
-            reference: reference.to_string(),
-        });
-    }
-
-    Ok(pointer.replace("~1", "/").replace("~0", "~"))
+fn field_has_presence(field: &FieldDescriptorProto, field_type: Option<Type>) -> bool {
+    matches!(field_type, Some(Type::Message))
+        || field.proto3_optional.unwrap_or(false)
+        || field.oneof_index.is_some()
 }
 
-fn parse_api_property_default(
-    service: &str,
-    api: &str,
-    property: &str,
-    value: Value,
-) -> Result<ApiMethodPropertyDefault> {
-    match value {
-        Value::Null => Ok(ApiMethodPropertyDefault::Null),
-        Value::Bool(value) => Ok(ApiMethodPropertyDefault::Bool(value)),
-        Value::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                Ok(ApiMethodPropertyDefault::Integer(value))
-            } else if let Some(value) = number.as_f64() {
-                Ok(ApiMethodPropertyDefault::Float(value.to_string()))
-            } else {
-                Err(Error::UnsupportedApiInputPropertyDefault {
-                    service: service.to_string(),
-                    api: api.to_string(),
-                    property: property.to_string(),
-                })
-            }
-        }
-        Value::String(value) => Ok(ApiMethodPropertyDefault::String(value)),
-        _ => Err(Error::UnsupportedApiInputPropertyDefault {
-            service: service.to_string(),
-            api: api.to_string(),
-            property: property.to_string(),
-        }),
-    }
+fn field_supports_required_without_presence(field_type: Option<Type>) -> bool {
+    matches!(field_type, Some(Type::String | Type::Bytes))
 }
 
-fn deserialize_optional_default_value<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Option<Option<Value>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Some(Option::<Value>::deserialize(deserializer)?))
+fn field_label(field: &FieldDescriptorProto) -> Option<Label> {
+    field.label.and_then(|label| Label::try_from(label).ok())
+}
+
+fn field_type(field: &FieldDescriptorProto) -> Option<Type> {
+    field
+        .r#type
+        .and_then(|field_type| Type::try_from(field_type).ok())
 }
 
 impl RawLanguageRefs {
@@ -661,134 +510,255 @@ impl RawLanguageRefs {
 mod tests {
     use std::path::PathBuf;
 
+    use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
 
-    use super::{ApiMethodPropertyDefault, ApiSpec};
+    use super::ApiSpec;
+
+    fn root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
 
     #[test]
-    fn parses_service_apis() {
+    fn parses_model_overrides() {
         let yaml = r#"
 nexusrpc: 1.0.0
 support:
-  $pythonFile: python/support.py
+  $pythonFile: python/model_overrides.py
+  $typescriptFile: typescript/model_overrides.ts
 types:
-  RetryPolicy:
+  temporal.api.common.v1.RetryPolicy:
     $python:
-      type: temporalio.common.RetryPolicy | None
-      converter: sdk_retry_policy_to_model
-      outputConverter: retry_policy_model_to_sdk
-    default: null
+      type: temporalio.common.RetryPolicy
+    $typescript:
+      type: common.RetryPolicy
+  temporal.api.common.v1.Payloads:
+    $python:
+      type: collections.abc.Sequence[typing.Any]
+  temporal.api.activity.v1.ActivityOptions:
+    required:
+      - retry_policy
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    omit:
+      - header
+  temporal.api.enums.v1.WorkflowIdReusePolicy:
+    $python:
+      type: temporalio.common.WorkflowIDReusePolicy
 services:
   WorkflowService:
     endpoint: __temporal_system
     operations:
-      SignalWithStartWorkflowExecution:
+      RetryPolicyOperation:
         input:
-          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
         output:
-          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
-    apis:
-      SignalWithStartWorkflow:
-        operation: SignalWithStartWorkflowExecution
-        input:
-          type: object
-          properties:
-            workflow:
-              type: string
-              $python:
-                type: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
-              $typescript:
-                name: workflowTypeOrFunc
-              positional: true
-            id:
-              type: string
-            retry_policy:
-              $ref: '#/types/retrypolicy'
-            signal:
-              type: string
-              $typescript:
-                positional: false
-          $python:
-            converter: build_signal_with_start_workflow_request
-        output:
-          $python:
-            ref: workflow.ExternalWorkflowHandle[object]
-            converter: signal_with_start_workflow_response_to_handle
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
 "#;
+
         let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+
         assert_eq!(
             spec.support.python_file.as_deref(),
-            Some("python/support.py")
+            Some("python/model_overrides.py")
         );
-        let service = &spec.services[0];
-        let api = &service.apis[0];
+        assert_eq!(
+            spec.support.typescript_file.as_deref(),
+            Some("typescript/model_overrides.ts")
+        );
+        let retry_policy = spec
+            .type_override("temporal.api.common.v1.RetryPolicy")
+            .unwrap();
+        assert_eq!(
+            retry_policy.python.as_ref().unwrap().type_name,
+            "temporalio.common.RetryPolicy"
+        );
+        assert_eq!(
+            retry_policy.typescript.as_ref().unwrap().from_proto,
+            "retryPolicyFromProto"
+        );
+        assert_eq!(
+            retry_policy.python.as_ref().unwrap().to_proto,
+            "retry_policy_to_proto"
+        );
 
-        assert_eq!(service.name, "WorkflowService");
-        assert_eq!(service.apis.len(), 1);
-        assert_eq!(api.name, "SignalWithStartWorkflow");
-        assert_eq!(api.operation, "SignalWithStartWorkflowExecution");
-        assert_eq!(api.input.schema_type, "object");
-        assert_eq!(api.input.properties.len(), 4);
-        assert_eq!(api.input.properties[0].name, "workflow");
+        let activity_options = spec
+            .type_override("temporal.api.activity.v1.ActivityOptions")
+            .unwrap();
+        assert!(activity_options.is_field_required("retry_policy"));
+        let signal_with_start = spec
+            .type_override(
+                "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest",
+            )
+            .unwrap();
+        assert!(signal_with_start.is_field_omitted("header"));
+        let workflow_id_reuse_policy = spec
+            .type_override("temporal.api.enums.v1.WorkflowIdReusePolicy")
+            .unwrap();
         assert_eq!(
-            api.input.properties[0].python_type.as_deref(),
-            Some("str | collections.abc.Callable[..., collections.abc.Awaitable[object]]")
+            workflow_id_reuse_policy.python.as_ref().unwrap().type_name,
+            "temporalio.common.WorkflowIDReusePolicy"
         );
         assert_eq!(
-            api.input.properties[0].typescript_name.as_deref(),
-            Some("workflowTypeOrFunc")
+            workflow_id_reuse_policy.python.as_ref().unwrap().to_proto,
+            "workflow_id_reuse_policy_to_proto"
         );
-        assert!(api.input.properties[0].positional);
-        assert_eq!(api.input.properties[1].name, "id");
+        let payloads = spec
+            .type_override("temporal.api.common.v1.Payloads")
+            .unwrap();
         assert_eq!(
-            api.input.properties[1].schema_type.as_deref(),
-            Some("string")
-        );
-        assert!(!api.input.properties[1].positional);
-        assert_eq!(api.input.properties[2].name, "retry_policy");
-        assert_eq!(
-            api.input.properties[2].type_name.as_deref(),
-            Some("RetryPolicy")
-        );
-        assert_eq!(api.input.properties[2].schema_type, None);
-        assert_eq!(
-            api.input.properties[2].python_type.as_deref(),
-            Some("temporalio.common.RetryPolicy | None")
+            payloads.python.as_ref().unwrap().type_name,
+            "collections.abc.Sequence[typing.Any]"
         );
         assert_eq!(
-            api.input.properties[2].python_converter.as_deref(),
-            Some("sdk_retry_policy_to_model")
-        );
-        assert_eq!(
-            api.input.properties[2].python_output_converter.as_deref(),
-            Some("retry_policy_model_to_sdk")
-        );
-        assert_eq!(api.input.properties[2].python_default, None);
-        assert_eq!(
-            api.input.properties[2].default_value,
-            Some(ApiMethodPropertyDefault::Null)
-        );
-        assert!(!api.input.properties[2].positional);
-        assert_eq!(api.input.properties[3].name, "signal");
-        assert_eq!(api.input.properties[3].typescript_positional, Some(false));
-        assert_eq!(
-            api.input.python_converter.as_deref(),
-            Some("build_signal_with_start_workflow_request")
-        );
-        assert_eq!(
-            api.output.python_ref.as_deref(),
-            Some("workflow.ExternalWorkflowHandle[object]")
-        );
-        assert_eq!(
-            api.output.python_converter.as_deref(),
-            Some("signal_with_start_workflow_response_to_handle")
+            payloads.python.as_ref().unwrap().to_proto,
+            "payloads_to_proto"
         );
     }
 
     #[test]
-    fn rejects_unknown_type_reference() {
+    fn derives_missing_converter_names() {
         let yaml = r#"
 nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.RetryPolicy:
+    $python:
+      type: temporalio.common.RetryPolicy
+      fromProto: custom_retry_policy_from_proto
+    $typescript:
+      type: common.RetryPolicy
+      toProto: customRetryPolicyToProto
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      RetryPolicyOperation:
+        input:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
+        output:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let retry_policy = spec
+            .type_override("temporal.api.common.v1.RetryPolicy")
+            .unwrap();
+
+        assert_eq!(
+            retry_policy.python.as_ref().unwrap().from_proto,
+            "custom_retry_policy_from_proto"
+        );
+        assert_eq!(
+            retry_policy.python.as_ref().unwrap().to_proto,
+            "retry_policy_to_proto"
+        );
+        assert_eq!(
+            retry_policy.typescript.as_ref().unwrap().from_proto,
+            "retryPolicyFromProto"
+        );
+        assert_eq!(
+            retry_policy.typescript.as_ref().unwrap().to_proto,
+            "customRetryPolicyToProto"
+        );
+    }
+
+    #[test]
+    fn derives_missing_enum_converter_names() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.enums.v1.WorkflowIdReusePolicy:
+    $python:
+      type: temporalio.common.WorkflowIDReusePolicy
+      fromProto: custom_workflow_id_reuse_policy_from_proto
+    $typescript:
+      type: common.WorkflowIdReusePolicy
+      toProto: customWorkflowIdReusePolicyToProto
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let workflow_id_reuse_policy = spec
+            .type_override("temporal.api.enums.v1.WorkflowIdReusePolicy")
+            .unwrap();
+
+        assert_eq!(
+            workflow_id_reuse_policy.python.as_ref().unwrap().from_proto,
+            "custom_workflow_id_reuse_policy_from_proto"
+        );
+        assert_eq!(
+            workflow_id_reuse_policy.python.as_ref().unwrap().to_proto,
+            "workflow_id_reuse_policy_to_proto"
+        );
+        assert_eq!(
+            workflow_id_reuse_policy
+                .typescript
+                .as_ref()
+                .unwrap()
+                .from_proto,
+            "workflowIdReusePolicyFromProto"
+        );
+        assert_eq!(
+            workflow_id_reuse_policy
+                .typescript
+                .as_ref()
+                .unwrap()
+                .to_proto,
+            "customWorkflowIdReusePolicyToProto"
+        );
+    }
+
+    #[test]
+    fn rejects_language_override_without_type() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.RetryPolicy:
+    $python:
+      fromProto: retry_policy_from_proto
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      RetryPolicyOperation:
+        input:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+        output:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+"#;
+
+        let err = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::IncompleteTypeLanguageOverride {
+                type_name,
+                language: crate::language::Language::Python,
+            } if type_name == "temporal.api.common.v1.RetryPolicy"
+        ));
+    }
+
+    #[test]
+    fn rejects_enum_language_override_without_type() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.enums.v1.WorkflowIdReusePolicy:
+    $python:
+      fromProto: workflow_id_reuse_policy_from_proto
 services:
   WorkflowService:
     endpoint: __temporal_system
@@ -798,30 +768,393 @@ services:
           $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
         output:
           $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
-    apis:
-      SignalWithStartWorkflow:
-        operation: SignalWithStartWorkflowExecution
-        input:
-          type: object
-          properties:
-            retry_policy:
-              $ref: '#/types/RetryPolicy'
-          $python:
-            converter: build_signal_with_start_workflow_request
-        output:
-          $python:
-            ref: workflow.ExternalWorkflowHandle[object]
-            converter: signal_with_start_workflow_response_to_handle
 "#;
 
-        let error = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+        let err = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+
         assert!(matches!(
-            error,
-            Error::UnknownApiInputPropertyRef {
+            err,
+            Error::IncompleteTypeLanguageOverride {
+                type_name,
+                language: crate::language::Language::Python,
+            } if type_name == "temporal.api.enums.v1.WorkflowIdReusePolicy"
+        ));
+    }
+
+    #[test]
+    fn rejects_model_override_unknown_keys() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.Payloads:
+    fields:
+      input:
+        $python:
+          toProto: payloads_to_proto
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let err = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap_err();
+
+        assert!(matches!(err, Error::YamlParse { .. }));
+    }
+
+    #[test]
+    fn validates_required_model_fields() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.activity.v1.ActivityOptions:
+    required:
+      - retry_policy
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      ActivityOptionsOperation:
+        input:
+          $pythonRef: temporalio.api.activity.v1.ActivityOptions
+        output:
+          $pythonRef: temporalio.api.activity.v1.ActivityOptions
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn validates_required_string_model_fields() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    required:
+      - workflow_id
+      - signal_name
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn validates_python_payloads_override() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.Payloads:
+    $python:
+      type: collections.abc.Sequence[typing.Any]
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn validates_enum_overrides() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.enums.v1.WorkflowIdReusePolicy:
+    $python:
+      type: temporalio.common.WorkflowIDReusePolicy
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn rejects_enum_type_override_field_policies() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.enums.v1.WorkflowIdReusePolicy:
+    required:
+      - ignored
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnsupportedEnumTypeOverrideProperty {
+                enumeration,
                 property,
-                reference,
-                ..
-            } if property == "retry_policy" && reference == "#/types/RetryPolicy"
+            } if enumeration == "temporal.api.enums.v1.WorkflowIdReusePolicy"
+                && property == "required"
+        ));
+    }
+
+    #[test]
+    fn validates_omitted_model_fields() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    omit:
+      - header
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+
+        spec.validate_type_overrides(&descriptors).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_type_override() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.DoesNotExist:
+    $python:
+      type: temporalio.common.RetryPolicy
+      fromProto: retry_policy_from_proto
+      toProto: retry_policy_to_proto
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      RetryPolicyOperation:
+        input:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+        output:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnknownTypeOverride { type_name }
+                if type_name == "temporal.api.common.v1.DoesNotExist"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_enum_type_override() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.enums.v1.DoesNotExist:
+    $python:
+      type: temporalio.common.WorkflowIDReusePolicy
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnknownTypeOverride { type_name }
+                if type_name == "temporal.api.enums.v1.DoesNotExist"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_type_override_field() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.activity.v1.ActivityOptions:
+    required:
+      - does_not_exist
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      ActivityOptionsOperation:
+        input:
+          $pythonRef: temporalio.api.activity.v1.ActivityOptions
+        output:
+          $pythonRef: temporalio.api.activity.v1.ActivityOptions
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnknownTypeOverrideField { message, field }
+                if message == "temporal.api.activity.v1.ActivityOptions"
+                    && field == "does_not_exist"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_omitted_type_override_field() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    omit:
+      - does_not_exist
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnknownTypeOverrideField { message, field }
+                if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                    && field == "does_not_exist"
+        ));
+    }
+
+    #[test]
+    fn rejects_conflicting_type_override_field_policies() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
+    required:
+      - signal_name
+    omit:
+      - signal_name
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      SignalWithStartWorkflowExecution:
+        input:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        output:
+          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::ConflictingTypeOverrideField { message, field }
+                if message == "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                    && field == "signal_name"
+        ));
+    }
+
+    #[test]
+    fn rejects_required_field_without_presence() {
+        let yaml = r#"
+nexusrpc: 1.0.0
+types:
+  temporal.api.common.v1.RetryPolicy:
+    required:
+      - maximum_attempts
+services:
+  WorkflowService:
+    endpoint: __temporal_system
+    operations:
+      RetryPolicyOperation:
+        input:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+        output:
+          $pythonRef: temporalio.api.common.v1.RetryPolicy
+"#;
+
+        let spec = ApiSpec::parse(yaml, PathBuf::from("inline.yaml")).unwrap();
+        let descriptors = DescriptorIndex::load(&root().join("descriptors.bin")).unwrap();
+        let err = spec.validate_type_overrides(&descriptors).unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::UnsupportedRequiredTypeField {
+                message,
+                field,
+                reason,
+            } if message == "temporal.api.common.v1.RetryPolicy"
+                && field == "maximum_attempts"
+                && reason == "field must support presence or be a string/bytes scalar"
         ));
     }
 }

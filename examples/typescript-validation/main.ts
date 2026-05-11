@@ -1,71 +1,52 @@
 import * as common from '@temporalio/common';
-import * as workflow from '@temporalio/workflow';
 
 import {
-  ActivityOptionsModel,
-  DurationModel,
-  PriorityModel,
-  RetryPolicyModel,
-  SignalWithStartWorkflowExecutionRequestModel,
+  ActivityOptions,
+  SignalWithStartWorkflowExecutionRequest,
   TaskQueueKind,
-  TaskQueueModel,
+  TaskQueue,
   WorkflowService,
   WorkflowServiceClient,
-  type WorkflowServiceRoundTripActivityOptionsOptions,
-  type WorkflowServiceSignalWithStartWorkflowOptions,
+  retryPolicyFromProto,
 } from './output.ts';
 
-const retryPolicy = RetryPolicyModel.fromProto(
+const retryPolicy = retryPolicyFromProto(
   common.compileRetryPolicy({ maximumAttempts: 3 }),
 );
 
-const duration = DurationModel.fromProto(common.msToTs('5s'));
-
-const taskQueue: TaskQueueModel = {
+const taskQueue: TaskQueue = {
   name: 'demo-task-queue',
   kind: TaskQueueKind.TASK_QUEUE_KIND_NORMAL,
 };
 
-const activityOptions: ActivityOptionsModel = {
+const activityOptions: ActivityOptions = {
   taskQueue,
-  scheduleToCloseTimeout: duration,
   retryPolicy,
-  priority: PriorityModel.fromProto(common.compilePriority({})) ?? {},
 };
 
-const request: SignalWithStartWorkflowExecutionRequestModel = {
+const request: SignalWithStartWorkflowExecutionRequest = {
+  workflowType: { name: 'ExampleWorkflow' },
   workflowId: 'workflow-id',
-  signalName: 'signal-name',
   taskQueue,
+  signalName: 'wake-up',
 };
 
-const signalOptions: WorkflowServiceSignalWithStartWorkflowOptions = {
-  signal: 'signal-name',
-  workflowId: 'workflow-id',
-  priority: {},
-};
-
-const roundTripActivityOptions: WorkflowServiceRoundTripActivityOptionsOptions = {
-  taskQueue: 'demo-task-queue',
-  retryPolicy: { maximumAttempts: 1 },
-};
-
+const activityProto = ActivityOptions.toProto(activityOptions);
+const requestProto = SignalWithStartWorkflowExecutionRequest.toProto(request);
+const roundTrippedActivity = ActivityOptions.fromProto(activityProto);
 const serviceName: string = WorkflowService.name;
-const activityRetryPolicy = activityOptions.retryPolicy;
-const signalWorkflowId = request.workflowId;
+const retryLimit = retryPolicy.maximumAttempts;
+const nestedRetryLimit = roundTrippedActivity?.retryPolicy.maximumAttempts;
 const client = new WorkflowServiceClient();
-const lowLevelResponse = RetryPolicyModel.fromProto(common.compileRetryPolicy({ maximumAttempts: 1 })) ?? {};
-const lowLevelHandle = client.retryPolicyOperation(lowLevelResponse);
-const roundTripResult: Promise<common.RetryPolicy | undefined> =
-  client.roundTripRetryPolicy(undefined);
-const signalWithStartResult: Promise<workflow.ExternalWorkflowHandle> =
-  client.signalWithStartWorkflow('exampleWorkflow', signalOptions);
+const retryHandle = client.retryPolicyOperation(retryPolicy);
+const signalHandle = client.signalWithStartWorkflowExecution(request);
 
 void serviceName;
-void signalOptions;
-void roundTripActivityOptions;
-void signalWorkflowId;
-void activityRetryPolicy;
-void lowLevelHandle;
-void roundTripResult;
-void signalWithStartResult;
+void retryLimit;
+void nestedRetryLimit;
+void requestProto;
+void retryHandle;
+void signalHandle;
+
+// @ts-expect-error request models are write-only
+SignalWithStartWorkflowExecutionRequest.fromProto({});

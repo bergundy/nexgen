@@ -40,16 +40,6 @@ pub enum Error {
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
 
-    #[error(
-        "python generation with `apis` entries requires `support.$pythonFile` in the input yaml"
-    )]
-    MissingPythonSupport,
-
-    #[error(
-        "typescript generation with renderable `apis` entries requires `support.$typescriptFile` in the input yaml"
-    )]
-    MissingTypeScriptSupport,
-
     #[error("service `{service}` is missing an endpoint")]
     MissingServiceEndpoint { service: String },
 
@@ -89,97 +79,33 @@ pub enum Error {
         matches: Vec<String>,
     },
 
-    #[error("service `{service}` api `{api}` references unknown operation `{operation}`")]
-    UnknownApiOperation {
-        service: String,
-        api: String,
-        operation: String,
-    },
-
     #[error(
-        "service `{service}` api `{api}` input type `{input_type}` is not supported; expected `object`"
+        "type override `{type_name}` is missing required `{language}` `type` field; `fromProto` and `toProto` default when omitted"
     )]
-    UnsupportedApiInputType {
-        service: String,
-        api: String,
-        input_type: String,
+    IncompleteTypeLanguageOverride {
+        type_name: String,
+        language: Language,
     },
 
-    #[error("service `{service}` api `{api}` input is missing `$python.converter`")]
-    MissingApiInputPythonConverter { service: String, api: String },
+    #[error("type override references unknown proto type `{type_name}`")]
+    UnknownTypeOverride { type_name: String },
 
-    #[error(
-        "service `{service}` api `{api}` input property `{property}` has invalid `$ref` `{reference}`; expected `#/types/<name>`"
-    )]
-    InvalidApiInputPropertyRef {
-        service: String,
-        api: String,
-        property: String,
-        reference: String,
+    #[error("type override for `{message}` references unknown field `{field}`")]
+    UnknownTypeOverrideField { message: String, field: String },
+
+    #[error("type override for `{message}.{field}` cannot be both required and omitted")]
+    ConflictingTypeOverrideField { message: String, field: String },
+
+    #[error("type override for `{message}.{field}` cannot be marked required: {reason}")]
+    UnsupportedRequiredTypeField {
+        message: String,
+        field: String,
+        reason: String,
     },
 
-    #[error(
-        "service `{service}` api `{api}` input property `{property}` references unknown type `{reference}`"
-    )]
-    UnknownApiInputPropertyRef {
-        service: String,
-        api: String,
-        property: String,
-        reference: String,
+    #[error("type override for enum `{enumeration}` cannot use `{property}`")]
+    UnsupportedEnumTypeOverrideProperty {
+        enumeration: String,
+        property: &'static str,
     },
-
-    #[error(
-        "service `{service}` api `{api}` input property `{property}` references ambiguous type `{reference}`; matched {matches:?}"
-    )]
-    AmbiguousApiInputPropertyRef {
-        service: String,
-        api: String,
-        property: String,
-        reference: String,
-        matches: Vec<String>,
-    },
-
-    #[error(
-        "service `{service}` api `{api}` input property `{property}` references type `{reference}` recursively via {cycle:?}"
-    )]
-    RecursiveApiInputPropertyRef {
-        service: String,
-        api: String,
-        property: String,
-        reference: String,
-        cycle: Vec<String>,
-    },
-
-    #[error(
-        "service `{service}` api `{api}` input property `{property}` is missing `type`, `$python.type`, and `$typescript.type`"
-    )]
-    MissingApiInputPropertyType {
-        service: String,
-        api: String,
-        property: String,
-    },
-
-    #[error(
-        "service `{service}` api `{api}` input property `{property}` has an unsupported `default`; expected null, bool, number, or string"
-    )]
-    UnsupportedApiInputPropertyDefault {
-        service: String,
-        api: String,
-        property: String,
-    },
-
-    #[error("service `{service}` api `{api}` output is missing `$python.ref`")]
-    MissingApiOutputPythonRef { service: String, api: String },
-
-    #[error("service `{service}` api `{api}` output is missing `$python.converter`")]
-    MissingApiOutputPythonConverter { service: String, api: String },
-
-    #[error("service `{service}` api `{api}` output is missing `$typescript.ref`")]
-    MissingApiOutputTypeScriptRef { service: String, api: String },
-
-    #[error("service `{service}` api `{api}` input is missing `$typescript.converter`")]
-    MissingApiInputTypeScriptConverter { service: String, api: String },
-
-    #[error("service `{service}` api `{api}` output is missing `$typescript.converter`")]
-    MissingApiOutputTypeScriptConverter { service: String, api: String },
 }

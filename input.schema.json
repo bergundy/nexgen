@@ -13,10 +13,10 @@
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
     },
     "support": {
-      "$ref": "#/$defs/support"
+      "$ref": "#/$defs/supportFiles"
     },
     "types": {
-      "$ref": "#/$defs/apiPropertyTypes"
+      "$ref": "#/$defs/typeOverrides"
     },
     "services": {
       "type": "object",
@@ -28,22 +28,6 @@
     }
   },
   "$defs": {
-    "support": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "$pythonFile": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Path to Python support code appended to the generated module. Relative paths are resolved from the input YAML file."
-        },
-        "$typescriptFile": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Path to TypeScript support code appended to the generated module. Relative paths are resolved from the input YAML file."
-        }
-      }
-    },
     "service": {
       "type": "object",
       "additionalProperties": false,
@@ -61,25 +45,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/operation"
           }
-        },
-        "apis": {
-          "$ref": "#/$defs/serviceApis"
         }
-      }
-    },
-    "serviceApis": {
-      "type": "object",
-      "description": "Optional map of ergonomic client APIs layered on top of operations.",
-      "minProperties": 1,
-      "additionalProperties": {
-        "$ref": "#/$defs/apiMethod"
-      }
-    },
-    "apiPropertyTypes": {
-      "type": "object",
-      "description": "Optional map of reusable API input property definitions addressable via `#/types/<name>`.",
-      "additionalProperties": {
-        "$ref": "#/$defs/apiMethodProperty"
       }
     },
     "operation": {
@@ -95,222 +61,82 @@
         }
       }
     },
-    "apiMethod": {
+    "supportFiles": {
       "type": "object",
+      "description": "Optional language-specific support snippets appended into generated output.",
       "additionalProperties": false,
-      "required": ["operation", "input", "output"],
       "properties": {
-        "operation": {
+        "$pythonFile": {
           "type": "string",
           "minLength": 1
         },
-        "input": {
-          "$ref": "#/$defs/apiMethodInput"
-        },
-        "output": {
-          "$ref": "#/$defs/apiMethodOutput"
+        "$typescriptFile": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
-    "apiMethodInput": {
+    "typeOverrides": {
+      "type": "object",
+      "description": "Optional map of canonical proto message and enum names to generated-type overrides.",
+      "additionalProperties": {
+        "$ref": "#/$defs/typeOverride"
+      }
+    },
+    "typeOverride": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type"],
       "properties": {
-        "type": {
-          "const": "object"
+        "required": {
+          "$ref": "#/$defs/modelRequiredFields"
         },
-        "properties": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/apiMethodProperty"
-          }
+        "omit": {
+          "$ref": "#/$defs/modelOmittedFields"
         },
         "$python": {
-          "$ref": "#/$defs/apiMethodInputPython"
+          "$ref": "#/$defs/modelLanguageOverride"
         },
         "$typescript": {
-          "$ref": "#/$defs/apiMethodInputTypeScript"
+          "$ref": "#/$defs/modelLanguageOverride"
         }
       }
     },
-    "apiMethodInputPython": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "converter": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional explicit Python request converter. If omitted, generation may derive request construction from the referenced property types."
-        }
-      }
+    "modelRequiredFields": {
+      "type": "array",
+      "description": "Optional list of proto field names that should be generated as required. Presence-bearing fields validate with protobuf presence checks; string and bytes fields validate as non-empty values.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
     },
-    "apiMethodInputTypeScript": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "converter": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional explicit TypeScript request converter. If omitted, generation may derive request construction from the referenced property types."
-        }
-      }
+    "modelOmittedFields": {
+      "type": "array",
+      "description": "Optional list of proto field names to remove from generated models and operation APIs.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
     },
-    "apiMethodProperty": {
-      "type": "object",
-      "additionalProperties": false,
-      "anyOf": [
-        {
-          "required": ["$ref"]
-        },
-        {
-          "required": ["type"]
-        },
-        {
-          "required": ["$python"],
-          "properties": {
-            "$python": {
-              "required": ["type"]
-            }
-          }
-        },
-        {
-          "required": ["$typescript"],
-          "properties": {
-            "$typescript": {
-              "required": ["type"]
-            }
-          }
-        }
-      ],
-      "properties": {
-        "$ref": {
-          "type": "string",
-          "pattern": "^#/types/.+"
-        },
-        "type": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$python": {
-          "$ref": "#/$defs/apiMethodPropertyPython"
-        },
-        "$typescript": {
-          "$ref": "#/$defs/apiMethodPropertyTypeScript"
-        },
-        "positional": {
-          "type": "boolean"
-        },
-        "default": {
-          "type": [
-            "string",
-            "number",
-            "boolean",
-            "null"
-          ]
-        }
-      }
-    },
-    "apiMethodPropertyPython": {
+    "modelLanguageOverride": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "type": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Required language-native replacement type."
         },
-        "converter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "outputConverter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "default": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "apiMethodPropertyTypeScript": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "type": {
-          "type": "string",
-          "minLength": 1
-        },
-        "converter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "outputConverter": {
-          "type": "string",
-          "minLength": 1
-        },
-        "default": {
-          "type": "string",
-          "minLength": 1
-        },
-        "positional": {
-          "type": "boolean"
-        }
-      }
-    },
-    "apiMethodOutput": {
-      "type": "object",
-      "additionalProperties": false,
-      "anyOf": [
-        {
-          "required": ["$python"]
-        },
-        {
-          "required": ["$typescript"]
-        }
-      ],
-      "properties": {
-        "$python": {
-          "$ref": "#/$defs/apiMethodOutputPython"
-        },
-        "$typescript": {
-          "$ref": "#/$defs/apiMethodOutputTypeScript"
-        }
-      }
-    },
-    "apiMethodOutputPython": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["ref"],
-      "properties": {
-        "ref": {
-          "type": "string",
-          "minLength": 1
-        },
-        "converter": {
+        "fromProto": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional explicit Python response converter. If omitted, generation may derive response conversion from the referenced property types."
-        }
-      }
-    },
-    "apiMethodOutputTypeScript": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["ref"],
-      "properties": {
-        "ref": {
-          "type": "string",
-          "minLength": 1
+          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
         },
-        "converter": {
+        "toProto": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional explicit TypeScript response converter. If omitted, generation may derive response conversion from the referenced property types."
+          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
         }
       }
     },
