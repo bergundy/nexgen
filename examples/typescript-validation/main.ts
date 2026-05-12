@@ -26,10 +26,10 @@ const activityOptions: ActivityOptions = {
 };
 
 const request: SignalWithStartWorkflowExecutionRequest = {
-  workflowType: { name: 'ExampleWorkflow' },
+  workflow: { name: 'ExampleWorkflow' },
   workflowId: 'workflow-id',
   taskQueue,
-  signalName: 'wake-up',
+  signal: 'wake-up',
 };
 
 const activityProto = ActivityOptions.toProto(activityOptions);

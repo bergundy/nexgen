@@ -1,4 +1,8 @@
+# pyright: reportAny=false, reportExplicitAny=false
+
+import collections.abc
 from datetime import timedelta
+import typing
 
 import google.protobuf.duration_pb2
 import temporalio.api.common.v1.message_pb2 as common_pb2
@@ -12,15 +16,15 @@ import temporalio.workflow
 
 
 def retry_policy_from_proto(
-    proto: temporalio.api.common.v1.RetryPolicy,
+    proto: common_pb2.RetryPolicy,
 ) -> temporalio.common.RetryPolicy:
     return temporalio.common.RetryPolicy.from_proto(proto)
 
 
 def retry_policy_to_proto(
     retry_policy: temporalio.common.RetryPolicy,
-) -> temporalio.api.common.v1.RetryPolicy:
-    proto = temporalio.api.common.v1.RetryPolicy()
+) -> common_pb2.RetryPolicy:
+    proto = common_pb2.RetryPolicy()
     retry_policy.apply_to_proto(proto)
     return proto
 

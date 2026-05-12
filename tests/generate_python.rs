@@ -9,12 +9,12 @@ fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn sample_fixture_dir(root: &std::path::Path) -> PathBuf {
-    root.join("tests/fixtures/sample")
+fn sample_input_path(root: &std::path::Path) -> PathBuf {
+    root.join("examples/input.yaml")
 }
 
-fn sample_python_output_path(fixture: &std::path::Path) -> PathBuf {
-    fixture.join("python/output.py")
+fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
+    root.join("examples/python-validation/output.py")
 }
 
 fn uv_cache_dir() -> &'static str {
@@ -24,14 +24,13 @@ fn uv_cache_dir() -> &'static str {
 #[test]
 fn sample_generation_matches_checked_in_output() {
     let root = project_root();
-    let fixture = sample_fixture_dir(&root);
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::Python,
-        fixture.join("input.yaml"),
+        sample_input_path(&root),
         root.join("descriptors.bin"),
     )
     .unwrap();
-    let expected = fs::read_to_string(sample_python_output_path(&fixture)).unwrap();
+    let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
 
     assert_eq!(rendered, expected);
 }
@@ -39,7 +38,6 @@ fn sample_generation_matches_checked_in_output() {
 #[test]
 fn cli_generates_python_file() {
     let root = project_root();
-    let fixture = sample_fixture_dir(&root);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -52,7 +50,7 @@ fn cli_generates_python_file() {
             "--lang",
             "python",
             "--input",
-            fixture.join("input.yaml").to_str().unwrap(),
+            sample_input_path(&root).to_str().unwrap(),
             "--descriptors",
             root.join("descriptors.bin").to_str().unwrap(),
             "--output",
@@ -64,7 +62,7 @@ fn cli_generates_python_file() {
     assert!(status.success());
 
     let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(sample_python_output_path(&fixture)).unwrap();
+    let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
     assert_eq!(rendered, expected);
 
     fs::remove_file(output_path).unwrap();
@@ -103,10 +101,9 @@ fn python_validation_app_type_checks_and_runs() {
 #[test]
 fn python_request_models_are_write_only() {
     let root = project_root();
-    let fixture = sample_fixture_dir(&root);
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::Python,
-        fixture.join("input.yaml"),
+        sample_input_path(&root),
         root.join("descriptors.bin"),
     )
     .unwrap();
@@ -116,7 +113,7 @@ fn python_request_models_are_write_only() {
         "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
     ));
     assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]:"));
-    assert!(rendered.contains("input: tuple[*WorkflowArgs] | None = None"));
+    assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None"));
     assert!(rendered.contains(
         "class SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs](typing.TypedDict, total=False):"
     ));
@@ -133,18 +130,25 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
     assert!(rendered.contains("async def signal_with_start_workflow_execution_args("));
     assert!(rendered.contains("    @typing.overload"));
-    assert!(rendered.contains("workflow_type: str,"));
+    assert!(rendered.contains("workflow: str,"));
     assert!(rendered.contains("input: tuple[typing.Any, ...] | None = ...,"));
     assert!(rendered.contains(
-        "workflow_type: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
+        "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
     ));
     assert!(rendered.contains(
         "async def signal_with_start_workflow_execution_args[FirstWorkflowArg, *RemainingWorkflowArgs]("
     ));
     assert!(rendered.contains("input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],"));
+    assert!(rendered.contains(
+        "signal: collections.abc.Callable[[typing.Any, SignalArg1], None | collections.abc.Awaitable[None]],"
+    ));
+    assert!(rendered.contains("signal_input: tuple[SignalArg1],"));
     assert!(rendered.contains("        *,"));
     assert!(rendered.contains(
-        "workflow_type: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
+        "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
+    ));
+    assert!(rendered.contains(
+        "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
     ));
     assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None,"));
     assert!(
@@ -152,7 +156,7 @@ fn python_request_models_are_write_only() {
             "request = SignalWithStartWorkflowExecutionRequest[*tuple[typing.Any, ...]]("
         )
     );
-    assert!(rendered.contains("workflow_type=workflow_type,"));
+    assert!(rendered.contains("workflow=workflow,"));
     assert!(rendered.contains("input=input,"));
     assert!(rendered.contains("return await self.signal_with_start_workflow_execution(request)"));
     assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));

@@ -1,10 +1,10 @@
-# yaml-language-server: $schema=../../../input.schema.json
+# yaml-language-server: $schema=../input.schema.json
 
 nexusrpc: 1.0.0
 
 support:
-  $pythonFile: python/model_overrides.py
-  $typescriptFile: typescript/model_overrides.ts
+  $python: python-validation/model_overrides.py
+  $typescript: typescript-validation/model_overrides.ts
 
 types:
   temporal.api.common.v1.RetryPolicy:
@@ -48,18 +48,24 @@ types:
     omit:
       - header
       - links
+    fields:
+      workflow_type:
+        name: workflow
+      signal_name:
+        name: signal
     $python:
-      typeParameters:
-        - name: WorkflowArgs
-          kind: TypeVarTuple
       fields:
         namespace:
           source: workflow.info().namespace
         workflow_type:
-          workflow_function:
-            args: WorkflowArgs
-            result: typing.Any
+          function:
+            primary: true
+            result: collections.abc.Awaitable[typing.Any]
             argsField: input
+        signal_name:
+          function:
+            result: None | collections.abc.Awaitable[None]
+            argsField: signal_input
     $typescript:
       fields:
         namespace:
@@ -80,28 +86,30 @@ services:
     operations:
       SignalWithStartWorkflowExecution:
         input:
-          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
-          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+          $python: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $typescript: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
         output:
-          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
-          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
           $python:
+            ref: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
             type: workflow.ExternalWorkflowHandle[typing.Any]
             transform: workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)
           $typescript:
+            ref: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
             type: workflow.ExternalWorkflowHandle
             transform: workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)
       RetryPolicyOperation:
         input:
-          $pythonRef: temporalio.api.common.v1.RetryPolicy
-          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
+          $python: temporalio.api.common.v1.RetryPolicy
+          $typescript: "@temporalio/api/common/v1.RetryPolicy"
         output:
-          $pythonRef: temporalio.api.common.v1.RetryPolicy
-          $typescriptRef: "@temporalio/api/common/v1.RetryPolicy"
+          ref:
+            $python: temporalio.api.common.v1.RetryPolicy
+            $typescript: "@temporalio/api/common/v1.RetryPolicy"
       ActivityOptionsOperation:
         input:
-          $pythonRef: temporalio.api.activity.v1.ActivityOptions
-          $typescriptRef: "@temporalio/api/activity/v1.ActivityOptions"
+          $python: temporalio.api.activity.v1.ActivityOptions
+          $typescript: "@temporalio/api/activity/v1.ActivityOptions"
         output:
-          $pythonRef: temporalio.api.activity.v1.ActivityOptions
-          $typescriptRef: "@temporalio/api/activity/v1.ActivityOptions"
+          ref:
+            $python: temporalio.api.activity.v1.ActivityOptions
+            $typescript: "@temporalio/api/activity/v1.ActivityOptions"

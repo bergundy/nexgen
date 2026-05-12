@@ -40,27 +40,16 @@ pub enum Error {
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
 
+    #[error("unknown language selector `{selector}`")]
+    UnknownLanguageSelector { selector: String },
+
     #[error("service `{service}` is missing an endpoint")]
     MissingServiceEndpoint { service: String },
 
     #[error(
-        "service `{service}` operation `{operation}` is missing `{language}` {direction} reference"
+        "service `{service}` operation `{operation}` output is missing required `type` or `transform` field"
     )]
-    MissingLanguageRef {
-        service: String,
-        operation: String,
-        language: Language,
-        direction: &'static str,
-    },
-
-    #[error(
-        "service `{service}` operation `{operation}` output is missing required `{language}` `type` or `transform` field"
-    )]
-    IncompleteOperationOutputTransform {
-        service: String,
-        operation: String,
-        language: Language,
-    },
+    IncompleteOperationOutputTransform { service: String, operation: String },
 
     #[error("invalid Python reference `{reference}`: expected `module.path.TypeName`")]
     InvalidPythonRef { reference: String },
@@ -89,12 +78,9 @@ pub enum Error {
     },
 
     #[error(
-        "type override `{type_name}` is missing required `{language}` `type` field; `fromProto` and `toProto` default when omitted"
+        "type override `{type_name}` is missing required `type` field; `fromProto` and `toProto` default when omitted"
     )]
-    IncompleteTypeLanguageOverride {
-        type_name: String,
-        language: Language,
-    },
+    IncompleteTypeOverride { type_name: String },
 
     #[error("type override references unknown proto type `{type_name}`")]
     UnknownTypeOverride { type_name: String },
@@ -105,47 +91,33 @@ pub enum Error {
     #[error("type override for `{message}.{field}` cannot be both required and omitted")]
     ConflictingTypeOverrideField { message: String, field: String },
 
-    #[error(
-        "type override for `{message}.{field}` cannot be omitted and customized with `{language}` field annotations"
-    )]
-    OmittedCustomizedTypeOverrideField {
-        message: String,
-        field: String,
-        language: Language,
-    },
+    #[error("type override for `{message}.{field}` cannot be both omitted and customized")]
+    OmittedCustomizedTypeOverrideField { message: String, field: String },
 
     #[error(
-        "type override for `{type_name}.{field}` is missing required `{language}` field customization; expected one of `type`, `source`, or `workflow_function`"
+        "type override for `{type_name}.{field}` is missing required field customization; expected one of `name`, `type`, `source`, or `function`"
     )]
-    IncompleteTypeOverrideLanguageField {
-        type_name: String,
-        field: String,
-        language: Language,
-    },
+    IncompleteTypeOverrideField { type_name: String, field: String },
 
     #[error(
-        "type override for `{message}.{field}` cannot combine `{language}` field `{property}` with `{conflicting_property}`"
+        "type override for `{message}.{field}` cannot combine field `{property}` with `{conflicting_property}`"
     )]
-    ConflictingTypeOverrideLanguageFieldProperties {
+    ConflictingTypeOverrideFieldProperties {
         message: String,
         field: String,
-        language: Language,
         property: &'static str,
         conflicting_property: &'static str,
     },
 
-    #[error("type override for `{message}.{field}` cannot use `{language}` field `{property}`")]
-    UnsupportedTypeOverrideLanguageFieldProperty {
+    #[error("type override for `{message}.{field}` cannot use field `{property}`")]
+    UnsupportedTypeOverrideFieldProperty {
         message: String,
         field: String,
-        language: Language,
         property: &'static str,
     },
 
-    #[error(
-        "type override for `{message}.{field}` has invalid Python field `{property}`: {reason}"
-    )]
-    InvalidPythonTypeOverrideField {
+    #[error("type override for `{message}.{field}` has invalid field `{property}`: {reason}")]
+    InvalidTypeOverrideField {
         message: String,
         field: String,
         property: &'static str,
@@ -159,13 +131,10 @@ pub enum Error {
         reason: String,
     },
 
-    #[error(
-        "type override for `{message}.{field}` cannot use `{language}` field `source`: {reason}"
-    )]
+    #[error("type override for `{message}.{field}` cannot use field `source`: {reason}")]
     UnsupportedSourcedTypeField {
         message: String,
         field: String,
-        language: Language,
         reason: String,
     },
 
@@ -175,27 +144,18 @@ pub enum Error {
         property: &'static str,
     },
 
-    #[error("type override `{type_name}` cannot use `{language}` `{property}`")]
-    UnsupportedLanguageTypeOverrideProperty {
+    #[error("type override `{type_name}` cannot use `{property}`")]
+    UnsupportedTypeOverrideProperty {
         type_name: String,
-        language: Language,
         property: &'static str,
     },
 
     #[error(
-        "type override `{type_name}` cannot combine `{language}` `{property}` with `{conflicting_property}`"
+        "type override `{type_name}` cannot combine `{property}` with `{conflicting_property}`"
     )]
-    ConflictingTypeOverrideLanguageProperties {
+    ConflictingTypeOverrideProperties {
         type_name: String,
-        language: Language,
         property: &'static str,
         conflicting_property: &'static str,
-    },
-
-    #[error("type override `{type_name}` uses duplicate `{language}` type parameter `{parameter}`")]
-    DuplicateTypeOverrideLanguageParameter {
-        type_name: String,
-        language: Language,
-        parameter: String,
     },
 }

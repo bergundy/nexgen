@@ -24,8 +24,6 @@ target
 .venv
 __pycache__/
 *.pyc
-examples/python-validation/output.py
 
 # TypeScript validation app
 examples/typescript-validation/node_modules/
-examples/typescript-validation/output.ts

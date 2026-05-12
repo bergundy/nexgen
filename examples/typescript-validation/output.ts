@@ -6,7 +6,7 @@ import type Long from 'long';
 import type { google, temporal } from '@temporalio/proto';
 import * as workflow from '@temporalio/workflow';
 
-// Included from support.$typescriptFile
+// Included from support.$typescript
 export function retryPolicyFromProto(
   proto: temporal.api.common.v1.IRetryPolicy,
 ): common.RetryPolicy {
@@ -65,7 +65,7 @@ export enum VersioningBehavior {
 
 export interface SignalWithStartWorkflowExecutionRequest {
   workflowId: string;
-  workflowType: WorkflowType;
+  workflow: WorkflowType;
   taskQueue: TaskQueue;
   input?: Payloads;
   workflowExecutionTimeout?: Duration;
@@ -75,7 +75,7 @@ export interface SignalWithStartWorkflowExecutionRequest {
   requestId?: string;
   workflowIdReusePolicy?: WorkflowIdReusePolicy;
   workflowIdConflictPolicy?: WorkflowIdConflictPolicy;
-  signalName: string;
+  signal: string;
   signalInput?: Payloads;
   control?: string;
   retryPolicy?: common.RetryPolicy;
@@ -97,7 +97,7 @@ export const SignalWithStartWorkflowExecutionRequest = {
     }
     return {
       workflowId: requiredField(model.workflowId, "SignalWithStartWorkflowExecutionRequest", "workflowId"),
-      workflowType: WorkflowType.toProto(requiredField(model.workflowType, "SignalWithStartWorkflowExecutionRequest", "workflowType")) ?? {},
+      workflow: WorkflowType.toProto(requiredField(model.workflow, "SignalWithStartWorkflowExecutionRequest", "workflow")) ?? {},
       taskQueue: TaskQueue.toProto(requiredField(model.taskQueue, "SignalWithStartWorkflowExecutionRequest", "taskQueue")) ?? {},
       input: model.input == null ? undefined : Payloads.toProto(model.input) ?? {},
       workflowExecutionTimeout: model.workflowExecutionTimeout == null ? undefined : Duration.toProto(model.workflowExecutionTimeout) ?? {},
@@ -107,7 +107,7 @@ export const SignalWithStartWorkflowExecutionRequest = {
       requestId: model.requestId,
       workflowIdReusePolicy: model.workflowIdReusePolicy == null ? undefined : model.workflowIdReusePolicy as number,
       workflowIdConflictPolicy: model.workflowIdConflictPolicy == null ? undefined : model.workflowIdConflictPolicy as number,
-      signalName: requiredField(model.signalName, "SignalWithStartWorkflowExecutionRequest", "signalName"),
+      signal: requiredField(model.signal, "SignalWithStartWorkflowExecutionRequest", "signal"),
       signalInput: model.signalInput == null ? undefined : Payloads.toProto(model.signalInput) ?? {},
       control: model.control,
       retryPolicy: model.retryPolicy == null ? undefined : retryPolicyToProto(model.retryPolicy),

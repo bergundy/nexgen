@@ -9,25 +9,24 @@ fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn sample_fixture_dir(root: &std::path::Path) -> PathBuf {
-    root.join("tests/fixtures/sample")
+fn sample_input_path(root: &std::path::Path) -> PathBuf {
+    root.join("examples/input.yaml")
 }
 
-fn sample_typescript_output_path(fixture: &std::path::Path) -> PathBuf {
-    fixture.join("typescript/output.ts")
+fn sample_typescript_output_path(root: &std::path::Path) -> PathBuf {
+    root.join("examples/typescript-validation/output.ts")
 }
 
 #[test]
 fn sample_typescript_generation_matches_checked_in_output() {
     let root = project_root();
-    let fixture = sample_fixture_dir(&root);
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::TypeScript,
-        fixture.join("input.yaml"),
+        sample_input_path(&root),
         root.join("descriptors.bin"),
     )
     .unwrap();
-    let expected = fs::read_to_string(sample_typescript_output_path(&fixture)).unwrap();
+    let expected = fs::read_to_string(sample_typescript_output_path(&root)).unwrap();
 
     assert_eq!(rendered, expected);
 }
@@ -35,7 +34,6 @@ fn sample_typescript_generation_matches_checked_in_output() {
 #[test]
 fn cli_generates_typescript_file() {
     let root = project_root();
-    let fixture = sample_fixture_dir(&root);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -48,7 +46,7 @@ fn cli_generates_typescript_file() {
             "--lang",
             "typescript",
             "--input",
-            fixture.join("input.yaml").to_str().unwrap(),
+            sample_input_path(&root).to_str().unwrap(),
             "--descriptors",
             root.join("descriptors.bin").to_str().unwrap(),
             "--output",
@@ -60,7 +58,7 @@ fn cli_generates_typescript_file() {
     assert!(status.success());
 
     let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(sample_typescript_output_path(&fixture)).unwrap();
+    let expected = fs::read_to_string(sample_typescript_output_path(&root)).unwrap();
     assert_eq!(rendered, expected);
 
     fs::remove_file(output_path).unwrap();
@@ -98,21 +96,20 @@ fn typescript_validation_app_type_checks() {
 #[test]
 fn typescript_renders_required_fields_and_custom_message_types() {
     let root = project_root();
-    let fixture = sample_fixture_dir(&root);
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::TypeScript,
-        fixture.join("input.yaml"),
+        sample_input_path(&root),
         root.join("descriptors.bin"),
     )
     .unwrap();
 
-    assert!(rendered.contains("workflowType: WorkflowType;"));
+    assert!(rendered.contains("workflow: WorkflowType;"));
     assert!(rendered.contains("workflowId: string;"));
     assert!(rendered.contains("taskQueue: TaskQueue;"));
-    assert!(rendered.contains("signalName: string;"));
+    assert!(rendered.contains("signal: string;"));
     assert!(rendered.contains("retryPolicy: common.RetryPolicy;"));
     assert!(rendered.contains("request: common.RetryPolicy,"));
-    assert!(rendered.contains("// Included from support.$typescriptFile"));
+    assert!(rendered.contains("// Included from support.$typescript"));
     assert!(rendered.contains("export function retryPolicyFromProto("));
     assert!(rendered.contains(
         "const result = await handle.result();\n    return workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined);"

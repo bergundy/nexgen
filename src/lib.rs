@@ -2,7 +2,10 @@ pub mod descriptors;
 pub mod error;
 pub mod generator;
 pub mod language;
+pub mod python;
 pub mod spec;
+pub mod typescript;
+pub mod validation;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,9 +35,9 @@ pub fn generate_to_string(
     descriptor_path: impl AsRef<Path>,
 ) -> Result<String> {
     let input_path = input_path.as_ref();
-    let spec = ApiSpec::load(input_path)?;
+    let spec = ApiSpec::load_for_language(language, input_path)?;
     let descriptors = DescriptorIndex::load(descriptor_path.as_ref())?;
-    let support = load_support_files(&spec, input_path)?;
+    let support = load_support_files(language, &spec, input_path)?;
     generate_source(language, &spec, &descriptors, &support)
 }
 
@@ -63,22 +66,29 @@ fn load_optional_file(path: Option<&Path>) -> Result<Option<String>> {
     .transpose()
 }
 
-fn load_support_files(spec: &ApiSpec, input_path: &Path) -> Result<SupportFiles> {
+fn load_support_files(
+    language: Language,
+    spec: &ApiSpec,
+    input_path: &Path,
+) -> Result<SupportFiles> {
     let base_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
-    let python_support_path = spec
+    let support_path = spec
         .support
-        .python_file
+        .file
         .as_deref()
         .map(|path| resolve_support_path(base_dir, path));
-    let typescript_support_path = spec
-        .support
-        .typescript_file
-        .as_deref()
-        .map(|path| resolve_support_path(base_dir, path));
+    let support_contents = load_optional_file(support_path.as_deref())?;
 
-    Ok(SupportFiles {
-        python: load_optional_file(python_support_path.as_deref())?,
-        typescript: load_optional_file(typescript_support_path.as_deref())?,
+    Ok(match language {
+        Language::Python => SupportFiles {
+            python: support_contents,
+            typescript: None,
+        },
+        Language::TypeScript => SupportFiles {
+            python: None,
+            typescript: support_contents,
+        },
+        _ => SupportFiles::default(),
     })
 }
 

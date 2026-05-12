@@ -2,330 +2,305 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "input.schema.json",
   "title": "nexus-api-gen input schema",
-  "description": "Schema for the YAML input consumed by nexus-api-gen.",
+  "description": "Schema for the YAML input consumed by nexus-api-gen. Language selectors such as $python and $typescript may appear anywhere; the generator projects the YAML for the selected language before parsing the resulting document into one spec.",
   "type": "object",
   "additionalProperties": false,
   "required": ["nexusrpc", "services"],
   "properties": {
     "nexusrpc": {
       "type": "string",
-      "description": "Version of the Nexus RPC input format.",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Version of the Nexus RPC input format."
     },
     "support": {
-      "$ref": "#/$defs/supportFiles"
+      "$ref": "#/$defs/scopedString"
     },
     "types": {
       "$ref": "#/$defs/typeOverrides"
     },
     "services": {
+      "$ref": "#/$defs/services"
+    }
+  },
+  "$defs": {
+    "selectorPattern": {
+      "type": "string",
+      "pattern": "^\\$(dotnet|go|java|python|ruby|typescript)$"
+    },
+    "node": {
+      "description": "Recursive YAML node. Known language selectors may appear anywhere and are projected away before parsing.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!\\$).*|^\\$(dotnet|go|java|python|ruby|typescript)$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      ]
+    },
+    "hasLanguageSelector": {
+      "anyOf": [
+        {
+          "required": ["$dotnet"]
+        },
+        {
+          "required": ["$go"]
+        },
+        {
+          "required": ["$java"]
+        },
+        {
+          "required": ["$python"]
+        },
+        {
+          "required": ["$ruby"]
+        },
+        {
+          "required": ["$typescript"]
+        }
+      ]
+    },
+    "scopedStringSelectors": {
       "type": "object",
-      "description": "Map of Nexus service names to service definitions.",
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/scopedString"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$ref": "#/$defs/hasLanguageSelector"
+        }
+      ]
+    },
+    "scopedString": {
+      "description": "A string value or a language-scoped object that resolves to one after projection.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "$ref": "#/$defs/scopedStringSelectors"
+        }
+      ]
+    },
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "languageNodeProperties": {
+      "type": "object",
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/node"
+        }
+      }
+    },
+    "services": {
+      "type": "object",
       "minProperties": 1,
       "additionalProperties": {
         "$ref": "#/$defs/service"
       }
-    }
-  },
-  "$defs": {
+    },
     "service": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["endpoint", "operations"],
       "properties": {
         "endpoint": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Nexus endpoint used for the generated service client. WorkflowService commonly uses `__temporal_system`."
+          "$ref": "#/$defs/scopedString"
         },
         "operations": {
           "type": "object",
-          "description": "Map of operation names to operation definitions.",
           "minProperties": 1,
           "additionalProperties": {
             "$ref": "#/$defs/operation"
           }
         }
-      }
+      },
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "additionalProperties": false
     },
     "operation": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["input", "output"],
       "properties": {
         "input": {
-          "$ref": "#/$defs/languageRefs"
+          "$ref": "#/$defs/scopedString"
         },
         "output": {
           "$ref": "#/$defs/operationOutput"
         }
-      }
+      },
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "additionalProperties": false
     },
     "operationOutput": {
-      "type": "object",
-      "description": "Language-specific output refs plus optional generated-client output transforms.",
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "$dotnetRef": {
-          "type": "string",
-          "minLength": 1
+      "description": "After projection this resolves either to a string ref or to an object with `ref` plus optional `type` and `transform`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/scopedString"
         },
-        "$goRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$javaRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$pythonRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$rubyRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$typescriptRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$python": {
-          "$ref": "#/$defs/operationOutputTransform"
-        },
-        "$typescript": {
-          "$ref": "#/$defs/operationOutputTransform"
+        {
+          "$ref": "#/$defs/operationOutputObject"
         }
-      }
+      ]
     },
-    "operationOutputTransform": {
+    "operationOutputObject": {
       "type": "object",
-      "additionalProperties": false,
       "properties": {
+        "ref": {
+          "$ref": "#/$defs/scopedString"
+        },
         "type": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Generated client return type for the transformed operation result."
+          "$ref": "#/$defs/scopedString"
         },
         "transform": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Language expression that converts `result` into the transformed output value. The request object is available as `request`."
+          "$ref": "#/$defs/scopedString"
         }
-      }
-    },
-    "supportFiles": {
-      "type": "object",
-      "description": "Optional language-specific support snippets appended into generated output.",
+      },
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/operationOutput"
+        }
+      },
       "additionalProperties": false,
-      "properties": {
-        "$pythonFile": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$typescriptFile": {
-          "type": "string",
-          "minLength": 1
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": ["ref"]
+            },
+            {
+              "$ref": "#/$defs/hasLanguageSelector"
+            }
+          ]
         }
-      }
+      ]
     },
     "typeOverrides": {
       "type": "object",
-      "description": "Optional map of canonical proto message and enum names to generated-type overrides.",
       "additionalProperties": {
         "$ref": "#/$defs/typeOverride"
       }
     },
     "typeOverride": {
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "required": {
-          "$ref": "#/$defs/modelRequiredFields"
+          "$ref": "#/$defs/stringList"
         },
         "omit": {
-          "$ref": "#/$defs/modelOmittedFields"
+          "$ref": "#/$defs/stringList"
         },
-        "$python": {
-          "$ref": "#/$defs/pythonTypeOverride"
-        },
-        "$typescript": {
-          "$ref": "#/$defs/typescriptTypeOverride"
-        }
-      }
-    },
-    "modelRequiredFields": {
-      "type": "array",
-      "description": "Optional list of proto field names that should be generated as required. Presence-bearing fields validate with protobuf presence checks; string and bytes fields validate as non-empty values.",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "uniqueItems": true
-    },
-    "modelOmittedFields": {
-      "type": "array",
-      "description": "Optional list of proto field names to remove from generated models and operation APIs.",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "uniqueItems": true
-    },
-    "pythonTypeOverride": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
         "type": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Required language-native replacement type."
+          "$ref": "#/$defs/scopedString"
         },
         "fromProto": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
+          "$ref": "#/$defs/scopedString"
         },
         "toProto": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
-        },
-        "typeParameters": {
-          "$ref": "#/$defs/pythonTypeParameters"
+          "$ref": "#/$defs/scopedString"
         },
         "fields": {
-          "$ref": "#/$defs/languageModelFieldOverrides"
+          "$ref": "#/$defs/fieldOverrides"
         }
-      }
-    },
-    "typescriptTypeOverride": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Required language-native replacement type."
-        },
-        "fromProto": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
-        },
-        "toProto": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional conversion helper symbol. Defaults to a name derived from the proto message."
-        },
-        "fields": {
-          "$ref": "#/$defs/languageModelFieldOverrides"
-        }
-      }
-    },
-    "pythonTypeParameters": {
-      "type": "array",
-      "description": "Optional inline generic parameters for a generated Python model. These are only valid on generated message models, not on whole-type replacements.",
-      "items": {
-        "$ref": "#/$defs/pythonTypeParameter"
       },
-      "uniqueItems": true
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "additionalProperties": false
     },
-    "pythonTypeParameter": {
+    "fieldOverrides": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["name", "kind"],
+      "additionalProperties": {
+        "$ref": "#/$defs/fieldOverride"
+      }
+    },
+    "fieldOverride": {
+      "type": "object",
       "properties": {
         "name": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/scopedString"
         },
-        "kind": {
-          "type": "string",
-          "enum": ["TypeVar", "TypeVarTuple"]
-        }
-      }
-    },
-    "languageModelFieldOverrides": {
-      "type": "object",
-      "description": "Optional per-field language-specific overrides for a generated message model. `type` changes only the emitted annotation; `source` hides the field from the generated model in that language and provides the serializer expression instead. Python also supports structured `workflow_function` metadata for workflow callable fields.",
-      "additionalProperties": {
-        "$ref": "#/$defs/languageModelFieldOverride"
-      }
-    },
-    "languageModelFieldOverride": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
         "type": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Exact language annotation to emit for this field."
+          "$ref": "#/$defs/scopedString"
         },
         "source": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Language expression used to populate this field during serialization instead of exposing it in the generated model."
+          "$ref": "#/$defs/scopedString"
         },
-        "workflow_function": {
-          "$ref": "#/$defs/pythonWorkflowFunctionField"
+        "function": {
+          "$ref": "#/$defs/function"
         }
-      }
+      },
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "additionalProperties": false
     },
-    "pythonWorkflowFunctionField": {
+    "function": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["args", "result", "argsField"],
+      "required": ["result", "argsField"],
       "properties": {
-        "args": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Name of the Python `TypeVarTuple` that represents the workflow arguments."
+        "primary": {
+          "type": "boolean"
         },
         "result": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Python annotation for the workflow result type. The generated callable annotation wraps this in `collections.abc.Awaitable[...]`."
+          "$ref": "#/$defs/scopedString"
         },
         "argsField": {
           "type": "string",
-          "minLength": 1,
-          "description": "Name of the field on the same message that carries the workflow argument tuple."
-        }
-      }
-    },
-    "languageRefs": {
-      "type": "object",
-      "description": "Map of language-specific type references for a request or response.",
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "$dotnetRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$goRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$javaRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$pythonRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$rubyRef": {
-          "type": "string",
-          "minLength": 1
-        },
-        "$typescriptRef": {
-          "type": "string",
           "minLength": 1
         }
-      }
+      },
+      "patternProperties": {
+        "^\\$(dotnet|go|java|python|ruby|typescript)$": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

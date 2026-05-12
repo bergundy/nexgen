@@ -5,8 +5,7 @@ import { fileURLToPath } from 'node:url';
 function main() {
   const appRoot = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(appRoot, '..', '..');
-  const fixtureRoot = resolve(repoRoot, 'tests', 'fixtures', 'sample');
-  const inputPath = resolve(fixtureRoot, 'input.yaml');
+  const inputPath = resolve(repoRoot, 'examples', 'input.yaml');
   const descriptorPath = resolve(repoRoot, 'descriptors.bin');
   const outputPath = resolve(appRoot, 'output.ts');
 

@@ -20,23 +20,23 @@ Current status:
   `TypedDict`
 - the generator supports top-level `types` overrides for required and omitted fields,
   language-specific whole-type substitutions such as `RetryPolicy`, `WorkflowType`, and
-  `TaskQueue`, per-language sourced fields, operation output transforms, and Python-only generic
-  model annotations
+  `TaskQueue`, per-language sourced fields, operation output transforms, and generic model
+  annotation metadata
 
-The checked-in sample fixture lives under `tests/fixtures/sample/` and includes:
+The checked-in shared sample lives under `examples/` and includes:
 
 - `input.yaml`
-- `python/model_overrides.py`
-- `python/output.py`
-- `typescript/model_overrides.ts`
-- `typescript/output.ts`
+- `python-validation/model_overrides.py`
+- `python-validation/output.py`
+- `typescript-validation/model_overrides.ts`
+- `typescript-validation/output.ts`
 
 Example using that sample fixture:
 
 ```bash
 cargo run -- generate \
   --lang python \
-  --input tests/fixtures/sample/input.yaml \
+  --input examples/input.yaml \
   --descriptors descriptors.bin \
   --output /tmp/output.py
 ```
@@ -44,7 +44,7 @@ cargo run -- generate \
 ```bash
 cargo run -- generate \
   --lang typescript \
-  --input tests/fixtures/sample/input.yaml \
+  --input examples/input.yaml \
   --descriptors descriptors.bin \
   --output /tmp/output.ts
 ```
@@ -58,11 +58,12 @@ services:
     operations:
       SignalWithStartWorkflowExecution:
         input:
-          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
-          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+          $python: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+          $typescript: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
         output:
-          $pythonRef: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
-          $typescriptRef: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+          ref:
+            $python: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+            $typescript: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
           $python:
             type: workflow.ExternalWorkflowHandle[typing.Any]
             transform: workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)
@@ -76,8 +77,8 @@ appended into the generated output for language-specific helper code:
 
 ```yaml
 support:
-  $pythonFile: python/model_overrides.py
-  $typescriptFile: typescript/model_overrides.ts
+  $python: python-validation/model_overrides.py
+  $typescript: typescript-validation/model_overrides.ts
 
 types:
   temporal.api.common.v1.RetryPolicy:
@@ -98,18 +99,24 @@ types:
     omit:
       - header
       - links
+    fields:
+      workflow_type:
+        name: workflow
+      signal_name:
+        name: signal
     $python:
-      typeParameters:
-        - name: WorkflowArgs
-          kind: TypeVarTuple
       fields:
         namespace:
           source: workflow.info().namespace
         workflow_type:
-          workflow_function:
-            args: WorkflowArgs
-            result: typing.Any
+          function:
+            primary: true
+            result: collections.abc.Awaitable[typing.Any]
             argsField: input
+        signal_name:
+          function:
+            result: None | collections.abc.Awaitable[None]
+            argsField: signal_input
     $typescript:
       fields:
         namespace:
@@ -137,16 +144,28 @@ Use `omit` to remove proto fields from the generated model surface entirely. Omi
 rendered into generated Python or TypeScript models, and generated `to_proto` / `from_proto`
 implementations do not read or write them.
 
-For generated Python message models, `$python.typeParameters` and `$python.fields.<name>.type`
-customize the emitted class and field annotations without changing the descriptor-driven proto
-conversion logic. Python also supports structured workflow callable metadata:
+Projected `fields.<name>.name`, `fields.<name>.type`, and `fields.<name>.function` customize the
+generated model metadata without changing the descriptor-driven proto conversion logic. The Python
+backend currently consumes these to render generic model annotations and structured callable
+metadata:
 
-- `$python.fields.<name>.workflow_function` marks a field as a workflow callable and ties it to a
-  `TypeVarTuple` plus an args field on the same message via `argsField`
+- `fields.<name>.name` renames the emitted field in generated language models and request APIs
+- `$python.fields.<name>.function` marks a field as a callable/string name field and ties it to an
+  args field on the same message via `argsField`
+- One function may be marked `primary: true`; the generator derives a variadic type parameter for
+  that function from the field name
+- Additional function fields use a fixed bounded arity of 6 and omit `args`
 
 This is useful for request-only models such as `SignalWithStartWorkflowExecutionRequest`, where
-`workflow_type` and `input` can share a `TypeVarTuple` declared in YAML while still letting the
-generator emit stricter overloads for the unpacked args API.
+`workflow_type` / `input` and `signal_name` / `signal_input` can each describe callable-argument
+relationships in YAML while still letting the generator emit stricter overloads for the unpacked
+args API.
+
+Language selectors such as `$python` and `$typescript` are now valid anywhere in the YAML. The
+generator first projects the document for the selected language, deep-merging matching object
+overlays and ignoring the rest, then parses that projected YAML into one ordinary spec. That means
+per-language refs, support paths, transforms, and field sources all use the same `$language`
+syntax.
 
 Use `$python.fields.<name>.source` or `$typescript.fields.<name>.source` to populate a field from
 the runtime instead of exposing it in the generated model for that language. Sourced fields are
