@@ -71,30 +71,22 @@ pub enum Error {
     )]
     IncompleteOperationOutputTransform { service: String, operation: String },
 
-    #[error("invalid Python reference `{reference}`: expected `module.path.TypeName`")]
-    InvalidPythonRef { reference: String },
-
-    #[error("Python reference `{reference}` could not be resolved to a proto message")]
-    UnresolvedPythonRef { reference: String },
-
-    #[error("Python reference `{reference}` is ambiguous; matched {matches:?}")]
-    AmbiguousPythonRef {
-        reference: String,
-        matches: Vec<String>,
+    #[error(
+        "service `{service}` operation `{operation}` references unknown input proto type `{type_name}`"
+    )]
+    UnknownOperationInputProto {
+        service: String,
+        operation: String,
+        type_name: String,
     },
 
     #[error(
-        "invalid TypeScript reference `{reference}`: expected `@scope/module.path.TypeName` or `package.path.TypeName`"
+        "service `{service}` operation `{operation}` references unknown output proto type `{type_name}`"
     )]
-    InvalidTypeScriptRef { reference: String },
-
-    #[error("TypeScript reference `{reference}` could not be resolved to a proto message")]
-    UnresolvedTypeScriptRef { reference: String },
-
-    #[error("TypeScript reference `{reference}` is ambiguous; matched {matches:?}")]
-    AmbiguousTypeScriptRef {
-        reference: String,
-        matches: Vec<String>,
+    UnknownOperationOutputProto {
+        service: String,
+        operation: String,
+        type_name: String,
     },
 
     #[error(

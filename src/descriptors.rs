@@ -65,13 +65,6 @@ impl DescriptorIndex {
         let normalized = full_name.trim_start_matches('.');
         self.enums.get(normalized)
     }
-
-    pub(crate) fn messages_with_suffix(&self, suffix: &str) -> Vec<&MessageMetadata> {
-        self.messages
-            .values()
-            .filter(|message| message.full_name.ends_with(suffix))
-            .collect()
-    }
 }
 
 #[derive(Debug, Clone)]

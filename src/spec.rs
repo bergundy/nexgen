@@ -10,6 +10,8 @@ use wit_parser::{
 use crate::error::{Error, Result};
 use crate::language::Language;
 
+const BUILTIN_TEMPORAL_TYPES_WIT: &str = include_str!("../wit/nexus-temporal-types.wit");
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiSpec {
     pub version: String,
@@ -29,6 +31,7 @@ impl ApiSpec {
 
     pub fn parse_for_language(language: Language, input: &str, path: PathBuf) -> Result<Self> {
         let mut resolve = Resolve::default();
+        load_builtin_packages(&mut resolve)?;
         let package_id = resolve
             .push_str(&path, input)
             .map_err(|error| Error::WitParse {
@@ -66,9 +69,11 @@ impl ApiSpec {
         };
 
         let mut types = BTreeMap::new();
-        for interface_id in package.interfaces.values() {
-            let interface = &resolve.interfaces[*interface_id];
-            collect_interface_types(language, resolve, interface, &path, &mut types)?;
+        for (_, dependency_package) in resolve.packages.iter() {
+            for interface_id in dependency_package.interfaces.values() {
+                let interface = &resolve.interfaces[*interface_id];
+                collect_interface_types(language, resolve, interface, &path, &mut types)?;
+            }
         }
 
         let mut services = Vec::new();
@@ -94,6 +99,19 @@ impl ApiSpec {
     }
 }
 
+fn load_builtin_packages(resolve: &mut Resolve) -> Result<()> {
+    resolve
+        .push_str(
+            Path::new("builtin/nexus-temporal-types.wit"),
+            BUILTIN_TEMPORAL_TYPES_WIT,
+        )
+        .map_err(|error| Error::InvalidWit {
+            path: PathBuf::from("builtin/nexus-temporal-types.wit"),
+            reason: format!("failed to parse bundled built-in WIT: {error}"),
+        })?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServiceSpec {
     pub name: String,
@@ -117,17 +135,18 @@ pub struct SupportSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperationSpec {
     pub name: String,
-    pub input_ref: String,
-    pub output_ref: String,
+    pub input_proto: String,
+    pub output_proto: String,
     pub output_transform: Option<OperationOutputTransformSpec>,
 }
 
 impl OperationSpec {
-    pub fn reference(&self, direction: Direction) -> &str {
-        match direction {
-            Direction::Input => &self.input_ref,
-            Direction::Output => &self.output_ref,
-        }
+    pub fn input_proto(&self) -> &str {
+        &self.input_proto
+    }
+
+    pub fn output_proto(&self) -> &str {
+        &self.output_proto
     }
 
     pub fn output_transform(&self) -> Option<&OperationOutputTransformSpec> {
@@ -260,10 +279,11 @@ pub struct WithArgumentsFieldSpec {
     pub name_expr: String,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Direction {
-    Input,
-    Output,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FlattenedFunctionTypeSpec {
+    args_name: String,
+    function: Option<FunctionFieldSpec>,
+    with_arguments: Option<WithArgumentsFieldSpec>,
 }
 
 fn collect_interface_types(
@@ -350,6 +370,14 @@ fn build_generated_model_from_record(
         let proto_field_name =
             directive_value(&directives, "proto-field", path, &field_context, "value")?
                 .unwrap_or_else(|| field.name.to_snake_case());
+        let flattened_function_type = if directive(&directives, "function", path, &field_context)?
+            .is_none()
+            && directive(&directives, "with-arguments", path, &field_context)?.is_none()
+        {
+            find_flattened_function_type_spec(language, resolve, &field.ty, path)?
+        } else {
+            None
+        };
 
         if !declared_fields.insert(proto_field_name.clone()) {
             return Err(Error::InvalidWit {
@@ -376,13 +404,18 @@ fn build_generated_model_from_record(
             field_sources.insert(proto_field_name.clone(), source);
         }
 
-        if let Some(annotation) = find_language_directive_value(
+        let field_annotation = if let Some(annotation) = find_language_directive_value(
             language,
             &[field.docs.contents.as_deref()],
             path,
             &field_context,
             "type",
         )? {
+            Some(annotation)
+        } else {
+            find_language_type_annotation_for_field_type(language, resolve, &field.ty, path)?
+        };
+        if let Some(annotation) = field_annotation {
             field_annotations.insert(proto_field_name.clone(), annotation);
         }
 
@@ -405,6 +438,28 @@ fn build_generated_model_from_record(
                 property: "source",
                 conflicting_property: "function",
             });
+        }
+
+        if let Some(flattened_function_type) = flattened_function_type {
+            let args_proto_field_name = flattened_function_type.args_name.to_snake_case();
+            if !declared_fields.insert(args_proto_field_name.clone()) {
+                return Err(Error::InvalidWit {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "{field_context} maps to duplicate proto field `{args_proto_field_name}`"
+                    ),
+                });
+            }
+            field_names.insert(
+                args_proto_field_name.clone(),
+                flattened_function_type.args_name.clone(),
+            );
+            if let Some(function) = flattened_function_type.function {
+                functions.insert(proto_field_name.clone(), function);
+            }
+            if let Some(with_arguments_field) = flattened_function_type.with_arguments {
+                with_arguments.insert(proto_field_name.clone(), with_arguments_field);
+            }
         }
     }
 
@@ -457,6 +512,68 @@ fn build_type_replacement(
     }))
 }
 
+fn find_language_type_annotation_for_field_type(
+    language: Language,
+    resolve: &Resolve,
+    ty: &Type,
+    path: &Path,
+) -> Result<Option<String>> {
+    let mut current = ty;
+    loop {
+        match current {
+            Type::Id(id) => {
+                let type_def = &resolve.types[*id];
+                let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
+                let context = format!("type `{type_name}`");
+                if let Some(annotation) = find_language_directive_value(
+                    language,
+                    &[type_def.docs.contents.as_deref()],
+                    path,
+                    &context,
+                    "type",
+                )? {
+                    return Ok(Some(annotation));
+                }
+                match &type_def.kind {
+                    TypeDefKind::Type(next) => current = next,
+                    _ => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+}
+
+fn find_proto_name_for_type(
+    resolve: &Resolve,
+    ty: &Type,
+    path: &Path,
+    context: &str,
+) -> Result<Option<String>> {
+    let mut current = ty;
+    loop {
+        match current {
+            Type::Id(id) => {
+                let type_def = &resolve.types[*id];
+                let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
+                let type_context = format!("{context} type `{type_name}`");
+                let directives =
+                    parse_directives(type_def.docs.contents.as_deref(), path, &type_context)?;
+                if let Some(proto_name) =
+                    directive_value(&directives, "proto", path, &type_context, "value")?
+                {
+                    return Ok(Some(proto_name));
+                }
+                match &type_def.kind {
+                    TypeDefKind::Type(next) => current = next,
+                    _ => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+}
+
 fn build_function_field(
     language: Language,
     directives: &[Directive],
@@ -480,6 +597,52 @@ fn build_function_field(
             context: context.to_string(),
             directive: "@nexus.function".to_string(),
             reason: "missing required `args-field`".to_string(),
+        });
+    };
+
+    let primary = directive
+        .value("primary")
+        .map(parse_bool)
+        .transpose()
+        .map_err(|reason| Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason,
+        })?
+        .unwrap_or(false);
+
+    Ok(Some(FunctionFieldSpec {
+        primary,
+        result_type: result_type.to_string(),
+        args_field: args_field.to_snake_case(),
+    }))
+}
+
+fn build_function_field_with_args_key(
+    language: Language,
+    directives: &[Directive],
+    path: &Path,
+    context: &str,
+    args_key: &str,
+) -> Result<Option<FunctionFieldSpec>> {
+    let Some(directive) = directive(directives, "function", path, context)? else {
+        return Ok(None);
+    };
+
+    let Some(result_type) = directive
+        .value(&format!("{}-result", language_key(language)))
+        .or_else(|| directive.value("result"))
+    else {
+        return Ok(None);
+    };
+
+    let Some(args_field) = directive.value(args_key) else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: format!("missing required `{args_key}`"),
         });
     };
 
@@ -557,9 +720,123 @@ fn build_with_arguments_field(
     }))
 }
 
+fn build_with_arguments_field_with_args_key(
+    language: Language,
+    directives: &[Directive],
+    path: &Path,
+    context: &str,
+    args_key: &str,
+) -> Result<Option<WithArgumentsFieldSpec>> {
+    if language != Language::TypeScript {
+        return Ok(None);
+    }
+
+    let Some(directive) = directive(directives, "with-arguments", path, context)? else {
+        return Ok(None);
+    };
+
+    let Some(args_field) = directive.value(args_key) else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.with-arguments".to_string(),
+            reason: format!("missing required `{args_key}`"),
+        });
+    };
+    let Some(value_type) = directive.value("value-type") else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.with-arguments".to_string(),
+            reason: "missing required `value-type`".to_string(),
+        });
+    };
+    let Some(args_type) = directive.value("args-type") else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.with-arguments".to_string(),
+            reason: "missing required `args-type`".to_string(),
+        });
+    };
+    let Some(name_expr) = directive.value("name-expr") else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.with-arguments".to_string(),
+            reason: "missing required `name-expr`".to_string(),
+        });
+    };
+
+    Ok(Some(WithArgumentsFieldSpec {
+        args_field: args_field.to_snake_case(),
+        value_type: value_type.to_string(),
+        args_type: args_type.to_string(),
+        name_expr: name_expr.to_string(),
+    }))
+}
+
+fn find_flattened_function_type_spec(
+    language: Language,
+    resolve: &Resolve,
+    ty: &Type,
+    path: &Path,
+) -> Result<Option<FlattenedFunctionTypeSpec>> {
+    let mut current = ty;
+    loop {
+        match current {
+            Type::Id(id) => {
+                let type_def = &resolve.types[*id];
+                let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
+                let context = format!("type `{type_name}`");
+                let directives =
+                    parse_directives(type_def.docs.contents.as_deref(), path, &context)?;
+                let function = build_function_field_with_args_key(
+                    language,
+                    &directives,
+                    path,
+                    &context,
+                    "args-name",
+                )?;
+                let with_arguments = build_with_arguments_field_with_args_key(
+                    language,
+                    &directives,
+                    path,
+                    &context,
+                    "args-name",
+                )?;
+                if function.is_some() || with_arguments.is_some() {
+                    let args_name = directive_value(
+                        &directives,
+                        if function.is_some() {
+                            "function"
+                        } else {
+                            "with-arguments"
+                        },
+                        path,
+                        &context,
+                        "args-name",
+                    )?
+                    .expect("args-name validated when building flattened function type");
+                    return Ok(Some(FlattenedFunctionTypeSpec {
+                        args_name,
+                        function,
+                        with_arguments,
+                    }));
+                }
+                match &type_def.kind {
+                    TypeDefKind::Type(next) => current = next,
+                    _ => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+}
+
 fn build_service(
     language: Language,
-    _resolve: &Resolve,
+    resolve: &Resolve,
     key: &WorldKey,
     interface: &Interface,
     path: &Path,
@@ -573,7 +850,9 @@ fn build_service(
     let operations = interface
         .functions
         .iter()
-        .map(|(_, function)| build_operation(language, function, path, &context, &service_name))
+        .map(|(_, function)| {
+            build_operation(language, resolve, function, path, &context, &service_name)
+        })
         .collect::<Result<Vec<_>>>()?;
 
     Ok(ServiceSpec {
@@ -585,6 +864,7 @@ fn build_service(
 
 fn build_operation(
     language: Language,
+    resolve: &Resolve,
     function: &Function,
     path: &Path,
     service_context: &str,
@@ -594,32 +874,34 @@ fn build_operation(
     let context = format!("{service_context} operation `{operation_name}`");
     let directives = parse_directives(function.docs.contents.as_deref(), path, &context)?;
 
-    let input_ref = find_language_directive_value(
-        language,
-        &[function.docs.contents.as_deref()],
-        path,
-        &context,
-        "input-ref",
-    )?
-    .ok_or_else(|| Error::InvalidWitDirective {
+    let [(parameter_name, input_type)] = function.params.as_slice() else {
+        return Err(Error::InvalidWit {
+            path: path.to_path_buf(),
+            reason: format!("{context} must declare exactly one input parameter"),
+        });
+    };
+    let input_proto =
+        find_proto_name_for_type(resolve, input_type, path, &context)?.ok_or_else(|| {
+            Error::InvalidWit {
+                path: path.to_path_buf(),
+                reason: format!(
+                    "{context} parameter `{parameter_name}` type must resolve to a type annotated with `@nexus.proto`"
+                ),
+            }
+        })?;
+    let output_type = function.result.as_ref().ok_or_else(|| Error::InvalidWit {
         path: path.to_path_buf(),
-        context: context.clone(),
-        directive: "@nexus.input-ref".to_string(),
-        reason: "missing selected-language value".to_string(),
+        reason: format!("{context} must declare a result type"),
     })?;
-    let output_ref = find_language_directive_value(
-        language,
-        &[function.docs.contents.as_deref()],
-        path,
-        &context,
-        "output-ref",
-    )?
-    .ok_or_else(|| Error::InvalidWitDirective {
-        path: path.to_path_buf(),
-        context: context.clone(),
-        directive: "@nexus.output-ref".to_string(),
-        reason: "missing selected-language value".to_string(),
-    })?;
+    let output_proto =
+        find_proto_name_for_type(resolve, output_type, path, &context)?.ok_or_else(|| {
+            Error::InvalidWit {
+                path: path.to_path_buf(),
+                reason: format!(
+                    "{context} result type must resolve to a type annotated with `@nexus.proto`"
+                ),
+            }
+        })?;
 
     let output_transform = build_operation_output_transform(
         language,
@@ -632,8 +914,8 @@ fn build_operation(
 
     Ok(OperationSpec {
         name: operation_name,
-        input_ref,
-        output_ref,
+        input_proto,
+        output_proto,
         output_transform,
     })
 }
@@ -799,10 +1081,43 @@ fn parse_directives(docs: Option<&str>, path: &Path, context: &str) -> Result<Ve
         return Ok(Vec::new());
     };
 
-    docs.lines()
-        .filter(|line| line.trim_start().starts_with("@nexus."))
-        .map(|line| parse_directive_line(line.trim(), path, context))
-        .collect()
+    let mut directives = Vec::new();
+    let mut current = None::<String>;
+
+    for line in docs.lines() {
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("@nexus.") {
+            if let Some(previous) = current.take() {
+                directives.push(parse_directive_line(&previous, path, context)?);
+            }
+            current = Some(trimmed_start.to_string());
+            continue;
+        }
+
+        let is_continuation = current.is_some()
+            && !trimmed_start.is_empty()
+            && trimmed_start.len() != line.len()
+            && (trimmed_start.starts_with('"') || trimmed_start.contains('='));
+
+        if is_continuation {
+            let directive = current
+                .as_mut()
+                .expect("continuation checked to have an active directive");
+            directive.push(' ');
+            directive.push_str(trimmed_start);
+            continue;
+        }
+
+        if let Some(previous) = current.take() {
+            directives.push(parse_directive_line(&previous, path, context)?);
+        }
+    }
+
+    if let Some(previous) = current.take() {
+        directives.push(parse_directive_line(&previous, path, context)?);
+    }
+
+    Ok(directives)
 }
 
 #[derive(Debug, Clone)]
@@ -914,7 +1229,7 @@ mod tests {
     use crate::error::Error;
     use crate::language::Language;
 
-    use super::ApiSpec;
+    use super::{ApiSpec, directive, parse_directives};
 
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -946,33 +1261,33 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  /// @nexus.proto "temporal.api.common.v1.RetryPolicy"
-  /// @nexus.type python="temporalio.common.RetryPolicy" typescript="common.RetryPolicy"
-  type retry-policy = string;
+  use nexus:temporal-types/model@1.0.0.{retry-policy, signal-function, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record signal-with-start-workflow-execution-request {
     /// @nexus.proto-field "workflow_type"
-    /// @nexus.function primary=true args-field="input" python-result="collections.abc.Awaitable[typing.Any]" typescript-result="Promise<any>"
-    workflow: string,
-    input: option<string>,
+    workflow: workflow-function,
     workflow-id: string,
     task-queue: string,
     /// @nexus.proto-field "signal_name"
-    /// @nexus.function args-field="signal-input" python-result="None | collections.abc.Awaitable[None]"
-    /// @nexus.with-arguments args-field="signal-input" value-type="workflow.SignalDefinition<any[]>" args-type="Value extends workflow.SignalDefinition<infer Args, any> ? Args : never" name-expr="value.name"
-    signal: string,
-    signal-input: option<string>,
+    signal: signal-function,
     /// @nexus.source python="workflow.info().namespace" typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
   }
 
-  /// @nexus.input-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest" typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
-  /// @nexus.output-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse" typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
-  /// @nexus.output-transform python-type="workflow.ExternalWorkflowHandle[typing.Any]" python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)" typescript-type="workflow.ExternalWorkflowHandle" typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record signal-with-start-workflow-execution-response {
+    run-id: option<string>,
+  }
+
+  /// @nexus.output-transform
+  ///   python-type="workflow.ExternalWorkflowHandle[typing.Any]"
+  ///   python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
+  ///   typescript-type="workflow.ExternalWorkflowHandle"
+  ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
   signal-with-start-workflow-execution: func(
     request: signal-with-start-workflow-execution-request
-  ) -> string;
+  ) -> signal-with-start-workflow-execution-response;
 }
 "#;
 
@@ -993,10 +1308,19 @@ interface workflow-service {
                 "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest",
             )
             .unwrap();
+        assert_eq!(
+            python.services[0].operations[0].input_proto(),
+            "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+        );
+        assert_eq!(
+            python.services[0].operations[0].output_proto(),
+            "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+        );
         assert!(request.is_field_required("workflow_type"));
         assert!(request.is_field_hidden("header"));
         let model = request.generated_model().unwrap();
         assert_eq!(model.field_name_override("workflow_type"), Some("workflow"));
+        assert_eq!(model.field_name_override("input"), Some("input"));
         assert_eq!(
             model.field_name_override("workflow_id"),
             Some("workflow-id")
@@ -1030,27 +1354,58 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{signal-function, workflow-function};
+
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record signal-with-start-workflow-execution-request {
     /// @nexus.proto-field "workflow_type"
-    /// @nexus.function primary=true args-field="input" python-result="collections.abc.Awaitable[typing.Any]"
-    workflow: string,
-    input: option<string>,
+    workflow: workflow-function,
     workflow-id: string,
     task-queue: string,
     /// @nexus.proto-field "signal_name"
-    signal: string,
+    signal: signal-function,
   }
 
-  /// @nexus.input-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  /// @nexus.output-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record signal-with-start-workflow-execution-response {
+    run-id: option<string>,
+  }
+
   signal-with-start-workflow-execution: func(
     request: signal-with-start-workflow-execution-request
-  ) -> string;
+  ) -> signal-with-start-workflow-execution-response;
 }
 "#;
 
         validate(Language::Python, wit).unwrap();
+    }
+
+    #[test]
+    fn parses_multiline_directive_arguments() {
+        let directives = parse_directives(
+            Some(
+                r#"@nexus.type
+  python="temporalio.common.RetryPolicy"
+  typescript="common.RetryPolicy""#,
+            ),
+            &PathBuf::from("inline.wit"),
+            "type `example`",
+        )
+        .unwrap();
+
+        let directive = directive(
+            &directives,
+            "type",
+            &PathBuf::from("inline.wit"),
+            "type `example`",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            directive.value("python"),
+            Some("temporalio.common.RetryPolicy")
+        );
+        assert_eq!(directive.value("typescript"), Some("common.RetryPolicy"));
     }
 
     #[test]

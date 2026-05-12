@@ -5,9 +5,9 @@ use crate::descriptors::DescriptorIndex;
 use crate::error::{Error, Result};
 use crate::language::Language;
 use crate::python;
-use crate::spec::{ApiSpec, Direction};
+use crate::spec::ApiSpec;
 use crate::typescript;
-use crate::validation::{resolve_message_for_language, validate_type_overrides};
+use crate::validation::validate_type_overrides;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ModelCapabilities {
@@ -34,27 +34,32 @@ impl ModelCapabilities {
 pub(crate) fn root_model_capabilities(
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    language: Language,
+    _language: Language,
 ) -> Result<BTreeMap<String, ModelCapabilities>> {
     let mut capabilities: BTreeMap<String, ModelCapabilities> = BTreeMap::new();
 
     for service in &spec.services {
         for operation in &service.operations {
-            let input_message = resolve_message_for_language(
-                descriptors,
-                language,
-                operation.reference(Direction::Input),
-            )?;
+            let input_message = descriptors
+                .message(operation.input_proto())
+                .ok_or_else(|| Error::UnknownOperationInputProto {
+                    service: service.name.clone(),
+                    operation: operation.name.clone(),
+                    type_name: operation.input_proto().to_string(),
+                })?;
             capabilities
                 .entry(input_message.full_name.clone())
                 .or_default()
                 .merge(ModelCapabilities::TO_PROTO_ONLY);
 
-            let output_message = resolve_message_for_language(
-                descriptors,
-                language,
-                operation.reference(Direction::Output),
-            )?;
+            let output_message =
+                descriptors
+                    .message(operation.output_proto())
+                    .ok_or_else(|| Error::UnknownOperationOutputProto {
+                        service: service.name.clone(),
+                        operation: operation.name.clone(),
+                        type_name: operation.output_proto().to_string(),
+                    })?;
             capabilities
                 .entry(output_message.full_name.clone())
                 .or_default()

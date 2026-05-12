@@ -1,0 +1,92 @@
+package nexus:temporal-types@1.0.0;
+
+interface model {
+  /// String-shaped placeholder for semantic types that generators reinterpret.
+  type placeholder = string;
+
+  /// @nexus.proto "temporal.api.common.v1.Payload"
+  /// @nexus.type python="typing.Any" typescript="common.Payload"
+  type payload = placeholder;
+
+  /// @nexus.proto "temporal.api.common.v1.Payloads"
+  /// @nexus.type python="collections.abc.Sequence[typing.Any]"
+  type payloads = list<payload>;
+
+  /// @nexus.proto "temporal.api.common.v1.WorkflowType"
+  /// @nexus.type python="str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]" typescript="string | common.Workflow"
+  type workflow-type = placeholder;
+
+  /// @nexus.function
+  ///   primary=true
+  ///   args-name="input"
+  ///   python-result="collections.abc.Awaitable[typing.Any]"
+  ///   typescript-result="Promise<any>"
+  /// @nexus.type
+  ///   python="str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]"
+  ///   typescript="string | common.Workflow"
+  type workflow-function = placeholder;
+
+  /// @nexus.function
+  ///   args-name="signal-input"
+  ///   python-result="None | collections.abc.Awaitable[None]"
+  /// @nexus.with-arguments
+  ///   args-name="signal-input"
+  ///   value-type="workflow.SignalDefinition<any[]>"
+  ///   args-type="Value extends workflow.SignalDefinition<infer Args, any> ? Args : never"
+  ///   name-expr="value.name"
+  /// @nexus.type
+  ///   python="str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]"
+  ///   typescript="string | workflow.SignalDefinition<any[]>"
+  type signal-function = placeholder;
+
+  /// @nexus.proto "temporal.api.common.v1.RetryPolicy"
+  /// @nexus.type python="temporalio.common.RetryPolicy" typescript="common.RetryPolicy"
+  type retry-policy = placeholder;
+
+  /// @nexus.proto "temporal.api.taskqueue.v1.TaskQueue"
+  /// @nexus.type python="str" typescript="string"
+  type task-queue = placeholder;
+
+  /// @nexus.proto "temporal.api.common.v1.Memo"
+  /// @nexus.type python="collections.abc.Mapping[str, typing.Any]" typescript="Record<string, unknown>"
+  type memo = placeholder;
+
+  /// @nexus.proto "temporal.api.common.v1.SearchAttributes"
+  /// @nexus.type python="temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes" typescript="common.TypedSearchAttributes | common.SearchAttributes"
+  type search-attributes = placeholder;
+
+  /// @nexus.proto "temporal.api.common.v1.Priority"
+  /// @nexus.type python="temporalio.common.Priority" typescript="common.Priority"
+  type priority = placeholder;
+
+  /// @nexus.proto "temporal.api.workflow.v1.VersioningOverride"
+  /// @nexus.type python="temporalio.common.VersioningOverride" typescript="common.VersioningOverride"
+  type versioning-override = placeholder;
+
+  /// @nexus.proto "google.protobuf.Duration"
+  /// @nexus.type python="timedelta" typescript="common.Duration"
+  type duration = placeholder;
+
+  /// @nexus.proto "temporal.api.enums.v1.WorkflowIdReusePolicy"
+  /// @nexus.type python="temporalio.common.WorkflowIDReusePolicy" typescript="common.WorkflowIdReusePolicy"
+  enum workflow-id-reuse-policy {
+    allow-duplicate,
+    allow-duplicate-failed-only,
+    reject-duplicate,
+    terminate-if-running,
+  }
+
+  /// @nexus.proto "temporal.api.enums.v1.WorkflowIdConflictPolicy"
+  /// @nexus.type python="temporalio.common.WorkflowIDConflictPolicy" typescript="common.WorkflowIdConflictPolicy"
+  enum workflow-id-conflict-policy {
+    fail,
+    use-existing,
+    terminate-existing,
+  }
+
+  /// @nexus.proto "temporal.api.sdk.v1.UserMetadata"
+  record user-metadata {
+    summary: option<payload>,
+    details: option<payload>,
+  }
+}

@@ -7,7 +7,7 @@ use crate::descriptors::{DescriptorIndex, MessageMetadata};
 use crate::error::{Error, Result};
 use crate::language::Language;
 use crate::python;
-use crate::spec::{ApiSpec, Direction, GeneratedModelSpec, TypeOverrideSpec};
+use crate::spec::{ApiSpec, GeneratedModelSpec, TypeOverrideSpec};
 use crate::typescript;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -47,27 +47,32 @@ pub(crate) fn validate_type_overrides(
 fn language_message_usages(
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    language: Language,
+    _language: Language,
 ) -> Result<BTreeMap<String, MessageUsage>> {
     let mut usages: BTreeMap<String, MessageUsage> = BTreeMap::new();
 
     for service in &spec.services {
         for operation in &service.operations {
-            let input_message = resolve_message_for_language(
-                descriptors,
-                language,
-                operation.reference(Direction::Input),
-            )?;
+            let input_message = descriptors
+                .message(operation.input_proto())
+                .ok_or_else(|| Error::UnknownOperationInputProto {
+                    service: service.name.clone(),
+                    operation: operation.name.clone(),
+                    type_name: operation.input_proto().to_string(),
+                })?;
             usages
                 .entry(input_message.full_name.clone())
                 .or_default()
                 .input = true;
 
-            let output_message = resolve_message_for_language(
-                descriptors,
-                language,
-                operation.reference(Direction::Output),
-            )?;
+            let output_message =
+                descriptors
+                    .message(operation.output_proto())
+                    .ok_or_else(|| Error::UnknownOperationOutputProto {
+                        service: service.name.clone(),
+                        operation: operation.name.clone(),
+                        type_name: operation.output_proto().to_string(),
+                    })?;
             usages
                 .entry(output_message.full_name.clone())
                 .or_default()
@@ -76,18 +81,6 @@ fn language_message_usages(
     }
 
     Ok(usages)
-}
-
-pub(crate) fn resolve_message_for_language<'a>(
-    descriptors: &'a DescriptorIndex,
-    language: Language,
-    reference: &str,
-) -> Result<&'a MessageMetadata> {
-    match language {
-        Language::Python => python::resolve_message_ref(descriptors, reference),
-        Language::TypeScript => typescript::resolve_message_ref(descriptors, reference),
-        language => Err(Error::UnsupportedLanguage { language }),
-    }
 }
 
 fn validate_message_type_override(
