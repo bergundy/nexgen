@@ -3,7 +3,7 @@
 Small `uv`-managed app for validating the generated Python output.
 
 The build step runs `nexus-api-gen` against the shared sample spec in
-`examples/input.yaml` and writes a fresh `output.py` into this directory so the
+`examples/input.wit` and writes a fresh `output.py` into this directory so the
 application and `basedpyright` both validate the same generated module. The
 support helpers for that shared spec live alongside this example in
 `model_overrides.py`.

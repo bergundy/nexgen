@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+use std::process::ExitStatus;
 
 use thiserror::Error;
 
@@ -23,11 +24,33 @@ pub enum Error {
         source: io::Error,
     },
 
-    #[error("failed to parse YAML from `{path}`: {source}")]
-    YamlParse {
+    #[error("failed to run formatter `{command}` for `{path}`: {source}")]
+    RunFormatter {
         path: PathBuf,
+        command: String,
         #[source]
-        source: serde_yaml::Error,
+        source: io::Error,
+    },
+
+    #[error("formatter `{command}` failed for `{path}` with status {status}")]
+    FormatterFailed {
+        path: PathBuf,
+        command: String,
+        status: ExitStatus,
+    },
+
+    #[error("failed to parse WIT from `{path}`: {message}")]
+    WitParse { path: PathBuf, message: String },
+
+    #[error("invalid WIT in `{path}`: {reason}")]
+    InvalidWit { path: PathBuf, reason: String },
+
+    #[error("invalid WIT directive `{directive}` on {context} in `{path}`: {reason}")]
+    InvalidWitDirective {
+        path: PathBuf,
+        context: String,
+        directive: String,
+        reason: String,
     },
 
     #[error("failed to decode descriptor set from `{path}`: {source}")]
@@ -39,9 +62,6 @@ pub enum Error {
 
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
-
-    #[error("unknown language selector `{selector}`")]
-    UnknownLanguageSelector { selector: String },
 
     #[error("service `{service}` is missing an endpoint")]
     MissingServiceEndpoint { service: String },

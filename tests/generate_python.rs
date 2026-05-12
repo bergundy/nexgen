@@ -10,7 +10,7 @@ fn project_root() -> PathBuf {
 }
 
 fn sample_input_path(root: &std::path::Path) -> PathBuf {
-    root.join("examples/input.yaml")
+    root.join("examples/input.wit")
 }
 
 fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
@@ -21,45 +21,60 @@ fn uv_cache_dir() -> &'static str {
     "/tmp/nexus-api-gen-uv-cache"
 }
 
-#[test]
-fn sample_generation_matches_checked_in_output() {
-    let root = project_root();
-    let rendered = generate_to_string(
-        nexus_api_gen::language::Language::Python,
-        sample_input_path(&root),
-        root.join("descriptors.bin"),
-    )
-    .unwrap();
-    let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
-
-    assert_eq!(rendered, expected);
+fn prepend_path(path: &std::path::Path) -> String {
+    let existing = std::env::var("PATH").unwrap_or_default();
+    format!("{}:{existing}", path.display())
 }
 
-#[test]
-fn cli_generates_python_file() {
-    let root = project_root();
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let output_path = std::env::temp_dir().join(format!("nexus-api-gen-{unique}.py"));
-
+fn generate_formatted_python_output(root: &std::path::Path, output_path: &std::path::Path) {
+    let ruff_bin_dir = root.join("examples/python-validation/.venv/bin");
     let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .env("PATH", prepend_path(&ruff_bin_dir))
         .args([
             "generate",
             "--lang",
             "python",
             "--input",
-            sample_input_path(&root).to_str().unwrap(),
+            sample_input_path(root).to_str().unwrap(),
             "--descriptors",
             root.join("descriptors.bin").to_str().unwrap(),
             "--output",
             output_path.to_str().unwrap(),
+            "--format",
         ])
         .status()
         .unwrap();
 
     assert!(status.success());
+}
+
+fn unique_output_path(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}.py"))
+}
+
+#[test]
+fn sample_generation_matches_checked_in_output() {
+    let root = project_root();
+    let output_path = unique_output_path("sample");
+    generate_formatted_python_output(&root, &output_path);
+    let rendered = fs::read_to_string(&output_path).unwrap();
+    let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
+
+    assert_eq!(rendered, expected);
+
+    fs::remove_file(output_path).unwrap();
+}
+
+#[test]
+fn cli_generates_python_file() {
+    let root = project_root();
+    let output_path = unique_output_path("cli");
+
+    generate_formatted_python_output(&root, &output_path);
 
     let rendered = fs::read_to_string(&output_path).unwrap();
     let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
@@ -114,10 +129,8 @@ fn python_request_models_are_write_only() {
     ));
     assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]:"));
     assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None"));
-    assert!(rendered.contains(
-        "class SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs](typing.TypedDict, total=False):"
-    ));
-    assert!(rendered.contains("workflow_id: typing.Required[str]"));
+    assert!(!rendered.contains("(typing.TypedDict, total=False):"));
+    assert!(!rendered.contains("typing.Unpack["));
     assert!(!rendered.contains("namespace: str | None = None"));
     assert!(!rendered.contains("namespace: str | None"));
     assert!(rendered.contains("message.namespace = workflow.info().namespace"));
@@ -159,5 +172,9 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains("workflow=workflow,"));
     assert!(rendered.contains("input=input,"));
     assert!(rendered.contains("return await self.signal_with_start_workflow_execution(request)"));
+    assert!(rendered.contains("async def activity_options_operation_args("));
+    assert!(rendered.contains("task_queue: str | None = None,"));
+    assert!(rendered.contains("retry_policy: temporalio.common.RetryPolicy,"));
+    assert!(rendered.contains("request = ActivityOptions("));
     assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
 }

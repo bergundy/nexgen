@@ -469,7 +469,6 @@ def test_generated_metadata() -> None:
     assert registry[("WorkflowService", "RetryPolicyOperation")] is retry_operation
     assert registry[("WorkflowService", "ActivityOptionsOperation")] is activity_operation
     assert hasattr(output, "SignalWithStartWorkflowExecutionRequest")
-    assert hasattr(output, "SignalWithStartWorkflowExecutionRequestArgs")
     assert not hasattr(output.SignalWithStartWorkflowExecutionRequest, "from_proto")
     assert not hasattr(output, "SignalWithStartWorkflowExecutionRequestTyped")
     assert not hasattr(output, "RetryPolicy")
@@ -553,7 +552,6 @@ async def test_signal_request_api(
     assert "header" not in request.__dataclass_fields__
     assert "links" not in request.__dataclass_fields__
     assert "namespace" not in request.__dataclass_fields__
-    assert "namespace" not in output.SignalWithStartWorkflowExecutionRequestArgs.__annotations__
 
     request_proto = request.to_proto()
     assert_full_signal_request(

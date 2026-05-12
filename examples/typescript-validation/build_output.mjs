@@ -1,33 +1,34 @@
-import { spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function main() {
   const appRoot = dirname(fileURLToPath(import.meta.url));
-  const repoRoot = resolve(appRoot, '..', '..');
-  const inputPath = resolve(repoRoot, 'examples', 'input.yaml');
-  const descriptorPath = resolve(repoRoot, 'descriptors.bin');
-  const outputPath = resolve(appRoot, 'output.ts');
+  const repoRoot = resolve(appRoot, "..", "..");
+  const inputPath = resolve(repoRoot, "examples", "input.wit");
+  const descriptorPath = resolve(repoRoot, "descriptors.bin");
+  const outputPath = resolve(appRoot, "output.ts");
 
   const result = spawnSync(
-    'cargo',
+    "cargo",
     [
-      'run',
-      '--quiet',
-      '--',
-      'generate',
-      '--lang',
-      'typescript',
-      '--input',
+      "run",
+      "--quiet",
+      "--",
+      "generate",
+      "--lang",
+      "typescript",
+      "--input",
       inputPath,
-      '--descriptors',
+      "--descriptors",
       descriptorPath,
-      '--output',
+      "--output",
       outputPath,
+      "--format",
     ],
     {
       cwd: repoRoot,
-      stdio: 'inherit',
+      stdio: "inherit",
     },
   );
 

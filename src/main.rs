@@ -8,7 +8,7 @@ use nexus_api_gen::{GenerateRequest, generate_to_file};
 #[derive(Parser)]
 #[command(name = "nexus-api-gen")]
 #[command(
-    about = "Generate language-specific Nexus operation bindings from YAML and protobuf descriptors"
+    about = "Generate language-specific Nexus operation bindings from WIT and protobuf descriptors"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -30,6 +30,8 @@ struct GenerateArgs {
     descriptors: PathBuf,
     #[arg(long)]
     output: PathBuf,
+    #[arg(long)]
+    format: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -56,6 +58,7 @@ fn main() -> ExitCode {
             input_path: args.input,
             descriptor_path: args.descriptors,
             output_path: args.output,
+            format: args.format,
         }),
     };
 

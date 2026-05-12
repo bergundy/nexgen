@@ -1,6 +1,6 @@
 # TypeScript Validation App
 
-This example builds the shared sample spec in `examples/input.yaml` into the
+This example builds the shared sample spec in `examples/input.wit` into the
 checked-in `output.ts` in this directory and then typechecks a small consumer
 against the generated code. The TypeScript support helpers for that shared spec
 live alongside this example in `model_overrides.ts`.

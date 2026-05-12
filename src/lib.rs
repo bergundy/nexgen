@@ -9,6 +9,7 @@ pub mod validation;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use descriptors::DescriptorIndex;
 use error::Result;
@@ -27,6 +28,7 @@ pub struct GenerateRequest {
     pub input_path: PathBuf,
     pub descriptor_path: PathBuf,
     pub output_path: PathBuf,
+    pub format: bool,
 }
 
 pub fn generate_to_string(
@@ -53,7 +55,53 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
         source,
     })?;
 
+    if request.format {
+        format_generated_file(request.language, &request.output_path)?;
+    }
+
     Ok(())
+}
+
+fn format_generated_file(language: Language, output_path: &Path) -> Result<()> {
+    let (program, args) = formatter_command(language, output_path)?;
+    let command = format_formatter_command(program, &args);
+    let status = Command::new(program)
+        .args(&args)
+        .status()
+        .map_err(|source| error::Error::RunFormatter {
+            path: output_path.to_path_buf(),
+            command: command.clone(),
+            source,
+        })?;
+
+    if !status.success() {
+        return Err(error::Error::FormatterFailed {
+            path: output_path.to_path_buf(),
+            command,
+            status,
+        });
+    }
+
+    Ok(())
+}
+
+fn formatter_command(
+    language: Language,
+    output_path: &Path,
+) -> Result<(&'static str, Vec<String>)> {
+    let output_path = output_path.to_string_lossy().into_owned();
+    match language {
+        Language::Python => Ok(("ruff", vec!["format".to_string(), output_path])),
+        Language::TypeScript => Ok(("prettier", vec!["--write".to_string(), output_path])),
+        _ => Err(error::Error::UnsupportedLanguage { language }),
+    }
+}
+
+fn format_formatter_command(program: &str, args: &[String]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn load_optional_file(path: Option<&Path>) -> Result<Option<String>> {
@@ -98,5 +146,36 @@ fn resolve_support_path(base_dir: &Path, support_path: &str) -> PathBuf {
         support_path
     } else {
         base_dir.join(support_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{format_formatter_command, formatter_command};
+    use crate::language::Language;
+
+    #[test]
+    fn chooses_python_formatter_command() {
+        let (program, args) = formatter_command(Language::Python, Path::new("output.py")).unwrap();
+        assert_eq!(program, "ruff");
+        assert_eq!(args, vec!["format", "output.py"]);
+        assert_eq!(
+            format_formatter_command(program, &args),
+            "ruff format output.py"
+        );
+    }
+
+    #[test]
+    fn chooses_typescript_formatter_command() {
+        let (program, args) =
+            formatter_command(Language::TypeScript, Path::new("output.ts")).unwrap();
+        assert_eq!(program, "prettier");
+        assert_eq!(args, vec!["--write", "output.ts"]);
+        assert_eq!(
+            format_formatter_command(program, &args),
+            "prettier --write output.ts"
+        );
     }
 }

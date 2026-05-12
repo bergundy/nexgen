@@ -1,0 +1,132 @@
+/// @nexus.support python="python-validation/model_overrides.py" typescript="typescript-validation/model_overrides.ts"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  /// @nexus.proto "temporal.api.common.v1.RetryPolicy"
+  /// @nexus.type python="temporalio.common.RetryPolicy" typescript="common.RetryPolicy"
+  type retry-policy = string;
+
+  /// @nexus.proto "temporal.api.common.v1.WorkflowType"
+  /// @nexus.type python="str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]" typescript="string | common.Workflow"
+  type workflow-type = string;
+
+  /// @nexus.proto "temporal.api.taskqueue.v1.TaskQueue"
+  /// @nexus.type python="str" typescript="string"
+  type task-queue = string;
+
+  /// @nexus.proto "temporal.api.common.v1.Payload"
+  /// @nexus.type python="typing.Any" typescript="common.Payload"
+  type payload = string;
+
+  /// @nexus.proto "temporal.api.common.v1.Payloads"
+  /// @nexus.type python="collections.abc.Sequence[typing.Any]"
+  type payloads = list<string>;
+
+  /// @nexus.proto "temporal.api.common.v1.Memo"
+  /// @nexus.type python="collections.abc.Mapping[str, typing.Any]" typescript="Record<string, unknown>"
+  type memo = string;
+
+  /// @nexus.proto "temporal.api.common.v1.SearchAttributes"
+  /// @nexus.type python="temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes" typescript="common.TypedSearchAttributes | common.SearchAttributes"
+  type search-attributes = string;
+
+  /// @nexus.proto "temporal.api.common.v1.Priority"
+  /// @nexus.type python="temporalio.common.Priority" typescript="common.Priority"
+  type priority = string;
+
+  /// @nexus.proto "temporal.api.workflow.v1.VersioningOverride"
+  /// @nexus.type python="temporalio.common.VersioningOverride" typescript="common.VersioningOverride"
+  type versioning-override = string;
+
+  /// @nexus.proto "google.protobuf.Duration"
+  /// @nexus.type python="timedelta" typescript="common.Duration"
+  type duration = string;
+
+  /// @nexus.proto "temporal.api.enums.v1.WorkflowIdReusePolicy"
+  /// @nexus.type python="temporalio.common.WorkflowIDReusePolicy" typescript="common.WorkflowIdReusePolicy"
+  enum workflow-id-reuse-policy {
+    allow-duplicate,
+    allow-duplicate-failed-only,
+    reject-duplicate,
+    terminate-if-running,
+  }
+
+  /// @nexus.proto "temporal.api.enums.v1.WorkflowIdConflictPolicy"
+  /// @nexus.type python="temporalio.common.WorkflowIDConflictPolicy" typescript="common.WorkflowIdConflictPolicy"
+  enum workflow-id-conflict-policy {
+    fail,
+    use-existing,
+    terminate-existing,
+  }
+
+  /// @nexus.proto "temporal.api.sdk.v1.UserMetadata"
+  record user-metadata {
+    summary: option<payload>,
+    details: option<payload>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record signal-with-start-workflow-execution-request {
+    /// @nexus.proto-field "workflow_type"
+    /// @nexus.function primary=true args-field="input" python-result="collections.abc.Awaitable[typing.Any]" typescript-result="Promise<any>"
+    workflow: string,
+    input: option<payloads>,
+    workflow-id: string,
+    task-queue: string,
+    /// @nexus.proto-field "signal_name"
+    /// @nexus.function args-field="signal-input" python-result="None | collections.abc.Awaitable[None]"
+    /// @nexus.with-arguments args-field="signal-input" value-type="workflow.SignalDefinition<any[]>" args-type="Value extends workflow.SignalDefinition<infer Args, any> ? Args : never" name-expr="value.name"
+    signal: string,
+    signal-input: option<payloads>,
+    workflow-execution-timeout: option<duration>,
+    workflow-run-timeout: option<duration>,
+    workflow-task-timeout: option<duration>,
+    identity: option<string>,
+    request-id: option<string>,
+    workflow-id-reuse-policy: option<workflow-id-reuse-policy>,
+    workflow-id-conflict-policy: option<workflow-id-conflict-policy>,
+    retry-policy: option<retry-policy>,
+    cron-schedule: option<string>,
+    memo: option<memo>,
+    search-attributes: option<search-attributes>,
+    priority: option<priority>,
+    versioning-override: option<versioning-override>,
+    user-metadata: option<user-metadata>,
+    /// @nexus.source python="workflow.info().namespace" typescript="workflow.workflowInfo().namespace"
+    namespace: option<string>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record signal-with-start-workflow-execution-response {
+    run-id: option<string>,
+    started: option<bool>,
+  }
+
+  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
+  record activity-options {
+    task-queue: option<task-queue>,
+    retry-policy: retry-policy,
+    schedule-to-close-timeout: option<duration>,
+    priority: option<priority>,
+  }
+
+  /// @nexus.input-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest" typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+  /// @nexus.output-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse" typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+  /// @nexus.output-transform python-type="workflow.ExternalWorkflowHandle[typing.Any]" python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)" typescript-type="workflow.ExternalWorkflowHandle" typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
+  signal-with-start-workflow-execution: func(
+    request: signal-with-start-workflow-execution-request,
+  ) -> signal-with-start-workflow-execution-response;
+
+  /// @nexus.input-ref python="temporalio.api.common.v1.RetryPolicy" typescript="@temporalio/api/common/v1.RetryPolicy"
+  /// @nexus.output-ref python="temporalio.api.common.v1.RetryPolicy" typescript="@temporalio/api/common/v1.RetryPolicy"
+  retry-policy-operation: func(request: retry-policy) -> retry-policy;
+
+  /// @nexus.input-ref python="temporalio.api.activity.v1.ActivityOptions" typescript="@temporalio/api/activity/v1.ActivityOptions"
+  /// @nexus.output-ref python="temporalio.api.activity.v1.ActivityOptions" typescript="@temporalio/api/activity/v1.ActivityOptions"
+  activity-options-operation: func(request: activity-options) -> activity-options;
+}

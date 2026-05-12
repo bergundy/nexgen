@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use heck::ToLowerCamelCase;
+use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use indexmap::IndexMap;
 use prost_types::FieldDescriptorProto;
 use prost_types::field_descriptor_proto::{Label, Type};
@@ -136,6 +136,104 @@ fn normalize_typescript_module(module_path: &str) -> Option<String> {
     None
 }
 
+fn generated_model_type_parameters(
+    spec: &ApiSpec,
+    message_name: &str,
+) -> Vec<RenderedTypeParameter> {
+    let Some(generated_model) = spec
+        .type_override(message_name)
+        .and_then(|type_override| type_override.generated_model())
+    else {
+        return Vec::new();
+    };
+
+    let mut type_parameters = generated_model
+        .functions
+        .iter()
+        .map(|(field_name, function)| {
+            let generated_name = generated_model
+                .field_name_override(field_name)
+                .unwrap_or(field_name);
+            let type_parameter_name = function_type_parameter_name(generated_name);
+            let constraint = function_constraint(&function.result_type);
+            (
+                !function.primary,
+                generated_name.to_string(),
+                RenderedTypeParameter {
+                    name: type_parameter_name,
+                    constraint: constraint.clone(),
+                    default: constraint,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    type_parameters.extend(generated_model.with_arguments.iter().map(
+        |(field_name, with_arguments)| {
+            let generated_name = generated_model
+                .field_name_override(field_name)
+                .unwrap_or(field_name);
+            let constraint = with_arguments.value_type.clone();
+            (
+                true,
+                generated_name.to_string(),
+                RenderedTypeParameter {
+                    name: with_arguments_type_parameter_name(generated_name),
+                    constraint: constraint.clone(),
+                    default: constraint,
+                },
+            )
+        },
+    ));
+
+    type_parameters.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    type_parameters
+        .into_iter()
+        .map(|(_, _, type_parameter)| type_parameter)
+        .collect()
+}
+
+fn function_type_parameter_name(field_name: &str) -> String {
+    format!(
+        "{}Fn",
+        function_type_parameter_stem(field_name).to_upper_camel_case()
+    )
+}
+
+fn with_arguments_type_parameter_name(field_name: &str) -> String {
+    format!(
+        "{}Value",
+        function_type_parameter_stem(field_name).to_upper_camel_case()
+    )
+}
+
+fn function_type_parameter_stem(field_name: &str) -> &str {
+    field_name
+        .strip_suffix("Type")
+        .or_else(|| field_name.strip_suffix("Name"))
+        .unwrap_or(field_name)
+}
+
+fn function_constraint(result_annotation: &str) -> String {
+    format!("(...args: any[]) => {result_annotation}")
+}
+
+fn generic_model_annotation(model_name: &str, type_parameters: &[RenderedTypeParameter]) -> String {
+    if type_parameters.is_empty() {
+        model_name.to_string()
+    } else {
+        format!(
+            "{}<{}>",
+            model_name,
+            type_parameters
+                .iter()
+                .map(|type_parameter| type_parameter.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
 #[derive(Debug)]
 struct RenderedService<'a> {
     name: &'a str,
@@ -150,6 +248,7 @@ struct RenderedOperation<'a> {
     attr_name: String,
     input_proto_ref: String,
     output_proto_ref: String,
+    input_type_parameters: Vec<RenderedTypeParameter>,
     input_annotation: String,
     input_to_proto_expr: String,
     output_annotation: String,
@@ -171,14 +270,19 @@ struct RenderedEnumValue {
 #[derive(Debug)]
 struct RenderedModel {
     name: String,
+    proto_ref: String,
     capabilities: ModelCapabilities,
+    type_parameters: Vec<RenderedTypeParameter>,
     fields: Vec<RenderedField>,
     sourced_fields: Vec<RenderedSourcedField>,
+    functions: Vec<RenderedFunctionField>,
+    with_arguments: Vec<RenderedWithArgumentsField>,
 }
 
 #[derive(Debug)]
 struct RenderedField {
     name: String,
+    proto_name: String,
     annotation: String,
     optional: bool,
     from_proto_expr: String,
@@ -189,6 +293,29 @@ struct RenderedField {
 struct RenderedSourcedField {
     name: String,
     to_proto_expr: String,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedTypeParameter {
+    name: String,
+    constraint: String,
+    default: String,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedFunctionField {
+    callable_field_name: String,
+    args_field_name: String,
+    primary: bool,
+    type_parameter_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedWithArgumentsField {
+    value_field_name: String,
+    args_field_name: String,
+    type_parameter_name: String,
+    args_type_expression: String,
 }
 
 #[derive(Debug)]
@@ -331,13 +458,26 @@ fn resolve_operation<'a>(
         uses_long,
     );
     let output_transform = operation.output_transform();
+    let input_type_parameters = models
+        .get(&input_message.full_name)
+        .map(|model| model.type_parameters.clone())
+        .unwrap_or_default();
+    let input_annotation = if matches!(
+        input_conversion.kind,
+        MessageValueConversionKind::GeneratedModel { .. }
+    ) {
+        generic_model_annotation(&input_conversion.annotation, &input_type_parameters)
+    } else {
+        input_conversion.annotation.clone()
+    };
 
     Ok(RenderedOperation {
         name: operation.name.as_str(),
         attr_name: typescript_ident(&operation.name.to_lower_camel_case()),
         input_proto_ref: message_typescript_interface_ref(input_message),
         output_proto_ref: message_typescript_interface_ref(output_message),
-        input_annotation: input_conversion.annotation.clone(),
+        input_type_parameters,
+        input_annotation,
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
         output_annotation: output_transform
             .map(|transform| transform.type_name.clone())
@@ -425,9 +565,13 @@ fn ensure_model(
         message.full_name.clone(),
         RenderedModel {
             name: message_model_name(&message.full_name),
+            proto_ref: message_typescript_interface_ref(message),
             capabilities: requested_capabilities,
+            type_parameters: generated_model_type_parameters(spec, &message.full_name),
             fields: Vec::new(),
             sourced_fields: Vec::new(),
+            functions: Vec::new(),
+            with_arguments: Vec::new(),
         },
     );
 
@@ -481,6 +625,77 @@ fn ensure_model(
         .get_mut(&message.full_name)
         .expect("model should be inserted before recursive field resolution")
         .sourced_fields = sourced_fields;
+    models
+        .get_mut(&message.full_name)
+        .expect("model should be inserted before recursive field resolution")
+        .functions = spec
+        .type_override(&message.full_name)
+        .and_then(|type_override| type_override.generated_model())
+        .map(|generated_model| {
+            generated_model
+                .functions
+                .iter()
+                .map(|(field_name, function)| RenderedFunctionField {
+                    callable_field_name: generated_model
+                        .field_name_override(field_name)
+                        .map(typescript_generated_field_name)
+                        .unwrap_or_else(|| typescript_ident(&field_name.to_lower_camel_case())),
+                    args_field_name: generated_model
+                        .field_name_override(&function.args_field)
+                        .map(typescript_generated_field_name)
+                        .unwrap_or_else(|| {
+                            typescript_ident(&function.args_field.to_lower_camel_case())
+                        }),
+                    primary: function.primary,
+                    type_parameter_name: function_type_parameter_name(
+                        generated_model
+                            .field_name_override(field_name)
+                            .unwrap_or(field_name),
+                    ),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    models
+        .get_mut(&message.full_name)
+        .expect("model should be inserted before recursive field resolution")
+        .with_arguments = spec
+        .type_override(&message.full_name)
+        .and_then(|type_override| type_override.generated_model())
+        .map(|generated_model| {
+            generated_model
+                .with_arguments
+                .iter()
+                .map(|(field_name, with_arguments)| RenderedWithArgumentsField {
+                    value_field_name: generated_model
+                        .field_name_override(field_name)
+                        .map(typescript_generated_field_name)
+                        .unwrap_or_else(|| typescript_ident(&field_name.to_lower_camel_case())),
+                    args_field_name: generated_model
+                        .field_name_override(&with_arguments.args_field)
+                        .map(typescript_generated_field_name)
+                        .unwrap_or_else(|| {
+                            typescript_ident(&with_arguments.args_field.to_lower_camel_case())
+                        }),
+                    type_parameter_name: {
+                        let generated_field_name = generated_model
+                            .field_name_override(field_name)
+                            .unwrap_or(field_name);
+                        with_arguments_type_parameter_name(generated_field_name)
+                    },
+                    args_type_expression: {
+                        let generated_field_name = generated_model
+                            .field_name_override(field_name)
+                            .unwrap_or(field_name);
+                        with_arguments_args_type_expression(
+                            &with_arguments.args_type,
+                            &with_arguments_type_parameter_name(generated_field_name),
+                        )
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 }
 
 fn ensure_enum(enumeration: &EnumMetadata, enums: &mut IndexMap<String, RenderedEnum>) {
@@ -515,12 +730,21 @@ fn build_field(
         .name
         .as_deref()
         .expect("descriptor fields should be named");
-    let generated_field_name = spec
+    let generated_model = spec
         .type_override(&message.full_name)
-        .and_then(|type_override| type_override.generated_model())
+        .and_then(|type_override| type_override.generated_model());
+    let generated_field_name = generated_model
         .and_then(|generated_model| generated_model.field_name_override(proto_name))
         .map(|name| field_name(field, Some(name)))
         .unwrap_or_else(|| field_name(field, None));
+    let function_field =
+        generated_model.and_then(|generated_model| generated_model.function(proto_name));
+    let with_arguments_field =
+        generated_model.and_then(|generated_model| generated_model.with_arguments(proto_name));
+    let function_args_field = generated_model
+        .and_then(|generated_model| generated_model.function_for_args_field(proto_name));
+    let with_arguments_args_field = generated_model
+        .and_then(|generated_model| generated_model.with_arguments_for_args_field(proto_name));
     let proto_field_name = field_name(field, None);
     let required = spec
         .type_override(&message.full_name)
@@ -530,6 +754,7 @@ fn build_field(
         *uses_long |= map_info.value_type.uses_long;
         return RenderedField {
             name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
             annotation: typescript_field_annotation(
                 spec,
                 &message.full_name,
@@ -547,9 +772,83 @@ fn build_field(
     let label = field_label(field);
     let owner_name = message_model_name(&message.full_name);
 
+    if function_field.is_some() {
+        return RenderedField {
+            name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
+            annotation: resolved_type.annotation.clone(),
+            optional: !required,
+            from_proto_expr: if required {
+                required_from_proto_expr(
+                    &resolved_type,
+                    &owner_name,
+                    &proto_field_name,
+                    &generated_field_name,
+                    field,
+                )
+            } else {
+                optional_from_proto_expr(&resolved_type, &proto_field_name)
+            },
+            to_proto_expr: if required {
+                required_function_to_proto_expr(&resolved_type, &owner_name, &generated_field_name)
+            } else {
+                optional_function_to_proto_expr(&resolved_type, &generated_field_name)
+            },
+        };
+    }
+
+    if let Some(with_arguments) = with_arguments_field {
+        return RenderedField {
+            name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
+            annotation: resolved_type.annotation.clone(),
+            optional: !required,
+            from_proto_expr: if required {
+                required_from_proto_expr(
+                    &resolved_type,
+                    &owner_name,
+                    &proto_field_name,
+                    &generated_field_name,
+                    field,
+                )
+            } else {
+                optional_from_proto_expr(&resolved_type, &proto_field_name)
+            },
+            to_proto_expr: if required {
+                required_with_arguments_to_proto_expr(
+                    &resolved_type,
+                    &owner_name,
+                    &generated_field_name,
+                    &with_arguments.name_expr,
+                )
+            } else {
+                optional_with_arguments_to_proto_expr(
+                    &resolved_type,
+                    &generated_field_name,
+                    &with_arguments.name_expr,
+                )
+            },
+        };
+    }
+
+    if function_args_field.is_some() || with_arguments_args_field.is_some() {
+        return RenderedField {
+            name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
+            annotation: resolved_type.annotation.clone(),
+            optional: true,
+            from_proto_expr: optional_from_proto_expr(&resolved_type, &proto_field_name),
+            to_proto_expr: optional_function_args_to_proto_expr(
+                &resolved_type,
+                &generated_field_name,
+            ),
+        };
+    }
+
     if label == Some(Label::Repeated) {
         return RenderedField {
             name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
             annotation: typescript_field_annotation(
                 spec,
                 &message.full_name,
@@ -565,6 +864,7 @@ fn build_field(
     if required {
         return RenderedField {
             name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
             annotation: typescript_field_annotation(
                 spec,
                 &message.full_name,
@@ -589,6 +889,7 @@ fn build_field(
 
     RenderedField {
         name: generated_field_name.clone(),
+        proto_name: proto_field_name.clone(),
         annotation: typescript_field_annotation(
             spec,
             &message.full_name,
@@ -653,7 +954,7 @@ fn typescript_field_annotation(
 fn repeated_from_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -> String {
     match resolved_type.kind {
         ResolvedFieldKind::Message => format!(
-            "proto.{field_name}?.map((value: any) => {})",
+            "proto.{field_name}?.map((value: any) => {}!)",
             resolved_type
                 .message_conversion
                 .as_ref()
@@ -847,6 +1148,96 @@ fn optional_to_proto_expr_from_expr(resolved_type: &ResolvedFieldType, value_exp
         ),
         _ => value_expr.to_string(),
     }
+}
+
+fn required_function_to_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    owner_name: &str,
+    field_name: &str,
+) -> String {
+    let required_value =
+        required_field_expr(&format!("model.{field_name}"), owner_name, field_name);
+    function_value_to_proto_expr(resolved_type, &function_name_expr(&required_value))
+}
+
+fn optional_function_to_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -> String {
+    let value_expr = format!("model.{field_name}");
+    format!(
+        "{value_expr} == null ? undefined : {}",
+        function_value_to_proto_expr(resolved_type, &function_name_expr(&value_expr))
+    )
+}
+
+fn required_with_arguments_to_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    owner_name: &str,
+    field_name: &str,
+    name_expr_template: &str,
+) -> String {
+    let required_value =
+        required_field_expr(&format!("model.{field_name}"), owner_name, field_name);
+    function_value_to_proto_expr(
+        resolved_type,
+        &with_arguments_name_expr(name_expr_template, &required_value),
+    )
+}
+
+fn optional_with_arguments_to_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    field_name: &str,
+    name_expr_template: &str,
+) -> String {
+    let value_expr = format!("model.{field_name}");
+    format!(
+        "{value_expr} == null ? undefined : {}",
+        function_value_to_proto_expr(
+            resolved_type,
+            &with_arguments_name_expr(name_expr_template, &value_expr),
+        )
+    )
+}
+
+fn function_value_to_proto_expr(resolved_type: &ResolvedFieldType, name_expr: &str) -> String {
+    match resolved_type.kind {
+        ResolvedFieldKind::Message => match &resolved_type
+            .message_conversion
+            .as_ref()
+            .expect("message conversion should be present")
+            .kind
+        {
+            MessageValueConversionKind::GeneratedModel { model_name } => {
+                format!("{model_name}.toProto({{ name: {name_expr} }}) ?? {{}}")
+            }
+            MessageValueConversionKind::Override { to_proto, .. } => {
+                format!("{to_proto}({name_expr})")
+            }
+        },
+        _ => name_expr.to_string(),
+    }
+}
+
+fn function_name_expr(value_expr: &str) -> String {
+    format!("_RequestFunctionName({value_expr})")
+}
+
+fn with_arguments_name_expr(name_expr_template: &str, value_expr: &str) -> String {
+    format!(
+        "((value) => typeof value === 'string' ? value : ({}))({value_expr})",
+        name_expr_template,
+    )
+}
+
+fn optional_function_args_to_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    field_name: &str,
+) -> String {
+    if let Some(message_conversion) = &resolved_type.message_conversion {
+        if let MessageValueConversionKind::Override { .. } = message_conversion.kind {
+            return optional_to_proto_expr_from_expr(resolved_type, &format!("model.{field_name}"));
+        }
+    }
+
+    format!("_RequestArgsToPayloads(model.{field_name})")
 }
 
 fn enum_from_proto_expr(resolved_type: &ResolvedFieldType, expr: &str) -> String {
@@ -1152,6 +1543,16 @@ fn render_module(
     output.push_str("  }\n");
     output.push_str("  return value;\n");
     output.push_str("}\n");
+
+    let uses_invocation_models = models
+        .iter()
+        .any(|model| !model.functions.is_empty() || !model.with_arguments.is_empty());
+    if uses_invocation_models {
+        output.push('\n');
+        render_function_type_helpers(&mut output);
+        output.push('\n');
+        render_function_runtime_helpers(&mut output);
+    }
     if !enums.is_empty() {
         output.push('\n');
         for enumeration in enums {
@@ -1196,28 +1597,251 @@ fn render_enum(output: &mut String, enumeration: &RenderedEnum) {
     output.push_str("}\n");
 }
 
-fn render_model(output: &mut String, model: &RenderedModel) {
-    output.push_str("export interface ");
-    output.push_str(&model.name);
-    output.push_str(" {\n");
-    for field in &model.fields {
-        output.push_str("  ");
-        output.push_str(&field.name);
-        if field.optional {
-            output.push('?');
-        }
-        output.push_str(": ");
-        output.push_str(&field.annotation);
-        output.push_str(";\n");
-    }
+fn render_function_type_helpers(output: &mut String) {
+    output.push_str("type _RequestWithFunctionField<\n");
+    output.push_str("  Fn extends (...args: any[]) => any,\n");
+    output.push_str("  Base,\n");
+    output.push_str("  Field extends string,\n");
+    output.push_str("  ArgsField extends string,\n");
+    output.push_str("> =\n");
+    output.push_str(
+        "  | (Base & { [K in Field]: string } & { [K in ArgsField]?: ReadonlyArray<unknown> })\n",
+    );
+    output.push_str("  | (Base & { [K in Field]: Fn } & (Parameters<Fn> extends [any, ...any[]]\n");
+    output.push_str("      ? { [K in ArgsField]: Parameters<Fn> | Readonly<Parameters<Fn>> }\n");
+    output
+        .push_str("      : { [K in ArgsField]?: Parameters<Fn> | Readonly<Parameters<Fn>> }));\n");
+    output.push_str("\n");
+    output.push_str("type _RequestWithArgumentsField<\n");
+    output.push_str("  Value,\n");
+    output.push_str("  Args extends any[],\n");
+    output.push_str("  Base,\n");
+    output.push_str("  Field extends string,\n");
+    output.push_str("  ArgsField extends string,\n");
+    output.push_str("> =\n");
+    output.push_str(
+        "  | (Base & { [K in Field]: string } & { [K in ArgsField]?: ReadonlyArray<unknown> })\n",
+    );
+    output.push_str("  | (Base & { [K in Field]: Value } & (Args extends [any, ...any[]]\n");
+    output.push_str("      ? { [K in ArgsField]: Args | Readonly<Args> }\n");
+    output.push_str("      : { [K in ArgsField]?: Args | Readonly<Args> }));\n");
+}
+
+fn render_function_runtime_helpers(output: &mut String) {
+    output.push_str("function _RequestFunctionName<Fn extends (...args: any[]) => any>(\n");
+    output.push_str("  value: string | Fn,\n");
+    output.push_str("): string {\n");
+    output.push_str("  if (typeof value === 'string') {\n");
+    output.push_str("    return value;\n");
+    output.push_str("  }\n");
+    output.push_str("  if (value.name) {\n");
+    output.push_str("    return value.name;\n");
+    output.push_str("  }\n");
+    output.push_str(
+        "  throw new TypeError('Invalid request function: the function is anonymous');\n",
+    );
     output.push_str("}\n\n");
+    output.push_str("function _RequestArgsToPayloads(\n");
+    output.push_str("  args: ReadonlyArray<unknown> | undefined,\n");
+    output.push_str("): temporal.api.common.v1.IPayloads | undefined {\n");
+    output.push_str("  if (args == null) {\n");
+    output.push_str("    return undefined;\n");
+    output.push_str("  }\n");
+    output.push_str(
+        "  const payloads = common.toPayloads(common.defaultPayloadConverter, ...args);\n",
+    );
+    output.push_str("  return payloads == null ? undefined : { payloads };\n");
+    output.push_str("}\n");
+}
+
+fn render_type_parameter_list(type_parameters: &[RenderedTypeParameter]) -> String {
+    if type_parameters.is_empty() {
+        return String::new();
+    }
+
+    let params = type_parameters
+        .iter()
+        .map(|type_parameter| {
+            format!(
+                "{} extends {} = {}",
+                type_parameter.name, type_parameter.constraint, type_parameter.default
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<{params}>")
+}
+
+fn render_named_generic_function_start(
+    output: &mut String,
+    name: &str,
+    type_parameters: &[RenderedTypeParameter],
+    indent: usize,
+) {
+    let indent_str = " ".repeat(indent);
+    output.push_str(name);
+    output.push_str("<\n");
+    for type_parameter in type_parameters {
+        output.push_str(&indent_str);
+        output.push_str("  ");
+        output.push_str(&type_parameter.name);
+        output.push_str(" extends ");
+        output.push_str(&type_parameter.constraint);
+        output.push_str(" = ");
+        output.push_str(&type_parameter.default);
+        output.push_str(",\n");
+    }
+    output.push_str(&indent_str);
+    output.push_str(">(\n");
+}
+
+fn render_function_model_composition(model: &RenderedModel, base_name: &str) -> String {
+    let mut composition = base_name.to_string();
+    let mut invocations = model
+        .functions
+        .iter()
+        .map(RenderedInvocationField::Function)
+        .chain(
+            model
+                .with_arguments
+                .iter()
+                .map(RenderedInvocationField::WithArguments),
+        )
+        .collect::<Vec<_>>();
+    invocations.sort_by(|left, right| {
+        left.sort_key()
+            .cmp(&right.sort_key())
+            .then_with(|| left.field_name().cmp(right.field_name()))
+    });
+
+    for invocation in invocations {
+        composition = match invocation {
+            RenderedInvocationField::Function(function) => format!(
+                "_RequestWithFunctionField<{}, {}, {}, {}>",
+                function.type_parameter_name,
+                composition,
+                typescript_string_literal(&function.callable_field_name),
+                typescript_string_literal(&function.args_field_name),
+            ),
+            RenderedInvocationField::WithArguments(with_arguments) => format!(
+                "_RequestWithArgumentsField<{}, {}, {}, {}, {}>",
+                with_arguments.type_parameter_name,
+                with_arguments.args_type_expression,
+                composition,
+                typescript_string_literal(&with_arguments.value_field_name),
+                typescript_string_literal(&with_arguments.args_field_name),
+            ),
+        };
+    }
+    composition
+}
+
+#[derive(Clone, Copy)]
+enum RenderedInvocationField<'a> {
+    Function(&'a RenderedFunctionField),
+    WithArguments(&'a RenderedWithArgumentsField),
+}
+
+impl<'a> RenderedInvocationField<'a> {
+    fn sort_key(self) -> (u8, bool) {
+        match self {
+            Self::Function(function) => (0, !function.primary),
+            Self::WithArguments(_) => (1, true),
+        }
+    }
+
+    fn field_name(self) -> &'a str {
+        match self {
+            Self::Function(function) => &function.callable_field_name,
+            Self::WithArguments(with_arguments) => &with_arguments.value_field_name,
+        }
+    }
+}
+
+fn with_arguments_args_type_expression(
+    args_type_template: &str,
+    type_parameter_name: &str,
+) -> String {
+    args_type_template.replace("Value", type_parameter_name)
+}
+
+fn render_model(output: &mut String, model: &RenderedModel) {
+    if model.functions.is_empty() && model.with_arguments.is_empty() {
+        output.push_str("export interface ");
+        output.push_str(&model.name);
+        output.push_str(" {\n");
+        for field in &model.fields {
+            output.push_str("  ");
+            output.push_str(&field.name);
+            if field.optional {
+                output.push('?');
+            }
+            output.push_str(": ");
+            output.push_str(&field.annotation);
+            output.push_str(";\n");
+        }
+        output.push_str("}\n\n");
+    } else {
+        let function_fields = model
+            .functions
+            .iter()
+            .map(|function| function.callable_field_name.as_str())
+            .chain(
+                model
+                    .with_arguments
+                    .iter()
+                    .map(|with_arguments| with_arguments.value_field_name.as_str()),
+            )
+            .collect::<Vec<_>>();
+        let args_fields = model
+            .functions
+            .iter()
+            .map(|function| function.args_field_name.as_str())
+            .chain(
+                model
+                    .with_arguments
+                    .iter()
+                    .map(|with_arguments| with_arguments.args_field_name.as_str()),
+            )
+            .collect::<Vec<_>>();
+        let base_name = format!("{}Base", model.name);
+
+        output.push_str("type ");
+        output.push_str(&base_name);
+        output.push_str(" = {\n");
+        for field in &model.fields {
+            if function_fields.contains(&field.name.as_str())
+                || args_fields.contains(&field.name.as_str())
+            {
+                continue;
+            }
+            output.push_str("  ");
+            output.push_str(&field.name);
+            if field.optional {
+                output.push('?');
+            }
+            output.push_str(": ");
+            output.push_str(&field.annotation);
+            output.push_str(";\n");
+        }
+        output.push_str("};\n\n");
+
+        output.push_str("export type ");
+        output.push_str(&model.name);
+        output.push_str(&render_type_parameter_list(&model.type_parameters));
+        output.push_str(" = ");
+        output.push_str(&render_function_model_composition(model, &base_name));
+        output.push_str(";\n\n");
+    }
     output.push_str("export const ");
     output.push_str(&model.name);
     output.push_str(" = {\n");
     let mut wrote_method = false;
     if model.capabilities.from_proto {
         output.push_str("  fromProto(\n");
-        output.push_str("    proto: any,\n");
+        output.push_str("    proto: ");
+        output.push_str(&model.proto_ref);
+        output.push_str(" | null | undefined,\n");
         output.push_str("  ): ");
         output.push_str(&model.name);
         output.push_str(" | undefined {\n");
@@ -1244,11 +1868,23 @@ fn render_model(output: &mut String, model: &RenderedModel) {
         if wrote_method {
             output.push_str(",\n\n");
         }
-        output.push_str("  toProto(\n");
-        output.push_str("    model: ");
-        output.push_str(&model.name);
-        output.push_str(" | null | undefined,\n");
-        output.push_str("  ): any {\n");
+        if model.type_parameters.is_empty() {
+            output.push_str("  toProto(\n");
+            output.push_str("    model: ");
+            output.push_str(&model.name);
+            output.push_str(" | null | undefined,\n");
+        } else {
+            render_named_generic_function_start(output, "  toProto", &model.type_parameters, 4);
+            output.push_str("    model: ");
+            output.push_str(&generic_model_annotation(
+                &model.name,
+                &model.type_parameters,
+            ));
+            output.push_str(" | null | undefined,\n");
+        }
+        output.push_str("  ): ");
+        output.push_str(&model.proto_ref);
+        output.push_str(" | undefined {\n");
         output.push_str("    if (model == null) {\n");
         output.push_str("      return undefined;\n");
         output.push_str("    }\n");
@@ -1258,7 +1894,7 @@ fn render_model(output: &mut String, model: &RenderedModel) {
             output.push_str("    return {\n");
             for field in &model.fields {
                 output.push_str("      ");
-                output.push_str(&field.name);
+                output.push_str(&field.proto_name);
                 output.push_str(": ");
                 output.push_str(&field.to_proto_expr);
                 output.push_str(",\n");
@@ -1336,9 +1972,18 @@ fn render_operation_client_methods(
     service_name: &str,
     operation: &RenderedOperation<'_>,
 ) {
-    output.push_str("  public async ");
-    output.push_str(&operation.attr_name);
-    output.push_str("(\n");
+    if operation.input_type_parameters.is_empty() {
+        output.push_str("  public async ");
+        output.push_str(&operation.attr_name);
+        output.push_str("(\n");
+    } else {
+        render_named_generic_function_start(
+            output,
+            &format!("  public async {}", operation.attr_name),
+            &operation.input_type_parameters,
+            2,
+        );
+    }
     output.push_str("    request: ");
     output.push_str(&operation.input_annotation);
     output.push_str(",\n");
@@ -1380,11 +2025,17 @@ fn required_field_expr(value_expr: &str, owner_name: &str, field_name: &str) -> 
 }
 
 pub(crate) fn field_name(field: &FieldDescriptorProto, explicit_name: Option<&str>) -> String {
-    let name = explicit_name
-        .or_else(|| field.json_name.as_deref())
-        .or_else(|| field.name.as_deref())
-        .expect("descriptor fields should be named");
-    typescript_ident(name)
+    match explicit_name {
+        Some(name) => typescript_generated_field_name(name),
+        None => {
+            let name = field
+                .json_name
+                .as_deref()
+                .or_else(|| field.name.as_deref())
+                .expect("descriptor fields should be named");
+            typescript_ident(name)
+        }
+    }
 }
 
 fn typescript_ident(name: &str) -> String {
@@ -1393,6 +2044,10 @@ fn typescript_ident(name: &str) -> String {
     } else {
         name.to_string()
     }
+}
+
+fn typescript_generated_field_name(name: &str) -> String {
+    typescript_ident(&name.to_lower_camel_case())
 }
 
 fn typescript_string_literal(value: &str) -> String {
@@ -1455,6 +2110,8 @@ fn is_typescript_keyword(name: &str) -> bool {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{TYPESCRIPT_SUPPORT_MARKER, resolve_message_ref};
     use crate::SupportFiles;
@@ -1464,7 +2121,7 @@ mod tests {
     use crate::spec::ApiSpec;
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/input.yaml")
+        root.join("examples/input.wit")
     }
 
     fn sample_typescript_output_path(root: &std::path::Path) -> PathBuf {
@@ -1479,6 +2136,24 @@ mod tests {
             ),
             ..SupportFiles::default()
         }
+    }
+
+    fn format_typescript_output(root: &std::path::Path, output: &str) -> String {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_path = std::env::temp_dir().join(format!("nexus-api-gen-typescript-{unique}.ts"));
+        fs::write(&temp_path, output).unwrap();
+        let status =
+            Command::new(root.join("examples/typescript-validation/node_modules/.bin/prettier"))
+                .args(["--write", temp_path.to_str().unwrap()])
+                .status()
+                .unwrap();
+        assert!(status.success());
+        let formatted = fs::read_to_string(&temp_path).unwrap();
+        fs::remove_file(temp_path).unwrap();
+        formatted
     }
 
     #[test]
@@ -1505,6 +2180,7 @@ mod tests {
         let descriptors = DescriptorIndex::load(&root.join("descriptors.bin")).unwrap();
         let support = sample_support_files(&root);
         let output = generate_source(Language::TypeScript, &spec, &descriptors, &support).unwrap();
+        let output = format_typescript_output(&root, &output);
         let expected = std::fs::read_to_string(sample_typescript_output_path(&root)).unwrap();
 
         assert_eq!(output, expected);
@@ -1521,45 +2197,117 @@ mod tests {
 
         assert!(output.contains(TYPESCRIPT_SUPPORT_MARKER));
         assert!(output.contains("export function retryPolicyFromProto("));
-        assert!(output.contains("workflow: WorkflowType;"));
+        assert!(output.contains("type _RequestWithFunctionField<"));
+        assert!(output.contains("type _RequestWithArgumentsField<"));
+        assert!(output.contains("type SignalWithStartWorkflowExecutionRequestBase = {"));
+        assert!(output.contains("export type SignalWithStartWorkflowExecutionRequest<"));
+        assert!(output.contains(
+            "WorkflowFn extends (...args: any[]) => Promise<any> = (...args: any[]) => Promise<any>,"
+        ));
+        assert!(output.contains(
+            "SignalValue extends workflow.SignalDefinition<any[]> = workflow.SignalDefinition<any[]>"
+        ));
+        assert!(output.contains("> = _RequestWithArgumentsField<"));
+        assert!(output.contains(
+            "SignalValue extends workflow.SignalDefinition<infer Args, any> ? Args : never"
+        ));
+        assert!(output.contains(
+            "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowExecutionRequestBase, \"workflow\", \"input\">"
+        ));
         assert!(output.contains("workflowId: string;"));
-        assert!(output.contains("taskQueue: TaskQueue;"));
-        assert!(output.contains("signal: string;"));
+        assert!(output.contains("taskQueue: string;"));
+        assert!(output.contains("workflowRunTimeout?: common.Duration;"));
+        assert!(output.contains("workflowIdReusePolicy?: common.WorkflowIdReusePolicy;"));
+        assert!(output.contains("workflowIdConflictPolicy?: common.WorkflowIdConflictPolicy;"));
+        assert!(output.contains("memo?: Record<string, unknown>;"));
+        assert!(output.contains(
+            "searchAttributes?: common.TypedSearchAttributes | common.SearchAttributes;"
+        ));
+        assert!(output.contains("versioningOverride?: common.VersioningOverride;"));
+        assert!(output.contains("priority?: common.Priority;"));
+        assert!(!output.contains("signal: string;"));
         assert!(!output.contains("namespace?: string;"));
         assert!(output.contains("namespace: workflow.workflowInfo().namespace,"));
         assert!(output.contains("retryPolicy: common.RetryPolicy;"));
-        assert!(output.contains("requiredField(model.workflow"));
+        assert!(output.contains("_RequestFunctionName("));
+        assert!(output.contains("input: _RequestArgsToPayloads(model.input),"));
+        assert!(output.contains("signalInput: _RequestArgsToPayloads(model.signalInput),"));
+        assert!(output.contains(
+            "signalName: ((value) => typeof value === 'string' ? value : (value.name))("
+        ));
+        assert!(output.contains("workflowType: workflowTypeToProto("));
+        assert!(output.contains("taskQueue: taskQueueToProto("));
+        assert!(output.contains(
+            "workflowRunTimeout: model.workflowRunTimeout == null ? undefined : durationToProto(model.workflowRunTimeout),"
+        ));
+        assert!(output.contains("memo: model.memo == null ? undefined : memoToProto(model.memo),"));
+        assert!(output.contains(
+            "searchAttributes: model.searchAttributes == null ? undefined : searchAttributesToProto(model.searchAttributes),"
+        ));
+        assert!(output.contains(
+            "priority: model.priority == null ? undefined : priorityToProto(model.priority),"
+        ));
+        assert!(output.contains(
+            "versioningOverride: model.versioningOverride == null ? undefined : versioningOverrideToProto(model.versioningOverride),"
+        ));
+        assert!(output.contains("export function taskQueueFromProto("));
+        assert!(output.contains("export function taskQueueToProto("));
+        assert!(output.contains(
+            "): temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionRequest | undefined {"
+        ));
         assert!(output.contains("requiredField(model.retryPolicy"));
         assert!(output.contains("request: common.RetryPolicy"));
         assert!(output.contains("retryPolicyToProto(request)"));
         assert!(!output.contains("header?:"));
         assert!(!output.contains("export interface Header"));
+        assert!(!output.contains("export interface WorkflowType"));
+        assert!(!output.contains("export interface TaskQueue"));
+        assert!(!output.contains("export interface Duration"));
+        assert!(!output.contains("export interface Memo"));
+        assert!(!output.contains("export interface SearchAttributes"));
+        assert!(!output.contains("export interface Priority"));
+        assert!(!output.contains("export interface VersioningOverride"));
         assert!(!output.contains("SignalWithStartWorkflowExecutionRequest = {\n  fromProto("));
         assert!(!output.contains("SignalWithStartWorkflowExecutionRequest.fromProto"));
+        assert!(!output.contains("export interface SignalWithStartWorkflowExecutionRequest {"));
         assert!(!output.contains("export interface RetryPolicy"));
+        assert!(!output.contains("export enum WorkflowIdReusePolicy"));
+        assert!(!output.contains("export enum WorkflowIdConflictPolicy"));
         assert!(!output.contains("signalWithStartWorkflow("));
+        assert!(output.contains("public async signalWithStartWorkflowExecution<"));
+        assert!(output.contains(
+            "request: SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>,"
+        ));
         assert!(!output.contains("from './model_overrides.ts'"));
     }
 
     #[test]
     fn renders_typescript_enum_overrides() {
-        let yaml = r#"
-nexusrpc: 1.0.0
-types:
-  temporal.api.enums.v1.WorkflowIdReusePolicy:
-    $typescript:
-      type: common.WorkflowIdReusePolicy
-services:
-  WorkflowService:
-    endpoint: __temporal_system
-    operations:
-      SignalWithStartWorkflowExecution:
-        input: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
-        output:
-          ref: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  /// @nexus.proto "temporal.api.enums.v1.WorkflowIdReusePolicy"
+  /// @nexus.type typescript="common.WorkflowIdReusePolicy"
+  enum workflow-id-reuse-policy {
+    allow-duplicate,
+    allow-duplicate-failed-only,
+    reject-duplicate,
+    terminate-if-running,
+  }
+
+  /// @nexus.input-ref typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+  /// @nexus.output-ref typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+  signal-with-start-workflow-execution: func() -> string;
+}
 "#;
         let spec =
-            ApiSpec::parse_for_language(Language::TypeScript, yaml, PathBuf::from("inline.yaml"))
+            ApiSpec::parse_for_language(Language::TypeScript, wit, PathBuf::from("inline.wit"))
                 .unwrap();
         let descriptors = DescriptorIndex::load(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("descriptors.bin"),
@@ -1582,18 +2330,21 @@ services:
 
     #[test]
     fn rejects_missing_service_endpoint() {
-        let yaml = r#"
-nexusrpc: 1.0.0
-services:
-  ExampleService:
-    operations:
-      ExampleOperation:
-        input: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
-        output:
-          ref: "@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export example-service;
+}
+
+interface example-service {
+  /// @nexus.input-ref typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionRequest"
+  /// @nexus.output-ref typescript="@temporalio/api/workflowservice/v1.SignalWithStartWorkflowExecutionResponse"
+  example-operation: func() -> string;
+}
 "#;
         let spec =
-            ApiSpec::parse_for_language(Language::TypeScript, yaml, PathBuf::from("inline.yaml"))
+            ApiSpec::parse_for_language(Language::TypeScript, wit, PathBuf::from("inline.wit"))
                 .unwrap();
         let descriptors = DescriptorIndex::load(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("descriptors.bin"),

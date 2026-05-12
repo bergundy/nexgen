@@ -105,6 +105,9 @@ fn validate_message_type_override(
         validate_model_override_field(message_name, field_name, message)?;
     }
     if let Some(generated_model) = type_override.generated_model() {
+        for field_name in &generated_model.declared_fields {
+            validate_model_override_field(message_name, field_name, message)?;
+        }
         validate_generated_model_fields(
             message_name,
             type_override,
@@ -115,7 +118,15 @@ fn validate_message_type_override(
             usage,
             language,
         )?;
-        validate_function_fields(message_name, type_override, generated_model, message, usage)?;
+        validate_invocation_fields(
+            message_name,
+            type_override,
+            generated_model,
+            message,
+            descriptors,
+            usage,
+            language,
+        )?;
     }
     for field_name in type_override
         .required_fields
@@ -232,30 +243,38 @@ fn validate_generated_model_fields(
     Ok(())
 }
 
-fn validate_function_fields(
+fn validate_invocation_fields(
     message_name: &str,
     type_override: &TypeOverrideSpec,
     generated_model: &GeneratedModelSpec,
     message: &MessageMetadata,
+    descriptors: &DescriptorIndex,
     usage: MessageUsage,
+    language: Language,
 ) -> Result<()> {
-    if generated_model.functions.is_empty() {
+    if generated_model.functions.is_empty() && generated_model.with_arguments.is_empty() {
         return Ok(());
     }
 
     if usage.output {
-        let field = generated_model
-            .functions
-            .keys()
-            .next()
-            .map(String::as_str)
-            .expect("function fields should not be empty");
-        return Err(Error::InvalidTypeOverrideField {
-            message: message_name.to_string(),
-            field: field.to_string(),
-            property: "function",
-            reason: "function fields are only supported on input-only generated models".to_string(),
-        });
+        if let Some(field) = generated_model.functions.keys().next() {
+            return Err(Error::InvalidTypeOverrideField {
+                message: message_name.to_string(),
+                field: field.clone(),
+                property: "function",
+                reason: "function fields are only supported on input-only generated models"
+                    .to_string(),
+            });
+        }
+        if let Some(field) = generated_model.with_arguments.keys().next() {
+            return Err(Error::InvalidTypeOverrideField {
+                message: message_name.to_string(),
+                field: field.clone(),
+                property: "withArguments",
+                reason: "withArguments fields are only supported on input-only generated models"
+                    .to_string(),
+            });
+        }
     }
 
     let mut primary_field_name: Option<&str> = None;
@@ -276,7 +295,9 @@ fn validate_function_fields(
             primary_field_name = Some(field_name);
         }
 
-        if let Some(existing) = seen_args_fields.insert(function.args_field.as_str(), field_name) {
+        if let Some((existing, _)) =
+            seen_args_fields.insert(function.args_field.as_str(), (field_name, "function"))
+        {
             return Err(Error::InvalidTypeOverrideField {
                 message: message_name.to_string(),
                 field: field_name.clone(),
@@ -289,8 +310,33 @@ fn validate_function_fields(
         }
     }
 
+    for (field_name, with_arguments) in &generated_model.with_arguments {
+        if language != Language::TypeScript {
+            return Err(Error::InvalidTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+                property: "withArguments",
+                reason: "withArguments fields are only supported for TypeScript".to_string(),
+            });
+        }
+        if let Some((existing, _)) = seen_args_fields.insert(
+            with_arguments.args_field.as_str(),
+            (field_name, "withArguments"),
+        ) {
+            return Err(Error::InvalidTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+                property: "withArguments",
+                reason: format!(
+                    "argsField `{}` is already used by field `{existing}`",
+                    with_arguments.args_field
+                ),
+            });
+        }
+    }
+
     for (field_name, function) in &generated_model.functions {
-        validate_model_override_field(message_name, field_name, message)?;
+        let callable_field = validate_model_override_field(message_name, field_name, message)?;
         if type_override.omitted_fields.contains(field_name) {
             return Err(Error::OmittedCustomizedTypeOverrideField {
                 message: message_name.to_string(),
@@ -306,7 +352,16 @@ fn validate_function_fields(
             });
         }
 
-        validate_model_override_field(message_name, &function.args_field, message)?;
+        validate_named_invocation_field(
+            message_name,
+            field_name,
+            callable_field,
+            descriptors,
+            "function",
+        )?;
+
+        let args_field =
+            validate_model_override_field(message_name, &function.args_field, message)?;
         if type_override.omitted_fields.contains(&function.args_field) {
             return Err(Error::OmittedCustomizedTypeOverrideField {
                 message: message_name.to_string(),
@@ -343,9 +398,192 @@ fn validate_function_fields(
                 conflicting_property: "source",
             });
         }
+        validate_invocation_args_field(
+            message_name,
+            &function.args_field,
+            args_field,
+            descriptors,
+            "function",
+        )?;
+    }
+
+    for (field_name, with_arguments) in &generated_model.with_arguments {
+        let value_field = validate_model_override_field(message_name, field_name, message)?;
+        if type_override.omitted_fields.contains(field_name) {
+            return Err(Error::OmittedCustomizedTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+            });
+        }
+        if with_arguments.args_field == *field_name {
+            return Err(Error::InvalidTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.clone(),
+                property: "withArguments",
+                reason: "argsField must point to a different field".to_string(),
+            });
+        }
+
+        validate_named_invocation_field(
+            message_name,
+            field_name,
+            value_field,
+            descriptors,
+            "withArguments",
+        )?;
+
+        let args_field =
+            validate_model_override_field(message_name, &with_arguments.args_field, message)?;
+        if type_override
+            .omitted_fields
+            .contains(&with_arguments.args_field)
+        {
+            return Err(Error::OmittedCustomizedTypeOverrideField {
+                message: message_name.to_string(),
+                field: with_arguments.args_field.clone(),
+            });
+        }
+        if type_override
+            .required_fields
+            .contains(&with_arguments.args_field)
+        {
+            return Err(Error::ConflictingTypeOverrideFieldProperties {
+                message: message_name.to_string(),
+                field: with_arguments.args_field.clone(),
+                property: "withArguments",
+                conflicting_property: "required",
+            });
+        }
+        if generated_model
+            .field_annotations
+            .contains_key(&with_arguments.args_field)
+        {
+            return Err(Error::ConflictingTypeOverrideFieldProperties {
+                message: message_name.to_string(),
+                field: with_arguments.args_field.clone(),
+                property: "withArguments",
+                conflicting_property: "type",
+            });
+        }
+        if generated_model
+            .field_sources
+            .contains_key(&with_arguments.args_field)
+        {
+            return Err(Error::ConflictingTypeOverrideFieldProperties {
+                message: message_name.to_string(),
+                field: with_arguments.args_field.clone(),
+                property: "withArguments",
+                conflicting_property: "source",
+            });
+        }
+        validate_invocation_args_field(
+            message_name,
+            &with_arguments.args_field,
+            args_field,
+            descriptors,
+            "withArguments",
+        )?;
     }
 
     Ok(())
+}
+
+fn validate_named_invocation_field(
+    message_name: &str,
+    field_name: &str,
+    field: &FieldDescriptorProto,
+    descriptors: &DescriptorIndex,
+    property: &'static str,
+) -> Result<()> {
+    match field_type(field) {
+        Some(Type::String) => Ok(()),
+        Some(Type::Message) => {
+            let Some(type_name) = field.type_name.as_deref() else {
+                return Err(Error::InvalidTypeOverrideField {
+                    message: message_name.to_string(),
+                    field: field_name.to_string(),
+                    property,
+                    reason: "field message type is missing a descriptor name".to_string(),
+                });
+            };
+            let Some(message) = descriptors.message(type_name.trim_start_matches('.')) else {
+                return Err(Error::InvalidTypeOverrideField {
+                    message: message_name.to_string(),
+                    field: field_name.to_string(),
+                    property,
+                    reason: "field message type is not available in the descriptors".to_string(),
+                });
+            };
+            let has_name_field = message.descriptor.field.iter().any(|field| {
+                field.name.as_deref() == Some("name")
+                    && field_label(field) != Some(Label::Repeated)
+                    && field_type(field) == Some(Type::String)
+            });
+            if has_name_field {
+                Ok(())
+            } else {
+                Err(Error::InvalidTypeOverrideField {
+                    message: message_name.to_string(),
+                    field: field_name.to_string(),
+                    property,
+                    reason: "field messages must expose a singular string `name` field".to_string(),
+                })
+            }
+        }
+        _ => Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+            property,
+            reason: "fields must be either a string field or a message with a `name` field"
+                .to_string(),
+        }),
+    }
+}
+
+fn validate_invocation_args_field(
+    message_name: &str,
+    field_name: &str,
+    field: &FieldDescriptorProto,
+    descriptors: &DescriptorIndex,
+    property: &'static str,
+) -> Result<()> {
+    if field_label(field) == Some(Label::Repeated) {
+        return Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+            property,
+            reason: "argsField must point to a singular Payloads field".to_string(),
+        });
+    }
+
+    let Some(type_name) = field.type_name.as_deref() else {
+        return Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+            property,
+            reason: "argsField must point to temporal.api.common.v1.Payloads".to_string(),
+        });
+    };
+    let normalized_type_name = type_name.trim_start_matches('.');
+    if normalized_type_name == "temporal.api.common.v1.Payloads" {
+        return Ok(());
+    }
+
+    if descriptors.message(normalized_type_name).is_none() {
+        return Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: field_name.to_string(),
+            property,
+            reason: "argsField message type is not available in the descriptors".to_string(),
+        });
+    }
+
+    Err(Error::InvalidTypeOverrideField {
+        message: message_name.to_string(),
+        field: field_name.to_string(),
+        property,
+        reason: "argsField must point to temporal.api.common.v1.Payloads".to_string(),
+    })
 }
 
 fn field_name_for_language(
@@ -385,9 +623,11 @@ fn validate_enum_type_override(
     }
     if let Some(generated_model) = type_override.generated_model() {
         if !generated_model.field_names.is_empty()
+            || !generated_model.declared_fields.is_empty()
             || !generated_model.field_annotations.is_empty()
             || !generated_model.field_sources.is_empty()
             || !generated_model.functions.is_empty()
+            || !generated_model.with_arguments.is_empty()
         {
             return Err(Error::UnsupportedTypeOverrideProperty {
                 type_name: enumeration_name.to_string(),

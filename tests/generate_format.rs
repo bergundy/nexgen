@@ -1,0 +1,106 @@
+#[cfg(unix)]
+mod tests {
+    use std::env;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn project_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn sample_input_path(root: &Path) -> PathBuf {
+        root.join("examples/input.wit")
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        env::temp_dir().join(format!("nexus-api-gen-{name}-{unique}"))
+    }
+
+    fn write_formatter_script(dir: &Path, name: &str, marker: &str) -> PathBuf {
+        let script_path = dir.join(name);
+        let script = format!("#!/bin/sh\nprintf '\\n{marker}\\n' >> \"$2\"\n");
+        fs::write(&script_path, script).unwrap();
+        let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).unwrap();
+        script_path
+    }
+
+    fn formatter_path_env(dir: &Path) -> String {
+        let existing_path = env::var("PATH").unwrap_or_default();
+        format!("{}:{existing_path}", dir.display())
+    }
+
+    #[test]
+    fn cli_generates_and_formats_python_file() {
+        let root = project_root();
+        let temp_dir = unique_temp_dir("python-format");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let output_path = temp_dir.join("output.py");
+        write_formatter_script(&temp_dir, "ruff", "# formatted by test");
+
+        let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+            .env("PATH", formatter_path_env(&temp_dir))
+            .args([
+                "generate",
+                "--lang",
+                "python",
+                "--input",
+                sample_input_path(&root).to_str().unwrap(),
+                "--descriptors",
+                root.join("descriptors.bin").to_str().unwrap(),
+                "--output",
+                output_path.to_str().unwrap(),
+                "--format",
+            ])
+            .status()
+            .unwrap();
+
+        assert!(status.success());
+
+        let rendered = fs::read_to_string(&output_path).unwrap();
+        assert!(rendered.contains("# formatted by test"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn cli_generates_and_formats_typescript_file() {
+        let root = project_root();
+        let temp_dir = unique_temp_dir("typescript-format");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let output_path = temp_dir.join("output.ts");
+        write_formatter_script(&temp_dir, "prettier", "// formatted by test");
+
+        let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+            .env("PATH", formatter_path_env(&temp_dir))
+            .args([
+                "generate",
+                "--lang",
+                "typescript",
+                "--input",
+                sample_input_path(&root).to_str().unwrap(),
+                "--descriptors",
+                root.join("descriptors.bin").to_str().unwrap(),
+                "--output",
+                output_path.to_str().unwrap(),
+                "--format",
+            ])
+            .status()
+            .unwrap();
+
+        assert!(status.success());
+
+        let rendered = fs::read_to_string(&output_path).unwrap();
+        assert!(rendered.contains("// formatted by test"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+}

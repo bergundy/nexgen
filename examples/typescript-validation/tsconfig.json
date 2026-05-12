@@ -9,8 +9,5 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
   },
-  "include": [
-    "main.ts",
-    "output.ts"
-  ]
+  "include": ["main.ts", "output.ts"]
 }

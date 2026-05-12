@@ -36,7 +36,8 @@ def workflow_type_to_proto(
     if isinstance(workflow_type, str):
         name = workflow_type
     else:
-        name, _ = temporalio.workflow._Definition.get_name_and_result_type(workflow_type)  # pyright: ignore[reportPrivateUsage]
+        definition = typing.cast(typing.Any, temporalio.workflow._Definition)  # pyright: ignore[reportPrivateUsage]
+        name, _ = definition.get_name_and_result_type(workflow_type)
     return common_pb2.WorkflowType(name=name)
 
 

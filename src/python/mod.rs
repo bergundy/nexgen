@@ -141,7 +141,7 @@ fn normalize_temporalio_module(module_path: &str) -> Option<String> {
 }
 
 pub(crate) fn python_field_name(name: &str) -> String {
-    python_ident(name)
+    python_ident(&name.to_snake_case())
 }
 
 fn generated_model_type_parameters(generated_model: &GeneratedModelSpec) -> Vec<String> {
@@ -245,7 +245,6 @@ enum PythonFieldDefaultKind {
 
 #[derive(Debug)]
 struct RenderedUnpackedInput {
-    kwargs_type_name: String,
     model_name: String,
     type_parameters: Vec<String>,
     fields: Vec<RenderedUnpackedInputField>,
@@ -474,7 +473,6 @@ fn resolve_operation<'a>(
                 )
             })
             .map(|model| RenderedUnpackedInput {
-                kwargs_type_name: format!("{}Args", model.name),
                 model_name: model.name.clone(),
                 type_parameters: model.type_parameters.clone(),
                 fields: model
@@ -1665,17 +1663,6 @@ fn render_module(
     services: &[RenderedService<'_>],
     support_source: Option<&str>,
 ) -> String {
-    let mut unpacked_inputs = BTreeMap::new();
-    for service in services {
-        for operation in &service.operations {
-            if let Some(unpacked_input) = &operation.unpacked_input {
-                unpacked_inputs
-                    .entry(unpacked_input.kwargs_type_name.clone())
-                    .or_insert(unpacked_input);
-            }
-        }
-    }
-
     let mut module_imports = BTreeSet::new();
     for service in services {
         for operation in &service.operations {
@@ -1743,8 +1730,9 @@ fn render_module(
             output.push_str("    if isinstance(value, str):\n");
             output.push_str("        return value\n");
             output.push_str(
-                "    name, _ = workflow._Definition.get_name_and_result_type(value)  # pyright: ignore[reportPrivateUsage]\n",
+                "    definition = typing.cast(typing.Any, workflow._Definition)  # pyright: ignore[reportPrivateUsage]\n",
             );
+            output.push_str("    name, _ = definition.get_name_and_result_type(value)\n");
             output.push_str("    return name\n");
             if uses_secondary_function_helper {
                 output.push_str("\n\n");
@@ -1783,21 +1771,6 @@ fn render_module(
         for (index, model) in models.iter().enumerate() {
             render_model(&mut output, model);
             if index + 1 != models.len() {
-                output.push_str("\n\n");
-            }
-        }
-        wrote_section = true;
-    }
-
-    if !unpacked_inputs.is_empty() {
-        if wrote_section {
-            output.push_str("\n\n");
-        } else {
-            output.push_str("\n\n");
-        }
-        for (index, unpacked_input) in unpacked_inputs.values().enumerate() {
-            render_unpacked_input_type(&mut output, unpacked_input);
-            if index + 1 != unpacked_inputs.len() {
                 output.push_str("\n\n");
             }
         }
@@ -2007,32 +1980,6 @@ fn model_self_annotation(model: &RenderedModel) -> &str {
         &model.name
     } else {
         "typing.Self"
-    }
-}
-
-fn render_unpacked_input_type(output: &mut String, unpacked_input: &RenderedUnpackedInput) {
-    output.push_str("class ");
-    output.push_str(&unpacked_input.kwargs_type_name);
-    render_python_type_parameter_list(output, &unpacked_input.type_parameters);
-    output.push_str("(typing.TypedDict, total=False):\n");
-
-    if unpacked_input.fields.is_empty() {
-        output.push_str("    pass\n");
-        return;
-    }
-
-    for field in &unpacked_input.fields {
-        output.push_str("    ");
-        output.push_str(&field.attr_name);
-        output.push_str(": ");
-        if field.default_kind == PythonFieldDefaultKind::Required {
-            output.push_str("typing.Required[");
-            output.push_str(&field.annotation);
-            output.push(']');
-        } else {
-            output.push_str(&field.annotation);
-        }
-        output.push('\n');
     }
 }
 
@@ -2394,20 +2341,24 @@ fn render_unpacked_operation_client_method(
         return;
     }
 
-    let kwargs_annotation = python_parameterized_model_annotation(
-        &unpacked_input.kwargs_type_name,
-        &unpacked_input.type_parameters,
-    );
-
     output.push_str("    async def ");
     output.push_str(&operation.attr_name);
     output.push_str("_args");
     render_python_type_parameter_list(output, &operation.input_type_parameters);
     output.push_str("(\n");
     output.push_str("        self,\n");
-    output.push_str("        **kwargs: typing.Unpack[");
-    output.push_str(&kwargs_annotation);
-    output.push_str("],\n");
+    output.push_str("        *,\n");
+    for field in &unpacked_input.fields {
+        output.push_str("        ");
+        output.push_str(&field.attr_name);
+        output.push_str(": ");
+        output.push_str(&field.annotation);
+        if let Some(default_expr) = python_parameter_default_expr(field.default_kind) {
+            output.push_str(" = ");
+            output.push_str(default_expr);
+        }
+        output.push_str(",\n");
+    }
     if operation.output_transform_expr.is_some() {
         output.push_str("    ) -> ");
         output.push_str(&operation.output_annotation);
@@ -2419,9 +2370,17 @@ fn render_unpacked_operation_client_method(
         output.push_str(",\n");
         output.push_str("    ]:\n");
     }
-    output.push_str("        request: typing.Any = ");
+    output.push_str("        request = ");
     output.push_str(&unpacked_input.model_name);
-    output.push_str("(**kwargs)\n");
+    output.push_str("(\n");
+    for field in &unpacked_input.fields {
+        output.push_str("            ");
+        output.push_str(&field.attr_name);
+        output.push('=');
+        output.push_str(&field.attr_name);
+        output.push_str(",\n");
+    }
+    output.push_str("        )\n");
     output.push_str("        return await self.");
     output.push_str(&operation.attr_name);
     output.push_str("(request)\n");
@@ -2649,6 +2608,8 @@ fn is_python_keyword(name: &str) -> bool {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{PYTHON_SUPPORT_MARKER, resolve_message_ref};
     use crate::SupportFiles;
@@ -2658,7 +2619,7 @@ mod tests {
     use crate::spec::ApiSpec;
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/input.yaml")
+        root.join("examples/input.wit")
     }
 
     fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
@@ -2673,6 +2634,23 @@ mod tests {
             ),
             ..SupportFiles::default()
         }
+    }
+
+    fn format_python_output(root: &std::path::Path, output: &str) -> String {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_path = std::env::temp_dir().join(format!("nexus-api-gen-python-{unique}.py"));
+        fs::write(&temp_path, output).unwrap();
+        let status = Command::new(root.join("examples/python-validation/.venv/bin/ruff"))
+            .args(["format", temp_path.to_str().unwrap()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let formatted = fs::read_to_string(&temp_path).unwrap();
+        fs::remove_file(temp_path).unwrap();
+        formatted
     }
 
     #[test]
@@ -2698,6 +2676,7 @@ mod tests {
         let descriptors = DescriptorIndex::load(&root.join("descriptors.bin")).unwrap();
         let support = sample_support_files(&root);
         let output = generate_source(Language::Python, &spec, &descriptors, &support).unwrap();
+        let output = format_python_output(&root, &output);
         let expected = std::fs::read_to_string(sample_python_output_path(&root)).unwrap();
 
         assert_eq!(output, expected);
@@ -2777,10 +2756,8 @@ mod tests {
         assert!(output.contains("async def signal_with_start_workflow_execution[*WorkflowArgs]("));
         assert!(output.contains("request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]"));
         assert!(output.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
-        assert!(output.contains(
-            "class SignalWithStartWorkflowExecutionRequestArgs[*WorkflowArgs](typing.TypedDict, total=False):"
-        ));
-        assert!(output.contains("workflow_id: typing.Required[str]"));
+        assert!(!output.contains("(typing.TypedDict, total=False):"));
+        assert!(!output.contains("typing.Unpack["));
         assert!(output.contains("input: tuple[typing.Any, ...] | None"));
         assert!(output.contains("    @typing.overload"));
         assert!(output.contains("workflow: str,"));
@@ -2811,6 +2788,10 @@ mod tests {
         assert!(output.contains("workflow=workflow,"));
         assert!(output.contains("input=input,"));
         assert!(output.contains("return await self.signal_with_start_workflow_execution(request)"));
+        assert!(output.contains("async def activity_options_operation_args("));
+        assert!(output.contains("task_queue: str | None = None,"));
+        assert!(output.contains("retry_policy: temporalio.common.RetryPolicy,"));
+        assert!(output.contains("request = ActivityOptions("));
         assert!(!output.contains("SignalWithStartWorkflowExecutionRequest.from_proto"));
         assert!(!output.contains(
             "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
@@ -2838,19 +2819,21 @@ mod tests {
 
     #[test]
     fn rejects_missing_service_endpoint() {
-        let yaml = r#"
-nexusrpc: 1.0.0
-services:
-  ExampleService:
-    operations:
-      ExampleOperation:
-        input: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
-        output:
-          ref: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export example-service;
+}
+
+interface example-service {
+  /// @nexus.input-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  /// @nexus.output-ref python="temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  example-operation: func() -> string;
+}
 "#;
-        let spec =
-            ApiSpec::parse_for_language(Language::Python, yaml, PathBuf::from("inline.yaml"))
-                .unwrap();
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap();
         let descriptors = DescriptorIndex::load(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("descriptors.bin"),
         )

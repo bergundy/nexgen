@@ -7,7 +7,7 @@ import subprocess
 def main() -> None:
     app_root = Path(__file__).resolve().parent
     repo_root = app_root.parent.parent
-    input_path = repo_root / "examples" / "input.yaml"
+    input_path = repo_root / "examples" / "input.wit"
     descriptor_path = repo_root / "descriptors.bin"
     destination = app_root / "output.py"
 
@@ -30,6 +30,7 @@ def main() -> None:
             str(descriptor_path),
             "--output",
             str(destination),
+            "--format",
         ],
         check=True,
         cwd=repo_root,
