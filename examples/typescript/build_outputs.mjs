@@ -7,7 +7,12 @@ function main() {
   const appRoot = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(appRoot, "..", "..");
   const inputsRoot = resolve(repoRoot, "examples", "inputs");
-  const descriptorPath = resolve(repoRoot, "descriptors.bin");
+  const descriptorPath = resolve(
+    repoRoot,
+    "examples",
+    "descriptors",
+    "temporal_api.bin",
+  );
 
   const exampleIds = process.argv.slice(2);
   const selectedIds =

@@ -10,7 +10,7 @@ def main() -> None:
     app_root = Path(__file__).resolve().parent
     repo_root = app_root.parent.parent
     inputs_root = repo_root / "examples" / "inputs"
-    descriptor_path = repo_root / "descriptors.bin"
+    descriptor_path = repo_root / "examples" / "descriptors" / "temporal_api.bin"
 
     example_ids = sys.argv[1:] or discover_example_ids(app_root, inputs_root)
     if not example_ids:
@@ -24,8 +24,6 @@ def main() -> None:
                 raise SystemExit(f"missing generator input: {path}")
 
         destination.parent.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
-        _ = env.setdefault("RUFF_CACHE_DIR", "/tmp/nexus-api-gen-ruff-cache")
         _ = subprocess.run(
             generator_command()
             + [
@@ -42,7 +40,6 @@ def main() -> None:
             ],
             check=True,
             cwd=repo_root,
-            env=env,
         )
         print(f"Built {destination} with nexus-api-gen")
 

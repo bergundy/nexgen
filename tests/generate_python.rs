@@ -11,6 +11,10 @@ fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+fn descriptor_path(root: &Path) -> PathBuf {
+    root.join("examples/descriptors/temporal_api.bin")
+}
+
 fn python_root(root: &Path) -> PathBuf {
     root.join("examples/python")
 }
@@ -57,14 +61,6 @@ fn python_example_ids(root: &Path) -> Vec<String> {
     ids
 }
 
-fn uv_cache_dir() -> &'static str {
-    "/tmp/nexus-api-gen-uv-cache"
-}
-
-fn ruff_cache_dir() -> &'static str {
-    "/tmp/nexus-api-gen-ruff-cache"
-}
-
 fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: &Path) {
     let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
         .args([
@@ -74,7 +70,7 @@ fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: 
             "--input",
             input_path(root, example_id).to_str().unwrap(),
             "--descriptors",
-            root.join("descriptors.bin").to_str().unwrap(),
+            descriptor_path(root).to_str().unwrap(),
             "--output",
             output_path.to_str().unwrap(),
         ])
@@ -84,8 +80,6 @@ fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: 
 
     let format_status = Command::new("uv")
         .current_dir(python_root(root))
-        .env("UV_CACHE_DIR", uv_cache_dir())
-        .env("RUFF_CACHE_DIR", ruff_cache_dir())
         .args([
             "run",
             "ruff",
@@ -127,8 +121,6 @@ fn python_example_suite_type_checks_and_runs() {
 
     let build_status = Command::new("uv")
         .current_dir(&example_dir)
-        .env("UV_CACHE_DIR", uv_cache_dir())
-        .env("RUFF_CACHE_DIR", ruff_cache_dir())
         .env("NEXUS_API_GEN_BIN", env!("CARGO_BIN_EXE_nexus-api-gen"))
         .args(["run", "build_outputs.py"])
         .status()
@@ -137,7 +129,6 @@ fn python_example_suite_type_checks_and_runs() {
 
     let typecheck_status = Command::new("uv")
         .current_dir(&example_dir)
-        .env("UV_CACHE_DIR", uv_cache_dir())
         .args(["run", "basedpyright"])
         .status()
         .unwrap();
@@ -145,7 +136,6 @@ fn python_example_suite_type_checks_and_runs() {
 
     let pytest_status = Command::new("uv")
         .current_dir(&example_dir)
-        .env("UV_CACHE_DIR", uv_cache_dir())
         .args(["run", "pytest"])
         .status()
         .unwrap();
@@ -158,7 +148,7 @@ fn python_request_models_are_write_only() {
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::Python,
         input_path(&root, PRIMARY_EXAMPLE_ID),
-        root.join("descriptors.bin"),
+        descriptor_path(&root),
     )
     .unwrap();
 

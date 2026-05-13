@@ -1,6 +1,3 @@
-/// @nexus.support
-///   python="support.py"
-///   typescript="support.ts"
 package temporal:nexus@1.0.0;
 
 world system {
@@ -9,12 +6,19 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{task-queue, workflow-function};
+  use nexus:temporal-types/model@1.0.0.{payloads, task-queue, workflow-function};
 
   /// @nexus.proto "temporal.api.common.v1.WorkflowExecution"
   record workflow-execution {
     workflow-id: string,
     run-id: option<string>,
+  }
+
+  resource started-workflow {
+    constructor(namespace: string, workflow-id: string, run-id: option<string>);
+
+    cancel: func(reason: option<string>);
+    get-result: func() -> payloads;
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionRequest"
@@ -30,10 +34,7 @@ interface workflow-service {
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionResponse"
-  record start-workflow-response {
-    run-id: option<string>,
-    started: option<bool>,
-  }
+  type start-workflow-result = own<started-workflow>;
 
   /// @nexus.proto "temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionRequest"
   record cancel-workflow-request {
@@ -49,12 +50,7 @@ interface workflow-service {
   record cancel-workflow-response {
   }
 
-  /// @nexus.output-transform
-  ///   python-type="StartedWorkflowHandle[typing.Any]"
-  ///   python="started_workflow_handle_from_proto(request.workflow_id, result.run_id)"
-  ///   typescript-type="StartedWorkflowHandle"
-  ///   typescript="startedWorkflowHandleFromProto(request.workflowId, result.runId ?? undefined)"
-  start-workflow: func(request: start-workflow-request) -> start-workflow-response;
+  start-workflow: func(request: start-workflow-request) -> start-workflow-result;
 
   cancel-workflow: func(request: cancel-workflow-request) -> cancel-workflow-response;
 }

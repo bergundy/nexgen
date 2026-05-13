@@ -11,6 +11,10 @@ fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+fn descriptor_path(root: &std::path::Path) -> PathBuf {
+    root.join("examples/descriptors/temporal_api.bin")
+}
+
 fn parse(language: Language, wit: &str, path: &str) -> ApiSpec {
     ApiSpec::parse_for_language(language, wit, PathBuf::from(path)).unwrap()
 }
@@ -22,7 +26,7 @@ fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
         .args([
             "add-rpc",
             "--descriptors",
-            root.join("descriptors.bin").to_str().unwrap(),
+            descriptor_path(&root).to_str().unwrap(),
             "--rpc",
             "SignalWithStartExecution",
         ])
@@ -50,7 +54,7 @@ fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
 #[test]
 fn add_rpc_matches_signal_with_start_proto_shape_but_not_handwritten_refinements() {
     let root = project_root();
-    let descriptors = root.join("descriptors.bin");
+    let descriptors = descriptor_path(&root);
     let generated = add_rpc_to_string(&descriptors, "SignalWithStartExecution", None).unwrap();
 
     let generated_python = parse(Language::Python, &generated, "generated-add-rpc.wit");
@@ -188,7 +192,7 @@ fn add_rpc_matches_signal_with_start_proto_shape_but_not_handwritten_refinements
 #[test]
 fn add_rpc_can_extend_an_existing_wit_file() {
     let root = project_root();
-    let descriptors = root.join("descriptors.bin");
+    let descriptors = descriptor_path(&root);
     let input = root.join(PRIMARY_EXAMPLE_PATH);
     let generated =
         add_rpc_to_string(&descriptors, "SignalWorkflowExecution", Some(&input)).unwrap();

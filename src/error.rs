@@ -78,6 +78,21 @@ pub enum Error {
     #[error("service `{service}` is missing an endpoint")]
     MissingServiceEndpoint { service: String },
 
+    #[error("resource `{service}.{resource}` is invalid: {reason}")]
+    InvalidResource {
+        service: String,
+        resource: String,
+        reason: String,
+    },
+
+    #[error("resource method `{service}.{resource}.{method}` is invalid: {reason}")]
+    InvalidResourceMethod {
+        service: String,
+        resource: String,
+        method: String,
+        reason: String,
+    },
+
     #[error(
         "service `{service}` operation `{operation}` output is missing required `type` or `transform` field"
     )]

@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use tempfile::TempDir;
 use wit_parser::{
-    Function, Interface, PackageId, PackageSourceMap, Resolve, Type, TypeDef, TypeDefKind,
-    WorldItem, WorldKey,
+    Function, FunctionKind, Handle, Interface, PackageId, PackageSourceMap, Resolve, Type, TypeDef,
+    TypeDefKind, WorldItem, WorldKey,
 };
 
 use crate::error::{Error, Result};
@@ -253,6 +253,7 @@ pub struct ServiceSpec {
     pub name: String,
     pub endpoint: Option<String>,
     pub operations: Vec<OperationSpec>,
+    pub resources: Vec<ResourceSpec>,
 }
 
 impl ServiceSpec {
@@ -260,6 +261,10 @@ impl ServiceSpec {
         self.operations
             .iter()
             .find(|operation| operation.name == name)
+    }
+
+    pub fn resource(&self, name: &str) -> Option<&ResourceSpec> {
+        self.resources.iter().find(|resource| resource.name == name)
     }
 }
 
@@ -279,6 +284,7 @@ pub struct OperationSpec {
     pub name: String,
     pub input_proto: String,
     pub output_proto: String,
+    pub output_resource: Option<String>,
     pub output_transform: Option<OperationOutputTransformSpec>,
 }
 
@@ -291,9 +297,41 @@ impl OperationSpec {
         &self.output_proto
     }
 
+    pub fn output_resource(&self) -> Option<&str> {
+        self.output_resource.as_deref()
+    }
+
     pub fn output_transform(&self) -> Option<&OperationOutputTransformSpec> {
         self.output_transform.as_ref()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSpec {
+    pub name: String,
+    pub fields: Vec<ResourceFieldSpec>,
+    pub methods: Vec<ResourceMethodSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceFieldSpec {
+    pub name: String,
+    pub annotation: String,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceMethodSpec {
+    pub name: String,
+    pub params: Vec<ResourceFieldSpec>,
+    pub result: Option<ResourceResultSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceResultSpec {
+    pub annotation: String,
+    pub proto: Option<String>,
+    pub resource: Option<String>,
 }
 
 fn collect_support_spec(
@@ -436,8 +474,10 @@ fn prepare_wit_workspace(input: &str, path: &Path) -> Result<PreparedWitWorkspac
         source,
     })?;
 
-    if let Some(source_dir) = input_source_dir(path) {
+    if let Some(source_dir) = input_package_source_dir(path) {
         copy_package_source_dir(&source_dir, &package_root, path)?;
+    } else if let Some(source_dir) = input_support_source_dir(path) {
+        copy_standalone_input_support_dir(&source_dir, &package_root, path)?;
     }
 
     let target_name = input_target_name(path);
@@ -487,9 +527,25 @@ fn prepare_builtin_metadata_workspace() -> Result<PreparedWitWorkspace> {
     })
 }
 
-fn input_source_dir(path: &Path) -> Option<PathBuf> {
+fn input_package_source_dir(path: &Path) -> Option<PathBuf> {
     if path.is_dir() {
         return Some(path.to_path_buf());
+    }
+
+    if path.file_name()? != "main.wit" {
+        return None;
+    }
+
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() || !parent.exists() {
+        return None;
+    }
+    Some(parent.to_path_buf())
+}
+
+fn input_support_source_dir(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() {
+        return None;
     }
 
     let parent = path.parent()?;
@@ -534,6 +590,60 @@ fn copy_package_source_dir(
                 continue;
             }
             copy_package_source_dir(&source_path, &destination_path, input_path)?;
+            continue;
+        }
+
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| Error::WriteFile {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        fs::copy(&source_path, &destination_path).map_err(|source| Error::WriteFile {
+            path: destination_path,
+            source,
+        })?;
+    }
+
+    Ok(())
+}
+
+fn copy_standalone_input_support_dir(
+    source_dir: &Path,
+    destination_dir: &Path,
+    input_path: &Path,
+) -> Result<()> {
+    for entry in fs::read_dir(source_dir).map_err(|source| Error::ReadFile {
+        path: source_dir.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::ReadFile {
+            path: source_dir.to_path_buf(),
+            source,
+        })?;
+        let source_path = entry.path();
+        let destination_path = destination_dir.join(entry.file_name());
+
+        if source_path == input_path {
+            continue;
+        }
+
+        let file_type = entry.file_type().map_err(|source| Error::ReadFile {
+            path: source_path.clone(),
+            source,
+        })?;
+        if file_type.is_dir() {
+            if entry.file_name() == "deps" {
+                continue;
+            }
+            copy_standalone_input_support_dir(&source_path, &destination_path, input_path)?;
+            continue;
+        }
+
+        if source_path
+            .extension()
+            .is_some_and(|extension| extension == "wit")
+        {
             continue;
         }
 
@@ -1025,6 +1135,146 @@ fn find_language_type_annotation_for_field_type(
     }
 }
 
+fn resolve_wit_type_annotation(
+    language: Language,
+    resolve: &Resolve,
+    ty: &Type,
+    path: &Path,
+    context: &str,
+) -> Result<String> {
+    match ty {
+        Type::Bool => Ok(match language {
+            Language::Python => "bool".to_string(),
+            Language::TypeScript => "boolean".to_string(),
+            _ => "bool".to_string(),
+        }),
+        Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::S8
+        | Type::S16
+        | Type::S32
+        | Type::S64 => Ok(match language {
+            Language::Python => "int".to_string(),
+            Language::TypeScript => "number".to_string(),
+            _ => "int".to_string(),
+        }),
+        Type::F32 | Type::F64 => Ok(match language {
+            Language::Python => "float".to_string(),
+            Language::TypeScript => "number".to_string(),
+            _ => "float".to_string(),
+        }),
+        Type::Char | Type::String => Ok(match language {
+            Language::Python => "str".to_string(),
+            Language::TypeScript => "string".to_string(),
+            _ => "string".to_string(),
+        }),
+        Type::Id(id) => {
+            let type_def = &resolve.types[*id];
+            let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
+            let type_context = format!("{context} type `{type_name}`");
+            if let Some(annotation) = find_language_directive_value(
+                language,
+                &[type_def.docs.contents.as_deref()],
+                path,
+                &type_context,
+                "type",
+            )? {
+                return Ok(annotation);
+            }
+            if let Some(resource_name) = find_owned_resource_name_for_type_def(resolve, type_def) {
+                return Ok(resource_name.to_upper_camel_case());
+            }
+            match &type_def.kind {
+                TypeDefKind::Option(inner) => {
+                    let inner_annotation =
+                        resolve_wit_type_annotation(language, resolve, inner, path, &type_context)?;
+                    Ok(match language {
+                        Language::Python => format!("{inner_annotation} | None"),
+                        Language::TypeScript => format!("{inner_annotation} | undefined"),
+                        _ => inner_annotation,
+                    })
+                }
+                TypeDefKind::List(inner) => {
+                    let inner_annotation =
+                        resolve_wit_type_annotation(language, resolve, inner, path, &type_context)?;
+                    Ok(match language {
+                        Language::Python => format!("list[{inner_annotation}]"),
+                        Language::TypeScript => format!("{inner_annotation}[]"),
+                        _ => inner_annotation,
+                    })
+                }
+                TypeDefKind::Tuple(tuple) => {
+                    let item_annotations = tuple
+                        .types
+                        .iter()
+                        .map(|item| {
+                            resolve_wit_type_annotation(
+                                language,
+                                resolve,
+                                item,
+                                path,
+                                &type_context,
+                            )
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(match language {
+                        Language::Python => format!("tuple[{}]", item_annotations.join(", ")),
+                        Language::TypeScript => format!("[{}]", item_annotations.join(", ")),
+                        _ => item_annotations.join(", "),
+                    })
+                }
+                TypeDefKind::Type(next) => {
+                    resolve_wit_type_annotation(language, resolve, next, path, &type_context)
+                }
+                TypeDefKind::Handle(Handle::Own(resource_id))
+                | TypeDefKind::Handle(Handle::Borrow(resource_id)) => {
+                    let resource_def = &resolve.types[*resource_id];
+                    let resource_name = resource_def.name.as_deref().unwrap_or("unnamed-resource");
+                    Ok(resource_name.to_upper_camel_case())
+                }
+                TypeDefKind::Resource => Ok(type_name.to_upper_camel_case()),
+                TypeDefKind::Record(_)
+                | TypeDefKind::Flags(_)
+                | TypeDefKind::Variant(_)
+                | TypeDefKind::Enum(_)
+                | TypeDefKind::Map(_, _)
+                | TypeDefKind::FixedSizeList(_, _)
+                | TypeDefKind::Result(_)
+                | TypeDefKind::Future(_)
+                | TypeDefKind::Stream(_) => {
+                    let proto_name =
+                        find_proto_name_for_type_def(type_def, path, &type_context)?.ok_or_else(
+                            || Error::InvalidWit {
+                                path: path.to_path_buf(),
+                                reason: format!(
+                                    "{type_context} must provide either `@nexus.type` or `@nexus.proto` for generated resource bindings"
+                                ),
+                            },
+                        )?;
+                    Ok(proto_name
+                        .rsplit('.')
+                        .next()
+                        .expect("proto names should have a final segment")
+                        .to_string())
+                }
+                _ => Err(Error::InvalidWit {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "{type_context} uses unsupported WIT type `{}` for generated resource bindings",
+                        type_def.kind.as_str()
+                    ),
+                }),
+            }
+        }
+        _ => Err(Error::InvalidWit {
+            path: path.to_path_buf(),
+            reason: format!("{context} uses unsupported WIT type for generated resource bindings"),
+        }),
+    }
+}
+
 fn find_proto_name_for_type(
     resolve: &Resolve,
     ty: &Type,
@@ -1052,6 +1302,24 @@ fn find_proto_name_for_type(
             }
             _ => return Ok(None),
         }
+    }
+}
+
+fn find_owned_resource_name_for_type(resolve: &Resolve, ty: &Type) -> Option<String> {
+    match ty {
+        Type::Id(id) => find_owned_resource_name_for_type_def(resolve, &resolve.types[*id]),
+        _ => None,
+    }
+}
+
+fn find_owned_resource_name_for_type_def(resolve: &Resolve, type_def: &TypeDef) -> Option<String> {
+    match &type_def.kind {
+        TypeDefKind::Handle(Handle::Own(resource_id)) => resolve.types[*resource_id]
+            .name
+            .as_deref()
+            .map(str::to_string),
+        TypeDefKind::Type(next) => find_owned_resource_name_for_type(resolve, next),
+        _ => None,
     }
 }
 
@@ -1340,15 +1608,172 @@ fn build_service(
     let operations = interface
         .functions
         .iter()
+        .filter(|(_, function)| {
+            matches!(
+                function.kind,
+                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding
+            )
+        })
         .map(|(_, function)| {
             build_operation(language, resolve, function, path, &context, &service_name)
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let mut resources = Vec::new();
+    for type_id in interface.types.values() {
+        let type_def = &resolve.types[*type_id];
+        if !matches!(type_def.kind, TypeDefKind::Resource) {
+            continue;
+        }
+        resources.push(build_resource(
+            language, resolve, interface, *type_id, type_def, path, &context,
+        )?);
+    }
+
     Ok(ServiceSpec {
         name: service_name,
         endpoint,
         operations,
+        resources,
+    })
+}
+
+fn build_resource(
+    language: Language,
+    resolve: &Resolve,
+    interface: &Interface,
+    resource_id: wit_parser::TypeId,
+    type_def: &TypeDef,
+    path: &Path,
+    service_context: &str,
+) -> Result<ResourceSpec> {
+    let resource_name = type_def
+        .name
+        .as_deref()
+        .ok_or_else(|| Error::InvalidWit {
+            path: path.to_path_buf(),
+            reason: format!("{service_context} declares an unnamed resource"),
+        })?
+        .to_string();
+    let context = format!(
+        "{service_context} resource `{}`",
+        resource_name.to_upper_camel_case()
+    );
+
+    let constructor = interface.functions.values().find(
+        |function| matches!(function.kind, FunctionKind::Constructor(id) if id == resource_id),
+    );
+    let fields = match constructor {
+        Some(constructor) => constructor
+            .params
+            .iter()
+            .map(|(name, ty)| {
+                build_resource_field(language, resolve, name, ty, path, &context, "constructor")
+            })
+            .collect::<Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    let methods = interface
+        .functions
+        .values()
+        .filter(|function| {
+            matches!(
+                function.kind,
+                FunctionKind::Method(id) | FunctionKind::AsyncMethod(id) if id == resource_id
+            )
+        })
+        .map(|function| build_resource_method(language, resolve, function, path, &context))
+        .collect::<Result<Vec<_>>>()?;
+
+    for function in interface.functions.values() {
+        match function.kind {
+            FunctionKind::Static(id) | FunctionKind::AsyncStatic(id) if id == resource_id => {
+                return Err(Error::InvalidWit {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "{context} static methods are not supported yet (`{}`)",
+                        function.name
+                    ),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    Ok(ResourceSpec {
+        name: resource_name,
+        fields,
+        methods,
+    })
+}
+
+fn build_resource_method(
+    language: Language,
+    resolve: &Resolve,
+    function: &Function,
+    path: &Path,
+    resource_context: &str,
+) -> Result<ResourceMethodSpec> {
+    let method_name = function
+        .name
+        .rsplit('.')
+        .next()
+        .unwrap_or(function.name.as_str())
+        .to_string();
+    let context = format!(
+        "{resource_context} method `{}`",
+        method_name.to_upper_camel_case()
+    );
+    let params = function
+        .params
+        .iter()
+        .skip_while(|(name, _)| name == "self")
+        .map(|(name, ty)| {
+            build_resource_field(language, resolve, name, ty, path, &context, "parameter")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let result = function
+        .result
+        .as_ref()
+        .map(|ty| build_resource_result(language, resolve, ty, path, &context))
+        .transpose()?;
+
+    Ok(ResourceMethodSpec {
+        name: method_name,
+        params,
+        result,
+    })
+}
+
+fn build_resource_result(
+    language: Language,
+    resolve: &Resolve,
+    ty: &Type,
+    path: &Path,
+    context: &str,
+) -> Result<ResourceResultSpec> {
+    Ok(ResourceResultSpec {
+        annotation: resolve_wit_type_annotation(language, resolve, ty, path, context)?,
+        proto: find_proto_name_for_type(resolve, ty, path, context)?,
+        resource: find_owned_resource_name_for_type(resolve, ty),
+    })
+}
+
+fn build_resource_field(
+    language: Language,
+    resolve: &Resolve,
+    name: &str,
+    ty: &Type,
+    path: &Path,
+    context: &str,
+    _role: &str,
+) -> Result<ResourceFieldSpec> {
+    let annotation = resolve_wit_type_annotation(language, resolve, ty, path, context)?;
+    Ok(ResourceFieldSpec {
+        name: name.to_string(),
+        annotation,
+        optional: is_optional_type(resolve, ty),
     })
 }
 
@@ -1392,6 +1817,7 @@ fn build_operation(
                 ),
             }
         })?;
+    let output_resource = find_owned_resource_name_for_type(resolve, output_type);
 
     let output_transform = build_operation_output_transform(
         language,
@@ -1406,6 +1832,7 @@ fn build_operation(
         name: operation_name,
         input_proto,
         output_proto,
+        output_resource,
         output_transform,
     })
 }
@@ -1728,7 +2155,7 @@ mod tests {
     }
 
     fn descriptors() -> DescriptorIndex {
-        DescriptorIndex::load(&root().join("descriptors.bin")).unwrap()
+        DescriptorIndex::load(&root().join("examples/descriptors/temporal_api.bin")).unwrap()
     }
 
     fn parse(language: Language, wit: &str) -> ApiSpec {
@@ -1906,11 +2333,11 @@ interface workflow-service {
     }
 
     #[test]
-    fn parses_sibling_wit_files_from_input_directory() {
+    fn parses_sibling_wit_files_from_main_wit_package_directory() {
         let temp_dir = unique_temp_dir("sibling-wit");
         fs::create_dir_all(&temp_dir).unwrap();
         let shared_path = temp_dir.join("shared.wit");
-        let input_path = temp_dir.join("input.wit");
+        let input_path = temp_dir.join("main.wit");
         fs::write(
             &shared_path,
             r#"
@@ -1943,6 +2370,49 @@ interface workflow-service {
         assert_eq!(
             spec.services[0].operations[0].input_proto(),
             "acme.foo.v1.LocalRetryPolicy"
+        );
+
+        fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn ignores_sibling_wit_files_for_standalone_input_wit() {
+        let temp_dir = unique_temp_dir("standalone-wit");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let shared_path = temp_dir.join("shared.wit");
+        let input_path = temp_dir.join("input.wit");
+        fs::write(
+            &shared_path,
+            r#"
+package temporal:nexus@1.0.0;
+
+interface shared {
+  /// @nexus.proto "acme.foo.v1.LocalRetryPolicy"
+  record local-retry-policy {
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{retry-policy};
+
+  retry-policy-operation: func(request: retry-policy) -> retry-policy;
+}
+"#;
+
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, input_path).unwrap();
+        assert_eq!(
+            spec.services[0].operations[0].input_proto(),
+            "temporal.api.common.v1.RetryPolicy"
         );
 
         fs::remove_dir_all(temp_dir).unwrap();

@@ -1,9 +1,13 @@
+mod api_plan;
+mod backend_common;
+
 pub mod add_rpc;
 pub mod descriptors;
 pub mod error;
 pub mod generator;
 pub mod language;
 pub mod python;
+pub mod resources;
 pub mod spec;
 pub mod typescript;
 pub mod validation;

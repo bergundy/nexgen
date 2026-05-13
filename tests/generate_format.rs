@@ -15,6 +15,10 @@ mod tests {
         root.join("examples/inputs/workflow-service.wit")
     }
 
+    fn descriptor_path(root: &Path) -> PathBuf {
+        root.join("examples/descriptors/temporal_api.bin")
+    }
+
     fn unique_temp_dir(name: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -55,7 +59,7 @@ mod tests {
                 "--input",
                 sample_input_path(&root).to_str().unwrap(),
                 "--descriptors",
-                root.join("descriptors.bin").to_str().unwrap(),
+                descriptor_path(&root).to_str().unwrap(),
                 "--output",
                 output_path.to_str().unwrap(),
                 "--format",
@@ -88,7 +92,7 @@ mod tests {
                 "--input",
                 sample_input_path(&root).to_str().unwrap(),
                 "--descriptors",
-                root.join("descriptors.bin").to_str().unwrap(),
+                descriptor_path(&root).to_str().unwrap(),
                 "--output",
                 output_path.to_str().unwrap(),
                 "--format",

@@ -32,7 +32,7 @@ handle_task = client.start_workflow_args(
     task_queue=TASK_QUEUE,
 )
 typed_handle_task: collections.abc.Awaitable[
-    output.StartedWorkflowHandle[typing.Any]
+    output.StartedWorkflow
 ] = handle_task
 _ = typed_handle_task
 
@@ -42,7 +42,7 @@ named_handle_task = client.start_workflow_args(
     task_queue=TASK_QUEUE,
 )
 typed_named_handle_task: collections.abc.Awaitable[
-    output.StartedWorkflowHandle[typing.Any]
+    output.StartedWorkflow
 ] = named_handle_task
 _ = typed_named_handle_task
 
@@ -55,5 +55,7 @@ _ = cancel_task
 async def use_handle() -> None:
     handle = await handle_task
     await handle.cancel()
-    result_task: collections.abc.Awaitable[typing.Any] = handle.get_result()
+    result_task: collections.abc.Awaitable[collections.abc.Sequence[typing.Any]] = (
+        handle.get_result()
+    )
     _ = result_task

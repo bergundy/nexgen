@@ -11,6 +11,10 @@ fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+fn descriptor_path(root: &Path) -> PathBuf {
+    root.join("examples/descriptors/temporal_api.bin")
+}
+
 fn typescript_root(root: &Path) -> PathBuf {
     root.join("examples/typescript")
 }
@@ -82,7 +86,7 @@ fn generate_formatted_typescript_output(root: &Path, example_id: &str, output_pa
             "--input",
             input_path(root, example_id).to_str().unwrap(),
             "--descriptors",
-            root.join("descriptors.bin").to_str().unwrap(),
+            descriptor_path(root).to_str().unwrap(),
             "--output",
             output_path.to_str().unwrap(),
         ])
@@ -160,7 +164,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::TypeScript,
         input_path(&root, PRIMARY_EXAMPLE_ID),
-        root.join("descriptors.bin"),
+        descriptor_path(&root),
     )
     .unwrap();
 

@@ -43,31 +43,17 @@ class ExampleWorkflow:
 class FakeOperationHandle:
     def __init__(
         self,
-        response: workflowservice_v1.StartWorkflowExecutionResponse,
+        response: object,
     ) -> None:
         self._response = response
 
     def __await__(
         self,
-    ) -> Generator[object, None, workflowservice_v1.StartWorkflowExecutionResponse]:
-        async def wait_for_result() -> workflowservice_v1.StartWorkflowExecutionResponse:
+    ) -> Generator[object, None, object]:
+        async def wait_for_result() -> object:
             return self._response
 
         return wait_for_result().__await__()
-
-
-class FakeExternalWorkflowHandle:
-    def __init__(self, workflow_id: str, run_id: str | None) -> None:
-        self.id = workflow_id
-        self.run_id = run_id
-        self.cancelled = False
-        self.signals: list[tuple[object, tuple[object, ...]]] = []
-
-    async def cancel(self) -> None:
-        self.cancelled = True
-
-    async def signal(self, signal: object, *args: object) -> None:
-        self.signals.append((signal, args))
 
 
 class FakePayloadConverter:
@@ -96,25 +82,34 @@ class FakeNexusClient:
         input: object,
     ) -> FakeOperationHandle:
         self.calls.append((operation, input))
-        assert operation is output.WorkflowService.start_workflow
-        assert isinstance(input, workflowservice_v1.StartWorkflowExecutionRequest)
-        assert input.namespace == "workflow-namespace"
-        assert input.workflow_id == "workflow-id"
-        assert input.workflow_type.name == "ExampleWorkflow"
-        assert input.task_queue.name == TASK_QUEUE
-        assert [payload.data for payload in input.input.payloads] == [b"str:'customer-123'"]
+        if operation is output.WorkflowService.start_workflow:
+            assert isinstance(input, workflowservice_v1.StartWorkflowExecutionRequest)
+            assert input.namespace == "workflow-namespace"
+            assert input.workflow_id == "workflow-id"
+            assert input.workflow_type.name == "ExampleWorkflow"
+            assert input.task_queue.name == TASK_QUEUE
+            assert [payload.data for payload in input.input.payloads] == [
+                b"str:'customer-123'"
+            ]
 
-        response = workflowservice_v1.StartWorkflowExecutionResponse()
-        response.run_id = "run-123"
-        response.started = True
+            response = workflowservice_v1.StartWorkflowExecutionResponse()
+            response.run_id = "run-123"
+            response.started = True
+            return FakeOperationHandle(response)
+
+        assert operation is output.WorkflowService.cancel_workflow
+        assert isinstance(input, workflowservice_v1.RequestCancelWorkflowExecutionRequest)
+        assert input.namespace == "workflow-namespace"
+        assert input.workflow_execution.workflow_id == "workflow-id"
+        assert input.workflow_execution.run_id == "run-123"
+        response = workflowservice_v1.RequestCancelWorkflowExecutionResponse()
         return FakeOperationHandle(response)
 
 
 @pytest.fixture
-def context() -> tuple[typing.Any, FakeNexusClient, list[FakeExternalWorkflowHandle]]:
+def context() -> tuple[typing.Any, FakeNexusClient]:
     fake_client = FakeNexusClient()
     fake_payload_converter = FakePayloadConverter()
-    created_external_handles: list[FakeExternalWorkflowHandle] = []
 
     def fake_create_nexus_client(*, service: type[object], endpoint: str) -> FakeNexusClient:
         assert service is output.WorkflowService
@@ -130,23 +125,13 @@ def context() -> tuple[typing.Any, FakeNexusClient, list[FakeExternalWorkflowHan
     def fake_workflow_info() -> FakeWorkflowInfo:
         return FakeWorkflowInfo()
 
-    def fake_get_external_workflow_handle(
-        workflow_id: str,
-        *,
-        run_id: str | None = None,
-    ) -> FakeExternalWorkflowHandle:
-        handle = FakeExternalWorkflowHandle(workflow_id, run_id)
-        created_external_handles.append(handle)
-        return handle
-
     workflow_module = output.workflow  # pyright: ignore[reportPrivateLocalImportUsage]
     setattr(workflow_module, "create_nexus_client", fake_create_nexus_client)
     setattr(workflow_module, "payload_converter", fake_workflow_payload_converter)
     setattr(workflow_module, "info", fake_workflow_info)
-    setattr(workflow_module, "get_external_workflow_handle", fake_get_external_workflow_handle)
 
     client = output.WorkflowServiceClient()
-    return client, fake_client, created_external_handles
+    return client, fake_client
 
 
 def test_generated_metadata() -> None:
@@ -164,9 +149,9 @@ def test_generated_metadata() -> None:
 
 
 def test_cancel_workflow_request_serializes(
-    context: tuple[typing.Any, FakeNexusClient, list[FakeExternalWorkflowHandle]],
+    context: tuple[typing.Any, FakeNexusClient],
 ) -> None:
-    _client, _fake_client, _created_external_handles = context
+    _client, _fake_client = context
 
     request = output.RequestCancelWorkflowExecutionRequest(
         workflow_execution=output.WorkflowExecution(workflow_id="workflow-id"),
@@ -181,9 +166,9 @@ def test_cancel_workflow_request_serializes(
 
 
 async def test_start_workflow_returns_wrapper_handle(
-    context: tuple[typing.Any, FakeNexusClient, list[FakeExternalWorkflowHandle]],
+    context: tuple[typing.Any, FakeNexusClient],
 ) -> None:
-    client, fake_client, created_external_handles = context
+    client, fake_client = context
 
     handle = await client.start_workflow_args(
         workflow=ExampleWorkflow.run,
@@ -193,13 +178,22 @@ async def test_start_workflow_returns_wrapper_handle(
     )
 
     assert len(fake_client.calls) == 1
-    assert isinstance(handle, output.StartedWorkflowHandle)
+    assert isinstance(handle, output.StartedWorkflow)
+    assert handle.namespace == "workflow-namespace"
     assert handle.workflow_id == "workflow-id"
     assert handle.run_id == "run-123"
-    assert len(created_external_handles) == 1
 
     await handle.cancel()
-    assert created_external_handles[0].cancelled is True
+    assert len(fake_client.calls) == 2
+    cancel_operation, cancel_request = fake_client.calls[1]
+    assert cancel_operation is output.WorkflowService.cancel_workflow
+    assert isinstance(
+        cancel_request,
+        workflowservice_v1.RequestCancelWorkflowExecutionRequest,
+    )
+    assert cancel_request.namespace == "workflow-namespace"
+    assert cancel_request.workflow_execution.workflow_id == "workflow-id"
+    assert cancel_request.workflow_execution.run_id == "run-123"
 
     with pytest.raises(NotImplementedError):
         await handle.get_result()

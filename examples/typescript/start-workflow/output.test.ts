@@ -1,26 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
 
 const runtime = vi.hoisted(() => {
-  const cancel = vi.fn(async () => undefined);
-  const signal = vi.fn(async () => undefined);
   const startOperation = vi.fn();
   const createNexusServiceClient = vi.fn(() => ({
     startOperation,
   }));
-  const getExternalWorkflowHandle = vi.fn(
-    (workflowId: string, runId?: string) => ({
-      workflowId,
-      runId,
-      cancel,
-      signal,
-    }),
-  );
   return {
-    cancel,
-    signal,
     startOperation,
     createNexusServiceClient,
-    getExternalWorkflowHandle,
   };
 });
 
@@ -35,13 +22,12 @@ vi.mock("@temporalio/workflow", async () => {
         namespace: "workflow-namespace",
       }) as ReturnType<typeof actual.workflowInfo>,
     createNexusServiceClient: runtime.createNexusServiceClient,
-    getExternalWorkflowHandle: runtime.getExternalWorkflowHandle,
   };
 });
 
 import {
   RequestCancelWorkflowExecutionRequest,
-  StartedWorkflowHandle,
+  StartedWorkflow,
   StartWorkflowExecutionRequest,
   WorkflowService,
   WorkflowServiceClient,
@@ -92,12 +78,16 @@ describe("start-workflow generated output", () => {
       return customerId;
     }
 
-    runtime.startOperation.mockResolvedValue({
-      result: async () => ({
-        runId: "run-123",
-        started: true,
-      }),
-    });
+    runtime.startOperation
+      .mockResolvedValueOnce({
+        result: async () => ({
+          runId: "run-123",
+          started: true,
+        }),
+      })
+      .mockResolvedValueOnce({
+        result: async () => ({}),
+      });
 
     const client = new WorkflowServiceClient();
     const handle = await client.startWorkflow({
@@ -107,23 +97,31 @@ describe("start-workflow generated output", () => {
       taskQueue: "demo-task-queue",
     });
 
-    expect(handle).toBeInstanceOf(StartedWorkflowHandle);
+    expect(handle).toBeInstanceOf(StartedWorkflow);
+    expect(handle.namespace).toBe("workflow-namespace");
     expect(handle.workflowId).toBe("workflow-id");
     expect(handle.runId).toBe("run-123");
     expect(runtime.createNexusServiceClient).toHaveBeenCalledWith({
       service: WorkflowService,
       endpoint: "__temporal_system",
     });
-    expect(runtime.getExternalWorkflowHandle).toHaveBeenCalledWith(
-      "workflow-id",
-      "run-123",
-    );
 
     await handle.cancel();
-    expect(runtime.cancel).toHaveBeenCalled();
+    expect(runtime.startOperation).toHaveBeenNthCalledWith(
+      2,
+      WorkflowService.operations.cancelWorkflow,
+      {
+        namespace: "workflow-namespace",
+        workflowExecution: {
+          workflowId: "workflow-id",
+          runId: "run-123",
+        },
+        reason: undefined,
+      },
+    );
 
     await expect(handle.getResult()).rejects.toThrow(
-      "result retrieval is not yet implemented",
+      "started-workflow.getResult is not yet implemented",
     );
   });
 });

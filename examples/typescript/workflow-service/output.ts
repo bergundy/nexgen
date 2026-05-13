@@ -560,42 +560,6 @@ export const UserMetadata = {
   },
 };
 
-export interface SignalWithStartWorkflowExecutionResponse {
-  runId?: string;
-  started?: boolean;
-}
-
-export const SignalWithStartWorkflowExecutionResponse = {
-  fromProto(
-    proto:
-      | temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionResponse
-      | null
-      | undefined,
-  ): SignalWithStartWorkflowExecutionResponse | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      runId: proto.runId ?? undefined,
-      started: proto.started ?? undefined,
-    };
-  },
-
-  toProto(
-    model: SignalWithStartWorkflowExecutionResponse | null | undefined,
-  ):
-    | temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionResponse
-    | undefined {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      runId: model.runId,
-      started: model.started,
-    };
-  },
-};
-
 export interface ActivityOptions {
   taskQueue?: string;
   scheduleToCloseTimeout?: common.Duration;
@@ -687,9 +651,11 @@ export class WorkflowServiceClient {
   >(
     request: SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>,
   ): Promise<workflow.ExternalWorkflowHandle> {
+    const requestProto =
+      SignalWithStartWorkflowExecutionRequest.toProto(request) ?? {};
     const handle = await this.client.startOperation(
       WorkflowService.operations.signalWithStartWorkflowExecution,
-      SignalWithStartWorkflowExecutionRequest.toProto(request) ?? {},
+      requestProto,
     );
     const result = await handle.result();
     return workflow.getExternalWorkflowHandle(

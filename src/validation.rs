@@ -65,6 +65,10 @@ fn language_message_usages(
                 .or_default()
                 .input = true;
 
+            if operation.output_transform().is_some() || operation.output_resource().is_some() {
+                continue;
+            }
+
             let output_message =
                 descriptors
                     .message(operation.output_proto())

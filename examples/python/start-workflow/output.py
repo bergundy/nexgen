@@ -220,56 +220,6 @@ def versioning_override_to_proto(
     )
 
 
-import collections.abc
-import typing
-
-import temporalio.workflow
-
-_ResultT = typing.TypeVar("_ResultT")
-
-
-class StartedWorkflowHandle(typing.Generic[_ResultT]):
-    def __init__(
-        self,
-        handle: temporalio.workflow.ExternalWorkflowHandle[_ResultT],
-    ) -> None:
-        self._handle: temporalio.workflow.ExternalWorkflowHandle[_ResultT] = handle
-
-    @property
-    def workflow_id(self) -> str:
-        return self._handle.id
-
-    @property
-    def run_id(self) -> str | None:
-        return self._handle.run_id
-
-    async def cancel(self) -> None:
-        await self._handle.cancel()
-
-    async def signal(
-        self,
-        signal: str | collections.abc.Callable[..., typing.Any],
-        *args: typing.Any,
-    ) -> None:
-        await self._handle.signal(signal, *args)
-
-    async def get_result(self) -> _ResultT:
-        raise NotImplementedError(
-            "result retrieval is not yet implemented for started workflow handles"
-        )
-
-
-def started_workflow_handle_from_proto(
-    workflow_id: str,
-    run_id: str | None,
-) -> StartedWorkflowHandle[typing.Any]:
-    handle = temporalio.workflow.get_external_workflow_handle(
-        workflow_id,
-        run_id=run_id,
-    )
-    return StartedWorkflowHandle(handle)
-
-
 @dataclasses.dataclass(slots=True)
 class StartWorkflowExecutionRequest[*WorkflowArgs]:
     workflow_id: str
@@ -314,32 +264,6 @@ class StartWorkflowExecutionRequest[*WorkflowArgs]:
         if self.input is not None:
             message.input.CopyFrom(payloads_to_proto(self.input))
         message.namespace = workflow.info().namespace
-        return message
-
-
-@dataclasses.dataclass(slots=True)
-class StartWorkflowExecutionResponse:
-    run_id: str | None = None
-    started: bool | None = None
-
-    @classmethod
-    def from_proto(
-        cls,
-        proto: temporalio.api.workflowservice.v1.StartWorkflowExecutionResponse,
-    ) -> StartWorkflowExecutionResponse:
-        return cls(
-            run_id=proto.run_id,
-            started=proto.started,
-        )
-
-    def to_proto(
-        self,
-    ) -> temporalio.api.workflowservice.v1.StartWorkflowExecutionResponse:
-        message = temporalio.api.workflowservice.v1.StartWorkflowExecutionResponse()
-        if self.run_id is not None:
-            message.run_id = self.run_id
-        if self.started is not None:
-            message.started = self.started
         return message
 
 
@@ -417,6 +341,32 @@ class RequestCancelWorkflowExecutionResponse:
         return message
 
 
+@dataclasses.dataclass
+class StartedWorkflow:
+    _client: WorkflowServiceClient
+    namespace: str
+    workflow_id: str
+    run_id: str | None
+
+    async def cancel(
+        self,
+        reason: str | None = None,
+    ) -> None:
+        request = RequestCancelWorkflowExecutionRequest(
+            workflow_execution=WorkflowExecution(
+                workflow_id=self.workflow_id, run_id=self.run_id
+            ),
+            reason=reason,
+        )
+        handle = await self._client.cancel_workflow(request)
+        await handle
+
+    async def get_result(
+        self,
+    ) -> collections.abc.Sequence[typing.Any]:
+        raise NotImplementedError("started-workflow.get_result is not yet implemented")
+
+
 @service
 class WorkflowService:
     start_workflow: Operation[
@@ -442,13 +392,19 @@ class WorkflowServiceClient:
     async def start_workflow[*WorkflowArgs](
         self,
         request: StartWorkflowExecutionRequest[*WorkflowArgs],
-    ) -> StartedWorkflowHandle[typing.Any]:
+    ) -> StartedWorkflow:
+        request_proto = request.to_proto()
         handle = await self._client.start_operation(
             WorkflowService.start_workflow,
-            request.to_proto(),
+            request_proto,
         )
         result = await handle
-        return started_workflow_handle_from_proto(request.workflow_id, result.run_id)
+        return StartedWorkflow(
+            _client=self,
+            namespace=request_proto.namespace,
+            workflow_id=request.workflow_id,
+            run_id=result.run_id or None,
+        )
 
     @typing.overload
     async def start_workflow_args(
@@ -458,7 +414,7 @@ class WorkflowServiceClient:
         workflow: str,
         task_queue: str,
         input: tuple[typing.Any, ...] | None = ...,
-    ) -> StartedWorkflowHandle[typing.Any]: ...
+    ) -> StartedWorkflow: ...
 
     @typing.overload
     async def start_workflow_args(
@@ -469,7 +425,7 @@ class WorkflowServiceClient:
             [typing.Any], collections.abc.Awaitable[typing.Any]
         ],
         task_queue: str,
-    ) -> StartedWorkflowHandle[typing.Any]: ...
+    ) -> StartedWorkflow: ...
 
     @typing.overload
     async def start_workflow_args[FirstWorkflowArg, *RemainingWorkflowArgs](
@@ -482,7 +438,7 @@ class WorkflowServiceClient:
         ],
         task_queue: str,
         input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
-    ) -> StartedWorkflowHandle[typing.Any]: ...
+    ) -> StartedWorkflow: ...
 
     async def start_workflow_args(
         self,
@@ -492,7 +448,7 @@ class WorkflowServiceClient:
         | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],
         task_queue: str,
         input: tuple[typing.Any, ...] | None = None,
-    ) -> StartedWorkflowHandle[typing.Any]:
+    ) -> StartedWorkflow:
         request = StartWorkflowExecutionRequest[*tuple[typing.Any, ...]](
             workflow_id=workflow_id,
             workflow=workflow,

@@ -381,34 +381,6 @@ class UserMetadata:
 
 
 @dataclasses.dataclass(slots=True)
-class SignalWithStartWorkflowExecutionResponse:
-    run_id: str | None = None
-    started: bool | None = None
-
-    @classmethod
-    def from_proto(
-        cls,
-        proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse,
-    ) -> SignalWithStartWorkflowExecutionResponse:
-        return cls(
-            run_id=proto.run_id,
-            started=proto.started,
-        )
-
-    def to_proto(
-        self,
-    ) -> temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse:
-        message = (
-            temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse()
-        )
-        if self.run_id is not None:
-            message.run_id = self.run_id
-        if self.started is not None:
-            message.started = self.started
-        return message
-
-
-@dataclasses.dataclass(slots=True)
 class ActivityOptions:
     retry_policy: temporalio.common.RetryPolicy
     task_queue: str | None = None
@@ -490,9 +462,10 @@ class WorkflowServiceClient:
         self,
         request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs],
     ) -> workflow.ExternalWorkflowHandle[typing.Any]:
+        request_proto = request.to_proto()
         handle = await self._client.start_operation(
             WorkflowService.signal_with_start_workflow_execution,
-            request.to_proto(),
+            request_proto,
         )
         result = await handle
         return workflow.get_external_workflow_handle(

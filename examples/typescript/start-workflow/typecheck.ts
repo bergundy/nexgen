@@ -1,4 +1,5 @@
-import { StartedWorkflowHandle, StartWorkflowExecutionRequest, WorkflowServiceClient } from "./output.ts";
+import type * as common from "@temporalio/common";
+import { StartedWorkflow, StartWorkflowExecutionRequest, WorkflowServiceClient } from "./output.ts";
 
 async function exampleWorkflow(customerId: string): Promise<string> {
   return customerId;
@@ -12,10 +13,10 @@ const request: StartWorkflowExecutionRequest<typeof exampleWorkflow> = {
 };
 
 const client = new WorkflowServiceClient();
-const handlePromise: Promise<StartedWorkflowHandle> = client.startWorkflow(
+const handlePromise: Promise<StartedWorkflow> = client.startWorkflow(
   request,
 );
-const namedHandlePromise: Promise<StartedWorkflowHandle> = client.startWorkflow(
+const namedHandlePromise: Promise<StartedWorkflow> = client.startWorkflow(
   {
     workflow: "ExampleWorkflow",
     workflowId: "workflow-id-named",
@@ -31,7 +32,7 @@ void client.cancelWorkflow({
 async function useHandle(): Promise<void> {
   const handle = await handlePromise;
   await handle.cancel();
-  const resultPromise: Promise<unknown> = handle.getResult();
+  const resultPromise: Promise<common.Payload[]> = handle.getResult();
   void resultPromise;
 }
 

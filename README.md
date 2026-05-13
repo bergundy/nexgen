@@ -25,7 +25,7 @@ Generate from the shared example input:
 cargo run -- generate \
   --lang python \
   --input examples/inputs/workflow-service.wit \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --output /tmp/output.py
 ```
 
@@ -33,7 +33,7 @@ cargo run -- generate \
 cargo run -- generate \
   --lang typescript \
   --input examples/inputs/workflow-service.wit \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --output /tmp/output.ts
 ```
 
@@ -46,7 +46,7 @@ Add `--format` to run a formatter after generation:
 cargo run -- generate \
   --lang python \
   --input examples/inputs/workflow-service.wit \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --output /tmp/output.py \
   --format
 ```
@@ -55,7 +55,7 @@ Generate WIT for a proto RPC from the descriptor set:
 
 ```bash
 cargo run -- add-rpc \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --rpc SignalWithStartExecution
 ```
 
@@ -63,7 +63,7 @@ Write the standalone WIT scaffold to a file instead of stdout:
 
 ```bash
 cargo run -- add-rpc \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --rpc temporal.api.workflowservice.v1.WorkflowService.SignalWithStartWorkflowExecution \
   --output /tmp/add-rpc.wit
 ```
@@ -72,7 +72,7 @@ Extend an existing WIT file with a new RPC:
 
 ```bash
 cargo run -- add-rpc \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --rpc SignalWorkflowExecution \
   --input examples/inputs/workflow-service.wit
 ```
@@ -81,7 +81,7 @@ Rewrite the existing WIT file in place by pointing `--output` at the same path:
 
 ```bash
 cargo run -- add-rpc \
-  --descriptors descriptors.bin \
+  --descriptors examples/descriptors/temporal_api.bin \
   --rpc SignalWorkflowExecution \
   --input examples/inputs/workflow-service.wit \
   --output examples/inputs/workflow-service.wit

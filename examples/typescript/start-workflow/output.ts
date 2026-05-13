@@ -303,42 +303,6 @@ export function workflowIdConflictPolicyToProto(
   return common.encodeWorkflowIdConflictPolicy(policy);
 }
 
-export class StartedWorkflowHandle {
-  public readonly workflowId: string;
-  public readonly runId: string | undefined;
-
-  public constructor(private readonly handle: workflow.ExternalWorkflowHandle) {
-    this.workflowId = handle.workflowId;
-    this.runId = handle.runId;
-  }
-
-  public async cancel(): Promise<void> {
-    await this.handle.cancel();
-  }
-
-  public async signal<Args extends any[] = [], Name extends string = string>(
-    def: workflow.SignalDefinition<Args, Name> | string,
-    ...args: Args
-  ): Promise<void> {
-    await this.handle.signal(def, ...args);
-  }
-
-  public async getResult(): Promise<unknown> {
-    throw new Error(
-      "result retrieval is not yet implemented for started workflow handles",
-    );
-  }
-}
-
-export function startedWorkflowHandleFromProto(
-  workflowId: string,
-  runId: string | undefined,
-): StartedWorkflowHandle {
-  return new StartedWorkflowHandle(
-    workflow.getExternalWorkflowHandle(workflowId, runId),
-  );
-}
-
 function requiredField<T>(
   value: T | null | undefined,
   owner: string,
@@ -484,42 +448,6 @@ export const Payloads = {
   },
 };
 
-export interface StartWorkflowExecutionResponse {
-  runId?: string;
-  started?: boolean;
-}
-
-export const StartWorkflowExecutionResponse = {
-  fromProto(
-    proto:
-      | temporal.api.workflowservice.v1.IStartWorkflowExecutionResponse
-      | null
-      | undefined,
-  ): StartWorkflowExecutionResponse | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      runId: proto.runId ?? undefined,
-      started: proto.started ?? undefined,
-    };
-  },
-
-  toProto(
-    model: StartWorkflowExecutionResponse | null | undefined,
-  ):
-    | temporal.api.workflowservice.v1.IStartWorkflowExecutionResponse
-    | undefined {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      runId: model.runId,
-      started: model.started,
-    };
-  },
-};
-
 export interface RequestCancelWorkflowExecutionRequest {
   workflowExecution: WorkflowExecution;
   reason?: string;
@@ -563,7 +491,7 @@ export const WorkflowExecution = {
     }
     return {
       workflowId: requiredField(
-        proto.workflowId ?? undefined,
+        proto.workflowId === "" ? undefined : proto.workflowId,
         "WorkflowExecution",
         "workflowId",
       ),
@@ -615,6 +543,28 @@ export const RequestCancelWorkflowExecutionResponse = {
   },
 };
 
+export class StartedWorkflow {
+  public constructor(
+    private readonly client: WorkflowServiceClient,
+    public readonly namespace: string,
+    public readonly workflowId: string,
+    public readonly runId: string | undefined,
+  ) {}
+
+  public async cancel(reason?: string | undefined): Promise<void> {
+    const request = {
+      workflowExecution: { workflowId: this.workflowId, runId: this.runId },
+      reason: reason,
+    };
+    const handle = await this.client.cancelWorkflow(request);
+    await handle.result();
+  }
+
+  public async getResult(): Promise<common.Payload[]> {
+    throw new Error("started-workflow.getResult is not yet implemented");
+  }
+}
+
 export const WorkflowService = nexus.service("WorkflowService", {
   startWorkflow: nexus.operation<
     temporal.api.workflowservice.v1.IStartWorkflowExecutionRequest,
@@ -642,13 +592,16 @@ export class WorkflowServiceClient {
     ) => Promise<any>,
   >(
     request: StartWorkflowExecutionRequest<WorkflowFn>,
-  ): Promise<StartedWorkflowHandle> {
+  ): Promise<StartedWorkflow> {
+    const requestProto = StartWorkflowExecutionRequest.toProto(request) ?? {};
     const handle = await this.client.startOperation(
       WorkflowService.operations.startWorkflow,
-      StartWorkflowExecutionRequest.toProto(request) ?? {},
+      requestProto,
     );
     const result = await handle.result();
-    return startedWorkflowHandleFromProto(
+    return new StartedWorkflow(
+      this,
+      requiredField(requestProto.namespace, "resource", "namespace"),
       request.workflowId,
       result.runId ?? undefined,
     );
