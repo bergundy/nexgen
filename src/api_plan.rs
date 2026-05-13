@@ -5,9 +5,6 @@ use indexmap::IndexMap;
 use prost_types::FieldDescriptorProto;
 use prost_types::field_descriptor_proto::{Label, Type};
 
-use crate::backend_common::{
-    enum_name, field_has_presence, field_label, field_type, message_model_name,
-};
 use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata};
 use crate::error::{Error, Result};
 use crate::generator::ModelCapabilities;
@@ -215,6 +212,53 @@ pub(crate) struct PlannedMessageType {
     pub(crate) model_name: String,
     // NOTE: This is already the selected language's replacement payload from the spec.
     pub(crate) replacement: Option<TypeReplacementSpec>,
+}
+
+pub(crate) fn service_client_name(service_name: &str) -> String {
+    format!("{service_name}Client")
+}
+
+pub(crate) fn message_model_name(full_name: &str) -> String {
+    full_name
+        .rsplit('.')
+        .next()
+        .expect("descriptor names should not be empty")
+        .to_string()
+}
+
+pub(crate) fn enum_name(full_name: &str) -> String {
+    full_name
+        .rsplit('.')
+        .next()
+        .expect("descriptor names should not be empty")
+        .to_string()
+}
+
+pub(crate) fn relative_descriptor_name(full_name: &str, package: &str) -> String {
+    if package.is_empty() {
+        full_name.to_string()
+    } else {
+        full_name
+            .strip_prefix(&format!("{package}."))
+            .unwrap_or(full_name)
+            .to_string()
+    }
+}
+
+pub(crate) fn field_has_presence(field: &FieldDescriptorProto, field_type: Option<Type>) -> bool {
+    matches!(field_type, Some(Type::Message))
+        || field.proto3_optional.unwrap_or(false)
+        || field.oneof_index.is_some()
+}
+
+pub(crate) fn field_label(field: &FieldDescriptorProto) -> Option<Label> {
+    field.label.and_then(|label| Label::try_from(label).ok())
+}
+
+pub(crate) fn field_type(field: &FieldDescriptorProto) -> Option<Type> {
+    field
+        .r#type
+        .and_then(|field_type| Type::try_from(field_type).ok())
 }
 
 pub(crate) fn build_api_plan(spec: &ApiSpec, descriptors: &DescriptorIndex) -> Result<ApiPlan> {
