@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Generator, Sequence
 import dataclasses
 import datetime
+import importlib.util
 from pathlib import Path
+import sys
 import typing
 
 from nexusrpc import Operation
+import pytest
 import temporalio.api.activity.v1 as activity_v1
 import temporalio.api.common.v1
 import temporalio.api.common.v1.message_pb2 as common_pb2
@@ -15,10 +17,25 @@ import temporalio.api.workflowservice.v1 as workflowservice_v1
 import temporalio.common
 import temporalio.workflow
 
-import output
-
 APP_ROOT = Path(__file__).resolve().parent
 OUTPUT_PATH = APP_ROOT / "output.py"
+
+
+def load_output_module() -> typing.Any:
+    spec = importlib.util.spec_from_file_location(
+        "generated_workflow_service_output",
+        OUTPUT_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load generated module from {OUTPUT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+output: typing.Any = load_output_module()
+
 TASK_QUEUE = "demo-task-queue"
 
 REQUEST_WORKFLOW_ID = "workflow-request"
@@ -396,6 +413,16 @@ def build_activity_options(example_data: ExampleData) -> output.ActivityOptions:
     return activity_options
 
 
+@pytest.fixture
+def example_data() -> ExampleData:
+    return build_example_data()
+
+
+@pytest.fixture
+def context() -> ClientContext:
+    return install_fake_runtime()
+
+
 def assert_handle_matches(
     handle: temporalio.workflow.ExternalWorkflowHandle[typing.Any],
     workflow_id: str,
@@ -457,6 +484,7 @@ def install_fake_runtime() -> ClientContext:
 
 
 def test_generated_metadata() -> None:
+    assert OUTPUT_PATH.exists(), f"expected generated file at {OUTPUT_PATH}"
     signal_operation = output.WorkflowService.signal_with_start_workflow_execution
     retry_operation = output.WorkflowService.retry_policy_operation
     activity_operation = output.WorkflowService.activity_options_operation
@@ -524,7 +552,7 @@ def test_required_field_validation() -> None:
     )
 
 
-def test_activity_options_round_trip(example_data: ExampleData) -> output.ActivityOptions:
+def test_activity_options_round_trip(example_data: ExampleData) -> None:
     activity_options = build_activity_options(example_data)
     activity_proto = activity_options.to_proto()
     assert activity_proto.HasField("retry_policy")
@@ -537,9 +565,9 @@ def test_activity_options_round_trip(example_data: ExampleData) -> output.Activi
     assert round_tripped_activity.task_queue == TASK_QUEUE
     assert round_tripped_activity.schedule_to_close_timeout == datetime.timedelta(seconds=7)
     assert round_tripped_activity.priority == example_data.priority
-    return activity_options
 
 
+@pytest.mark.asyncio
 async def test_signal_request_api(
     context: ClientContext,
     example_data: ExampleData,
@@ -571,6 +599,7 @@ async def test_signal_request_api(
     assert_handle_matches(handle, REQUEST_WORKFLOW_ID)
 
 
+@pytest.mark.asyncio
 async def test_signal_args_api(
     context: ClientContext,
     example_data: ExampleData,
@@ -598,6 +627,7 @@ async def test_signal_args_api(
     assert_handle_matches(handle, ARGS_WORKFLOW_ID)
 
 
+@pytest.mark.asyncio
 async def test_signal_minimal_args_api(context: ClientContext) -> None:
     handle = await context.client.signal_with_start_workflow_execution_args(
         workflow="ExampleWorkflow",
@@ -608,6 +638,7 @@ async def test_signal_minimal_args_api(context: ClientContext) -> None:
     assert_handle_matches(handle, MINIMAL_WORKFLOW_ID)
 
 
+@pytest.mark.asyncio
 async def test_signal_high_arity_request_api(
     context: ClientContext,
     example_data: ExampleData,
@@ -630,6 +661,7 @@ async def test_signal_high_arity_request_api(
     assert_handle_matches(handle, HIGH_ARITY_WORKFLOW_ID)
 
 
+@pytest.mark.asyncio
 async def test_retry_policy_operation(
     context: ClientContext,
     example_data: ExampleData,
@@ -639,11 +671,12 @@ async def test_retry_policy_operation(
     assert retry_round_trip.maximum_attempts == 3
 
 
+@pytest.mark.asyncio
 async def test_activity_options_operation(
     context: ClientContext,
-    activity_options: output.ActivityOptions,
     example_data: ExampleData,
 ) -> None:
+    activity_options = build_activity_options(example_data)
     activity_handle = await context.client.activity_options_operation(activity_options)
     activity_response = output.ActivityOptions.from_proto(await activity_handle)
     assert isinstance(activity_response.retry_policy, temporalio.common.RetryPolicy)
@@ -651,42 +684,3 @@ async def test_activity_options_operation(
     assert activity_response.task_queue == TASK_QUEUE
     assert activity_response.schedule_to_close_timeout == datetime.timedelta(seconds=7)
     assert activity_response.priority == example_data.priority
-
-
-def test_runtime_recording(context: ClientContext) -> None:
-    assert len(context.fake_client.calls) == 6
-    assert [
-        (handle.id, handle.run_id) for handle in context.created_external_handles
-    ] == [
-        (REQUEST_WORKFLOW_ID, expected_run_id(REQUEST_WORKFLOW_ID)),
-        (ARGS_WORKFLOW_ID, expected_run_id(ARGS_WORKFLOW_ID)),
-        (MINIMAL_WORKFLOW_ID, expected_run_id(MINIMAL_WORKFLOW_ID)),
-        (HIGH_ARITY_WORKFLOW_ID, expected_run_id(HIGH_ARITY_WORKFLOW_ID)),
-    ]
-
-
-async def main() -> None:
-    assert OUTPUT_PATH.exists(), f"expected generated file at {OUTPUT_PATH}"
-
-    test_generated_metadata()
-    test_required_field_validation()
-
-    example_data = build_example_data()
-    activity_options = test_activity_options_round_trip(example_data)
-    context = install_fake_runtime()
-
-    await test_signal_request_api(context, example_data)
-    await test_signal_args_api(context, example_data)
-    await test_signal_minimal_args_api(context)
-    await test_signal_high_arity_request_api(context, example_data)
-    await test_retry_policy_operation(context, example_data)
-    await test_activity_options_operation(context, activity_options, example_data)
-    test_runtime_recording(context)
-
-    print(
-        "Generated Python-native model overrides, payload encoding helpers, required-field validation, low-level operation wrappers, and registry metadata look correct"
-    )
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

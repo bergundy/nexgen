@@ -1802,7 +1802,7 @@ fn render_model(output: &mut String, model: &RenderedModel) {
             output.push_str("    @classmethod\n");
             output.push_str("    def from_proto(\n");
             output.push_str("        cls,\n");
-            output.push_str("        proto: ");
+            output.push_str("        _proto: ");
             output.push_str(&model.proto_ref);
             output.push_str(",\n");
             output.push_str("    ) -> ");
@@ -2561,18 +2561,20 @@ mod tests {
     use crate::spec::ApiSpec;
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/input.wit")
+        root.join("examples/inputs/workflow-service.wit")
     }
 
     fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/python-validation/output.py")
+        root.join("examples/python/workflow-service/output.py")
     }
 
     fn sample_support_files(root: &std::path::Path) -> SupportFiles {
         SupportFiles {
             python: Some(
-                fs::read_to_string(root.join("examples/python-validation/model_overrides.py"))
-                    .unwrap(),
+                fs::read_to_string(
+                    root.join("builtins/nexus-temporal-types/python/model_overrides.py"),
+                )
+                .unwrap(),
             ),
             ..SupportFiles::default()
         }
@@ -2585,8 +2587,10 @@ mod tests {
             .as_nanos();
         let temp_path = std::env::temp_dir().join(format!("nexus-api-gen-python-{unique}.py"));
         fs::write(&temp_path, output).unwrap();
-        let status = Command::new(root.join("examples/python-validation/.venv/bin/ruff"))
-            .args(["format", temp_path.to_str().unwrap()])
+        let status = Command::new("uv")
+            .current_dir(root.join("examples/python"))
+            .env("RUFF_CACHE_DIR", "/tmp/nexus-api-gen-ruff-cache")
+            .args(["run", "ruff", "format", temp_path.to_str().unwrap()])
             .status()
             .unwrap();
         assert!(status.success());

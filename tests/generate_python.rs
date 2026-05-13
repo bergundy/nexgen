@@ -1,51 +1,102 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nexus_api_gen::generate_to_string;
 
+const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
+
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn sample_input_path(root: &std::path::Path) -> PathBuf {
-    root.join("examples/input.wit")
+fn python_root(root: &Path) -> PathBuf {
+    root.join("examples/python")
 }
 
-fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
-    root.join("examples/python-validation/output.py")
+fn input_path(root: &Path, example_id: &str) -> PathBuf {
+    let flat_path = root
+        .join("examples/inputs")
+        .join(format!("{example_id}.wit"));
+    if flat_path.is_file() {
+        flat_path
+    } else {
+        root.join("examples/inputs")
+            .join(example_id)
+            .join("main.wit")
+    }
+}
+
+fn python_output_path(root: &Path, example_id: &str) -> PathBuf {
+    python_root(root).join(example_id).join("output.py")
+}
+
+fn python_example_ids(root: &Path) -> Vec<String> {
+    let python_root = python_root(root);
+    let mut ids = fs::read_dir(root.join("examples/inputs"))
+        .unwrap()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let example_id = if path.is_file() {
+                path.file_stem()?.to_string_lossy().into_owned()
+            } else if path.join("main.wit").is_file() {
+                path.file_name()?.to_string_lossy().into_owned()
+            } else {
+                return None;
+            };
+            if python_root.join(&example_id).is_dir() {
+                Some(example_id)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
 }
 
 fn uv_cache_dir() -> &'static str {
     "/tmp/nexus-api-gen-uv-cache"
 }
 
-fn prepend_path(path: &std::path::Path) -> String {
-    let existing = std::env::var("PATH").unwrap_or_default();
-    format!("{}:{existing}", path.display())
+fn ruff_cache_dir() -> &'static str {
+    "/tmp/nexus-api-gen-ruff-cache"
 }
 
-fn generate_formatted_python_output(root: &std::path::Path, output_path: &std::path::Path) {
-    let ruff_bin_dir = root.join("examples/python-validation/.venv/bin");
+fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: &Path) {
     let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
-        .env("PATH", prepend_path(&ruff_bin_dir))
         .args([
             "generate",
             "--lang",
             "python",
             "--input",
-            sample_input_path(root).to_str().unwrap(),
+            input_path(root, example_id).to_str().unwrap(),
             "--descriptors",
             root.join("descriptors.bin").to_str().unwrap(),
             "--output",
             output_path.to_str().unwrap(),
-            "--format",
         ])
         .status()
         .unwrap();
-
     assert!(status.success());
+
+    let format_status = Command::new("uv")
+        .current_dir(python_root(root))
+        .env("UV_CACHE_DIR", uv_cache_dir())
+        .env("RUFF_CACHE_DIR", ruff_cache_dir())
+        .args([
+            "run",
+            "ruff",
+            "format",
+            "--config",
+            "pyproject.toml",
+            output_path.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(format_status.success());
 }
 
 fn unique_output_path(label: &str) -> PathBuf {
@@ -57,41 +108,29 @@ fn unique_output_path(label: &str) -> PathBuf {
 }
 
 #[test]
-fn sample_generation_matches_checked_in_output() {
+fn python_examples_generation_matches_checked_in_output() {
     let root = project_root();
-    let output_path = unique_output_path("sample");
-    generate_formatted_python_output(&root, &output_path);
-    let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
-
-    assert_eq!(rendered, expected);
-
-    fs::remove_file(output_path).unwrap();
+    for example_id in python_example_ids(&root) {
+        let output_path = unique_output_path(&format!("python-{example_id}"));
+        generate_formatted_python_output(&root, &example_id, &output_path);
+        let rendered = fs::read_to_string(&output_path).unwrap();
+        let expected = fs::read_to_string(python_output_path(&root, &example_id)).unwrap();
+        assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        fs::remove_file(output_path).unwrap();
+    }
 }
 
 #[test]
-fn cli_generates_python_file() {
+fn python_example_suite_type_checks_and_runs() {
     let root = project_root();
-    let output_path = unique_output_path("cli");
-
-    generate_formatted_python_output(&root, &output_path);
-
-    let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(sample_python_output_path(&root)).unwrap();
-    assert_eq!(rendered, expected);
-
-    fs::remove_file(output_path).unwrap();
-}
-
-#[test]
-fn python_validation_app_type_checks_and_runs() {
-    let root = project_root();
-    let example_dir = root.join("examples/python-validation");
+    let example_dir = python_root(&root);
 
     let build_status = Command::new("uv")
         .current_dir(&example_dir)
         .env("UV_CACHE_DIR", uv_cache_dir())
-        .args(["run", "build_output.py"])
+        .env("RUFF_CACHE_DIR", ruff_cache_dir())
+        .env("NEXUS_API_GEN_BIN", env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .args(["run", "build_outputs.py"])
         .status()
         .unwrap();
     assert!(build_status.success());
@@ -104,13 +143,13 @@ fn python_validation_app_type_checks_and_runs() {
         .unwrap();
     assert!(typecheck_status.success());
 
-    let run_status = Command::new("uv")
+    let pytest_status = Command::new("uv")
         .current_dir(&example_dir)
         .env("UV_CACHE_DIR", uv_cache_dir())
-        .args(["run", "main.py"])
+        .args(["run", "pytest"])
         .status()
         .unwrap();
-    assert!(run_status.success());
+    assert!(pytest_status.success());
 }
 
 #[test]
@@ -118,7 +157,7 @@ fn python_request_models_are_write_only() {
     let root = project_root();
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::Python,
-        sample_input_path(&root),
+        input_path(&root, PRIMARY_EXAMPLE_ID),
         root.join("descriptors.bin"),
     )
     .unwrap();

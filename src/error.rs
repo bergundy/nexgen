@@ -24,6 +24,9 @@ pub enum Error {
         source: io::Error,
     },
 
+    #[error("refusing to overwrite existing path `{path}`")]
+    OutputPathExists { path: PathBuf },
+
     #[error("failed to run formatter `{command}` for `{path}`: {source}")]
     RunFormatter {
         path: PathBuf,
@@ -62,6 +65,15 @@ pub enum Error {
 
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
+
+    #[error("RPC `{name}` was not found in the descriptor set")]
+    UnknownRpcName { name: String },
+
+    #[error("RPC name `{name}` is ambiguous; matches: {matches:?}")]
+    AmbiguousRpcName { name: String, matches: Vec<String> },
+
+    #[error("cannot generate add-rpc WIT for `{context}`: {reason}")]
+    UnsupportedAddRpc { context: String, reason: String },
 
     #[error("service `{service}` is missing an endpoint")]
     MissingServiceEndpoint { service: String },

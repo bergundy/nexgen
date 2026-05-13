@@ -12,7 +12,7 @@ mod tests {
     }
 
     fn sample_input_path(root: &Path) -> PathBuf {
-        root.join("examples/input.wit")
+        root.join("examples/inputs/workflow-service.wit")
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

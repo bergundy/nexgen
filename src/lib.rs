@@ -1,3 +1,4 @@
+pub mod add_rpc;
 pub mod descriptors;
 pub mod error;
 pub mod generator;
@@ -11,11 +12,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use add_rpc::generate_add_rpc_wit;
 use descriptors::DescriptorIndex;
 use error::Result;
 use generator::generate_source;
 use language::Language;
-use spec::ApiSpec;
+use spec::{ApiSpec, write_prepared_wit_directory};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SupportFiles {
@@ -29,6 +31,18 @@ pub struct GenerateRequest {
     pub descriptor_path: PathBuf,
     pub output_path: PathBuf,
     pub format: bool,
+}
+
+pub struct AddRpcRequest {
+    pub descriptor_path: PathBuf,
+    pub rpc_name: String,
+    pub input_path: Option<PathBuf>,
+    pub output_path: Option<PathBuf>,
+}
+
+pub struct DebugWitDirRequest {
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
 }
 
 pub fn generate_to_string(
@@ -60,6 +74,44 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn add_rpc_to_string(
+    descriptor_path: impl AsRef<Path>,
+    rpc_name: &str,
+    input_path: Option<&Path>,
+) -> Result<String> {
+    let descriptors = DescriptorIndex::load(descriptor_path.as_ref())?;
+    if let Some(input_path) = input_path {
+        let input = fs::read_to_string(input_path).map_err(|source| error::Error::ReadFile {
+            path: input_path.to_path_buf(),
+            source,
+        })?;
+        add_rpc::generate_add_rpc_wit_with_input(&descriptors, rpc_name, input_path, &input)
+    } else {
+        generate_add_rpc_wit(&descriptors, rpc_name)
+    }
+}
+
+pub fn add_rpc_to_file(request: &AddRpcRequest) -> Result<()> {
+    let output = add_rpc_to_string(
+        &request.descriptor_path,
+        &request.rpc_name,
+        request.input_path.as_deref(),
+    )?;
+    if let Some(path) = &request.output_path {
+        fs::write(path, output).map_err(|source| error::Error::WriteFile {
+            path: path.clone(),
+            source,
+        })?;
+    } else {
+        print!("{output}");
+    }
+    Ok(())
+}
+
+pub fn debug_wit_dir_to_file(request: &DebugWitDirRequest) -> Result<()> {
+    write_prepared_wit_directory(&request.input_path, &request.output_path)
 }
 
 fn format_generated_file(language: Language, output_path: &Path) -> Result<()> {
@@ -104,28 +156,23 @@ fn format_formatter_command(program: &str, args: &[String]) -> String {
         .join(" ")
 }
 
-fn load_optional_file(path: Option<&Path>) -> Result<Option<String>> {
-    path.map(|path| {
-        fs::read_to_string(path).map_err(|source| error::Error::ReadFile {
-            path: path.to_path_buf(),
-            source,
-        })
-    })
-    .transpose()
-}
-
 fn load_support_files(
     language: Language,
     spec: &ApiSpec,
-    input_path: &Path,
+    _input_path: &Path,
 ) -> Result<SupportFiles> {
-    let base_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
-    let support_path = spec
-        .support
-        .file
-        .as_deref()
-        .map(|path| resolve_support_path(base_dir, path));
-    let support_contents = load_optional_file(support_path.as_deref())?;
+    let support_contents = if spec.support.fragments.is_empty() {
+        None
+    } else {
+        Some(
+            spec.support
+                .fragments
+                .iter()
+                .map(|fragment| fragment.contents.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        )
+    };
 
     Ok(match language {
         Language::Python => SupportFiles {
@@ -138,15 +185,6 @@ fn load_support_files(
         },
         _ => SupportFiles::default(),
     })
-}
-
-fn resolve_support_path(base_dir: &Path, support_path: &str) -> PathBuf {
-    let support_path = PathBuf::from(support_path);
-    if support_path.is_absolute() {
-        support_path
-    } else {
-        base_dir.join(support_path)
-    }
 }
 
 #[cfg(test)]

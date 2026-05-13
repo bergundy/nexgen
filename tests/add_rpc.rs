@@ -1,0 +1,213 @@
+use std::path::PathBuf;
+use std::process::Command;
+
+use nexus_api_gen::add_rpc_to_string;
+use nexus_api_gen::language::Language;
+use nexus_api_gen::spec::ApiSpec;
+
+const PRIMARY_EXAMPLE_PATH: &str = "examples/inputs/workflow-service.wit";
+
+fn project_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn parse(language: Language, wit: &str, path: &str) -> ApiSpec {
+    ApiSpec::parse_for_language(language, wit, PathBuf::from(path)).unwrap()
+}
+
+#[test]
+fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
+    let root = project_root();
+    let output = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .args([
+            "add-rpc",
+            "--descriptors",
+            root.join("descriptors.bin").to_str().unwrap(),
+            "--rpc",
+            "SignalWithStartExecution",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let rendered = String::from_utf8(output.stdout).unwrap();
+
+    assert!(rendered.contains("package temporal:nexus@1.0.0;"));
+    assert!(rendered.contains("/// @nexus.endpoint \"__REPLACE_ME__\""));
+    assert!(rendered.contains("record signal-with-start-workflow-execution-request {"));
+    assert!(rendered.contains("workflow-type: option<workflow-type>,"));
+    assert!(rendered.contains("input: option<payloads>,"));
+    assert!(rendered.contains("signal-name: string,"));
+    assert!(rendered.contains("signal-input: option<payloads>,"));
+    assert!(rendered.contains(
+        "signal-with-start-workflow-execution: func(\n    request: signal-with-start-workflow-execution-request,\n  ) -> signal-with-start-workflow-execution-response;"
+    ));
+    assert!(!rendered.contains("@nexus.output-transform"));
+    assert!(!rendered.contains("workflow: workflow-function,"));
+    assert!(!rendered.contains("signal: signal-function,"));
+}
+
+#[test]
+fn add_rpc_matches_signal_with_start_proto_shape_but_not_handwritten_refinements() {
+    let root = project_root();
+    let descriptors = root.join("descriptors.bin");
+    let generated = add_rpc_to_string(&descriptors, "SignalWithStartExecution", None).unwrap();
+
+    let generated_python = parse(Language::Python, &generated, "generated-add-rpc.wit");
+    let handwritten_python =
+        ApiSpec::load_for_language(Language::Python, &root.join(PRIMARY_EXAMPLE_PATH)).unwrap();
+    let generated_typescript = parse(Language::TypeScript, &generated, "generated-add-rpc.wit");
+    let handwritten_typescript =
+        ApiSpec::load_for_language(Language::TypeScript, &root.join(PRIMARY_EXAMPLE_PATH)).unwrap();
+
+    let generated_python_service = &generated_python.services[0];
+    let handwritten_python_service = &handwritten_python.services[0];
+    assert_eq!(
+        generated_python_service.name,
+        handwritten_python_service.name
+    );
+    assert_eq!(
+        generated_python_service.operations[0].name,
+        handwritten_python_service.operations[0].name
+    );
+    assert_eq!(
+        generated_python_service.operations[0].input_proto,
+        handwritten_python_service.operations[0].input_proto
+    );
+    assert_eq!(
+        generated_python_service.operations[0].output_proto,
+        handwritten_python_service.operations[0].output_proto
+    );
+    assert!(
+        generated_python_service.operations[0]
+            .output_transform
+            .is_none()
+    );
+    assert!(
+        handwritten_python_service.operations[0]
+            .output_transform
+            .is_some()
+    );
+
+    let generated_python_request = generated_python
+        .type_override("temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    let handwritten_python_request = handwritten_python
+        .type_override("temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    assert_eq!(
+        generated_python_request.field_name_override("workflow_type"),
+        Some("workflow-type")
+    );
+    assert_eq!(
+        generated_python_request.field_name_override("signal_name"),
+        Some("signal-name")
+    );
+    assert_eq!(
+        generated_python_request.field_name_override("input"),
+        Some("input")
+    );
+    assert_eq!(
+        generated_python_request.field_name_override("signal_input"),
+        Some("signal-input")
+    );
+    assert!(generated_python_request.function("workflow_type").is_none());
+    assert!(generated_python_request.function("signal_name").is_none());
+    assert_ne!(
+        generated_python_request.field_name_override("workflow_type"),
+        handwritten_python_request.field_name_override("workflow_type")
+    );
+    assert_ne!(
+        generated_python_request.field_name_override("signal_name"),
+        handwritten_python_request.field_name_override("signal_name")
+    );
+    assert_ne!(
+        generated_python_request.function("workflow_type"),
+        handwritten_python_request.function("workflow_type")
+    );
+
+    let generated_typescript_request = generated_typescript
+        .type_override("temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    let handwritten_typescript_request = handwritten_typescript
+        .type_override("temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    assert_eq!(
+        generated_typescript_request.field_name_override("workflow_type"),
+        Some("workflow-type")
+    );
+    assert_eq!(
+        generated_typescript_request.field_name_override("signal_name"),
+        Some("signal-name")
+    );
+    assert_eq!(
+        generated_typescript_request.field_name_override("input"),
+        Some("input")
+    );
+    assert_eq!(
+        generated_typescript_request.field_name_override("signal_input"),
+        Some("signal-input")
+    );
+    assert!(
+        generated_typescript_request
+            .function("workflow_type")
+            .is_none()
+    );
+    assert!(
+        generated_typescript_request
+            .with_arguments("signal_name")
+            .is_none()
+    );
+    assert_ne!(
+        generated_typescript_request.field_name_override("workflow_type"),
+        handwritten_typescript_request.field_name_override("workflow_type")
+    );
+    assert_ne!(
+        generated_typescript_request.field_name_override("signal_name"),
+        handwritten_typescript_request.field_name_override("signal_name")
+    );
+    assert_ne!(
+        generated_typescript_request.with_arguments("signal_name"),
+        handwritten_typescript_request.with_arguments("signal_name")
+    );
+
+    assert!(generated.contains("user-metadata: option<user-metadata>,"));
+    assert!(generated.contains("header: option<header>,"));
+    assert!(generated.contains("links: list<link>,"));
+    assert!(!generated.contains("@nexus.source"));
+}
+
+#[test]
+fn add_rpc_can_extend_an_existing_wit_file() {
+    let root = project_root();
+    let descriptors = root.join("descriptors.bin");
+    let input = root.join(PRIMARY_EXAMPLE_PATH);
+    let generated =
+        add_rpc_to_string(&descriptors, "SignalWorkflowExecution", Some(&input)).unwrap();
+
+    assert!(generated.contains("signal-with-start-workflow-execution: func("));
+    assert!(generated.contains("signal-workflow-execution: func("));
+    assert!(generated.contains("record signal-workflow-execution-request {"));
+    assert!(generated.contains("record signal-workflow-execution-response {"));
+    assert!(generated.contains("signal-name: string,"));
+    assert!(generated.contains("input: option<payloads>,"));
+    assert!(generated.contains("workflow-execution: option<workflow-execution>,"));
+    assert!(!generated.contains("package temporal:nexus@1.0.0;\n\npackage temporal:nexus@1.0.0;"));
+
+    let parsed = parse(Language::Python, &generated, "extended-input.wit");
+    let service = &parsed.services[0];
+    assert!(
+        service
+            .operation("SignalWithStartWorkflowExecution")
+            .is_some()
+    );
+    assert!(service.operation("SignalWorkflowExecution").is_some());
+}

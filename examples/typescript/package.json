@@ -1,10 +1,11 @@
 {
-  "name": "typescript-validation",
+  "name": "examples-typescript",
   "private": true,
   "type": "module",
   "scripts": {
-    "build-output": "node build_output.mjs",
-    "typecheck": "tsc --noEmit"
+    "build-outputs": "node build_outputs.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@temporalio/common": "^1.15.0",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "prettier": "^3.8.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   }
 }

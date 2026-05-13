@@ -2066,35 +2066,58 @@ mod tests {
     use crate::spec::ApiSpec;
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/input.wit")
+        root.join("examples/inputs/workflow-service.wit")
     }
 
     fn sample_typescript_output_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/typescript-validation/output.ts")
+        root.join("examples/typescript/workflow-service/output.ts")
     }
 
     fn sample_support_files(root: &std::path::Path) -> SupportFiles {
         SupportFiles {
             typescript: Some(
-                fs::read_to_string(root.join("examples/typescript-validation/model_overrides.ts"))
-                    .unwrap(),
+                fs::read_to_string(
+                    root.join("builtins/nexus-temporal-types/typescript/model_overrides.ts"),
+                )
+                .unwrap(),
             ),
             ..SupportFiles::default()
         }
     }
 
+    fn ensure_typescript_dependencies(root: &std::path::Path) {
+        let example_dir = root.join("examples/typescript");
+        if example_dir.join("node_modules").exists() {
+            return;
+        }
+
+        let status = Command::new("npm")
+            .current_dir(&example_dir)
+            .args(["install", "--no-fund", "--no-audit"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
     fn format_typescript_output(root: &std::path::Path, output: &str) -> String {
+        ensure_typescript_dependencies(root);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let temp_path = std::env::temp_dir().join(format!("nexus-api-gen-typescript-{unique}.ts"));
         fs::write(&temp_path, output).unwrap();
-        let status =
-            Command::new(root.join("examples/typescript-validation/node_modules/.bin/prettier"))
-                .args(["--write", temp_path.to_str().unwrap()])
-                .status()
-                .unwrap();
+        let status = Command::new("npm")
+            .current_dir(root.join("examples/typescript"))
+            .args([
+                "exec",
+                "--",
+                "prettier",
+                "--write",
+                temp_path.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
         assert!(status.success());
         let formatted = fs::read_to_string(&temp_path).unwrap();
         fs::remove_file(temp_path).unwrap();

@@ -1,47 +1,107 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nexus_api_gen::generate_to_string;
 
+const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
+
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn sample_input_path(root: &std::path::Path) -> PathBuf {
-    root.join("examples/input.wit")
+fn typescript_root(root: &Path) -> PathBuf {
+    root.join("examples/typescript")
 }
 
-fn sample_typescript_output_path(root: &std::path::Path) -> PathBuf {
-    root.join("examples/typescript-validation/output.ts")
+fn input_path(root: &Path, example_id: &str) -> PathBuf {
+    let flat_path = root
+        .join("examples/inputs")
+        .join(format!("{example_id}.wit"));
+    if flat_path.is_file() {
+        flat_path
+    } else {
+        root.join("examples/inputs")
+            .join(example_id)
+            .join("main.wit")
+    }
 }
 
-fn prepend_path(path: &std::path::Path) -> String {
-    let existing = std::env::var("PATH").unwrap_or_default();
-    format!("{}:{existing}", path.display())
+fn typescript_output_path(root: &Path, example_id: &str) -> PathBuf {
+    typescript_root(root).join(example_id).join("output.ts")
 }
 
-fn generate_formatted_typescript_output(root: &std::path::Path, output_path: &std::path::Path) {
-    let prettier_bin_dir = root.join("examples/typescript-validation/node_modules/.bin");
+fn typescript_example_ids(root: &Path) -> Vec<String> {
+    let typescript_root = typescript_root(root);
+    let mut ids = fs::read_dir(root.join("examples/inputs"))
+        .unwrap()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let example_id = if path.is_file() {
+                path.file_stem()?.to_string_lossy().into_owned()
+            } else if path.join("main.wit").is_file() {
+                path.file_name()?.to_string_lossy().into_owned()
+            } else {
+                return None;
+            };
+            if typescript_root.join(&example_id).is_dir() {
+                Some(example_id)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
+fn ensure_typescript_dependencies(root: &Path) {
+    let example_dir = typescript_root(root);
+    if example_dir.join("node_modules").exists() {
+        return;
+    }
+
+    let install_status = Command::new("npm")
+        .current_dir(&example_dir)
+        .args(["install", "--no-fund", "--no-audit"])
+        .status()
+        .unwrap();
+    assert!(install_status.success());
+}
+
+fn generate_formatted_typescript_output(root: &Path, example_id: &str, output_path: &Path) {
+    ensure_typescript_dependencies(root);
+
     let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
-        .env("PATH", prepend_path(&prettier_bin_dir))
         .args([
             "generate",
             "--lang",
             "typescript",
             "--input",
-            sample_input_path(root).to_str().unwrap(),
+            input_path(root, example_id).to_str().unwrap(),
             "--descriptors",
             root.join("descriptors.bin").to_str().unwrap(),
             "--output",
             output_path.to_str().unwrap(),
-            "--format",
         ])
         .status()
         .unwrap();
-
     assert!(status.success());
+
+    let format_status = Command::new("npm")
+        .current_dir(typescript_root(root))
+        .args([
+            "exec",
+            "--",
+            "prettier",
+            "--write",
+            output_path.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(format_status.success());
 }
 
 fn unique_output_path(label: &str) -> PathBuf {
@@ -53,49 +113,28 @@ fn unique_output_path(label: &str) -> PathBuf {
 }
 
 #[test]
-fn sample_typescript_generation_matches_checked_in_output() {
+fn typescript_examples_generation_matches_checked_in_output() {
     let root = project_root();
-    let output_path = unique_output_path("sample");
-    generate_formatted_typescript_output(&root, &output_path);
-    let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(sample_typescript_output_path(&root)).unwrap();
-
-    assert_eq!(rendered, expected);
-
-    fs::remove_file(output_path).unwrap();
-}
-
-#[test]
-fn cli_generates_typescript_file() {
-    let root = project_root();
-    let output_path = unique_output_path("cli");
-
-    generate_formatted_typescript_output(&root, &output_path);
-
-    let rendered = fs::read_to_string(&output_path).unwrap();
-    let expected = fs::read_to_string(sample_typescript_output_path(&root)).unwrap();
-    assert_eq!(rendered, expected);
-
-    fs::remove_file(output_path).unwrap();
-}
-
-#[test]
-fn typescript_validation_app_type_checks() {
-    let root = project_root();
-    let example_dir = root.join("examples/typescript-validation");
-
-    if !example_dir.join("node_modules").exists() {
-        let install_status = Command::new("npm")
-            .current_dir(&example_dir)
-            .args(["install", "--no-fund", "--no-audit"])
-            .status()
-            .unwrap();
-        assert!(install_status.success());
+    for example_id in typescript_example_ids(&root) {
+        let output_path = unique_output_path(&format!("typescript-{example_id}"));
+        generate_formatted_typescript_output(&root, &example_id, &output_path);
+        let rendered = fs::read_to_string(&output_path).unwrap();
+        let expected = fs::read_to_string(typescript_output_path(&root, &example_id)).unwrap();
+        assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        fs::remove_file(output_path).unwrap();
     }
+}
+
+#[test]
+fn typescript_example_suite_typechecks_and_tests() {
+    let root = project_root();
+    let example_dir = typescript_root(&root);
+    ensure_typescript_dependencies(&root);
 
     let build_status = Command::new("npm")
         .current_dir(&example_dir)
-        .args(["run", "build-output"])
+        .env("NEXUS_API_GEN_BIN", env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .args(["run", "build-outputs"])
         .status()
         .unwrap();
     assert!(build_status.success());
@@ -106,6 +145,13 @@ fn typescript_validation_app_type_checks() {
         .status()
         .unwrap();
     assert!(typecheck_status.success());
+
+    let test_status = Command::new("npm")
+        .current_dir(&example_dir)
+        .args(["run", "test"])
+        .status()
+        .unwrap();
+    assert!(test_status.success());
 }
 
 #[test]
@@ -113,7 +159,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     let root = project_root();
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::TypeScript,
-        sample_input_path(&root),
+        input_path(&root, PRIMARY_EXAMPLE_ID),
         root.join("descriptors.bin"),
     )
     .unwrap();

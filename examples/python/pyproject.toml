@@ -1,0 +1,20 @@
+[project]
+name = "examples-python"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "basedpyright==1.31.4",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "ruff>=0.15.12",
+    "temporalio==1.26.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.basedpyright]
+exclude = [".venv", "**/test_*.py"]

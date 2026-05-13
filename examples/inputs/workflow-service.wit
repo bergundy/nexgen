@@ -1,4 +1,3 @@
-/// @nexus.support python="python-validation/model_overrides.py" typescript="typescript-validation/model_overrides.ts"
 package temporal:nexus@1.0.0;
 
 world system {

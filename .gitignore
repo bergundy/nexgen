@@ -24,6 +24,7 @@ target
 .venv
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # TypeScript validation app
-examples/typescript-validation/node_modules/
+examples/typescript/node_modules/

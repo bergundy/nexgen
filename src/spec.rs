@@ -1,16 +1,26 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use heck::{ToSnakeCase, ToUpperCamelCase};
+use tempfile::TempDir;
 use wit_parser::{
-    Function, Interface, PackageId, Resolve, Type, TypeDef, TypeDefKind, WorldItem, WorldKey,
+    Function, Interface, PackageId, PackageSourceMap, Resolve, Type, TypeDef, TypeDefKind,
+    WorldItem, WorldKey,
 };
 
 use crate::error::{Error, Result};
 use crate::language::Language;
 
-const BUILTIN_TEMPORAL_TYPES_WIT: &str = include_str!("../wit/nexus-temporal-types.wit");
+type PackageOrigins = BTreeMap<PackageId, PathBuf>;
+
+pub(crate) struct ParsedWitPackage {
+    pub resolve: Resolve,
+    pub package_id: PackageId,
+    pub package_origins: PackageOrigins,
+    _workspace: TempDir,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiSpec {
@@ -18,6 +28,18 @@ pub struct ApiSpec {
     pub support: SupportSpec,
     pub services: Vec<ServiceSpec>,
     pub types: BTreeMap<String, TypeOverrideSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltinTypeMetadata {
+    pub wit_name: String,
+    pub use_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltinWitMetadata {
+    pub proto_types: BTreeMap<String, BuiltinTypeMetadata>,
+    pub type_use_paths: BTreeMap<String, String>,
 }
 
 impl ApiSpec {
@@ -30,15 +52,14 @@ impl ApiSpec {
     }
 
     pub fn parse_for_language(language: Language, input: &str, path: PathBuf) -> Result<Self> {
-        let mut resolve = Resolve::default();
-        load_builtin_packages(&mut resolve)?;
-        let package_id = resolve
-            .push_str(&path, input)
-            .map_err(|error| Error::WitParse {
-                path: path.clone(),
-                message: error.to_string(),
-            })?;
-        Self::from_wit(language, &resolve, package_id, path)
+        let parsed = parse_wit_with_builtins(input, &path)?;
+        Self::from_wit(
+            language,
+            &parsed.resolve,
+            parsed.package_id,
+            &parsed.package_origins,
+            path,
+        )
     }
 
     pub fn type_override(&self, type_name: &str) -> Option<&TypeOverrideSpec> {
@@ -49,24 +70,13 @@ impl ApiSpec {
         language: Language,
         resolve: &Resolve,
         package_id: PackageId,
+        package_origins: &PackageOrigins,
         path: PathBuf,
     ) -> Result<Self> {
         let package = &resolve.packages[package_id];
         let world_id = select_world(resolve, package_id, &path)?;
         let world = &resolve.worlds[world_id];
-
-        let support = SupportSpec {
-            file: find_language_directive_value(
-                language,
-                &[
-                    package.docs.contents.as_deref(),
-                    world.docs.contents.as_deref(),
-                ],
-                &path,
-                "package/world",
-                "support",
-            )?,
-        };
+        let support = collect_support_spec(language, resolve, package_id, package_origins)?;
 
         let mut types = BTreeMap::new();
         for (_, dependency_package) in resolve.packages.iter() {
@@ -99,17 +109,143 @@ impl ApiSpec {
     }
 }
 
-fn load_builtin_packages(resolve: &mut Resolve) -> Result<()> {
-    resolve
-        .push_str(
-            Path::new("builtin/nexus-temporal-types.wit"),
-            BUILTIN_TEMPORAL_TYPES_WIT,
-        )
-        .map_err(|error| Error::InvalidWit {
-            path: PathBuf::from("builtin/nexus-temporal-types.wit"),
-            reason: format!("failed to parse bundled built-in WIT: {error}"),
-        })?;
+pub fn write_prepared_wit_directory(input_path: &Path, output_path: &Path) -> Result<()> {
+    if output_path.exists() {
+        return Err(Error::OutputPathExists {
+            path: output_path.to_path_buf(),
+        });
+    }
+
+    let input = fs::read_to_string(input_path).map_err(|source| Error::ReadFile {
+        path: input_path.to_path_buf(),
+        source,
+    })?;
+    let workspace = prepare_wit_workspace(&input, input_path)?;
+    copy_directory_tree(&workspace.package_root, output_path)?;
     Ok(())
+}
+
+pub(crate) fn parse_wit_with_builtins(input: &str, path: &Path) -> Result<ParsedWitPackage> {
+    let workspace = prepare_wit_workspace(input, path)?;
+    let mut resolve = Resolve::default();
+    let (package_id, source_map) =
+        resolve
+            .push_dir(&workspace.package_root)
+            .map_err(|error| Error::WitParse {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+    let package_origins = collect_package_origins(&resolve, &source_map)?;
+    Ok(ParsedWitPackage {
+        resolve,
+        package_id,
+        package_origins,
+        _workspace: workspace.temp_dir,
+    })
+}
+
+pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
+    let workspace = prepare_builtin_metadata_workspace()?;
+    let mut resolve = Resolve::default();
+    let (main_package_id, source_map) =
+        resolve
+            .push_dir(&workspace.package_root)
+            .map_err(|error| Error::InvalidWit {
+                path: repo_builtins_root(),
+                reason: format!("failed to parse bundled built-in WIT: {error}"),
+            })?;
+    let package_origins = collect_package_origins(&resolve, &source_map)?;
+
+    let mut proto_types = BTreeMap::new();
+    let mut type_use_paths = BTreeMap::new();
+
+    for (package_id, package) in resolve.packages.iter() {
+        if package_id == main_package_id {
+            continue;
+        }
+
+        let package_name = if let Some(version) = &package.name.version {
+            format!(
+                "{}:{}@{}",
+                package.name.namespace, package.name.name, version
+            )
+        } else {
+            format!("{}:{}", package.name.namespace, package.name.name)
+        };
+        let origin_path = package_origins
+            .get(&package_id)
+            .cloned()
+            .unwrap_or_else(|| repo_builtins_root());
+
+        for interface_id in package.interfaces.values() {
+            let interface = &resolve.interfaces[*interface_id];
+            let Some(interface_name) = interface.name.as_deref() else {
+                continue;
+            };
+            let use_path = if let Some(version) = &package.name.version {
+                format!(
+                    "{}:{}/{}@{}",
+                    package.name.namespace, package.name.name, interface_name, version
+                )
+            } else {
+                format!(
+                    "{}:{}/{}",
+                    package.name.namespace, package.name.name, interface_name
+                )
+            };
+
+            for type_id in interface.types.values() {
+                let type_def = &resolve.types[*type_id];
+                let Some(type_name) = type_def.name.as_deref() else {
+                    continue;
+                };
+                let context =
+                    format!("built-in type `{package_name}.{interface_name}.{type_name}`");
+                let directives =
+                    parse_directives(type_def.docs.contents.as_deref(), &origin_path, &context)?;
+
+                if let Some(existing) =
+                    type_use_paths.insert(type_name.to_string(), use_path.clone())
+                {
+                    if existing != use_path {
+                        return Err(Error::InvalidWit {
+                            path: origin_path.join("model.wit"),
+                            reason: format!(
+                                "built-in type `{type_name}` is declared under multiple use paths"
+                            ),
+                        });
+                    }
+                }
+
+                let Some(proto_name) =
+                    directive_value(&directives, "proto", &origin_path, &context, "value")?
+                else {
+                    continue;
+                };
+
+                if let Some(existing) = proto_types.insert(
+                    proto_name.clone(),
+                    BuiltinTypeMetadata {
+                        wit_name: type_name.to_string(),
+                        use_path: use_path.clone(),
+                    },
+                ) {
+                    return Err(Error::InvalidWit {
+                        path: origin_path.join("model.wit"),
+                        reason: format!(
+                            "duplicate built-in `@nexus.proto` mapping for `{proto_name}` (`{}` and `{}`)",
+                            existing.wit_name, type_name
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(BuiltinWitMetadata {
+        proto_types,
+        type_use_paths,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,7 +265,13 @@ impl ServiceSpec {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SupportSpec {
-    pub file: Option<String>,
+    pub fragments: Vec<SupportFragmentSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupportFragmentSpec {
+    pub path: String,
+    pub contents: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +294,345 @@ impl OperationSpec {
     pub fn output_transform(&self) -> Option<&OperationOutputTransformSpec> {
         self.output_transform.as_ref()
     }
+}
+
+fn collect_support_spec(
+    language: Language,
+    resolve: &Resolve,
+    current_package_id: PackageId,
+    package_origins: &PackageOrigins,
+) -> Result<SupportSpec> {
+    let mut fragments = Vec::new();
+    let mut seen_paths = BTreeSet::new();
+
+    for (package_id, origin_path) in package_origins {
+        if *package_id == current_package_id {
+            continue;
+        }
+        collect_package_support_fragments(
+            language,
+            resolve,
+            *package_id,
+            origin_path,
+            &mut seen_paths,
+            &mut fragments,
+        )?;
+    }
+
+    if let Some(origin_path) = package_origins.get(&current_package_id) {
+        collect_package_support_fragments(
+            language,
+            resolve,
+            current_package_id,
+            origin_path,
+            &mut seen_paths,
+            &mut fragments,
+        )?;
+    }
+
+    Ok(SupportSpec { fragments })
+}
+
+fn collect_package_support_fragments(
+    language: Language,
+    resolve: &Resolve,
+    package_id: PackageId,
+    origin_path: &Path,
+    seen_paths: &mut BTreeSet<String>,
+    fragments: &mut Vec<SupportFragmentSpec>,
+) -> Result<()> {
+    let package = &resolve.packages[package_id];
+    let package_name = if let Some(version) = &package.name.version {
+        format!(
+            "{}:{}@{}",
+            package.name.namespace, package.name.name, version
+        )
+    } else {
+        format!("{}:{}", package.name.namespace, package.name.name)
+    };
+
+    collect_support_fragment_from_docs(
+        language,
+        package.docs.contents.as_deref(),
+        origin_path,
+        &format!("package `{package_name}`"),
+        seen_paths,
+        fragments,
+    )?;
+
+    for (world_name, world_id) in &package.worlds {
+        let world = &resolve.worlds[*world_id];
+        collect_support_fragment_from_docs(
+            language,
+            world.docs.contents.as_deref(),
+            origin_path,
+            &format!("package `{package_name}` world `{world_name}`"),
+            seen_paths,
+            fragments,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn collect_support_fragment_from_docs(
+    language: Language,
+    docs: Option<&str>,
+    origin_path: &Path,
+    context: &str,
+    seen_paths: &mut BTreeSet<String>,
+    fragments: &mut Vec<SupportFragmentSpec>,
+) -> Result<()> {
+    let directives = parse_directives(docs, origin_path, context)?;
+    let Some(relative_path) =
+        directive_value_for_language(&directives, "support", origin_path, context, language)?
+    else {
+        return Ok(());
+    };
+
+    let resolved_path = resolve_support_path(origin_path, &relative_path);
+    let normalized_path = resolved_path.to_string_lossy().replace('\\', "/");
+    if !seen_paths.insert(normalized_path.clone()) {
+        return Ok(());
+    }
+
+    let contents = load_support_fragment_contents(&resolved_path)?;
+    fragments.push(SupportFragmentSpec {
+        path: normalized_path,
+        contents,
+    });
+    Ok(())
+}
+
+fn load_support_fragment_contents(path: &Path) -> Result<String> {
+    fs::read_to_string(path).map_err(|source| Error::ReadFile {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn resolve_support_path(base_dir: &Path, support_path: &str) -> PathBuf {
+    let support_path = PathBuf::from(support_path);
+    if support_path.is_absolute() {
+        support_path
+    } else {
+        base_dir.join(support_path)
+    }
+}
+
+struct PreparedWitWorkspace {
+    temp_dir: TempDir,
+    package_root: PathBuf,
+}
+
+fn prepare_wit_workspace(input: &str, path: &Path) -> Result<PreparedWitWorkspace> {
+    let temp_dir = tempfile::tempdir().map_err(|source| Error::WriteFile {
+        path: PathBuf::from("<tempdir>"),
+        source,
+    })?;
+    let package_root = temp_dir.path().join("main");
+    fs::create_dir_all(&package_root).map_err(|source| Error::WriteFile {
+        path: package_root.clone(),
+        source,
+    })?;
+
+    if let Some(source_dir) = input_source_dir(path) {
+        copy_package_source_dir(&source_dir, &package_root, path)?;
+    }
+
+    let target_name = input_target_name(path);
+    let target_path = package_root.join(&target_name);
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| Error::WriteFile {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&target_path, input).map_err(|source| Error::WriteFile {
+        path: target_path,
+        source,
+    })?;
+
+    copy_provided_builtins(&package_root)?;
+
+    Ok(PreparedWitWorkspace {
+        temp_dir,
+        package_root,
+    })
+}
+
+fn prepare_builtin_metadata_workspace() -> Result<PreparedWitWorkspace> {
+    let temp_dir = tempfile::tempdir().map_err(|source| Error::WriteFile {
+        path: PathBuf::from("<tempdir>"),
+        source,
+    })?;
+    let package_root = temp_dir.path().join("main");
+    fs::create_dir_all(&package_root).map_err(|source| Error::WriteFile {
+        path: package_root.clone(),
+        source,
+    })?;
+    let stub_path = package_root.join("main.wit");
+    fs::write(
+        &stub_path,
+        "package temporary:root@0.0.0;\n\nworld system {\n}\n",
+    )
+    .map_err(|source| Error::WriteFile {
+        path: stub_path,
+        source,
+    })?;
+    copy_provided_builtins(&package_root)?;
+    Ok(PreparedWitWorkspace {
+        temp_dir,
+        package_root,
+    })
+}
+
+fn input_source_dir(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() {
+        return Some(path.to_path_buf());
+    }
+
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() || !parent.exists() {
+        return None;
+    }
+    Some(parent.to_path_buf())
+}
+
+fn input_target_name(path: &Path) -> OsString {
+    path.file_name()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| OsString::from("input.wit"))
+}
+
+fn copy_package_source_dir(
+    source_dir: &Path,
+    destination_dir: &Path,
+    input_path: &Path,
+) -> Result<()> {
+    for entry in fs::read_dir(source_dir).map_err(|source| Error::ReadFile {
+        path: source_dir.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::ReadFile {
+            path: source_dir.to_path_buf(),
+            source,
+        })?;
+        let source_path = entry.path();
+        let destination_path = destination_dir.join(entry.file_name());
+
+        if source_path == input_path {
+            continue;
+        }
+
+        let file_type = entry.file_type().map_err(|source| Error::ReadFile {
+            path: source_path.clone(),
+            source,
+        })?;
+        if file_type.is_dir() {
+            if entry.file_name() == "deps" {
+                continue;
+            }
+            copy_package_source_dir(&source_path, &destination_path, input_path)?;
+            continue;
+        }
+
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| Error::WriteFile {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        fs::copy(&source_path, &destination_path).map_err(|source| Error::WriteFile {
+            path: destination_path,
+            source,
+        })?;
+    }
+
+    Ok(())
+}
+
+fn copy_provided_builtins(package_root: &Path) -> Result<()> {
+    let builtins_root = repo_builtins_root();
+    if !builtins_root.exists() {
+        return Ok(());
+    }
+    copy_directory_tree(&builtins_root, &package_root.join("deps"))
+}
+
+fn repo_builtins_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("builtins")
+}
+
+fn copy_directory_tree(source_dir: &Path, destination_dir: &Path) -> Result<()> {
+    for entry in fs::read_dir(source_dir).map_err(|source| Error::ReadFile {
+        path: source_dir.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::ReadFile {
+            path: source_dir.to_path_buf(),
+            source,
+        })?;
+        let source_path = entry.path();
+        let destination_path = destination_dir.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|source| Error::ReadFile {
+            path: source_path.clone(),
+            source,
+        })?;
+
+        if file_type.is_dir() {
+            fs::create_dir_all(&destination_path).map_err(|source| Error::WriteFile {
+                path: destination_path.clone(),
+                source,
+            })?;
+            copy_directory_tree(&source_path, &destination_path)?;
+            continue;
+        }
+
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| Error::WriteFile {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        fs::copy(&source_path, &destination_path).map_err(|source| Error::WriteFile {
+            path: destination_path,
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+fn collect_package_origins(
+    resolve: &Resolve,
+    source_map: &PackageSourceMap,
+) -> Result<PackageOrigins> {
+    let mut package_origins = BTreeMap::new();
+
+    for (package_id, _) in resolve.packages.iter() {
+        let Some(paths) = source_map.package_paths(package_id) else {
+            continue;
+        };
+        let mut package_paths = paths.collect::<Vec<_>>();
+        if package_paths.is_empty() {
+            continue;
+        }
+        package_paths.sort();
+        let origin = package_paths[0]
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        package_origins.insert(package_id, origin);
+    }
+
+    if package_origins.is_empty() {
+        return Err(Error::InvalidWit {
+            path: PathBuf::from("<workspace>"),
+            reason: "resolved WIT package graph had no source origins".to_string(),
+        });
+    }
+
+    Ok(package_origins)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -574,6 +1055,15 @@ fn find_proto_name_for_type(
     }
 }
 
+pub(crate) fn find_proto_name_for_type_def(
+    type_def: &TypeDef,
+    path: &Path,
+    context: &str,
+) -> Result<Option<String>> {
+    let directives = parse_directives(type_def.docs.contents.as_deref(), path, context)?;
+    directive_value(&directives, "proto", path, context, "value")
+}
+
 fn build_function_field(
     language: Language,
     directives: &[Directive],
@@ -949,7 +1439,7 @@ fn build_operation_output_transform(
     }
 }
 
-fn select_world(
+pub(crate) fn select_world(
     resolve: &Resolve,
     package_id: PackageId,
     path: &Path,
@@ -1223,13 +1713,15 @@ fn parse_bool(value: &str) -> std::result::Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
     use crate::language::Language;
 
-    use super::{ApiSpec, directive, parse_directives};
+    use super::{ApiSpec, directive, load_builtin_wit_metadata, parse_directives};
 
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1249,10 +1741,17 @@ mod tests {
         crate::validation::validate_type_overrides(&spec, &descriptors, language)
     }
 
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}"))
+    }
+
     #[test]
     fn parses_wit_into_selected_language_spec() {
         let wit = r#"
-/// @nexus.support python="python-validation/model_overrides.py" typescript="typescript-validation/model_overrides.ts"
 package temporal:nexus@1.0.0;
 
 world system {
@@ -1294,13 +1793,27 @@ interface workflow-service {
         let python = parse(Language::Python, wit);
         let typescript = parse(Language::TypeScript, wit);
 
-        assert_eq!(
-            python.support.file.as_deref(),
-            Some("python-validation/model_overrides.py")
+        assert_eq!(python.support.fragments.len(), 1);
+        assert_eq!(typescript.support.fragments.len(), 1);
+        assert!(
+            python.support.fragments[0]
+                .path
+                .ends_with("deps/nexus-temporal-types/python/model_overrides.py")
         );
-        assert_eq!(
-            typescript.support.file.as_deref(),
-            Some("typescript-validation/model_overrides.ts")
+        assert!(
+            typescript.support.fragments[0]
+                .path
+                .ends_with("deps/nexus-temporal-types/typescript/model_overrides.ts")
+        );
+        assert!(
+            python.support.fragments[0]
+                .contents
+                .contains("def retry_policy_from_proto(")
+        );
+        assert!(
+            typescript.support.fragments[0]
+                .contents
+                .contains("export function retryPolicyFromProto(")
         );
 
         let request = python
@@ -1341,6 +1854,132 @@ interface workflow-service {
         assert!(typescript_model.function("workflow_type").is_some());
         assert!(typescript_model.with_arguments("signal_name").is_some());
         assert!(typescript_model.function("signal_name").is_none());
+    }
+
+    #[test]
+    fn accumulates_builtin_and_input_support_fragments() {
+        let temp_dir = unique_temp_dir("support-fragments");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let input_path = temp_dir.join("input.wit");
+        let extra_support_path = temp_dir.join("extra_support.py");
+        fs::write(
+            &extra_support_path,
+            "def extra_support_hook() -> str:\n    return 'extra'\n",
+        )
+        .unwrap();
+
+        let wit = r#"
+/// @nexus.support python="extra_support.py"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{retry-policy};
+
+  retry-policy-operation: func(request: retry-policy) -> retry-policy;
+}
+"#;
+
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, input_path).unwrap();
+        assert_eq!(spec.support.fragments.len(), 2);
+        assert!(
+            spec.support.fragments[0]
+                .path
+                .ends_with("deps/nexus-temporal-types/python/model_overrides.py")
+        );
+        assert!(spec.support.fragments[1].path.ends_with("extra_support.py"));
+        assert!(
+            spec.support.fragments[0]
+                .contents
+                .contains("def retry_policy_from_proto(")
+        );
+        assert!(
+            spec.support.fragments[1]
+                .contents
+                .contains("def extra_support_hook() -> str:")
+        );
+
+        fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn parses_sibling_wit_files_from_input_directory() {
+        let temp_dir = unique_temp_dir("sibling-wit");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let shared_path = temp_dir.join("shared.wit");
+        let input_path = temp_dir.join("input.wit");
+        fs::write(
+            &shared_path,
+            r#"
+package temporal:nexus@1.0.0;
+
+interface shared {
+  /// @nexus.proto "acme.foo.v1.LocalRetryPolicy"
+  record local-retry-policy {
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  use shared.{local-retry-policy};
+
+  retry-policy-operation: func(request: local-retry-policy) -> local-retry-policy;
+}
+"#;
+
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, input_path).unwrap();
+        assert_eq!(
+            spec.services[0].operations[0].input_proto(),
+            "acme.foo.v1.LocalRetryPolicy"
+        );
+
+        fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn loads_builtin_wit_metadata_from_bundled_wit() {
+        let builtins = load_builtin_wit_metadata().unwrap();
+
+        let payload = builtins
+            .proto_types
+            .get("temporal.api.common.v1.Payload")
+            .unwrap();
+        assert_eq!(payload.wit_name, "payload");
+        assert_eq!(payload.use_path, "nexus:temporal-types/model@1.0.0");
+
+        let task_queue = builtins
+            .proto_types
+            .get("temporal.api.taskqueue.v1.TaskQueue")
+            .unwrap();
+        assert_eq!(task_queue.wit_name, "task-queue");
+        assert_eq!(task_queue.use_path, "nexus:temporal-types/model@1.0.0");
+
+        assert_eq!(
+            builtins
+                .type_use_paths
+                .get("workflow-function")
+                .map(String::as_str),
+            Some("nexus:temporal-types/model@1.0.0")
+        );
+        assert_eq!(
+            builtins
+                .type_use_paths
+                .get("signal-function")
+                .map(String::as_str),
+            Some("nexus:temporal-types/model@1.0.0")
+        );
     }
 
     #[test]

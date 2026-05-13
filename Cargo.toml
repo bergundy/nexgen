@@ -9,5 +9,6 @@ heck = "0.5"
 indexmap = { version = "2.7", features = ["serde"] }
 prost = "0.14"
 prost-types = "0.14"
+tempfile = "3.23"
 thiserror = "2.0"
 wit-parser = "0.244"

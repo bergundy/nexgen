@@ -10,20 +10,21 @@ Current status:
 - response and nested models remain bidirectional where generated
 - support files, native type substitutions, sourced fields, function/argument pairing, and output transforms are all driven from WIT `@nexus` directives
 
-The shared sample lives under `examples/`:
+Examples are organized by authored input WIT plus per-language example suites:
 
-- `input.wit`
-- `python-validation/model_overrides.py`
-- `python-validation/output.py`
-- `typescript-validation/model_overrides.ts`
-- `typescript-validation/output.ts`
+- `examples/inputs/workflow-service.wit`
+- `examples/python/workflow-service/output.py`
+- `examples/python/workflow-service/test_workflow_service.py`
+- `examples/typescript/workflow-service/output.ts`
+- `examples/typescript/workflow-service/typecheck.ts`
+- `examples/typescript/workflow-service/output.test.ts`
 
-Generate from the sample:
+Generate from the shared example input:
 
 ```bash
 cargo run -- generate \
   --lang python \
-  --input examples/input.wit \
+  --input examples/inputs/workflow-service.wit \
   --descriptors descriptors.bin \
   --output /tmp/output.py
 ```
@@ -31,7 +32,7 @@ cargo run -- generate \
 ```bash
 cargo run -- generate \
   --lang typescript \
-  --input examples/input.wit \
+  --input examples/inputs/workflow-service.wit \
   --descriptors descriptors.bin \
   --output /tmp/output.ts
 ```
@@ -44,10 +45,54 @@ Add `--format` to run a formatter after generation:
 ```bash
 cargo run -- generate \
   --lang python \
-  --input examples/input.wit \
+  --input examples/inputs/workflow-service.wit \
   --descriptors descriptors.bin \
   --output /tmp/output.py \
   --format
+```
+
+Generate WIT for a proto RPC from the descriptor set:
+
+```bash
+cargo run -- add-rpc \
+  --descriptors descriptors.bin \
+  --rpc SignalWithStartExecution
+```
+
+Write the standalone WIT scaffold to a file instead of stdout:
+
+```bash
+cargo run -- add-rpc \
+  --descriptors descriptors.bin \
+  --rpc temporal.api.workflowservice.v1.WorkflowService.SignalWithStartWorkflowExecution \
+  --output /tmp/add-rpc.wit
+```
+
+Extend an existing WIT file with a new RPC:
+
+```bash
+cargo run -- add-rpc \
+  --descriptors descriptors.bin \
+  --rpc SignalWorkflowExecution \
+  --input examples/inputs/workflow-service.wit
+```
+
+Rewrite the existing WIT file in place by pointing `--output` at the same path:
+
+```bash
+cargo run -- add-rpc \
+  --descriptors descriptors.bin \
+  --rpc SignalWorkflowExecution \
+  --input examples/inputs/workflow-service.wit \
+  --output examples/inputs/workflow-service.wit
+```
+
+Write the prepared WIT workspace the loader actually parses, including repo-provided builtins under `deps/`:
+
+```bash
+cargo run -- debug-wit-dir \
+  --input examples/inputs/workflow-service.wit \
+  --output /tmp/workflow-service-wit
 ```
 
 The WIT file defines the public surface. `@nexus` directives carry the parts WIT does not express directly:
@@ -57,17 +102,17 @@ The WIT file defines the public surface. `@nexus` directives carry the parts WIT
 - language-native override types
 - sourced field expressions
 - function and paired-argument metadata
-- operation output refs
 - output transforms
 
 The tool also ships a bundled WIT package of reusable semantic/common types:
 
 - `nexus:temporal-types/model@1.0.0`
 
+That bundled package can also contribute shared support snippets. Input WIT files can add their own extra support with `@nexus.support`, and all selected support fragments are concatenated into the generated output in declaration order.
+
 Example:
 
 ```wit
-/// @nexus.support python="python-validation/model_overrides.py" typescript="typescript-validation/model_overrides.ts"
 package temporal:nexus@1.0.0;
 
 world system {
@@ -86,7 +131,9 @@ interface workflow-service {
     task-queue: string,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    /// @nexus.source python="workflow.info().namespace" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source
+    ///   python="workflow.info().namespace"
+    ///   typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
   }
 
@@ -106,18 +153,21 @@ interface workflow-service {
 }
 ```
 
-Validate the sample apps:
+Validate the Python examples:
 
 ```bash
-cd examples/python-validation
-uv run build_output.py
-uv run main.py
+cd examples/python
+uv run build_outputs.py
+uv run pytest
 uv run basedpyright
 ```
 
+Validate the TypeScript examples:
+
 ```bash
-cd examples/typescript-validation
+cd examples/typescript
 npm install
-npm run build-output
+npm run build-outputs
+npm run test
 npm run typecheck
 ```
