@@ -10,6 +10,7 @@ interface workflow-service {
     duration,
     memo,
     payloads,
+    placeholder,
     priority,
     retry-policy,
     search-attributes,
@@ -43,9 +44,16 @@ interface workflow-service {
     search-attributes: option<search-attributes>,
     priority: option<priority>,
     versioning-override: option<versioning-override>,
+    workflow-start-delay: option<duration>,
     user-metadata: option<user-metadata>,
     /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
+    /// @nexus.omit
+    control: placeholder,
+    /// @nexus.omit
+    header: placeholder,
+    /// @nexus.omit
+    links: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
@@ -60,6 +68,12 @@ interface workflow-service {
     retry-policy: retry-policy,
     schedule-to-close-timeout: option<duration>,
     priority: option<priority>,
+    /// @nexus.omit
+    schedule-to-start-timeout: placeholder,
+    /// @nexus.omit
+    start-to-close-timeout: placeholder,
+    /// @nexus.omit
+    heartbeat-timeout: placeholder,
   }
 
   /// @nexus.output-transform

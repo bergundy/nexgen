@@ -14,26 +14,35 @@ interface model {
   /// @nexus.proto "temporal.api.common.v1.Payloads"
   type payloads = list<payload>;
 
+  /// Callable result annotation for workflow functions.
+  /// @nexus.type python="collections.abc.Awaitable[object]" typescript="Promise<any>"
+  type workflow-result = placeholder;
+
+  workflow-call: async func(input: payloads) -> workflow-result;
+
+  /// Callable result annotation for signal functions.
+  /// @nexus.type python="None | collections.abc.Awaitable[None]" typescript="void"
+  type signal-result = placeholder;
+
+  signal-call: func(signal-input: payloads) -> signal-result;
+
   /// @nexus.proto "temporal.api.common.v1.WorkflowType"
   /// @nexus.type python="str | collections.abc.Callable[..., collections.abc.Awaitable[object]]" typescript="string | common.Workflow"
   type workflow-type = placeholder;
 
   /// @nexus.function
   ///   primary=true
-  ///   args-name="input"
-  ///   python-result="collections.abc.Awaitable[object]"
-  ///   typescript-result="Promise<any>"
+  ///   signature="workflow-call"
   /// @nexus.type
   ///   python="str | collections.abc.Callable[..., collections.abc.Awaitable[object]]"
   ///   typescript="string | common.Workflow"
   type workflow-function = placeholder;
 
   /// @nexus.function
-  ///   args-name="signal-input"
-  ///   python-result="None | collections.abc.Awaitable[None]"
+  ///   signature="signal-call"
   ///   converter="signal_function_to_proto"
   /// @nexus.typescript-with-arguments
-  ///   args-name="signal-input"
+  ///   signature="signal-call"
   ///   value-type="workflow.SignalDefinition<any[]>"
   ///   args-type="Value extends workflow.SignalDefinition<infer Args, any> ? Args : never"
   ///   name-expr="value.name"

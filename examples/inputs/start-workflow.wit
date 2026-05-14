@@ -6,7 +6,7 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{payloads, task-queue, workflow-function};
+  use nexus:temporal-types/model@1.0.0.{duration, payloads, placeholder, task-queue, workflow-function};
 
   /// @nexus.proto "temporal.api.common.v1.WorkflowExecution"
   record workflow-execution {
@@ -31,10 +31,55 @@ interface workflow-service {
     workflow: workflow-function,
     workflow-id: string,
     task-queue: task-queue,
+    workflow-start-delay: option<duration>,
     /// @nexus.source
     ///   python="workflow_namespace()"
     ///   typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
+    /// @nexus.omit
+    workflow-execution-timeout: placeholder,
+    /// @nexus.omit
+    workflow-run-timeout: placeholder,
+    /// @nexus.omit
+    workflow-task-timeout: placeholder,
+    /// @nexus.omit
+    identity: placeholder,
+    /// @nexus.omit
+    request-id: placeholder,
+    /// @nexus.omit
+    workflow-id-reuse-policy: placeholder,
+    /// @nexus.omit
+    workflow-id-conflict-policy: placeholder,
+    /// @nexus.omit
+    retry-policy: placeholder,
+    /// @nexus.omit
+    cron-schedule: placeholder,
+    /// @nexus.omit
+    memo: placeholder,
+    /// @nexus.omit
+    search-attributes: placeholder,
+    /// @nexus.omit
+    header: placeholder,
+    /// @nexus.omit
+    request-eager-execution: placeholder,
+    /// @nexus.omit
+    continued-failure: placeholder,
+    /// @nexus.omit
+    last-completion-result: placeholder,
+    /// @nexus.omit
+    completion-callbacks: placeholder,
+    /// @nexus.omit
+    user-metadata: placeholder,
+    /// @nexus.omit
+    links: placeholder,
+    /// @nexus.omit
+    versioning-override: placeholder,
+    /// @nexus.omit
+    on-conflict-options: placeholder,
+    /// @nexus.omit
+    priority: placeholder,
+    /// @nexus.omit
+    eager-worker-deployment-options: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionResponse"
@@ -48,6 +93,14 @@ interface workflow-service {
     namespace: option<string>,
     workflow-execution: workflow-execution,
     reason: option<string>,
+    /// @nexus.omit
+    identity: placeholder,
+    /// @nexus.omit
+    request-id: placeholder,
+    /// @nexus.omit
+    first-execution-run-id: placeholder,
+    /// @nexus.omit
+    links: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionResponse"

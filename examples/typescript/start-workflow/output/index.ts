@@ -84,6 +84,7 @@ function _RequestArgsToPayloads(
 type StartWorkflowExecutionRequestBase = {
   workflowId: string;
   taskQueue: string;
+  workflowStartDelay?: common.Duration;
 };
 
 export type StartWorkflowExecutionRequest<
@@ -131,6 +132,10 @@ export const StartWorkflowExecutionRequest = {
         ),
       ),
       input: _RequestArgsToPayloads(model.input),
+      workflowStartDelay:
+        model.workflowStartDelay == null
+          ? undefined
+          : durationToProto(model.workflowStartDelay),
       namespace: workflow.workflowInfo().namespace,
     };
   },

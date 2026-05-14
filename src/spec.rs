@@ -7,7 +7,7 @@ use heck::{ToSnakeCase, ToUpperCamelCase};
 use tempfile::TempDir;
 use wit_parser::{
     Function, FunctionKind, Handle, Interface, PackageId, PackageSourceMap, Resolve, Type, TypeDef,
-    TypeDefKind, TypeId, WorldItem, WorldKey,
+    TypeDefKind, TypeId, TypeOwner, WorldItem, WorldKey,
 };
 
 use crate::error::{Error, Result};
@@ -757,6 +757,7 @@ pub struct TypeOverrideSpec {
     pub omitted_fields: BTreeSet<String>,
     pub replacement: Option<TypeReplacementSpec>,
     pub flatten_in_api: bool,
+    pub authored_record: bool,
     pub generated_model: GeneratedModelSpec,
 }
 
@@ -770,10 +771,7 @@ impl TypeOverrideSpec {
     }
 
     pub fn is_field_hidden(&self, field_name: &str) -> bool {
-        self.omitted_fields.contains(field_name)
-            || self.field_source(field_name).is_some()
-            || (!self.generated_model.declared_fields.is_empty()
-                && !self.generated_model.declared_fields.contains(field_name))
+        self.omitted_fields.contains(field_name) || self.field_source(field_name).is_some()
     }
 
     pub fn replacement(&self) -> Option<&TypeReplacementSpec> {
@@ -785,7 +783,7 @@ impl TypeOverrideSpec {
     }
 
     pub fn generated_model(&self) -> Option<&GeneratedModelSpec> {
-        if self.generated_model.is_empty() {
+        if !self.authored_record && self.generated_model.is_empty() {
             None
         } else {
             Some(&self.generated_model)
@@ -1003,7 +1001,8 @@ fn build_type_override(
     )?;
 
     let flatten_in_api = directive(&directives, "flatten-in-api", path, &context)?.is_some();
-    if flatten_in_api && !matches!(type_def.kind, TypeDefKind::Record(_)) {
+    let authored_record = matches!(type_def.kind, TypeDefKind::Record(_));
+    if flatten_in_api && !authored_record {
         return Err(Error::InvalidWitDirective {
             path: path.to_path_buf(),
             context: context.clone(),
@@ -1012,18 +1011,33 @@ fn build_type_override(
         });
     }
 
-    let (required_fields, generated_model) = match &type_def.kind {
+    if directive(&directives, "omit", path, &context)?.is_some() {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.clone(),
+            directive: "@nexus.omit".to_string(),
+            reason: "mark record fields with `@nexus.omit`; type-level omit is no longer supported"
+                .to_string(),
+        });
+    }
+
+    let (required_fields, omitted_fields, generated_model) = match &type_def.kind {
         TypeDefKind::Record(record) => {
             build_generated_model_from_record(language, resolve, record, path, &context)?
         }
-        _ => (BTreeSet::new(), GeneratedModelSpec::default()),
+        _ => (
+            BTreeSet::new(),
+            BTreeSet::new(),
+            GeneratedModelSpec::default(),
+        ),
     };
 
     let type_override = TypeOverrideSpec {
         required_fields,
-        omitted_fields: BTreeSet::new(),
+        omitted_fields,
         replacement,
         flatten_in_api,
+        authored_record,
         generated_model,
     };
 
@@ -1036,8 +1050,10 @@ fn build_generated_model_from_record(
     record: &wit_parser::Record,
     path: &Path,
     context: &str,
-) -> Result<(BTreeSet<String>, GeneratedModelSpec)> {
+) -> Result<(BTreeSet<String>, BTreeSet<String>, GeneratedModelSpec)> {
     let mut required_fields = BTreeSet::new();
+    let mut omitted_fields = BTreeSet::new();
+    let mut authored_proto_fields = BTreeSet::new();
     let mut declared_fields = BTreeSet::new();
     let mut field_names = BTreeMap::new();
     let mut field_annotations = BTreeMap::new();
@@ -1050,26 +1066,27 @@ fn build_generated_model_from_record(
     for field in &record.fields {
         let field_context = format!("{context} field `{}`", field.name);
         let directives = parse_directives(field.docs.contents.as_deref(), path, &field_context)?;
-        reject_legacy_with_arguments_directive(&directives, path, &field_context)?;
+        let omit_directive = directive(&directives, "omit", path, &field_context)?;
         let proto_field_name =
             directive_value(&directives, "proto-field", path, &field_context, "value")?
                 .unwrap_or_else(|| field.name.to_snake_case());
-        let flattened_function_type = if directive(&directives, "function", path, &field_context)?
-            .is_none()
-            && directive(
-                &directives,
-                "typescript-with-arguments",
-                path,
-                &field_context,
-            )?
-            .is_none()
+        let function_directive = directive(&directives, "function", path, &field_context)?;
+        let typescript_with_arguments_directive = directive(
+            &directives,
+            "typescript-with-arguments",
+            path,
+            &field_context,
+        )?;
+        let flattened_function_type = if omit_directive.is_none()
+            && function_directive.is_none()
+            && typescript_with_arguments_directive.is_none()
         {
             find_flattened_function_type_spec(language, resolve, &field.ty, path)?
         } else {
             None
         };
 
-        if !declared_fields.insert(proto_field_name.clone()) {
+        if !authored_proto_fields.insert(proto_field_name.clone()) {
             return Err(Error::InvalidWit {
                 path: path.to_path_buf(),
                 reason: format!(
@@ -1077,6 +1094,48 @@ fn build_generated_model_from_record(
                 ),
             });
         }
+
+        if let Some(omit_directive) = omit_directive {
+            if !omit_directive.args.is_empty() {
+                return Err(Error::InvalidWitDirective {
+                    path: path.to_path_buf(),
+                    context: field_context,
+                    directive: "@nexus.omit".to_string(),
+                    reason: "field-level omit does not take arguments".to_string(),
+                });
+            }
+
+            for conflicting_directive in [
+                "source",
+                "type",
+                "flattened-type",
+                "function",
+                "typescript-with-arguments",
+            ] {
+                if directive(&directives, conflicting_directive, path, &field_context)?.is_some() {
+                    return Err(Error::InvalidWitDirective {
+                        path: path.to_path_buf(),
+                        context: field_context,
+                        directive: "@nexus.omit".to_string(),
+                        reason: format!("cannot be combined with `@nexus.{conflicting_directive}`"),
+                    });
+                }
+            }
+
+            if flattened_function_type.is_some() {
+                return Err(Error::InvalidWitDirective {
+                    path: path.to_path_buf(),
+                    context: field_context,
+                    directive: "@nexus.omit".to_string(),
+                    reason: "cannot be combined with a flattened function field type".to_string(),
+                });
+            }
+
+            omitted_fields.insert(proto_field_name);
+            continue;
+        }
+
+        declared_fields.insert(proto_field_name.clone());
 
         field_names.insert(proto_field_name.clone(), field.name.clone());
         field_wit_types.insert(
@@ -1141,7 +1200,7 @@ fn build_generated_model_from_record(
 
         if let Some(flattened_function_type) = flattened_function_type {
             let args_proto_field_name = flattened_function_type.args_name.to_snake_case();
-            if !declared_fields.insert(args_proto_field_name.clone()) {
+            if !authored_proto_fields.insert(args_proto_field_name.clone()) {
                 return Err(Error::InvalidWit {
                     path: path.to_path_buf(),
                     reason: format!(
@@ -1149,6 +1208,7 @@ fn build_generated_model_from_record(
                     ),
                 });
             }
+            declared_fields.insert(args_proto_field_name.clone());
             field_names.insert(
                 args_proto_field_name.clone(),
                 flattened_function_type.args_name.clone(),
@@ -1164,6 +1224,7 @@ fn build_generated_model_from_record(
 
     Ok((
         required_fields,
+        omitted_fields,
         GeneratedModelSpec {
             declared_fields,
             field_names,
@@ -1564,34 +1625,25 @@ fn build_function_field(
     }))
 }
 
-fn build_function_field_with_args_key(
+fn build_function_field_for_type_alias(
     language: Language,
+    resolve: &Resolve,
+    type_def: &TypeDef,
     directives: &[Directive],
     path: &Path,
     context: &str,
-    args_key: &str,
-) -> Result<Option<FunctionFieldSpec>> {
-    let Some(directive) = directive(directives, "function", path, context)? else {
+) -> Result<Option<(String, FunctionFieldSpec)>> {
+    let Some(function_directive) = directive(directives, "function", path, context)? else {
         return Ok(None);
     };
 
-    let Some(result_type) = directive
-        .value(&format!("{}-result", language_key(language)))
-        .or_else(|| directive.value("result"))
-    else {
+    if language == Language::TypeScript
+        && directive(directives, "typescript-with-arguments", path, context)?.is_some()
+    {
         return Ok(None);
-    };
+    }
 
-    let Some(args_field) = directive.value(args_key) else {
-        return Err(Error::InvalidWitDirective {
-            path: path.to_path_buf(),
-            context: context.to_string(),
-            directive: "@nexus.function".to_string(),
-            reason: format!("missing required `{args_key}`"),
-        });
-    };
-
-    let primary = directive
+    let primary = function_directive
         .value("primary")
         .map(parse_bool)
         .transpose()
@@ -1603,12 +1655,62 @@ fn build_function_field_with_args_key(
         })?
         .unwrap_or(false);
 
-    Ok(Some(FunctionFieldSpec {
-        primary,
-        result_type: result_type.to_string(),
-        args_field: args_field.to_snake_case(),
-        converter: directive.value("converter").map(str::to_string),
-    }))
+    let converter = function_directive.value("converter").map(str::to_string);
+
+    if let Some(signature_name) = function_directive.value("signature") {
+        if function_directive.value("args-name").is_some()
+            || function_directive.value("result").is_some()
+            || function_directive
+                .value(&format!("{}-result", language_key(language)))
+                .is_some()
+        {
+            return Err(Error::InvalidWitDirective {
+                path: path.to_path_buf(),
+                context: context.to_string(),
+                directive: "@nexus.function".to_string(),
+                reason: "signature cannot be combined with args-name or result overrides"
+                    .to_string(),
+            });
+        }
+
+        let (args_name, result_type) =
+            resolve_function_signature(language, resolve, type_def, signature_name, path, context)?;
+        return Ok(Some((
+            args_name.clone(),
+            FunctionFieldSpec {
+                primary,
+                result_type,
+                args_field: args_name.to_snake_case(),
+                converter,
+            },
+        )));
+    }
+
+    let Some(result_type) = function_directive
+        .value(&format!("{}-result", language_key(language)))
+        .or_else(|| function_directive.value("result"))
+    else {
+        return Ok(None);
+    };
+
+    let Some(args_name) = function_directive.value("args-name") else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: "missing required `args-name`".to_string(),
+        });
+    };
+
+    Ok(Some((
+        args_name.to_string(),
+        FunctionFieldSpec {
+            primary,
+            result_type: result_type.to_string(),
+            args_field: args_name.to_snake_case(),
+            converter,
+        },
+    )))
 }
 
 fn build_with_arguments_field(
@@ -1617,10 +1719,11 @@ fn build_with_arguments_field(
     path: &Path,
     context: &str,
 ) -> Result<Option<WithArgumentsFieldSpec>> {
-    reject_legacy_with_arguments_directive(directives, path, context)?;
     if language != Language::TypeScript {
         return Ok(None);
     }
+
+    reject_legacy_with_arguments_directive(directives, path, context)?;
 
     let Some(directive) = directive(directives, "typescript-with-arguments", path, context)? else {
         return Ok(None);
@@ -1667,14 +1770,14 @@ fn build_with_arguments_field(
     }))
 }
 
-fn build_with_arguments_field_with_args_key(
+fn build_with_arguments_field_for_type_alias(
     language: Language,
+    resolve: &Resolve,
+    type_def: &TypeDef,
     directives: &[Directive],
     path: &Path,
     context: &str,
-    args_key: &str,
-) -> Result<Option<WithArgumentsFieldSpec>> {
-    reject_legacy_with_arguments_directive(directives, path, context)?;
+) -> Result<Option<(String, WithArgumentsFieldSpec)>> {
     if language != Language::TypeScript {
         return Ok(None);
     }
@@ -1683,14 +1786,27 @@ fn build_with_arguments_field_with_args_key(
         return Ok(None);
     };
 
-    let Some(args_field) = directive.value(args_key) else {
+    let args_name = if let Some(signature_name) = directive.value("signature") {
+        if directive.value("args-name").is_some() {
+            return Err(Error::InvalidWitDirective {
+                path: path.to_path_buf(),
+                context: context.to_string(),
+                directive: "@nexus.typescript-with-arguments".to_string(),
+                reason: "signature cannot be combined with args-name".to_string(),
+            });
+        }
+        resolve_function_signature_args_name(resolve, type_def, signature_name, path, context)?
+    } else if let Some(args_name) = directive.value("args-name") {
+        args_name.to_string()
+    } else {
         return Err(Error::InvalidWitDirective {
             path: path.to_path_buf(),
             context: context.to_string(),
             directive: "@nexus.typescript-with-arguments".to_string(),
-            reason: format!("missing required `{args_key}`"),
+            reason: "missing required `args-name` or `signature`".to_string(),
         });
     };
+
     let Some(value_type) = directive.value("value-type") else {
         return Err(Error::InvalidWitDirective {
             path: path.to_path_buf(),
@@ -1716,12 +1832,15 @@ fn build_with_arguments_field_with_args_key(
         });
     };
 
-    Ok(Some(WithArgumentsFieldSpec {
-        args_field: args_field.to_snake_case(),
-        value_type: value_type.to_string(),
-        args_type: args_type.to_string(),
-        name_expr: name_expr.to_string(),
-    }))
+    Ok(Some((
+        args_name.clone(),
+        WithArgumentsFieldSpec {
+            args_field: args_name.to_snake_case(),
+            value_type: value_type.to_string(),
+            args_type: args_type.to_string(),
+            name_expr: name_expr.to_string(),
+        },
+    )))
 }
 
 fn find_flattened_function_type_spec(
@@ -1740,37 +1859,47 @@ fn find_flattened_function_type_spec(
                 let directives =
                     parse_directives(type_def.docs.contents.as_deref(), path, &context)?;
                 reject_legacy_with_arguments_directive(&directives, path, &context)?;
-                let function = build_function_field_with_args_key(
+                let function = build_function_field_for_type_alias(
                     language,
+                    resolve,
+                    type_def,
                     &directives,
                     path,
                     &context,
-                    "args-name",
                 )?;
-                let with_arguments = build_with_arguments_field_with_args_key(
+                let with_arguments = build_with_arguments_field_for_type_alias(
                     language,
+                    resolve,
+                    type_def,
                     &directives,
                     path,
                     &context,
-                    "args-name",
                 )?;
                 if function.is_some() || with_arguments.is_some() {
-                    let args_name = directive_value(
-                        &directives,
-                        if function.is_some() {
-                            "function"
-                        } else {
-                            "typescript-with-arguments"
-                        },
-                        path,
-                        &context,
-                        "args-name",
-                    )?
-                    .expect("args-name validated when building flattened function type");
+                    let args_name = match (&function, &with_arguments) {
+                        (Some((function_args_name, _)), Some((with_arguments_args_name, _))) => {
+                            if function_args_name != with_arguments_args_name {
+                                return Err(Error::InvalidWitDirective {
+                                    path: path.to_path_buf(),
+                                    context,
+                                    directive: "@nexus.typescript-with-arguments".to_string(),
+                                    reason: format!(
+                                        "args-name `{with_arguments_args_name}` does not match function signature args-name `{function_args_name}`"
+                                    ),
+                                });
+                            }
+                            function_args_name.clone()
+                        }
+                        (Some((args_name, _)), None) | (None, Some((args_name, _))) => {
+                            args_name.clone()
+                        }
+                        (None, None) => unreachable!("checked for a present flattened function"),
+                    };
                     return Ok(Some(FlattenedFunctionTypeSpec {
                         args_name,
-                        function,
-                        with_arguments,
+                        function: function.map(|(_, function)| function),
+                        with_arguments: with_arguments
+                            .map(|(_, with_arguments)| with_arguments),
                     }));
                 }
                 match &type_def.kind {
@@ -1781,6 +1910,110 @@ fn find_flattened_function_type_spec(
             _ => return Ok(None),
         }
     }
+}
+
+fn resolve_function_signature(
+    language: Language,
+    resolve: &Resolve,
+    type_def: &TypeDef,
+    signature_name: &str,
+    path: &Path,
+    context: &str,
+) -> Result<(String, String)> {
+    let TypeOwner::Interface(interface_id) = type_def.owner else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: "signature is only supported on interface-owned types".to_string(),
+        });
+    };
+    let interface = &resolve.interfaces[interface_id];
+    let Some(function) = interface.functions.get(signature_name) else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: format!("unknown signature `{signature_name}`"),
+        });
+    };
+    let args_name = validate_function_signature(function, path, context, signature_name)?;
+    let function_context = format!("{context} signature `{signature_name}`");
+    let Some(result_type) = &function.result else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: format!(
+                "signature `{signature_name}` must declare a result type annotated for {}",
+                language_key(language)
+            ),
+        });
+    };
+
+    Ok((
+        args_name,
+        resolve_wit_type_annotation(language, resolve, result_type, path, &function_context)?,
+    ))
+}
+
+fn resolve_function_signature_args_name(
+    resolve: &Resolve,
+    type_def: &TypeDef,
+    signature_name: &str,
+    path: &Path,
+    context: &str,
+) -> Result<String> {
+    let TypeOwner::Interface(interface_id) = type_def.owner else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.typescript-with-arguments".to_string(),
+            reason: "signature is only supported on interface-owned types".to_string(),
+        });
+    };
+    let interface = &resolve.interfaces[interface_id];
+    let Some(function) = interface.functions.get(signature_name) else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.typescript-with-arguments".to_string(),
+            reason: format!("unknown signature `{signature_name}`"),
+        });
+    };
+
+    validate_function_signature(function, path, context, signature_name)
+}
+
+fn validate_function_signature(
+    function: &Function,
+    path: &Path,
+    context: &str,
+    signature_name: &str,
+) -> Result<String> {
+    if !matches!(
+        function.kind,
+        FunctionKind::Freestanding | FunctionKind::AsyncFreestanding
+    ) {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: format!(
+                "signature `{signature_name}` must be a freestanding interface function"
+            ),
+        });
+    }
+    if function.params.len() != 1 {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.function".to_string(),
+            reason: format!("signature `{signature_name}` must have exactly one parameter"),
+        });
+    }
+
+    Ok(function.params[0].0.clone())
 }
 
 fn reject_legacy_with_arguments_directive(
@@ -1796,8 +2029,10 @@ fn reject_legacy_with_arguments_directive(
             reason: "renamed to `@nexus.typescript-with-arguments`".to_string(),
         });
     }
+
     Ok(())
 }
+
 
 fn build_service(
     language: Language,
@@ -2394,7 +2629,7 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{retry-policy, signal-function, workflow-function};
+  use nexus:temporal-types/model@1.0.0.{placeholder, retry-policy, signal-function, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record signal-with-start-workflow-execution-request {
@@ -2406,11 +2641,14 @@ interface workflow-service {
     signal: signal-function,
     /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
+    /// @nexus.omit
+    header: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
+    started: option<bool>,
   }
 
   /// @nexus.output-transform
@@ -2475,6 +2713,7 @@ interface workflow-service {
         );
         assert!(request.is_field_required("workflow_type"));
         assert!(request.is_field_hidden("header"));
+        assert!(request.is_field_omitted("header"));
         let model = request.generated_model().unwrap();
         assert_eq!(model.field_name_override("workflow_type"), Some("workflow"));
         assert_eq!(model.field_name_override("input"), Some("input"));
@@ -2631,22 +2870,26 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{task-queue};
+  use nexus:temporal-types/model@1.0.0.{placeholder, retry-policy, task-queue};
 
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
   record request {
+    task-queue: option<task-queue>,
     /// @nexus.proto-field "retry_policy"
     retry-policy: option<string>,
-    workflow-id: string,
-    task-queue: task-queue,
+    /// @nexus.omit
+    schedule-to-close-timeout: placeholder,
+    /// @nexus.omit
+    schedule-to-start-timeout: placeholder,
+    /// @nexus.omit
+    start-to-close-timeout: placeholder,
+    /// @nexus.omit
+    heartbeat-timeout: placeholder,
+    /// @nexus.omit
+    priority: placeholder,
   }
 
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record response {
-    run-id: option<string>,
-  }
-
-  run: func(request: request) -> response;
+  run: func(request: request) -> request;
 }
 "#;
 
@@ -2838,7 +3081,7 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{signal-function, task-queue, workflow-function};
+  use nexus:temporal-types/model@1.0.0.{duration, placeholder, signal-function, task-queue, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record signal-with-start-workflow-execution-request {
@@ -2848,11 +3091,49 @@ interface workflow-service {
     task-queue: task-queue,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
+    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    namespace: option<string>,
+    /// @nexus.omit
+    workflow-execution-timeout: placeholder,
+    /// @nexus.omit
+    workflow-run-timeout: placeholder,
+    /// @nexus.omit
+    workflow-task-timeout: placeholder,
+    /// @nexus.omit
+    identity: placeholder,
+    /// @nexus.omit
+    request-id: placeholder,
+    /// @nexus.omit
+    workflow-id-reuse-policy: placeholder,
+    /// @nexus.omit
+    workflow-id-conflict-policy: placeholder,
+    /// @nexus.omit
+    control: placeholder,
+    /// @nexus.omit
+    retry-policy: placeholder,
+    /// @nexus.omit
+    cron-schedule: placeholder,
+    /// @nexus.omit
+    memo: placeholder,
+    /// @nexus.omit
+    search-attributes: placeholder,
+    /// @nexus.omit
+    header: placeholder,
+    workflow-start-delay: option<duration>,
+    /// @nexus.omit
+    user-metadata: placeholder,
+    /// @nexus.omit
+    links: placeholder,
+    /// @nexus.omit
+    versioning-override: placeholder,
+    /// @nexus.omit
+    priority: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
+    started: option<bool>,
   }
 
   signal-with-start-workflow-execution: func(
@@ -2862,6 +3143,104 @@ interface workflow-service {
 "#;
 
         validate(Language::Python, wit).unwrap();
+    }
+
+    #[test]
+    fn requires_explicit_omit_for_proto_fields_left_out_of_records() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{placeholder, retry-policy, task-queue};
+
+  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
+  record activity-options {
+    task-queue: option<task-queue>,
+    retry-policy: retry-policy,
+  }
+
+  activity-options-operation: func(request: activity-options) -> activity-options;
+}
+"#;
+
+        let error = validate(Language::Python, wit).unwrap_err();
+        assert!(error.to_string().contains(
+            "must declare field `schedule_to_close_timeout` in WIT or add that field and mark it with `@nexus.omit`"
+        ));
+    }
+
+    #[test]
+    fn allows_explicitly_omitted_proto_fields() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{placeholder, retry-policy, task-queue};
+
+  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
+  record activity-options {
+    task-queue: option<task-queue>,
+    retry-policy: retry-policy,
+    /// @nexus.omit
+    schedule-to-close-timeout: placeholder,
+    /// @nexus.omit
+    schedule-to-start-timeout: placeholder,
+    /// @nexus.omit
+    start-to-close-timeout: placeholder,
+    /// @nexus.omit
+    heartbeat-timeout: placeholder,
+    /// @nexus.omit
+    priority: placeholder,
+  }
+
+  activity-options-operation: func(request: activity-options) -> activity-options;
+}
+"#;
+
+        validate(Language::Python, wit).unwrap();
+    }
+
+    #[test]
+    fn rejects_type_level_omit_directive() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{retry-policy, task-queue};
+
+  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
+  /// @nexus.omit
+  record activity-options {
+    task-queue: option<task-queue>,
+    retry-policy: retry-policy,
+  }
+
+  activity-options-operation: func(request: activity-options) -> activity-options;
+}
+"#;
+
+        let error = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("type-level omit is no longer supported")
+        );
     }
 
     #[test]

@@ -3448,6 +3448,8 @@ world system {
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
   use nexus:temporal-types/model@1.0.0.{
+    duration,
+    placeholder,
     signal-function,
     task-queue,
     user-metadata,
@@ -3463,13 +3465,47 @@ interface workflow-service {
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
     /// @nexus.proto-field "request_id"
-    static-summary: option<string>,
+    static-summary: string,
     user-metadata: option<user-metadata>,
+    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    namespace: option<string>,
+    /// @nexus.omit
+    workflow-execution-timeout: placeholder,
+    /// @nexus.omit
+    workflow-run-timeout: placeholder,
+    /// @nexus.omit
+    workflow-task-timeout: placeholder,
+    /// @nexus.omit
+    identity: placeholder,
+    /// @nexus.omit
+    workflow-id-reuse-policy: placeholder,
+    /// @nexus.omit
+    workflow-id-conflict-policy: placeholder,
+    /// @nexus.omit
+    control: placeholder,
+    /// @nexus.omit
+    retry-policy: placeholder,
+    /// @nexus.omit
+    cron-schedule: placeholder,
+    /// @nexus.omit
+    memo: placeholder,
+    /// @nexus.omit
+    search-attributes: placeholder,
+    /// @nexus.omit
+    header: placeholder,
+    workflow-start-delay: option<duration>,
+    /// @nexus.omit
+    links: placeholder,
+    /// @nexus.omit
+    versioning-override: placeholder,
+    /// @nexus.omit
+    priority: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
+    started: option<bool>,
   }
 
   signal-with-start-workflow-execution: func(
@@ -3519,17 +3555,9 @@ world system {
 }
 
 interface example-service {
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record example-request {
-    workflow-id: string,
-  }
+  use nexus:temporal-types/model@1.0.0.{retry-policy};
 
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record example-response {
-    run-id: option<string>,
-  }
-
-  example-operation: func(request: example-request) -> example-response;
+  example-operation: func(request: retry-policy) -> retry-policy;
 }
 "#;
         let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))

@@ -78,6 +78,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -107,6 +108,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -139,6 +141,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -172,6 +175,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -203,6 +207,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -233,6 +238,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -266,6 +272,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -300,6 +307,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -332,6 +340,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -363,6 +372,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -397,6 +407,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -432,6 +443,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -464,6 +476,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -495,6 +508,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -529,6 +543,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -564,6 +579,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -596,6 +612,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -627,6 +644,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -661,6 +679,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -696,6 +715,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -729,6 +749,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -761,6 +782,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -796,6 +818,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -832,6 +855,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -865,6 +889,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -897,6 +922,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -932,6 +958,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -968,6 +995,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1001,6 +1029,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1033,6 +1062,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1068,6 +1098,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1104,6 +1135,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1147,6 +1179,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1189,6 +1222,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1234,6 +1268,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1280,6 +1315,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
+    workflow_start_delay: timedelta | None = ...,
     static_summary: str | None = ...,
     static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
@@ -1309,6 +1345,7 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = None,
+    workflow_start_delay: timedelta | None = None,
     static_summary: str | None = None,
     static_details: str | None = None,
     versioning_override: temporalio.common.VersioningOverride | None = None,
@@ -1342,6 +1379,7 @@ async def signal_with_start_workflow_execution(
         cron_schedule=cron_schedule,
         memo=memo,
         search_attributes=search_attributes,
+        workflow_start_delay=workflow_start_delay,
         user_metadata=user_metadata,
         versioning_override=versioning_override,
         priority=priority,

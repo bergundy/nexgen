@@ -94,10 +94,7 @@ pub enum Error {
     },
 
     #[error("duplicate descriptor {kind} `{name}`")]
-    DuplicateDescriptorDefinition {
-        kind: &'static str,
-        name: String,
-    },
+    DuplicateDescriptorDefinition { kind: &'static str, name: String },
 
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
@@ -174,6 +171,11 @@ pub enum Error {
 
     #[error("type override for `{message}.{field}` cannot be both omitted and customized")]
     OmittedCustomizedTypeOverrideField { message: String, field: String },
+
+    #[error(
+        "type override for `{message}` must declare field `{field}` in WIT or add that field and mark it with `@nexus.omit`"
+    )]
+    UndeclaredTypeOverrideField { message: String, field: String },
 
     #[error(
         "type override for `{type_name}.{field}` is missing required field customization; expected one of `name`, `type`, `source`, or `function`"

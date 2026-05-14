@@ -60,6 +60,7 @@ class SignalWithStartWorkflowExecutionRequest:
         | temporalio.common.SearchAttributes
         | None
     ) = None
+    workflow_start_delay: timedelta | None = None
     user_metadata: UserMetadata | None = None
     versioning_override: temporalio.common.VersioningOverride | None = None
     priority: temporalio.common.Priority | None = None
@@ -109,6 +110,10 @@ class SignalWithStartWorkflowExecutionRequest:
         if self.search_attributes is not None:
             message.search_attributes.CopyFrom(
                 search_attributes_to_proto(self.search_attributes)
+            )
+        if self.workflow_start_delay is not None:
+            message.workflow_start_delay.CopyFrom(
+                duration_to_proto(self.workflow_start_delay)
             )
         if self.user_metadata is not None:
             message.user_metadata.CopyFrom(self.user_metadata.to_proto())

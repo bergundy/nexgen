@@ -231,6 +231,12 @@ fn validate_generated_model_fields(
             .name
             .as_deref()
             .expect("descriptor fields should be named");
+        if !type_override.is_field_omitted(proto_name) && !field_names.contains_key(proto_name) {
+            return Err(Error::UndeclaredTypeOverrideField {
+                message: message_name.to_string(),
+                field: proto_name.to_string(),
+            });
+        }
         if type_override.is_field_hidden(proto_name) {
             continue;
         }

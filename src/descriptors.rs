@@ -383,11 +383,7 @@ mod tests {
     use super::DescriptorIndex;
     use crate::error::Error;
 
-    fn file_with_message(
-        file_name: &str,
-        package: &str,
-        message_name: &str,
-    ) -> FileDescriptorSet {
+    fn file_with_message(file_name: &str, package: &str, message_name: &str) -> FileDescriptorSet {
         FileDescriptorSet {
             file: vec![FileDescriptorProto {
                 name: Some(file_name.to_string()),

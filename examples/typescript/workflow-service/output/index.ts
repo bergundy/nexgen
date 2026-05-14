@@ -95,6 +95,7 @@ type SignalWithStartWorkflowExecutionRequestBase = {
   cronSchedule?: string;
   memo?: Record<string, unknown>;
   searchAttributes?: common.TypedSearchAttributes | common.SearchAttributes;
+  workflowStartDelay?: common.Duration;
   userMetadata?: UserMetadata;
   versioningOverride?: common.VersioningOverride;
   priority?: common.Priority;
@@ -198,6 +199,10 @@ export const SignalWithStartWorkflowExecutionRequest = {
         model.searchAttributes == null
           ? undefined
           : searchAttributesToProto(model.searchAttributes),
+      workflowStartDelay:
+        model.workflowStartDelay == null
+          ? undefined
+          : durationToProto(model.workflowStartDelay),
       userMetadata:
         model.userMetadata == null
           ? undefined

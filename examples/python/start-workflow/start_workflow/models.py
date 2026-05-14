@@ -6,10 +6,12 @@ from __future__ import annotations
 import collections.abc
 import dataclasses
 import typing
+from datetime import timedelta
 import temporalio.api.common.v1.message_pb2
 import temporalio.api.workflowservice.v1.request_response_pb2
 
 from ._support import (
+    duration_to_proto,
     payloads_to_proto,
     task_queue_to_proto,
     workflow_namespace,
@@ -23,6 +25,7 @@ class StartWorkflowExecutionRequest:
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
     task_queue: str
     input: tuple[typing.Any, ...] | None = None
+    workflow_start_delay: timedelta | None = None
 
     def to_proto(
         self,
@@ -33,6 +36,10 @@ class StartWorkflowExecutionRequest:
         message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
         if self.input is not None:
             message.input.CopyFrom(payloads_to_proto(self.input))
+        if self.workflow_start_delay is not None:
+            message.workflow_start_delay.CopyFrom(
+                duration_to_proto(self.workflow_start_delay)
+            )
         message.namespace = workflow_namespace()
         return message
 

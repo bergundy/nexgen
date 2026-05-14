@@ -2239,7 +2239,8 @@ mod tests {
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let support = sample_support_files(&root);
-        let generated = generate_files(Language::TypeScript, &spec, &descriptors, &support).unwrap();
+        let generated =
+            generate_files(Language::TypeScript, &spec, &descriptors, &support).unwrap();
         assert_eq!(generated.layout, GeneratedOutputLayout::Directory);
 
         ensure_typescript_dependencies(&root);
@@ -2260,7 +2261,13 @@ mod tests {
         }
         let status = Command::new("npm")
             .current_dir(root.join("examples/typescript"))
-            .args(["exec", "--", "prettier", "--write", temp_dir.to_str().unwrap()])
+            .args([
+                "exec",
+                "--",
+                "prettier",
+                "--write",
+                temp_dir.to_str().unwrap(),
+            ])
             .status()
             .unwrap();
         assert!(status.success());
@@ -2384,17 +2391,63 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{workflow-id-reuse-policy};
+  use nexus:temporal-types/model@1.0.0.{duration, placeholder, workflow-id-reuse-policy};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record signal-with-start-workflow-execution-request {
     workflow-id: string,
     workflow-id-reuse-policy: option<workflow-id-reuse-policy>,
+    /// @nexus.omit
+    namespace: placeholder,
+    /// @nexus.omit
+    workflow-type: placeholder,
+    /// @nexus.omit
+    task-queue: placeholder,
+    /// @nexus.omit
+    input: placeholder,
+    /// @nexus.omit
+    workflow-execution-timeout: placeholder,
+    /// @nexus.omit
+    workflow-run-timeout: placeholder,
+    /// @nexus.omit
+    workflow-task-timeout: placeholder,
+    /// @nexus.omit
+    identity: placeholder,
+    /// @nexus.omit
+    request-id: placeholder,
+    /// @nexus.omit
+    workflow-id-conflict-policy: placeholder,
+    /// @nexus.omit
+    signal-name: placeholder,
+    /// @nexus.omit
+    signal-input: placeholder,
+    /// @nexus.omit
+    control: placeholder,
+    /// @nexus.omit
+    retry-policy: placeholder,
+    /// @nexus.omit
+    cron-schedule: placeholder,
+    /// @nexus.omit
+    memo: placeholder,
+    /// @nexus.omit
+    search-attributes: placeholder,
+    /// @nexus.omit
+    header: placeholder,
+    workflow-start-delay: option<duration>,
+    /// @nexus.omit
+    user-metadata: placeholder,
+    /// @nexus.omit
+    links: placeholder,
+    /// @nexus.omit
+    versioning-override: placeholder,
+    /// @nexus.omit
+    priority: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
+    started: option<bool>,
   }
 
   signal-with-start-workflow-execution: func(
@@ -2435,17 +2488,9 @@ world system {
 }
 
 interface example-service {
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record example-request {
-    workflow-id: string,
-  }
+  use nexus:temporal-types/model@1.0.0.{retry-policy};
 
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record example-response {
-    run-id: option<string>,
-  }
-
-  example-operation: func(request: example-request) -> example-response;
+  example-operation: func(request: retry-policy) -> retry-policy;
 }
 "#;
         let spec =

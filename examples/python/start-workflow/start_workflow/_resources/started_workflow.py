@@ -7,6 +7,7 @@ import collections.abc
 import dataclasses
 import typing
 import typing_extensions
+from datetime import timedelta
 from temporalio import workflow
 import temporalio.api.workflowservice.v1.request_response_pb2
 
@@ -126,6 +127,7 @@ async def restart_workflow(
     workflow: str,
     task_queue: str,
     input: tuple[typing.Any, ...] | None = ...,
+    workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
@@ -135,6 +137,7 @@ async def restart_workflow(
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
+    workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
@@ -147,6 +150,7 @@ async def restart_workflow(
     ],
     task_queue: str,
     input: FirstWorkflowArg,
+    workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
@@ -160,6 +164,7 @@ async def restart_workflow(
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
@@ -169,6 +174,7 @@ async def restart_workflow(
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
     task_queue: str,
     input: object | tuple[object, ...] | None = None,
+    workflow_start_delay: timedelta | None = None,
 ) -> StartedWorkflow:
     normalized_input = _nexus_normalize_function_args(input)
     request = StartWorkflowExecutionRequest(
@@ -176,5 +182,6 @@ async def restart_workflow(
         workflow=workflow,
         task_queue=task_queue,
         input=normalized_input,
+        workflow_start_delay=workflow_start_delay,
     )
     return await _restart_workflow(request)
