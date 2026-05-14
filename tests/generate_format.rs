@@ -30,7 +30,7 @@ mod tests {
     fn write_formatter_script(dir: &Path, name: &str, marker: &str) -> PathBuf {
         let script_path = dir.join(name);
         let script = format!(
-            "#!/bin/sh\ntarget=\"$2\"\nif [ -d \"$target\" ]; then\n  target=\"$target/__init__.py\"\nfi\nprintf '\\n{marker}\\n' >> \"$target\"\n"
+            "#!/bin/sh\ntarget=\"$2\"\nif [ -d \"$target\" ]; then\n  if [ -f \"$target/__init__.py\" ]; then\n    target=\"$target/__init__.py\"\n  else\n    target=\"$target/index.ts\"\n  fi\nfi\nprintf '\\n{marker}\\n' >> \"$target\"\n"
         );
         fs::write(&script_path, script).unwrap();
         let mut permissions = fs::metadata(&script_path).unwrap().permissions();
@@ -82,7 +82,7 @@ mod tests {
         let root = project_root();
         let temp_dir = unique_temp_dir("typescript-format");
         fs::create_dir_all(&temp_dir).unwrap();
-        let output_path = temp_dir.join("output.ts");
+        let output_path = temp_dir.join("output");
         write_formatter_script(&temp_dir, "prettier", "// formatted by test");
 
         let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
@@ -104,7 +104,7 @@ mod tests {
 
         assert!(status.success());
 
-        let rendered = fs::read_to_string(&output_path).unwrap();
+        let rendered = fs::read_to_string(output_path.join("index.ts")).unwrap();
         assert!(rendered.contains("// formatted by test"));
 
         let _ = fs::remove_dir_all(temp_dir);

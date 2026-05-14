@@ -1,5 +1,10 @@
 import type * as common from "@temporalio/common";
-import { StartedWorkflow, StartWorkflowExecutionRequest, WorkflowServiceClient } from "./output.ts";
+import {
+  StartedWorkflow,
+  StartWorkflowExecutionRequest,
+  cancelWorkflow,
+  startWorkflow,
+} from "./output/index.ts";
 
 async function exampleWorkflow(customerId: string): Promise<string> {
   return customerId;
@@ -12,18 +17,13 @@ const request: StartWorkflowExecutionRequest<typeof exampleWorkflow> = {
   taskQueue: "demo-task-queue",
 };
 
-const client = new WorkflowServiceClient();
-const handlePromise: Promise<StartedWorkflow> = client.startWorkflow(
-  request,
-);
-const namedHandlePromise: Promise<StartedWorkflow> = client.startWorkflow(
-  {
-    workflow: "ExampleWorkflow",
-    workflowId: "workflow-id-named",
-    taskQueue: "demo-task-queue",
-  },
-);
-void client.cancelWorkflow({
+const handlePromise: Promise<StartedWorkflow> = startWorkflow(request);
+const namedHandlePromise: Promise<StartedWorkflow> = startWorkflow({
+  workflow: "ExampleWorkflow",
+  workflowId: "workflow-id-named",
+  taskQueue: "demo-task-queue",
+});
+void cancelWorkflow({
   workflowExecution: {
     workflowId: "workflow-id",
   },
@@ -45,14 +45,14 @@ void namedHandlePromise;
 void useHandle;
 
 // @ts-expect-error missing workflow args for a callable workflow
-client.startWorkflow({
+startWorkflow({
   workflow: exampleWorkflow,
   workflowId: "missing-input",
   taskQueue: "demo-task-queue",
 });
 
 // @ts-expect-error workflow args must match the workflow callable
-client.startWorkflow({
+startWorkflow({
   workflow: exampleWorkflow,
   input: [7],
   workflowId: "bad-input",

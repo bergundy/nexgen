@@ -434,7 +434,7 @@ fn example_output_path(repo_root: &Path, language: Language, example_id: &str) -
             .join(python_example_package_name(example_id)),
         Language::TypeScript => example_language_root(repo_root, language)
             .join(example_id)
-            .join("output.ts"),
+            .join("output"),
         _ => example_language_root(repo_root, language).join(example_id),
     }
 }
@@ -519,13 +519,12 @@ mod tests {
 
     #[test]
     fn chooses_typescript_formatter_command() {
-        let (program, args) =
-            formatter_command(Language::TypeScript, Path::new("output.ts")).unwrap();
+        let (program, args) = formatter_command(Language::TypeScript, Path::new("output")).unwrap();
         assert_eq!(program, "prettier");
-        assert_eq!(args, vec!["--write", "output.ts"]);
+        assert_eq!(args, vec!["--write", "output"]);
         assert_eq!(
             format_formatter_command(program, &args),
-            "prettier --write output.ts"
+            "prettier --write output"
         );
     }
 }

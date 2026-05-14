@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,7 +34,7 @@ fn input_path(root: &Path, example_id: &str) -> PathBuf {
 }
 
 fn typescript_output_path(root: &Path, example_id: &str) -> PathBuf {
-    typescript_root(root).join(example_id).join("output.ts")
+    typescript_root(root).join(example_id).join("output")
 }
 
 fn typescript_example_ids(root: &Path) -> Vec<String> {
@@ -75,6 +76,30 @@ fn ensure_typescript_dependencies(root: &Path) {
     assert!(install_status.success());
 }
 
+fn read_typescript_output_files(dir: &Path) -> BTreeMap<PathBuf, String> {
+    fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, String>) {
+        let mut entries = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("ts") {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read_to_string(&path).unwrap(),
+                );
+            }
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    visit(dir, dir, &mut files);
+    files
+}
+
 fn generate_formatted_typescript_output(root: &Path, example_id: &str, output_path: &Path) {
     ensure_typescript_dependencies(root);
 
@@ -113,7 +138,7 @@ fn unique_output_path(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}.ts"))
+    std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}"))
 }
 
 #[test]
@@ -122,10 +147,10 @@ fn typescript_examples_generation_matches_checked_in_output() {
     for example_id in typescript_example_ids(&root) {
         let output_path = unique_output_path(&format!("typescript-{example_id}"));
         generate_formatted_typescript_output(&root, &example_id, &output_path);
-        let rendered = fs::read_to_string(&output_path).unwrap();
-        let expected = fs::read_to_string(typescript_output_path(&root, &example_id)).unwrap();
+        let rendered = read_typescript_output_files(&output_path);
+        let expected = read_typescript_output_files(&typescript_output_path(&root, &example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
-        fs::remove_file(output_path).unwrap();
+        fs::remove_dir_all(output_path).unwrap();
     }
 }
 
@@ -194,7 +219,9 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!rendered.contains("signal: string;"));
     assert!(rendered.contains("retryPolicy: common.RetryPolicy;"));
     assert!(rendered.contains("request: common.RetryPolicy,"));
-    assert!(rendered.contains("// Included from support.$typescript"));
+    assert!(rendered.contains("### support.ts"));
+    assert!(rendered.contains("### index.ts"));
+    assert!(rendered.contains("export * from './support.ts';"));
     assert!(rendered.contains("export function retryPolicyFromProto("));
     assert!(rendered.contains("workflowType: workflowTypeToProto("));
     assert!(rendered.contains("workflow_function_name("));
@@ -224,15 +251,18 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains(
         "): temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionRequest | undefined {"
     ));
-    assert!(rendered.contains(
-        "const result = await handle.result();\n    return workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined);"
-    ));
-    assert!(rendered.contains("public async signalWithStartWorkflowExecution<"));
+    assert!(rendered.contains("const result = await handle.result();"));
+    assert!(rendered.contains("return workflow.getExternalWorkflowHandle("));
+    assert!(rendered.contains("request.workflowId"));
+    assert!(rendered.contains("result.runId ?? undefined"));
+    assert!(rendered.contains("export async function signalWithStartWorkflowExecution<"));
     assert!(
         rendered
             .contains("request: SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>,")
     );
-    assert!(rendered.contains("  ): Promise<workflow.ExternalWorkflowHandle> {"));
+    assert!(rendered.contains("const client = workflow.createNexusServiceClient({"));
+    assert!(!rendered.contains("export class WorkflowServiceClient"));
+    assert!(rendered.contains("): Promise<workflow.ExternalWorkflowHandle> {"));
     assert!(!rendered.contains("SignalWithStartWorkflowExecutionRequest = {\n  fromProto("));
     assert!(!rendered.contains("export interface SignalWithStartWorkflowExecutionRequest {"));
     assert!(!rendered.contains("export interface RetryPolicy"));

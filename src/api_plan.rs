@@ -215,10 +215,6 @@ pub(crate) struct PlannedMessageType {
     pub(crate) replacement: Option<TypeReplacementSpec>,
 }
 
-pub(crate) fn service_client_name(service_name: &str) -> String {
-    format!("{service_name}Client")
-}
-
 pub(crate) fn message_model_name(full_name: &str) -> String {
     full_name
         .rsplit('.')

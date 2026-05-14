@@ -30,8 +30,8 @@ import {
   StartedWorkflow,
   StartWorkflowExecutionRequest,
   WorkflowService,
-  WorkflowServiceClient,
-} from "./output.ts";
+  startWorkflow,
+} from "./output/index.ts";
 
 describe("start-workflow generated output", () => {
   test("serializes start-workflow requests", () => {
@@ -96,8 +96,7 @@ describe("start-workflow generated output", () => {
         result: async () => ({}),
       });
 
-    const client = new WorkflowServiceClient();
-    const handle = await client.startWorkflow({
+    const handle = await startWorkflow({
       workflow: exampleWorkflow,
       input: ["customer-123"],
       workflowId: "workflow-id",

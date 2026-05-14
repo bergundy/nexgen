@@ -15,7 +15,7 @@ Examples are organized by authored input WIT plus per-language example suites:
 - `examples/inputs/workflow-service.wit`
 - `examples/python/workflow-service/workflow_service/`
 - `examples/python/workflow-service/test_workflow_service.py`
-- `examples/typescript/workflow-service/output.ts`
+- `examples/typescript/workflow-service/output/`
 - `examples/typescript/workflow-service/typecheck.ts`
 - `examples/typescript/workflow-service/output.test.ts`
 
@@ -34,7 +34,7 @@ cargo run -- generate \
   --lang typescript \
   --input examples/inputs/workflow-service.wit \
   --descriptors examples/descriptors/temporal_api.bin \
-  --output /tmp/output.ts
+  --output /tmp/output
 ```
 
 Rebuild the checked-in example outputs:

@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["**/output.ts", "**/typecheck.ts", "**/*.test.ts"]
+  "include": ["**/output/**/*.ts", "**/typecheck.ts", "**/*.test.ts"]
 }

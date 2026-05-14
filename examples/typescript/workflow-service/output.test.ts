@@ -21,7 +21,7 @@ import {
   SignalWithStartWorkflowExecutionRequest,
   WorkflowService,
   retryPolicyFromProto,
-} from "./output.ts";
+} from "./output/index.ts";
 
 describe("workflow-service generated output", () => {
   test("exposes workflow service metadata", () => {

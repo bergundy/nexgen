@@ -5,9 +5,11 @@ import {
   ActivityOptions,
   SignalWithStartWorkflowExecutionRequest,
   WorkflowService,
-  WorkflowServiceClient,
+  activityOptionsOperation,
   retryPolicyFromProto,
-} from "./output.ts";
+  retryPolicyOperation,
+  signalWithStartWorkflowExecution,
+} from "./output/index.ts";
 
 const retryPolicy = retryPolicyFromProto(
   common.compileRetryPolicy({ maximumAttempts: 3 }),
@@ -89,10 +91,9 @@ const roundTrippedPriorityKey = roundTrippedActivity?.priority?.priorityKey;
 const requestNamespace: string | null | undefined = requestProto.namespace;
 const requestTaskQueueName: string | null | undefined =
   requestProto.taskQueue?.name;
-const client = new WorkflowServiceClient();
-const retryHandle = client.retryPolicyOperation(retryPolicy);
+const retryHandle = retryPolicyOperation(retryPolicy);
 const signalHandle: Promise<workflow.ExternalWorkflowHandle> =
-  client.signalWithStartWorkflowExecution({
+  signalWithStartWorkflowExecution({
     workflow: exampleWorkflow,
     input: [3, "nexus"],
     workflowId: "workflow-id",
@@ -101,7 +102,7 @@ const signalHandle: Promise<workflow.ExternalWorkflowHandle> =
     signalInput: [7, "hello"],
   });
 const highAritySignalHandle: Promise<workflow.ExternalWorkflowHandle> =
-  client.signalWithStartWorkflowExecution({
+  signalWithStartWorkflowExecution({
     workflow: "ExampleWorkflow",
     workflowId: "workflow-id-high-arity",
     taskQueue,
@@ -113,7 +114,7 @@ const highAritySignalHandle: Promise<workflow.ExternalWorkflowHandle> =
 request.namespace;
 
 // @ts-expect-error missing workflow args for a callable workflow
-client.signalWithStartWorkflowExecution({
+signalWithStartWorkflowExecution({
   workflow: exampleWorkflow,
   workflowId: "missing-workflow-input",
   taskQueue,
@@ -121,7 +122,7 @@ client.signalWithStartWorkflowExecution({
 });
 
 // @ts-expect-error workflow args must match the workflow callable
-client.signalWithStartWorkflowExecution({
+signalWithStartWorkflowExecution({
   workflow: exampleWorkflow,
   input: [3, 4],
   workflowId: "bad-workflow-input",
@@ -130,7 +131,7 @@ client.signalWithStartWorkflowExecution({
 });
 
 // @ts-expect-error missing signal args for a signal definition
-client.signalWithStartWorkflowExecution({
+signalWithStartWorkflowExecution({
   workflow: "ExampleWorkflow",
   workflowId: "missing-signal-input",
   taskQueue,
@@ -138,7 +139,7 @@ client.signalWithStartWorkflowExecution({
 });
 
 // @ts-expect-error signal args must match the signal definition
-client.signalWithStartWorkflowExecution({
+signalWithStartWorkflowExecution({
   workflow: "ExampleWorkflow",
   workflowId: "bad-signal-input",
   taskQueue,
@@ -156,6 +157,7 @@ void requestNamespace;
 void requestTaskQueueName;
 void requestProto;
 void stringNamedRequestProto;
+void activityOptionsOperation(activityOptions);
 void retryHandle;
 void signalHandle;
 void highAritySignalHandle;
