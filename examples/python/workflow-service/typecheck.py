@@ -13,7 +13,6 @@ import temporalio.common
 import temporalio.workflow
 
 import workflow_service as output  # pyright: ignore[reportImplicitRelativeImport]
-import workflow_service.models as output_models  # pyright: ignore[reportImplicitRelativeImport]
 
 TASK_QUEUE = "demo-task-queue"
 
@@ -72,10 +71,8 @@ handle = output.signal_with_start_workflow_execution(
     workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
     memo={"category": "payments", "attempt": 7},
     search_attributes=typed_search_attributes,
-    user_metadata=output_models.UserMetadata(
-        summary="Nightly sync",
-        details="Processes 42 records",
-    ),
+    static_summary="Nightly sync",
+    static_details="Processes 42 records",
     priority=priority,
     versioning_override=versioning_override,
 )

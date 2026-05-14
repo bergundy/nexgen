@@ -49,7 +49,7 @@ class StartedWorkflow:
     async def restart_workflow(
         self,
         workflow: str
-        | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],
+        | collections.abc.Callable[..., collections.abc.Awaitable[object]],
         task_queue: str,
     ) -> StartedWorkflow:
         request = StartWorkflowExecutionRequest(
@@ -128,9 +128,7 @@ async def restart_workflow(
 async def restart_workflow(
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
 ) -> StartedWorkflow: ...
 
@@ -140,7 +138,7 @@ async def restart_workflow[FirstWorkflowArg](
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -153,7 +151,7 @@ async def restart_workflow[FirstWorkflowArg, *RemainingWorkflowArgs](
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -163,8 +161,7 @@ async def restart_workflow[FirstWorkflowArg, *RemainingWorkflowArgs](
 async def restart_workflow(
     *,
     workflow_id: str,
-    workflow: str
-    | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],
+    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
     task_queue: str,
     input: object | tuple[object, ...] | None = None,
 ) -> StartedWorkflow:

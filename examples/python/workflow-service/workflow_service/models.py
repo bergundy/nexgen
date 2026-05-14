@@ -38,7 +38,7 @@ from ._support import (
 @dataclasses.dataclass(slots=True)
 class SignalWithStartWorkflowExecutionRequest:
     workflow_id: str
-    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]
+    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
     task_queue: str
     signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]
     input: tuple[typing.Any, ...] | None = None
@@ -124,8 +124,8 @@ class SignalWithStartWorkflowExecutionRequest:
 
 @dataclasses.dataclass(slots=True)
 class UserMetadata:
-    summary: typing.Any | None = None
-    details: typing.Any | None = None
+    static_summary: typing.Any | None = None
+    static_details: typing.Any | None = None
 
     @classmethod
     def from_proto(
@@ -133,20 +133,20 @@ class UserMetadata:
         proto: temporalio.api.sdk.v1.user_metadata_pb2.UserMetadata,
     ) -> UserMetadata:
         return cls(
-            summary=payload_from_proto(proto.summary)
+            static_summary=payload_from_proto(proto.summary)
             if proto.HasField("summary")
             else None,
-            details=payload_from_proto(proto.details)
+            static_details=payload_from_proto(proto.details)
             if proto.HasField("details")
             else None,
         )
 
     def to_proto(self) -> temporalio.api.sdk.v1.user_metadata_pb2.UserMetadata:
         message = temporalio.api.sdk.v1.user_metadata_pb2.UserMetadata()
-        if self.summary is not None:
-            message.summary.CopyFrom(payload_to_proto(self.summary))
-        if self.details is not None:
-            message.details.CopyFrom(payload_to_proto(self.details))
+        if self.static_summary is not None:
+            message.summary.CopyFrom(payload_to_proto(self.static_summary))
+        if self.static_details is not None:
+            message.details.CopyFrom(payload_to_proto(self.static_details))
         return message
 
 

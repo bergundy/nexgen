@@ -15,16 +15,16 @@ interface model {
   type payloads = list<payload>;
 
   /// @nexus.proto "temporal.api.common.v1.WorkflowType"
-  /// @nexus.type python="str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]" typescript="string | common.Workflow"
+  /// @nexus.type python="str | collections.abc.Callable[..., collections.abc.Awaitable[object]]" typescript="string | common.Workflow"
   type workflow-type = placeholder;
 
   /// @nexus.function
   ///   primary=true
   ///   args-name="input"
-  ///   python-result="collections.abc.Awaitable[typing.Any]"
+  ///   python-result="collections.abc.Awaitable[object]"
   ///   typescript-result="Promise<any>"
   /// @nexus.type
-  ///   python="str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]"
+  ///   python="str | collections.abc.Callable[..., collections.abc.Awaitable[object]]"
   ///   typescript="string | common.Workflow"
   type workflow-function = placeholder;
 
@@ -88,8 +88,13 @@ interface model {
   }
 
   /// @nexus.proto "temporal.api.sdk.v1.UserMetadata"
+  /// @nexus.flatten-in-api
   record user-metadata {
-    summary: option<payload>,
-    details: option<payload>,
+    /// @nexus.proto-field "summary"
+    /// @nexus.flattened-type python="str"
+    static-summary: option<payload>,
+    /// @nexus.proto-field "details"
+    /// @nexus.flattened-type python="str"
+    static-details: option<payload>,
   }
 }

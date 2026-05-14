@@ -367,8 +367,8 @@ def build_full_signal_request(
         memo={"category": "payments", "attempt": 7},
         search_attributes=example_data.typed_search_attributes,
         user_metadata=output_models.UserMetadata(
-            summary="Nightly sync",
-            details="Processes 42 records",
+            static_summary="Nightly sync",
+            static_details="Processes 42 records",
         ),
         priority=example_data.priority,
         versioning_override=example_data.versioning_override,
@@ -377,7 +377,7 @@ def build_full_signal_request(
 
 def make_signal_request(
     *,
-    workflow: str | Callable[..., Awaitable[typing.Any]] = ExampleWorkflow.run,
+    workflow: str | Callable[..., Awaitable[object]] = ExampleWorkflow.run,
     workflow_id: str = REQUEST_WORKFLOW_ID,
     task_queue: str = TASK_QUEUE,
     signal: str | Callable[..., None | Awaitable[None]] = "wake_up",
@@ -526,8 +526,8 @@ async def test_signal_request_api(
     round_tripped_user_metadata = output_models.UserMetadata.from_proto(
         request_proto.user_metadata
     )
-    assert round_tripped_user_metadata.summary == "str:'Nightly sync'"
-    assert round_tripped_user_metadata.details == "str:'Processes 42 records'"
+    assert round_tripped_user_metadata.static_summary == "str:'Nightly sync'"
+    assert round_tripped_user_metadata.static_details == "str:'Processes 42 records'"
     assert len(request_proto.links) == 0
 
 @pytest.mark.asyncio
@@ -548,10 +548,8 @@ async def test_signal_args_api(
         workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
         memo={"category": "payments", "attempt": 7},
         search_attributes=example_data.typed_search_attributes,
-        user_metadata=output_models.UserMetadata(
-            summary="Nightly sync",
-            details="Processes 42 records",
-        ),
+        static_summary="Nightly sync",
+        static_details="Processes 42 records",
         priority=example_data.priority,
         versioning_override=example_data.versioning_override,
     )

@@ -754,10 +754,18 @@ fn build_sourced_field(
 }
 
 fn typescript_field_annotation(field: &PlannedField, default_annotation: String) -> String {
-    field
+    let annotation = field
         .annotation_override
         .clone()
-        .unwrap_or(default_annotation)
+        .unwrap_or(default_annotation);
+    if !field.required && annotation.ends_with(" | undefined") {
+        annotation
+            .strip_suffix(" | undefined")
+            .expect("suffix check should guarantee success")
+            .to_string()
+    } else {
+        annotation
+    }
 }
 
 fn resolve_planned_value_type(
@@ -1268,7 +1276,12 @@ fn render_module(
 
     let resources = services
         .iter()
-        .flat_map(|service| service.resources.iter().map(move |resource| (resource, service)))
+        .flat_map(|service| {
+            service
+                .resources
+                .iter()
+                .map(move |resource| (resource, service))
+        })
         .collect::<Vec<_>>();
     if !resources.is_empty() {
         output.push('\n');
@@ -1663,11 +1676,7 @@ fn render_service(output: &mut String, service: &RenderedService<'_>) {
     output.push_str("}\n");
 }
 
-fn render_resource(
-    output: &mut String,
-    resource: &PlannedResource,
-    service: &RenderedService<'_>,
-) {
+fn render_resource(output: &mut String, resource: &PlannedResource, service: &RenderedService<'_>) {
     output.push_str("export class ");
     output.push_str(&resource.type_name);
     output.push_str(" {\n");
@@ -1728,7 +1737,8 @@ fn render_resource(
                     output.push_str("    const requestProto = ");
                     output.push_str(&request_to_proto_expr);
                     output.push_str(";\n");
-                    output.push_str("    const handle = await this.client.client.startOperation(\n");
+                    output
+                        .push_str("    const handle = await this.client.client.startOperation(\n");
                     output.push_str("      ");
                     output.push_str(service.name);
                     output.push_str(".operations.");
@@ -1767,7 +1777,8 @@ fn render_resource(
                         output.push_str("    );\n");
                     }
                 } else {
-                    output.push_str("    const handle = await this.client.client.startOperation(\n");
+                    output
+                        .push_str("    const handle = await this.client.client.startOperation(\n");
                     output.push_str("      ");
                     output.push_str(service.name);
                     output.push_str(".operations.");

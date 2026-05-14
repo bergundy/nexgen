@@ -30,7 +30,7 @@ def retry_policy_to_proto(
 
 
 def workflow_function_name(
-    value: str | collections.abc.Callable[..., typing.Any],
+    value: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
 ) -> str:
     name, _result_type = temporalio.workflow._Definition.get_name_and_result_type(value)  # pyright: ignore[reportPrivateUsage]
     return name
@@ -44,7 +44,7 @@ def signal_function_to_proto(
 
 def workflow_type_to_proto(
     workflow_type: str
-    | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],
+    | collections.abc.Callable[..., collections.abc.Awaitable[object]],
 ) -> common_pb2.WorkflowType:
     return common_pb2.WorkflowType(name=workflow_function_name(workflow_type))
 

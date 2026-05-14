@@ -756,6 +756,7 @@ pub struct TypeOverrideSpec {
     pub required_fields: BTreeSet<String>,
     pub omitted_fields: BTreeSet<String>,
     pub replacement: Option<TypeReplacementSpec>,
+    pub flatten_in_api: bool,
     pub generated_model: GeneratedModelSpec,
 }
 
@@ -777,6 +778,10 @@ impl TypeOverrideSpec {
 
     pub fn replacement(&self) -> Option<&TypeReplacementSpec> {
         self.replacement.as_ref()
+    }
+
+    pub fn flatten_in_api(&self) -> bool {
+        self.flatten_in_api
     }
 
     pub fn generated_model(&self) -> Option<&GeneratedModelSpec> {
@@ -804,6 +809,8 @@ pub struct GeneratedModelSpec {
     pub declared_fields: BTreeSet<String>,
     pub field_names: BTreeMap<String, String>,
     pub field_annotations: BTreeMap<String, String>,
+    pub field_flattened_annotations: BTreeMap<String, String>,
+    pub field_wit_types: BTreeMap<String, AuthoredFieldTypeSpec>,
     pub field_sources: BTreeMap<String, String>,
     pub functions: BTreeMap<String, FunctionFieldSpec>,
     pub with_arguments: BTreeMap<String, WithArgumentsFieldSpec>,
@@ -814,6 +821,8 @@ impl GeneratedModelSpec {
         self.declared_fields.is_empty()
             && self.field_names.is_empty()
             && self.field_annotations.is_empty()
+            && self.field_flattened_annotations.is_empty()
+            && self.field_wit_types.is_empty()
             && self.field_sources.is_empty()
             && self.functions.is_empty()
             && self.with_arguments.is_empty()
@@ -825,6 +834,16 @@ impl GeneratedModelSpec {
 
     pub fn field_annotation(&self, field_name: &str) -> Option<&str> {
         self.field_annotations.get(field_name).map(String::as_str)
+    }
+
+    pub fn field_flattened_annotation(&self, field_name: &str) -> Option<&str> {
+        self.field_flattened_annotations
+            .get(field_name)
+            .map(String::as_str)
+    }
+
+    pub fn field_wit_type(&self, field_name: &str) -> Option<&AuthoredFieldTypeSpec> {
+        self.field_wit_types.get(field_name)
     }
 
     pub fn field_source(&self, field_name: &str) -> Option<&str> {
@@ -852,6 +871,55 @@ impl GeneratedModelSpec {
         self.with_arguments
             .values()
             .find(|with_arguments| with_arguments.args_field == field_name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthoredFieldTypeSpec {
+    Bool,
+    Int,
+    Float,
+    String,
+    Bytes,
+    Option(Box<AuthoredFieldTypeSpec>),
+    List(Box<AuthoredFieldTypeSpec>),
+    Tuple(Vec<AuthoredFieldTypeSpec>),
+    Map(Box<AuthoredFieldTypeSpec>, Box<AuthoredFieldTypeSpec>),
+    Proto(String),
+}
+
+impl AuthoredFieldTypeSpec {
+    pub(crate) fn without_option(&self) -> &AuthoredFieldTypeSpec {
+        match self {
+            AuthoredFieldTypeSpec::Option(inner) => inner.without_option(),
+            _ => self,
+        }
+    }
+
+    pub(crate) fn to_wit_string(&self) -> String {
+        match self {
+            AuthoredFieldTypeSpec::Bool => "bool".to_string(),
+            AuthoredFieldTypeSpec::Int => "s64".to_string(),
+            AuthoredFieldTypeSpec::Float => "float64".to_string(),
+            AuthoredFieldTypeSpec::String => "string".to_string(),
+            AuthoredFieldTypeSpec::Bytes => "bytes".to_string(),
+            AuthoredFieldTypeSpec::Option(inner) => {
+                format!("option<{}>", inner.to_wit_string())
+            }
+            AuthoredFieldTypeSpec::List(inner) => format!("list<{}>", inner.to_wit_string()),
+            AuthoredFieldTypeSpec::Tuple(items) => format!(
+                "tuple<{}>",
+                items
+                    .iter()
+                    .map(AuthoredFieldTypeSpec::to_wit_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            AuthoredFieldTypeSpec::Map(key, value) => {
+                format!("map<{}, {}>", key.to_wit_string(), value.to_wit_string())
+            }
+            AuthoredFieldTypeSpec::Proto(proto_name) => proto_name.clone(),
+        }
     }
 }
 
@@ -934,6 +1002,16 @@ fn build_type_override(
         &proto_name,
     )?;
 
+    let flatten_in_api = directive(&directives, "flatten-in-api", path, &context)?.is_some();
+    if flatten_in_api && !matches!(type_def.kind, TypeDefKind::Record(_)) {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.clone(),
+            directive: "@nexus.flatten-in-api".to_string(),
+            reason: "only supported on record types".to_string(),
+        });
+    }
+
     let (required_fields, generated_model) = match &type_def.kind {
         TypeDefKind::Record(record) => {
             build_generated_model_from_record(language, resolve, record, path, &context)?
@@ -945,6 +1023,7 @@ fn build_type_override(
         required_fields,
         omitted_fields: BTreeSet::new(),
         replacement,
+        flatten_in_api,
         generated_model,
     };
 
@@ -962,6 +1041,8 @@ fn build_generated_model_from_record(
     let mut declared_fields = BTreeSet::new();
     let mut field_names = BTreeMap::new();
     let mut field_annotations = BTreeMap::new();
+    let mut field_flattened_annotations = BTreeMap::new();
+    let mut field_wit_types = BTreeMap::new();
     let mut field_sources = BTreeMap::new();
     let mut functions = BTreeMap::new();
     let mut with_arguments = BTreeMap::new();
@@ -998,6 +1079,10 @@ fn build_generated_model_from_record(
         }
 
         field_names.insert(proto_field_name.clone(), field.name.clone());
+        field_wit_types.insert(
+            proto_field_name.clone(),
+            resolve_authored_field_type_spec(resolve, &field.ty, path, &field_context)?,
+        );
 
         if !is_optional_type(resolve, &field.ty) {
             required_fields.insert(proto_field_name.clone());
@@ -1013,19 +1098,24 @@ fn build_generated_model_from_record(
             field_sources.insert(proto_field_name.clone(), source);
         }
 
-        let field_annotation = if let Some(annotation) = find_language_directive_value(
+        if let Some(annotation) = find_language_directive_value(
             language,
             &[field.docs.contents.as_deref()],
             path,
             &field_context,
             "type",
         )? {
-            Some(annotation)
-        } else {
-            find_language_type_annotation_for_field_type(language, resolve, &field.ty, path)?
-        };
-        if let Some(annotation) = field_annotation {
             field_annotations.insert(proto_field_name.clone(), annotation);
+        }
+
+        if let Some(annotation) = find_language_directive_value(
+            language,
+            &[field.docs.contents.as_deref()],
+            path,
+            &field_context,
+            "flattened-type",
+        )? {
+            field_flattened_annotations.insert(proto_field_name.clone(), annotation);
         }
 
         if let Some(function) = build_function_field(language, &directives, path, &field_context)? {
@@ -1078,6 +1168,8 @@ fn build_generated_model_from_record(
             declared_fields,
             field_names,
             field_annotations,
+            field_flattened_annotations,
+            field_wit_types,
             field_sources,
             functions,
             with_arguments,
@@ -1151,38 +1243,6 @@ fn build_type_replacement(
         from_proto: selected_from_proto,
         to_proto: selected_to_proto,
     }))
-}
-
-fn find_language_type_annotation_for_field_type(
-    language: Language,
-    resolve: &Resolve,
-    ty: &Type,
-    path: &Path,
-) -> Result<Option<String>> {
-    let mut current = ty;
-    loop {
-        match current {
-            Type::Id(id) => {
-                let type_def = &resolve.types[*id];
-                let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
-                let context = format!("type `{type_name}`");
-                if let Some(annotation) = find_language_directive_value(
-                    language,
-                    &[type_def.docs.contents.as_deref()],
-                    path,
-                    &context,
-                    "type",
-                )? {
-                    return Ok(Some(annotation));
-                }
-                match &type_def.kind {
-                    TypeDefKind::Type(next) => current = next,
-                    _ => return Ok(None),
-                }
-            }
-            _ => return Ok(None),
-        }
-    }
 }
 
 fn resolve_wit_type_annotation(
@@ -1323,6 +1383,80 @@ fn resolve_wit_type_annotation(
         _ => Err(Error::InvalidWit {
             path: path.to_path_buf(),
             reason: format!("{context} uses unsupported WIT type for generated resource bindings"),
+        }),
+    }
+}
+
+fn resolve_authored_field_type_spec(
+    resolve: &Resolve,
+    ty: &Type,
+    path: &Path,
+    context: &str,
+) -> Result<AuthoredFieldTypeSpec> {
+    match ty {
+        Type::Bool => Ok(AuthoredFieldTypeSpec::Bool),
+        Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::S8
+        | Type::S16
+        | Type::S32
+        | Type::S64 => Ok(AuthoredFieldTypeSpec::Int),
+        Type::F32 | Type::F64 => Ok(AuthoredFieldTypeSpec::Float),
+        Type::Char | Type::String => Ok(AuthoredFieldTypeSpec::String),
+        Type::Id(id) => {
+            let type_def = &resolve.types[*id];
+            let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
+            let type_context = format!("{context} type `{type_name}`");
+            if let Some(proto_name) = find_proto_name_for_type_def(type_def, path, &type_context)? {
+                return Ok(AuthoredFieldTypeSpec::Proto(proto_name));
+            }
+            match &type_def.kind {
+                TypeDefKind::Option(inner) => Ok(AuthoredFieldTypeSpec::Option(Box::new(
+                    resolve_authored_field_type_spec(resolve, inner, path, &type_context)?,
+                ))),
+                TypeDefKind::List(inner) => Ok(AuthoredFieldTypeSpec::List(Box::new(
+                    resolve_authored_field_type_spec(resolve, inner, path, &type_context)?,
+                ))),
+                TypeDefKind::Tuple(tuple) => Ok(AuthoredFieldTypeSpec::Tuple(
+                    tuple
+                        .types
+                        .iter()
+                        .map(|item| {
+                            resolve_authored_field_type_spec(resolve, item, path, &type_context)
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                )),
+                TypeDefKind::Map(key, value) => Ok(AuthoredFieldTypeSpec::Map(
+                    Box::new(resolve_authored_field_type_spec(
+                        resolve,
+                        key,
+                        path,
+                        &type_context,
+                    )?),
+                    Box::new(resolve_authored_field_type_spec(
+                        resolve,
+                        value,
+                        path,
+                        &type_context,
+                    )?),
+                )),
+                TypeDefKind::Type(next) => {
+                    resolve_authored_field_type_spec(resolve, next, path, &type_context)
+                }
+                _ => Err(Error::InvalidWit {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "{type_context} uses unsupported WIT type `{}` for generated model fields",
+                        type_def.kind.as_str()
+                    ),
+                }),
+            }
+        }
+        _ => Err(Error::InvalidWit {
+            path: path.to_path_buf(),
+            reason: format!("{context} uses unsupported WIT type for generated model fields"),
         }),
     }
 }
@@ -2362,6 +2496,12 @@ interface workflow-service {
             .unwrap()
             .generated_model()
             .unwrap();
+        assert!(
+            python
+                .type_override("temporal.api.sdk.v1.UserMetadata")
+                .unwrap()
+                .flatten_in_api()
+        );
         assert!(typescript_model.function("workflow_type").is_some());
         assert!(typescript_model.with_arguments("signal_name").is_some());
         assert!(typescript_model.function("signal_name").is_none());
@@ -2435,6 +2575,86 @@ interface workflow-service {
         assert_eq!(
             method.result.as_ref().unwrap().annotation,
             "collections.abc.Sequence[str]"
+        );
+    }
+
+    #[test]
+    fn validates_proto_backed_wit_field_types_and_keeps_flattened_types_separate() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{payload};
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.proto-field "memo"
+    /// @nexus.flattened-type python="str" typescript="string"
+    metadata: option<payload>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record response {
+    run-id: option<string>,
+  }
+
+  run: func(request: request) -> response;
+}
+"#;
+
+        let python = parse(Language::Python, wit);
+        let python_model = python
+            .type_override(
+                "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest",
+            )
+            .unwrap()
+            .generated_model()
+            .unwrap();
+        assert_eq!(
+            python_model.field_wit_type("memo").unwrap().to_wit_string(),
+            "option<temporal.api.common.v1.Payload>"
+        );
+        assert_eq!(python_model.field_annotation("memo"), None);
+        assert_eq!(python_model.field_flattened_annotation("memo"), Some("str"));
+
+        let mismatch = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{task-queue};
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.proto-field "retry_policy"
+    retry-policy: option<string>,
+    workflow-id: string,
+    task-queue: task-queue,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record response {
+    run-id: option<string>,
+  }
+
+  run: func(request: request) -> response;
+}
+"#;
+
+        let error = validate(Language::Python, mismatch).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("WIT field type `option<string>` does not match proto field type `option<temporal.api.common.v1.RetryPolicy>`")
         );
     }
 
@@ -2618,14 +2838,14 @@ world system {
 
 /// @nexus.endpoint "__temporal_system"
 interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{signal-function, workflow-function};
+  use nexus:temporal-types/model@1.0.0.{signal-function, task-queue, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record signal-with-start-workflow-execution-request {
     /// @nexus.proto-field "workflow_type"
     workflow: workflow-function,
     workflow-id: string,
-    task-queue: string,
+    task-queue: task-queue,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
   }

@@ -20,7 +20,7 @@ from ._support import (
 @dataclasses.dataclass(slots=True)
 class StartWorkflowExecutionRequest:
     workflow_id: str
-    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]
+    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
     task_queue: str
     input: tuple[typing.Any, ...] | None = None
 

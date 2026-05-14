@@ -30,6 +30,15 @@ pub enum Error {
     #[error("generated file path `{path}` conflicts with another generated file")]
     GeneratedFileConflict { path: PathBuf },
 
+    #[error(
+        "flattened API for `{type_name}` would generate duplicate parameter `{field}` from `{conflicting_field}`"
+    )]
+    FlattenedApiFieldConflict {
+        type_name: String,
+        field: String,
+        conflicting_field: String,
+    },
+
     #[error("refusing to overwrite existing path `{path}`")]
     OutputPathExists { path: PathBuf },
 

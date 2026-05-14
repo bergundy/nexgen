@@ -158,7 +158,9 @@ enum PythonFieldDefaultKind {
 struct RenderedUnpackedInput {
     model_name: String,
     type_parameters: Vec<String>,
-    fields: Vec<RenderedUnpackedInputField>,
+    parameters: Vec<RenderedUnpackedInputField>,
+    request_fields: Vec<RenderedUnpackedRequestField>,
+    flattened_messages: Vec<RenderedFlattenedMessage>,
     functions: Vec<RenderedFunctionField>,
 }
 
@@ -166,6 +168,28 @@ struct RenderedUnpackedInput {
 struct RenderedUnpackedInputField {
     attr_name: String,
     annotation: String,
+    default_kind: PythonFieldDefaultKind,
+}
+
+#[derive(Debug)]
+struct RenderedUnpackedRequestField {
+    attr_name: String,
+    value_expr: String,
+}
+
+#[derive(Debug)]
+struct RenderedFlattenedMessage {
+    local_name: String,
+    model_name: String,
+    required: bool,
+    fields: Vec<RenderedFlattenedMessageField>,
+}
+
+#[derive(Debug)]
+struct RenderedFlattenedMessageField {
+    attr_name: String,
+    annotation: String,
+    value_expr: String,
     default_kind: PythonFieldDefaultKind,
 }
 
@@ -359,58 +383,179 @@ fn resolve_operation<'a>(
         output_annotation,
         output_transform_expr: output_transform.map(|transform| transform.transform.clone()),
         output_resource_return,
-        unpacked_input: models
-            .get(&operation.input.info.full_name)
-            .filter(|_| {
-                matches!(
-                    input_conversion.kind,
-                    MessageValueConversionKind::GeneratedModel { .. }
-                )
+        unpacked_input: if matches!(
+            input_conversion.kind,
+            MessageValueConversionKind::GeneratedModel { .. }
+        ) {
+            Some(build_unpacked_input(
+                &operation.input.info.full_name,
+                models,
+                api_plan,
+            )?)
+        } else {
+            None
+        },
+    })
+}
+
+fn build_unpacked_input(
+    input_full_name: &str,
+    models: &IndexMap<String, RenderedModel>,
+    api_plan: &ApiPlan,
+) -> Result<RenderedUnpackedInput> {
+    let model = models
+        .get(input_full_name)
+        .expect("input model should be rendered before building unpacked input");
+    let planned_model = api_plan
+        .models
+        .get(input_full_name)
+        .expect("planned input model should exist");
+
+    let mut parameters = Vec::new();
+    let mut request_fields = Vec::new();
+    let mut flattened_messages = Vec::new();
+    let mut parameter_sources = BTreeMap::<String, String>::new();
+
+    for (planned_field, rendered_field) in planned_model.fields.iter().zip(model.fields.iter()) {
+        if let Some(flattened) =
+            build_flattened_message(planned_field, rendered_field, models, api_plan)
+        {
+            request_fields.push(RenderedUnpackedRequestField {
+                attr_name: flattened.local_name.clone(),
+                value_expr: flattened.local_name.clone(),
+            });
+            for child in &flattened.fields {
+                register_unpacked_parameter_name(
+                    &mut parameter_sources,
+                    &child.value_expr,
+                    &format!("{}.{}", flattened.local_name, child.attr_name),
+                    &model.name,
+                )?;
+                parameters.push(RenderedUnpackedInputField {
+                    attr_name: child.value_expr.clone(),
+                    annotation: child.annotation.clone(),
+                    default_kind: child.default_kind,
+                });
+            }
+            flattened_messages.push(flattened);
+            continue;
+        }
+
+        register_unpacked_parameter_name(
+            &mut parameter_sources,
+            &rendered_field.attr_name,
+            &rendered_field.attr_name,
+            &model.name,
+        )?;
+        parameters.push(RenderedUnpackedInputField {
+            attr_name: rendered_field.attr_name.clone(),
+            annotation: rendered_field.annotation.clone(),
+            default_kind: rendered_field.default_kind,
+        });
+        request_fields.push(RenderedUnpackedRequestField {
+            attr_name: rendered_field.attr_name.clone(),
+            value_expr: rendered_field.attr_name.clone(),
+        });
+    }
+
+    Ok(RenderedUnpackedInput {
+        model_name: model.name.clone(),
+        type_parameters: model.type_parameters.clone(),
+        parameters,
+        request_fields,
+        flattened_messages,
+        functions: planned_model
+            .generated_model
+            .functions
+            .iter()
+            .map(|(field_name, function)| RenderedFunctionField {
+                callable_field_name: planned_model
+                    .generated_model
+                    .field_name_override(field_name)
+                    .map(python_field_name)
+                    .unwrap_or_else(|| python_field_name(field_name)),
+                args_field_name: planned_model
+                    .generated_model
+                    .field_name_override(&function.args_field)
+                    .map(python_field_name)
+                    .unwrap_or_else(|| python_field_name(&function.args_field)),
+                args: if function.primary {
+                    RenderedFunctionArgs::Unbounded {
+                        type_parameter: primary_function_type_parameter_name(field_name),
+                    }
+                } else {
+                    RenderedFunctionArgs::Bounded
+                },
+                result_annotation: function.result_type.clone(),
             })
-            .map(|model| RenderedUnpackedInput {
-                model_name: model.name.clone(),
-                type_parameters: model.type_parameters.clone(),
-                fields: model
-                    .fields
-                    .iter()
-                    .map(|field| RenderedUnpackedInputField {
-                        attr_name: field.attr_name.clone(),
-                        annotation: field.annotation.clone(),
-                        default_kind: field.default_kind,
-                    })
-                    .collect(),
-                functions: api_plan
-                    .models
-                    .get(&operation.input.info.full_name)
-                    .map(|model| &model.generated_model)
-                    .map(|generated_model| {
-                        generated_model
-                            .functions
-                            .iter()
-                            .map(|(field_name, function)| RenderedFunctionField {
-                                callable_field_name: generated_model
-                                    .field_name_override(field_name)
-                                    .map(python_field_name)
-                                    .unwrap_or_else(|| python_field_name(field_name)),
-                                args_field_name: generated_model
-                                    .field_name_override(&function.args_field)
-                                    .map(python_field_name)
-                                    .unwrap_or_else(|| python_field_name(&function.args_field)),
-                                args: if function.primary {
-                                    RenderedFunctionArgs::Unbounded {
-                                        type_parameter: primary_function_type_parameter_name(
-                                            field_name,
-                                        ),
-                                    }
-                                } else {
-                                    RenderedFunctionArgs::Bounded
-                                },
-                                result_annotation: function.result_type.clone(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }),
+            .collect(),
+    })
+}
+
+fn register_unpacked_parameter_name(
+    parameter_sources: &mut BTreeMap<String, String>,
+    parameter_name: &str,
+    source: &str,
+    model_name: &str,
+) -> Result<()> {
+    if let Some(conflicting_field) = parameter_sources.get(parameter_name) {
+        return Err(Error::FlattenedApiFieldConflict {
+            type_name: model_name.to_string(),
+            field: parameter_name.to_string(),
+            conflicting_field: conflicting_field.clone(),
+        });
+    }
+    parameter_sources.insert(parameter_name.to_string(), source.to_string());
+    Ok(())
+}
+
+fn build_flattened_message(
+    planned_field: &PlannedField,
+    rendered_field: &RenderedField,
+    models: &IndexMap<String, RenderedModel>,
+    api_plan: &ApiPlan,
+) -> Option<RenderedFlattenedMessage> {
+    let PlannedFieldKind::Singular(PlannedValueType::Message(message_type)) = &planned_field.kind
+    else {
+        return None;
+    };
+    let nested_planned_model = api_plan.models.get(&message_type.info.full_name)?;
+    if !nested_planned_model.flatten_in_api {
+        return None;
+    }
+    let nested_rendered_model = models.get(&message_type.info.full_name)?;
+
+    Some(RenderedFlattenedMessage {
+        local_name: rendered_field.attr_name.clone(),
+        model_name: nested_rendered_model.name.clone(),
+        required: planned_field.required,
+        fields: nested_planned_model
+            .fields
+            .iter()
+            .zip(nested_rendered_model.fields.iter())
+            .map(
+                |(nested_planned_field, nested_rendered_field)| RenderedFlattenedMessageField {
+                    attr_name: nested_rendered_field.attr_name.clone(),
+                    annotation: nested_planned_model
+                        .generated_model
+                        .field_flattened_annotation(&nested_planned_field.proto_name)
+                        .map(|annotation| {
+                            if nested_planned_field.required {
+                                annotation.to_string()
+                            } else {
+                                format!("{annotation} | None")
+                            }
+                        })
+                        .unwrap_or_else(|| nested_rendered_field.annotation.clone()),
+                    value_expr: nested_rendered_field.attr_name.clone(),
+                    default_kind: if nested_planned_field.required {
+                        PythonFieldDefaultKind::Required
+                    } else {
+                        nested_rendered_field.default_kind
+                    },
+                },
+            )
+            .collect(),
     })
 }
 
@@ -627,7 +772,7 @@ fn build_field(
     }
 
     RenderedField {
-        attr_name,
+        attr_name: attr_name.clone(),
         annotation: python_field_annotation(field, resolved_type.annotation.clone(), true),
         default_kind: PythonFieldDefaultKind::None,
         default_expr: Some("None".to_string()),
@@ -636,6 +781,7 @@ fn build_field(
         to_proto_lines: match &field.role {
             PlannedFieldRole::Function(function_field) if function_field.converter.is_some() => {
                 optional_function_to_proto_lines(
+                    &attr_name,
                     &field.proto_name,
                     &resolved_type,
                     function_field
@@ -644,7 +790,7 @@ fn build_field(
                         .expect("function converter should be present"),
                 )
             }
-            _ => optional_to_proto_lines(&resolved_type, &field.proto_name),
+            _ => optional_to_proto_lines(&resolved_type, &attr_name, &field.proto_name),
         },
         imports: resolved_type.imports,
     }
@@ -1114,12 +1260,12 @@ fn optional_from_proto_expr(
     }
 }
 
-fn optional_to_proto_lines(resolved_type: &ResolvedFieldType, proto_name: &str) -> Vec<String> {
-    optional_to_proto_lines_from_expr(
-        resolved_type,
-        &format!("self.{}", python_ident(proto_name)),
-        proto_name,
-    )
+fn optional_to_proto_lines(
+    resolved_type: &ResolvedFieldType,
+    attr_name: &str,
+    proto_name: &str,
+) -> Vec<String> {
+    optional_to_proto_lines_from_expr(resolved_type, &format!("self.{attr_name}"), proto_name)
 }
 
 fn optional_to_proto_lines_from_expr(
@@ -1165,11 +1311,12 @@ fn optional_value_expr(value_expr: &str, annotation: &str) -> String {
 }
 
 fn optional_function_to_proto_lines(
+    attr_name: &str,
     proto_name: &str,
     resolved_type: &ResolvedFieldType,
     converter: &str,
 ) -> Vec<String> {
-    let value_expr = format!("self.{}", python_ident(proto_name));
+    let value_expr = format!("self.{attr_name}");
     let converted_value = function_converter_expr(converter, &value_expr);
     match resolved_type.kind {
         ResolvedFieldKind::Message => vec![
@@ -1442,7 +1589,8 @@ fn render_package(
             )?;
         }
         for operation in &service.operations {
-            if resource_operation_owners.contains_key(&operation_key(service.name, operation.name)) {
+            if resource_operation_owners.contains_key(&operation_key(service.name, operation.name))
+            {
                 continue;
             }
             insert_generated_file(
@@ -1840,15 +1988,15 @@ fn resource_bound_operations<'a>(
         .methods
         .iter()
         .filter_map(|method| match &method.binding {
-            PlannedResourceMethodBindingSpec::Operation { operation_name, .. } => Some(
-                ResourceBoundOperation {
+            PlannedResourceMethodBindingSpec::Operation { operation_name, .. } => {
+                Some(ResourceBoundOperation {
                     operation: service
                         .operations
                         .iter()
                         .find(|operation| operation.name == operation_name)
                         .expect("bound resource operation should exist on the service"),
-                },
-            ),
+                })
+            }
             PlannedResourceMethodBindingSpec::Stub => None,
         })
         .collect()
@@ -1991,11 +2139,7 @@ fn render_operation_module(
     output.push_str(service.name);
     output.push('\n');
     let used_model_names = used_python_symbol_imports(&body, model_names);
-        render_named_python_import(
-            &mut output,
-            "..models",
-            &used_model_names,
-        );
+    render_named_python_import(&mut output, "..models", &used_model_names);
     let used_resource_names = used_python_symbol_imports(&body, resource_names);
     if !used_resource_names.is_empty() {
         render_named_python_import(&mut output, ".._resources", &used_resource_names);
@@ -2034,7 +2178,12 @@ fn render_package_init(
 ) -> String {
     let operation_function_names = services
         .iter()
-        .flat_map(|service| service.operations.iter().map(|operation| operation.attr_name.clone()))
+        .flat_map(|service| {
+            service
+                .operations
+                .iter()
+                .map(|operation| operation.attr_name.clone())
+        })
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -2061,11 +2210,7 @@ fn render_package_init(
                 } else {
                     format!(".operations.{}", operation.attr_name)
                 };
-                render_named_python_import(
-                    &mut output,
-                    &module,
-                    &imports,
-                );
+                render_named_python_import(&mut output, &module, &imports);
             }
         }
     }
@@ -2691,7 +2836,7 @@ fn render_function_unpacked_overload(
     output.push_str("(\n");
     output.push_str("    *,\n");
 
-    for field in &unpacked_input.fields {
+    for field in &unpacked_input.parameters {
         if let Some(function_case) = overload_cases
             .iter()
             .find(|function_case| function_case.callable_field_name == field.attr_name)
@@ -2848,7 +2993,7 @@ fn render_unpacked_operation_function(
     render_python_type_parameter_list(output, &operation.input_type_parameters);
     output.push_str("(\n");
     output.push_str("    *,\n");
-    for field in &unpacked_input.fields {
+    for field in &unpacked_input.parameters {
         output.push_str("    ");
         output.push_str(&field.attr_name);
         output.push_str(": ");
@@ -2870,14 +3015,17 @@ fn render_unpacked_operation_function(
         output.push_str(",\n");
         output.push_str("]:\n");
     }
+    for flattened_message in &unpacked_input.flattened_messages {
+        render_flattened_message_setup(output, flattened_message);
+    }
     output.push_str("    request = ");
     output.push_str(&unpacked_input.model_name);
     output.push_str("(\n");
-    for field in &unpacked_input.fields {
+    for field in &unpacked_input.request_fields {
         output.push_str("        ");
         output.push_str(&field.attr_name);
         output.push('=');
-        output.push_str(&field.attr_name);
+        output.push_str(&field.value_expr);
         output.push_str(",\n");
     }
     output.push_str("    )\n");
@@ -2899,7 +3047,7 @@ fn render_function_unpacked_implementation(
     output.push_str("(\n");
     output.push_str("    *,\n");
 
-    for field in &unpacked_input.fields {
+    for field in &unpacked_input.parameters {
         output.push_str("    ");
         output.push_str(&field.attr_name);
         output.push_str(": ");
@@ -2945,17 +3093,20 @@ fn render_function_unpacked_implementation(
         output.push_str(&function.args_field_name);
         output.push_str(")\n");
     }
+    for flattened_message in &unpacked_input.flattened_messages {
+        render_flattened_message_setup(output, flattened_message);
+    }
 
     output.push_str("    request = ");
     output.push_str(&function_implementation_model_annotation(unpacked_input));
     output.push_str("(\n");
-    for field in &unpacked_input.fields {
+    for field in &unpacked_input.request_fields {
         let value_expr = unpacked_input
             .functions
             .iter()
-            .find(|function| function.args_field_name == field.attr_name)
+            .find(|function| function.args_field_name == field.value_expr)
             .map(|function| format!("normalized_{}", function.args_field_name))
-            .unwrap_or_else(|| field.attr_name.clone());
+            .unwrap_or_else(|| field.value_expr.clone());
         output.push_str("        ");
         output.push_str(&field.attr_name);
         output.push('=');
@@ -2966,6 +3117,58 @@ fn render_function_unpacked_implementation(
     output.push_str("    return await ");
     output.push_str(&request_operation_function_name(operation));
     output.push_str("(request)\n");
+}
+
+fn render_flattened_message_setup(
+    output: &mut String,
+    flattened_message: &RenderedFlattenedMessage,
+) {
+    let always_construct = flattened_message.required
+        || flattened_message
+            .fields
+            .iter()
+            .any(|field| field.default_kind == PythonFieldDefaultKind::Required);
+
+    output.push_str("    ");
+    output.push_str(&flattened_message.local_name);
+    output.push_str(" = ");
+    if always_construct {
+        output.push_str(&flattened_message.model_name);
+        output.push_str("(\n");
+        for field in &flattened_message.fields {
+            output.push_str("        ");
+            output.push_str(&field.attr_name);
+            output.push('=');
+            output.push_str(&field.value_expr);
+            output.push_str(",\n");
+        }
+        output.push_str("    )\n");
+        return;
+    }
+
+    output.push_str("(\n");
+    output.push_str("        None\n");
+    output.push_str("        if ");
+    for (index, field) in flattened_message.fields.iter().enumerate() {
+        if index > 0 {
+            output.push_str(" and ");
+        }
+        output.push_str(&field.value_expr);
+        output.push_str(" is None");
+    }
+    output.push_str("\n");
+    output.push_str("        else ");
+    output.push_str(&flattened_message.model_name);
+    output.push_str("(\n");
+    for field in &flattened_message.fields {
+        output.push_str("            ");
+        output.push_str(&field.attr_name);
+        output.push('=');
+        output.push_str(&field.value_expr);
+        output.push_str(",\n");
+    }
+    output.push_str("        )\n");
+    output.push_str("    )\n");
 }
 
 fn render_inline_nexus_client(output: &mut String, service: &RenderedService<'_>, indent: &str) {
@@ -3125,6 +3328,7 @@ mod tests {
 
     use crate::SupportFiles;
     use crate::descriptors::DescriptorIndex;
+    use crate::error::Error;
     use crate::generator::{GeneratedOutputLayout, generate_files, generate_source};
     use crate::language::Language;
     use crate::spec::ApiSpec;
@@ -3239,7 +3443,7 @@ mod tests {
         assert!(output.contains("retry_policy_to_proto,"));
         assert!(output.contains("def retry_policy_from_proto("));
         assert!(output.contains(
-            "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]]"
+            "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]"
         ));
         assert!(output.contains("workflow_id: str"));
         assert!(output.contains("task_queue: str"));
@@ -3263,8 +3467,8 @@ mod tests {
         ));
         assert!(output.contains("memo: collections.abc.Mapping[str, typing.Any] | None = None"));
         assert!(output.contains("user_metadata: UserMetadata | None = None"));
-        assert!(output.contains("summary: typing.Any | None = None"));
-        assert!(output.contains("details: typing.Any | None = None"));
+        assert!(output.contains("static_summary: typing.Any | None = None"));
+        assert!(output.contains("static_details: typing.Any | None = None"));
         assert!(output.contains("retry_policy: temporalio.common.RetryPolicy"));
         assert!(output.contains(
             "search_attributes: temporalio.common.TypedSearchAttributes | temporalio.common.SearchAttributes | None = None"
@@ -3306,7 +3510,7 @@ mod tests {
         assert!(output.contains("workflow: str,"));
         assert!(output.contains("input: tuple[typing.Any, ...] | None = ...,"));
         assert!(output.contains(
-            "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
+            "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],"
         ));
         assert!(output.contains(
             "async def signal_with_start_workflow_execution[FirstWorkflowArg, *RemainingWorkflowArgs]("
@@ -3321,21 +3525,29 @@ mod tests {
         assert!(output.contains("async def signal_with_start_workflow_execution("));
         assert!(output.contains("    *,"));
         assert!(output.contains(
-            "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
+            "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],"
         ));
         assert!(output.contains(
             "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
         ));
         assert!(output.contains("input: object | tuple[object, ...] | None = None,"));
+        assert!(output.contains("static_summary: str | None = None,"));
+        assert!(output.contains("static_details: str | None = None,"));
+        assert!(!output.contains("user_metadata_static_summary:"));
+        assert!(!output.contains("user_metadata_static_details:"));
         assert!(output.contains("def _nexus_normalize_function_args("));
-        assert!(output.contains(
-            "normalized_signal_input = _nexus_normalize_function_args(signal_input)"
-        ));
-        assert!(output.contains(
-            "normalized_input = _nexus_normalize_function_args(input)"
-        ));
+        assert!(
+            output
+                .contains("normalized_signal_input = _nexus_normalize_function_args(signal_input)")
+        );
+        assert!(output.contains("normalized_input = _nexus_normalize_function_args(input)"));
+        assert!(output.contains("user_metadata = ("));
+        assert!(output.contains("if static_summary is None and static_details is None"));
+        assert!(output.contains("static_summary=static_summary,"));
+        assert!(output.contains("static_details=static_details,"));
         assert!(output.contains("input=normalized_input,"));
         assert!(output.contains("signal_input=normalized_signal_input,"));
+        assert!(output.contains("user_metadata=user_metadata,"));
         assert!(output.contains("request = SignalWithStartWorkflowExecutionRequest("));
         assert!(output.contains("workflow=workflow,"));
         assert!(output.contains("input=normalized_input,"));
@@ -3391,6 +3603,79 @@ mod tests {
         assert!(output.contains("async def cancel("));
         assert!(output.contains("async def restart_workflow("));
         assert!(!output.contains("should be replaced during package initialization"));
+    }
+
+    #[test]
+    fn rejects_flattened_api_field_name_conflicts() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{
+    signal-function,
+    task-queue,
+    user-metadata,
+    workflow-function,
+  };
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record signal-with-start-workflow-execution-request {
+    /// @nexus.proto-field "workflow_type"
+    workflow: workflow-function,
+    workflow-id: string,
+    task-queue: task-queue,
+    /// @nexus.proto-field "signal_name"
+    signal: signal-function,
+    /// @nexus.proto-field "request_id"
+    static-summary: option<string>,
+    user-metadata: option<user-metadata>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record signal-with-start-workflow-execution-response {
+    run-id: option<string>,
+  }
+
+  signal-with-start-workflow-execution: func(
+    request: signal-with-start-workflow-execution-request,
+  ) -> signal-with-start-workflow-execution-response;
+}
+"#;
+
+        let temp_dir = unique_temp_dir("flatten-conflict");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let input_path = temp_dir.join("conflict.wit");
+        fs::write(&input_path, wit).unwrap();
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let spec = ApiSpec::load_for_language(Language::Python, &input_path).unwrap();
+        let descriptors =
+            DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
+        let error = generate_source(
+            Language::Python,
+            &spec,
+            &descriptors,
+            &crate::SupportFiles::default(),
+        )
+        .unwrap_err();
+
+        fs::remove_dir_all(temp_dir).unwrap();
+
+        assert!(matches!(
+            error,
+            Error::FlattenedApiFieldConflict {
+                type_name,
+                field,
+                conflicting_field,
+            } if type_name == "SignalWithStartWorkflowExecutionRequest"
+                && field == "static_summary"
+                && conflicting_field.contains("static_summary")
+        ));
     }
 
     #[test]

@@ -215,7 +215,7 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains("workflow: str,"));
     assert!(rendered.contains("input: tuple[typing.Any, ...] | None = ...,"));
     assert!(rendered.contains(
-        "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
+        "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],"
     ));
     assert!(rendered.contains(
         "async def signal_with_start_workflow_execution[FirstWorkflowArg, *RemainingWorkflowArgs]("
@@ -227,23 +227,30 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains("signal_input: tuple[SignalArg1],"));
     assert!(rendered.contains("    *,"));
     assert!(rendered.contains(
-        "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
+        "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],"
     ));
     assert!(rendered.contains(
         "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
     ));
     assert!(rendered.contains("input: object | tuple[object, ...] | None = None,"));
+    assert!(rendered.contains("static_summary: str | None = None,"));
+    assert!(rendered.contains("static_details: str | None = None,"));
+    assert!(!rendered.contains("user_metadata_static_summary:"));
+    assert!(!rendered.contains("user_metadata_static_details:"));
     assert!(rendered.contains("request = SignalWithStartWorkflowExecutionRequest("));
     assert!(rendered.contains("workflow=workflow,"));
     assert!(rendered.contains("def _nexus_normalize_function_args("));
-    assert!(rendered.contains(
-        "normalized_input = _nexus_normalize_function_args(input)"
-    ));
-    assert!(rendered.contains(
-        "normalized_signal_input = _nexus_normalize_function_args(signal_input)"
-    ));
+    assert!(rendered.contains("normalized_input = _nexus_normalize_function_args(input)"));
+    assert!(
+        rendered.contains("normalized_signal_input = _nexus_normalize_function_args(signal_input)")
+    );
+    assert!(rendered.contains("user_metadata = ("));
+    assert!(rendered.contains("if static_summary is None and static_details is None"));
+    assert!(rendered.contains("static_summary=static_summary,"));
+    assert!(rendered.contains("static_details=static_details,"));
     assert!(rendered.contains("input=normalized_input,"));
     assert!(rendered.contains("signal_input=normalized_signal_input,"));
+    assert!(rendered.contains("user_metadata=user_metadata,"));
     assert!(rendered.contains("return await _signal_with_start_workflow_execution(request)"));
     assert!(rendered.contains("async def activity_options_operation("));
     assert!(rendered.contains("task_queue: str | None = None,"));

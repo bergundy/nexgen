@@ -7,7 +7,7 @@ use crate::descriptors::{DescriptorIndex, MessageMetadata};
 use crate::error::{Error, Result};
 use crate::language::Language;
 use crate::python;
-use crate::spec::{ApiSpec, GeneratedModelSpec, TypeOverrideSpec};
+use crate::spec::{ApiSpec, AuthoredFieldTypeSpec, GeneratedModelSpec, TypeOverrideSpec};
 use crate::typescript;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -110,10 +110,18 @@ fn validate_message_type_override(
             type_override,
             &generated_model.field_names,
             &generated_model.field_annotations,
+            &generated_model.field_flattened_annotations,
             &generated_model.field_sources,
             message,
             usage,
             language,
+        )?;
+        validate_authored_field_types(
+            message_name,
+            type_override,
+            generated_model,
+            message,
+            descriptors,
         )?;
         validate_invocation_fields(
             message_name,
@@ -143,6 +151,7 @@ fn validate_generated_model_fields(
     type_override: &TypeOverrideSpec,
     field_names: &BTreeMap<String, String>,
     field_annotations: &BTreeMap<String, String>,
+    field_flattened_annotations: &BTreeMap<String, String>,
     field_sources: &BTreeMap<String, String>,
     message: &MessageMetadata,
     usage: MessageUsage,
@@ -164,6 +173,26 @@ fn validate_generated_model_fields(
             return Err(Error::OmittedCustomizedTypeOverrideField {
                 message: message_name.to_string(),
                 field: field_name.to_string(),
+            });
+        }
+    }
+
+    for field_name in field_flattened_annotations.keys() {
+        validate_model_override_field(message_name, field_name, message)?;
+        if type_override.omitted_fields.contains(field_name) {
+            return Err(Error::OmittedCustomizedTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.to_string(),
+            });
+        }
+        if !type_override.flatten_in_api() {
+            return Err(Error::InvalidTypeOverrideField {
+                message: message_name.to_string(),
+                field: field_name.to_string(),
+                property: "flattenedType",
+                reason:
+                    "flattened-type is only supported on records marked `@nexus.flatten-in-api`"
+                        .to_string(),
             });
         }
     }
@@ -196,18 +225,6 @@ fn validate_generated_model_fields(
         }
     }
 
-    for field_name in field_annotations
-        .keys()
-        .filter(|field_name| field_sources.contains_key(*field_name))
-    {
-        return Err(Error::ConflictingTypeOverrideFieldProperties {
-            message: message_name.to_string(),
-            field: field_name.to_string(),
-            property: "type",
-            conflicting_property: "source",
-        });
-    }
-
     let mut seen_generated_names: BTreeMap<String, String> = BTreeMap::new();
     for field in &message.descriptor.field {
         let proto_name = field
@@ -235,6 +252,31 @@ fn validate_generated_model_fields(
                 ),
             });
         }
+    }
+
+    Ok(())
+}
+
+fn validate_authored_field_types(
+    message_name: &str,
+    type_override: &TypeOverrideSpec,
+    generated_model: &GeneratedModelSpec,
+    message: &MessageMetadata,
+    descriptors: &DescriptorIndex,
+) -> Result<()> {
+    for (field_name, authored_type) in &generated_model.field_wit_types {
+        if generated_model.function(field_name).is_some()
+            || generated_model.with_arguments(field_name).is_some()
+        {
+            continue;
+        }
+
+        let field = validate_model_override_field(message_name, field_name, message)?;
+        if type_override.omitted_fields.contains(field_name) {
+            continue;
+        }
+
+        validate_authored_field_type(message_name, field_name, authored_type, field, descriptors)?;
     }
 
     Ok(())
@@ -374,17 +416,6 @@ fn validate_invocation_fields(
             });
         }
         if generated_model
-            .field_annotations
-            .contains_key(&function.args_field)
-        {
-            return Err(Error::ConflictingTypeOverrideFieldProperties {
-                message: message_name.to_string(),
-                field: function.args_field.clone(),
-                property: "function",
-                conflicting_property: "type",
-            });
-        }
-        if generated_model
             .field_sources
             .contains_key(&function.args_field)
         {
@@ -449,17 +480,6 @@ fn validate_invocation_fields(
                 field: with_arguments.args_field.clone(),
                 property: "withArguments",
                 conflicting_property: "required",
-            });
-        }
-        if generated_model
-            .field_annotations
-            .contains_key(&with_arguments.args_field)
-        {
-            return Err(Error::ConflictingTypeOverrideFieldProperties {
-                message: message_name.to_string(),
-                field: with_arguments.args_field.clone(),
-                property: "withArguments",
-                conflicting_property: "type",
             });
         }
         if generated_model
@@ -583,6 +603,184 @@ fn validate_invocation_args_field(
     })
 }
 
+fn validate_authored_field_type(
+    message_name: &str,
+    field_name: &str,
+    authored_type: &AuthoredFieldTypeSpec,
+    field: &FieldDescriptorProto,
+    descriptors: &DescriptorIndex,
+) -> Result<()> {
+    if authored_field_matches_proto(authored_type, field, descriptors)? {
+        return Ok(());
+    }
+
+    Err(Error::InvalidTypeOverrideField {
+        message: message_name.to_string(),
+        field: field_name.to_string(),
+        property: "type",
+        reason: format!(
+            "WIT field type `{}` does not match proto field type `{}`; use `@nexus.flattened-type` if only the flattened API should differ",
+            authored_type.to_wit_string(),
+            proto_field_type_string(field, descriptors)?,
+        ),
+    })
+}
+
+fn authored_field_matches_proto(
+    authored_type: &AuthoredFieldTypeSpec,
+    field: &FieldDescriptorProto,
+    descriptors: &DescriptorIndex,
+) -> Result<bool> {
+    if field_is_map(field, descriptors) {
+        let AuthoredFieldTypeSpec::Map(authored_key, authored_value) =
+            authored_type.without_option()
+        else {
+            return Ok(false);
+        };
+
+        let Some(entry_name) = field.type_name.as_deref() else {
+            return Ok(false);
+        };
+        let Some(entry) = descriptors.message(entry_name.trim_start_matches('.')) else {
+            return Ok(false);
+        };
+        let Some(key_field) = entry
+            .descriptor
+            .field
+            .iter()
+            .find(|field| field.name.as_deref() == Some("key"))
+        else {
+            return Ok(false);
+        };
+        let Some(value_field) = entry
+            .descriptor
+            .field
+            .iter()
+            .find(|field| field.name.as_deref() == Some("value"))
+        else {
+            return Ok(false);
+        };
+        return Ok(
+            authored_field_matches_proto(authored_key, key_field, descriptors)?
+                && authored_field_matches_proto(authored_value, value_field, descriptors)?,
+        );
+    }
+
+    if field_label(field) == Some(Label::Repeated) {
+        let AuthoredFieldTypeSpec::List(inner) = authored_type.without_option() else {
+            return Ok(false);
+        };
+        return authored_field_matches_singular_proto(inner, field);
+    }
+
+    authored_field_matches_singular_proto(authored_type.without_option(), field)
+}
+
+fn authored_field_matches_singular_proto(
+    authored_type: &AuthoredFieldTypeSpec,
+    field: &FieldDescriptorProto,
+) -> Result<bool> {
+    let matches = match field_type(field) {
+        Some(Type::Double | Type::Float) => {
+            matches!(authored_type, AuthoredFieldTypeSpec::Float)
+        }
+        Some(
+            Type::Int64
+            | Type::Uint64
+            | Type::Fixed64
+            | Type::Sfixed64
+            | Type::Sint64
+            | Type::Int32
+            | Type::Fixed32
+            | Type::Uint32
+            | Type::Sfixed32
+            | Type::Sint32,
+        ) => matches!(authored_type, AuthoredFieldTypeSpec::Int),
+        Some(Type::Bool) => matches!(authored_type, AuthoredFieldTypeSpec::Bool),
+        Some(Type::String) => matches!(authored_type, AuthoredFieldTypeSpec::String),
+        Some(Type::Bytes) => matches!(authored_type, AuthoredFieldTypeSpec::Bytes),
+        Some(Type::Enum | Type::Message | Type::Group) => match authored_type {
+            AuthoredFieldTypeSpec::Proto(proto_name) => field
+                .type_name
+                .as_deref()
+                .map(|name| proto_name == name.trim_start_matches('.'))
+                .unwrap_or(false),
+            _ => false,
+        },
+        None => false,
+    };
+
+    Ok(matches)
+}
+
+fn proto_field_type_string(
+    field: &FieldDescriptorProto,
+    descriptors: &DescriptorIndex,
+) -> Result<String> {
+    if field_is_map(field, descriptors) {
+        let Some(entry_name) = field.type_name.as_deref() else {
+            return Ok("map".to_string());
+        };
+        let Some(entry) = descriptors.message(entry_name.trim_start_matches('.')) else {
+            return Ok("map".to_string());
+        };
+        let Some(key_field) = entry
+            .descriptor
+            .field
+            .iter()
+            .find(|field| field.name.as_deref() == Some("key"))
+        else {
+            return Ok("map".to_string());
+        };
+        let Some(value_field) = entry
+            .descriptor
+            .field
+            .iter()
+            .find(|field| field.name.as_deref() == Some("value"))
+        else {
+            return Ok("map".to_string());
+        };
+        return Ok(format!(
+            "map<{}, {}>",
+            proto_field_type_string(key_field, descriptors)?,
+            proto_field_type_string(value_field, descriptors)?,
+        ));
+    }
+
+    let singular = match field_type(field) {
+        Some(Type::Double | Type::Float) => "float64".to_string(),
+        Some(
+            Type::Int64
+            | Type::Uint64
+            | Type::Fixed64
+            | Type::Sfixed64
+            | Type::Sint64
+            | Type::Int32
+            | Type::Fixed32
+            | Type::Uint32
+            | Type::Sfixed32
+            | Type::Sint32,
+        ) => "s64".to_string(),
+        Some(Type::Bool) => "bool".to_string(),
+        Some(Type::String) => "string".to_string(),
+        Some(Type::Bytes) => "bytes".to_string(),
+        Some(Type::Enum | Type::Message | Type::Group) => field
+            .type_name
+            .as_deref()
+            .map(|name| name.trim_start_matches('.').to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        None => "unknown".to_string(),
+    };
+
+    if field_label(field) == Some(Label::Repeated) {
+        Ok(format!("list<{singular}>"))
+    } else if field_has_presence(field, field_type(field)) {
+        Ok(format!("option<{singular}>"))
+    } else {
+        Ok(singular)
+    }
+}
+
 fn field_name_for_language(
     language: Language,
     field: &FieldDescriptorProto,
@@ -622,6 +820,8 @@ fn validate_enum_type_override(
         if !generated_model.field_names.is_empty()
             || !generated_model.declared_fields.is_empty()
             || !generated_model.field_annotations.is_empty()
+            || !generated_model.field_flattened_annotations.is_empty()
+            || !generated_model.field_wit_types.is_empty()
             || !generated_model.field_sources.is_empty()
             || !generated_model.functions.is_empty()
             || !generated_model.with_arguments.is_empty()

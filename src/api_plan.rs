@@ -133,6 +133,7 @@ pub(crate) struct PlannedModel {
     pub(crate) info: PlannedTypeInfo,
     pub(crate) name: String,
     pub(crate) capabilities: ModelCapabilities,
+    pub(crate) flatten_in_api: bool,
     pub(crate) generated_model: GeneratedModelSpec,
     pub(crate) fields: Vec<PlannedField>,
     pub(crate) sourced_fields: Vec<PlannedSourcedField>,
@@ -566,6 +567,9 @@ fn ensure_model_plan(
         .and_then(|type_override| type_override.generated_model())
         .cloned()
         .unwrap_or_default();
+    let flatten_in_api = spec
+        .type_override(&message.full_name)
+        .is_some_and(|type_override| type_override.flatten_in_api());
 
     plan.models.insert(
         message.full_name.clone(),
@@ -573,6 +577,7 @@ fn ensure_model_plan(
             info: PlannedTypeInfo::from_message(message),
             name: message_model_name(&message.full_name),
             capabilities: requested_capabilities,
+            flatten_in_api,
             generated_model: generated_model.clone(),
             fields: Vec::new(),
             sourced_fields: Vec::new(),

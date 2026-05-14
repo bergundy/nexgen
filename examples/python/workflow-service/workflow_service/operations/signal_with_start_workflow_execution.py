@@ -67,7 +67,8 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -77,9 +78,7 @@ async def signal_with_start_workflow_execution(
 async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -97,7 +96,8 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -108,7 +108,7 @@ async def signal_with_start_workflow_execution[FirstWorkflowArg](
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -128,7 +128,8 @@ async def signal_with_start_workflow_execution[FirstWorkflowArg](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -143,7 +144,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -163,7 +164,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -193,7 +195,8 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -203,9 +206,7 @@ async def signal_with_start_workflow_execution(
 async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -224,7 +225,8 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -235,7 +237,7 @@ async def signal_with_start_workflow_execution[FirstWorkflowArg](
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -256,7 +258,8 @@ async def signal_with_start_workflow_execution[FirstWorkflowArg](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -271,7 +274,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -292,7 +295,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -323,7 +327,8 @@ async def signal_with_start_workflow_execution[SignalArg1](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -333,9 +338,7 @@ async def signal_with_start_workflow_execution[SignalArg1](
 async def signal_with_start_workflow_execution[SignalArg1](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -355,7 +358,8 @@ async def signal_with_start_workflow_execution[SignalArg1](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -366,7 +370,7 @@ async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -388,7 +392,8 @@ async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -404,7 +409,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -426,7 +431,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -457,7 +463,8 @@ async def signal_with_start_workflow_execution[SignalArg1](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -467,9 +474,7 @@ async def signal_with_start_workflow_execution[SignalArg1](
 async def signal_with_start_workflow_execution[SignalArg1](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -489,7 +494,8 @@ async def signal_with_start_workflow_execution[SignalArg1](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -500,7 +506,7 @@ async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -522,7 +528,8 @@ async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -538,7 +545,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -560,7 +567,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -591,7 +599,8 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -601,9 +610,7 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
 async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -623,7 +630,8 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -638,7 +646,7 @@ async def signal_with_start_workflow_execution[
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -660,7 +668,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -677,7 +686,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -699,7 +708,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -731,7 +741,8 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -741,9 +752,7 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg
 async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg3](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -764,7 +773,8 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -780,7 +790,7 @@ async def signal_with_start_workflow_execution[
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -803,7 +813,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -821,7 +832,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -844,7 +855,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -881,7 +893,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -896,9 +909,7 @@ async def signal_with_start_workflow_execution[
 ](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -919,7 +930,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -936,7 +948,7 @@ async def signal_with_start_workflow_execution[
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -959,7 +971,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -978,7 +991,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -1001,7 +1014,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1039,7 +1053,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1055,9 +1070,7 @@ async def signal_with_start_workflow_execution[
 ](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -1078,7 +1091,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1096,7 +1110,7 @@ async def signal_with_start_workflow_execution[
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -1119,7 +1133,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1139,7 +1154,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -1162,7 +1177,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1211,7 +1227,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1228,9 +1245,7 @@ async def signal_with_start_workflow_execution[
 ](
     *,
     workflow_id: str,
-    workflow: collections.abc.Callable[
-        [typing.Any], collections.abc.Awaitable[typing.Any]
-    ],
+    workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
     task_queue: str,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
@@ -1261,7 +1276,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1280,7 +1296,7 @@ async def signal_with_start_workflow_execution[
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[typing.Any]
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
     input: FirstWorkflowArg,
@@ -1313,7 +1329,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1334,7 +1351,7 @@ async def signal_with_start_workflow_execution[
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
-        collections.abc.Awaitable[typing.Any],
+        collections.abc.Awaitable[object],
     ],
     task_queue: str,
     input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
@@ -1367,7 +1384,8 @@ async def signal_with_start_workflow_execution[
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = ...,
-    user_metadata: UserMetadata | None = ...,
+    static_summary: str | None = ...,
+    static_details: str | None = ...,
     versioning_override: temporalio.common.VersioningOverride | None = ...,
     priority: temporalio.common.Priority | None = ...,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
@@ -1376,8 +1394,7 @@ async def signal_with_start_workflow_execution[
 async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
-    workflow: str
-    | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],
+    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
     task_queue: str,
     input: object | tuple[object, ...] | None = None,
     workflow_execution_timeout: timedelta | None = None,
@@ -1396,12 +1413,21 @@ async def signal_with_start_workflow_execution(
     search_attributes: temporalio.common.TypedSearchAttributes
     | temporalio.common.SearchAttributes
     | None = None,
-    user_metadata: UserMetadata | None = None,
+    static_summary: str | None = None,
+    static_details: str | None = None,
     versioning_override: temporalio.common.VersioningOverride | None = None,
     priority: temporalio.common.Priority | None = None,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]:
     normalized_signal_input = _nexus_normalize_function_args(signal_input)
     normalized_input = _nexus_normalize_function_args(input)
+    user_metadata = (
+        None
+        if static_summary is None and static_details is None
+        else UserMetadata(
+            static_summary=static_summary,
+            static_details=static_details,
+        )
+    )
     request = SignalWithStartWorkflowExecutionRequest(
         workflow_id=workflow_id,
         workflow=workflow,

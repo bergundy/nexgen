@@ -583,9 +583,8 @@ interface workflow-service {
   restart-workflow: func(request: start-workflow-request) -> start-workflow-result;
 }
 "#;
-        let spec =
-            ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
-                .unwrap();
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap();
         let service = &spec.services[0];
         let resolved = resolve_service_resources(&spec, service, &descriptors()).unwrap();
         let method = &resolved.resources[0].methods[0];
@@ -651,9 +650,8 @@ interface workflow-service {
   restart-workflow: func(request: start-workflow-request) -> start-workflow-response;
 }
 "#;
-        let spec =
-            ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
-                .unwrap();
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap();
         let service = &spec.services[0];
         let error = resolve_service_resources(&spec, service, &descriptors()).unwrap_err();
 

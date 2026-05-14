@@ -524,8 +524,8 @@ export const Payloads = {
 };
 
 export interface UserMetadata {
-  summary?: common.Payload;
-  details?: common.Payload;
+  staticSummary?: common.Payload;
+  staticDetails?: common.Payload;
 }
 
 export const UserMetadata = {
@@ -536,9 +536,9 @@ export const UserMetadata = {
       return undefined;
     }
     return {
-      summary:
+      staticSummary:
         proto.summary == null ? undefined : payloadFromProto(proto.summary),
-      details:
+      staticDetails:
         proto.details == null ? undefined : payloadFromProto(proto.details),
     };
   },
@@ -551,9 +551,13 @@ export const UserMetadata = {
     }
     return {
       summary:
-        model.summary == null ? undefined : payloadToProto(model.summary),
+        model.staticSummary == null
+          ? undefined
+          : payloadToProto(model.staticSummary),
       details:
-        model.details == null ? undefined : payloadToProto(model.details),
+        model.staticDetails == null
+          ? undefined
+          : payloadToProto(model.staticDetails),
     };
   },
 };
