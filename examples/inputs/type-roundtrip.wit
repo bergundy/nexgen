@@ -1,0 +1,34 @@
+package temporal:nexus@1.0.0;
+
+world system {
+  export type-roundtrip-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface type-roundtrip-service {
+  use nexus:temporal-types/model@1.0.0.{
+    duration,
+    placeholder,
+    priority,
+    retry-policy,
+    task-queue,
+  };
+
+  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
+  record activity-options {
+    task-queue: option<task-queue>,
+    retry-policy: retry-policy,
+    schedule-to-close-timeout: option<duration>,
+    priority: option<priority>,
+    /// @nexus.omit
+    schedule-to-start-timeout: placeholder,
+    /// @nexus.omit
+    start-to-close-timeout: placeholder,
+    /// @nexus.omit
+    heartbeat-timeout: placeholder,
+  }
+
+  retry-policy-operation: func(request: retry-policy) -> retry-policy;
+
+  activity-options-operation: func(request: activity-options) -> activity-options;
+}

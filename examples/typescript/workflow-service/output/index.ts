@@ -14,6 +14,7 @@ import {
   signal_function_to_proto,
   taskQueueFromProto,
   taskQueueToProto,
+  workflow_namespace,
   payloadFromProto,
   payloadToProto,
   memoFromProto,
@@ -213,7 +214,7 @@ export const SignalWithStartWorkflowExecutionRequest = {
           : versioningOverrideToProto(model.versioningOverride),
       priority:
         model.priority == null ? undefined : priorityToProto(model.priority),
-      namespace: workflow.workflowInfo().namespace,
+      namespace: workflow_namespace(),
     };
   },
 };
@@ -285,76 +286,11 @@ export const UserMetadata = {
   },
 };
 
-export interface ActivityOptions {
-  taskQueue?: string;
-  scheduleToCloseTimeout?: common.Duration;
-  retryPolicy: common.RetryPolicy;
-  priority?: common.Priority;
-}
-
-export const ActivityOptions = {
-  fromProto(
-    proto: temporal.api.activity.v1.IActivityOptions | null | undefined,
-  ): ActivityOptions | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      taskQueue:
-        proto.taskQueue == null
-          ? undefined
-          : taskQueueFromProto(proto.taskQueue),
-      scheduleToCloseTimeout:
-        proto.scheduleToCloseTimeout == null
-          ? undefined
-          : durationFromProto(proto.scheduleToCloseTimeout),
-      retryPolicy: requiredField(
-        retryPolicyFromProto(
-          requiredField(proto.retryPolicy, "ActivityOptions", "retryPolicy"),
-        ),
-        "ActivityOptions",
-        "retryPolicy",
-      ),
-      priority:
-        proto.priority == null ? undefined : priorityFromProto(proto.priority),
-    };
-  },
-
-  toProto(
-    model: ActivityOptions | null | undefined,
-  ): temporal.api.activity.v1.IActivityOptions | undefined {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      taskQueue:
-        model.taskQueue == null ? undefined : taskQueueToProto(model.taskQueue),
-      scheduleToCloseTimeout:
-        model.scheduleToCloseTimeout == null
-          ? undefined
-          : durationToProto(model.scheduleToCloseTimeout),
-      retryPolicy: retryPolicyToProto(
-        requiredField(model.retryPolicy, "ActivityOptions", "retryPolicy"),
-      ),
-      priority:
-        model.priority == null ? undefined : priorityToProto(model.priority),
-    };
-  },
-};
-
 export const WorkflowService = nexus.service("WorkflowService", {
   signalWithStartWorkflowExecution: nexus.operation<
     temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionRequest,
     temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionResponse
   >({ name: "SignalWithStartWorkflowExecution" }),
-  retryPolicyOperation: nexus.operation<
-    temporal.api.common.v1.IRetryPolicy,
-    temporal.api.common.v1.IRetryPolicy
-  >({ name: "RetryPolicyOperation" }),
-  activityOptionsOperation: nexus.operation<
-    temporal.api.activity.v1.IActivityOptions,
-    temporal.api.activity.v1.IActivityOptions
-  >({ name: "ActivityOptionsOperation" }),
 });
 
 export async function signalWithStartWorkflowExecution<
@@ -380,33 +316,5 @@ export async function signalWithStartWorkflowExecution<
   return workflow.getExternalWorkflowHandle(
     request.workflowId,
     result.runId ?? undefined,
-  );
-}
-
-export async function retryPolicyOperation(
-  request: common.RetryPolicy,
-): Promise<workflow.NexusOperationHandle<temporal.api.common.v1.IRetryPolicy>> {
-  const client = workflow.createNexusServiceClient({
-    service: WorkflowService,
-    endpoint: "__temporal_system",
-  });
-  return await client.startOperation(
-    WorkflowService.operations.retryPolicyOperation,
-    retryPolicyToProto(request),
-  );
-}
-
-export async function activityOptionsOperation(
-  request: ActivityOptions,
-): Promise<
-  workflow.NexusOperationHandle<temporal.api.activity.v1.IActivityOptions>
-> {
-  const client = workflow.createNexusServiceClient({
-    service: WorkflowService,
-    endpoint: "__temporal_system",
-  });
-  return await client.startOperation(
-    WorkflowService.operations.activityOptionsOperation,
-    ActivityOptions.toProto(request) ?? {},
   );
 }

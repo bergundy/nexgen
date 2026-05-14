@@ -46,7 +46,7 @@ interface workflow-service {
     versioning-override: option<versioning-override>,
     workflow-start-delay: option<duration>,
     user-metadata: option<user-metadata>,
-    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source "workflow_namespace"
     namespace: option<string>,
     /// @nexus.omit
     control: placeholder,
@@ -62,20 +62,6 @@ interface workflow-service {
     started: option<bool>,
   }
 
-  /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
-  record activity-options {
-    task-queue: option<task-queue>,
-    retry-policy: retry-policy,
-    schedule-to-close-timeout: option<duration>,
-    priority: option<priority>,
-    /// @nexus.omit
-    schedule-to-start-timeout: placeholder,
-    /// @nexus.omit
-    start-to-close-timeout: placeholder,
-    /// @nexus.omit
-    heartbeat-timeout: placeholder,
-  }
-
   /// @nexus.output-transform
   ///   python-type="workflow.ExternalWorkflowHandle[typing.Any]"
   ///   python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
@@ -84,8 +70,4 @@ interface workflow-service {
   signal-with-start-workflow-execution: func(
     request: signal-with-start-workflow-execution-request,
   ) -> signal-with-start-workflow-execution-response;
-
-  retry-policy-operation: func(request: retry-policy) -> retry-policy;
-
-  activity-options-operation: func(request: activity-options) -> activity-options;
 }

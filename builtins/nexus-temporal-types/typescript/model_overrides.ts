@@ -46,6 +46,10 @@ export function taskQueueToProto(
   return { name: taskQueue };
 }
 
+export function workflow_namespace(): string {
+  return workflow.workflowInfo().namespace;
+}
+
 export function payloadFromProto(
   payload: temporal.api.common.v1.IPayload,
 ): common.Payload {

@@ -8,7 +8,7 @@ import temporalio.common
 from temporalio import workflow
 import temporalio.api.activity.v1.message_pb2
 
-from ..service import WorkflowService
+from ..service import TypeRoundtripService
 from ..models import ActivityOptions
 
 
@@ -17,12 +17,14 @@ async def _activity_options_operation(
 ) -> workflow.NexusOperationHandle[
     temporalio.api.activity.v1.message_pb2.ActivityOptions,
 ]:
-    nexus_client: workflow.NexusClient[WorkflowService] = workflow.create_nexus_client(
-        service=WorkflowService,
-        endpoint="__temporal_system",
+    nexus_client: workflow.NexusClient[TypeRoundtripService] = (
+        workflow.create_nexus_client(
+            service=TypeRoundtripService,
+            endpoint="__temporal_system",
+        )
     )
     return await nexus_client.start_operation(
-        WorkflowService.activity_options_operation,
+        TypeRoundtripService.activity_options_operation,
         request.to_proto(),
     )
 

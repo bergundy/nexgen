@@ -9,6 +9,7 @@ use nexus_api_gen::generate_to_string;
 use nexus_api_gen::generator::{GeneratedOutputLayout, generate_files};
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
+const TYPE_ROUNDTRIP_EXAMPLE_ID: &str = "type-roundtrip";
 
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -36,9 +37,7 @@ fn input_path(root: &Path, example_id: &str) -> PathBuf {
 }
 
 fn python_output_path(root: &Path, example_id: &str) -> PathBuf {
-    python_root(root)
-        .join(example_id)
-        .join(example_id.to_snake_case())
+    python_root(root).join(example_id.to_snake_case())
 }
 
 fn python_example_ids(root: &Path) -> Vec<String> {
@@ -55,7 +54,7 @@ fn python_example_ids(root: &Path) -> Vec<String> {
             } else {
                 return None;
             };
-            if python_root.join(&example_id).is_dir() {
+            if python_root.join(example_id.to_snake_case()).is_dir() {
                 Some(example_id)
             } else {
                 None
@@ -77,6 +76,13 @@ fn read_python_package_files(dir: &Path) -> BTreeMap<PathBuf, String> {
             if path.is_dir() {
                 visit(root, &path, files);
             } else if path.extension().and_then(|extension| extension.to_str()) == Some("py") {
+                if path
+                    .file_name()
+                    .and_then(|file_name| file_name.to_str())
+                    .is_some_and(|file_name| file_name.starts_with("test_"))
+                {
+                    continue;
+                }
                 files.insert(
                     path.strip_prefix(root).unwrap().to_path_buf(),
                     fs::read_to_string(&path).unwrap(),
@@ -283,11 +289,18 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains("signal_input=normalized_signal_input,"));
     assert!(rendered.contains("user_metadata=user_metadata,"));
     assert!(rendered.contains("return await _signal_with_start_workflow_execution(request)"));
-    assert!(rendered.contains("async def activity_options_operation("));
-    assert!(rendered.contains("task_queue: str | None = None,"));
-    assert!(rendered.contains("retry_policy: temporalio.common.RetryPolicy,"));
-    assert!(rendered.contains("request = ActivityOptions("));
     assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
     assert!(models.contains("from ._support import ("));
     assert!(models.contains("retry_policy_to_proto,"));
+
+    let type_roundtrip_rendered = generate_to_string(
+        nexus_api_gen::language::Language::Python,
+        input_path(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
+        &[descriptor_path(&root)],
+    )
+    .unwrap();
+    assert!(type_roundtrip_rendered.contains("async def activity_options_operation("));
+    assert!(type_roundtrip_rendered.contains("task_queue: str | None = None,"));
+    assert!(type_roundtrip_rendered.contains("retry_policy: temporalio.common.RetryPolicy,"));
+    assert!(type_roundtrip_rendered.contains("request = ActivityOptions("));
 }

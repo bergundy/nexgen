@@ -4,13 +4,10 @@ from collections.abc import Awaitable, Callable, Generator, Sequence
 import dataclasses
 import datetime
 from pathlib import Path
-import sys
 import typing
 
 from nexusrpc import Operation
 import pytest
-import temporalio.api.activity.v1 as activity_v1
-import temporalio.api.common.v1
 import temporalio.api.common.v1.message_pb2 as common_pb2
 import temporalio.api.workflowservice.v1 as workflowservice_v1
 import temporalio.common
@@ -18,23 +15,13 @@ import temporalio.workflow
 from typing_extensions import assert_type
 
 APP_ROOT = Path(__file__).resolve().parent
-OUTPUT_PATH = APP_ROOT / "workflow_service"
-
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
+OUTPUT_PATH = APP_ROOT.parent / "workflow_service"
 
 import workflow_service as output
 import workflow_service.models as output_models
-import workflow_service._support as output_support
 
 SIGNAL_WITH_START_OPERATION = output.__nexus_operation_registry__[
     ("WorkflowService", "SignalWithStartWorkflowExecution")
-]
-RETRY_POLICY_OPERATION = output.__nexus_operation_registry__[
-    ("WorkflowService", "RetryPolicyOperation")
-]
-ACTIVITY_OPTIONS_OPERATION = output.__nexus_operation_registry__[
-    ("WorkflowService", "ActivityOptionsOperation")
 ]
 
 TASK_QUEUE = "demo-task-queue"
@@ -57,11 +44,7 @@ HIGH_ARITY_SIGNAL_INPUT = (
 )
 
 
-ResponseProto = (
-    activity_v1.ActivityOptions
-    | temporalio.api.common.v1.RetryPolicy
-    | workflowservice_v1.SignalWithStartWorkflowExecutionResponse
-)
+ResponseProto = workflowservice_v1.SignalWithStartWorkflowExecutionResponse
 
 
 @temporalio.workflow.defn
@@ -205,27 +188,13 @@ class FakeNexusClient:
             elif input.workflow_id == MINIMAL_WORKFLOW_ID:
                 assert_minimal_signal_request(input)
             else:
-                raise AssertionError(f"unexpected signal-with-start workflow id: {input.workflow_id}")
+                raise AssertionError(
+                    f"unexpected signal-with-start workflow id: {input.workflow_id}"
+                )
 
             response = workflowservice_v1.SignalWithStartWorkflowExecutionResponse()
             response.run_id = expected_run_id(input.workflow_id)
             response.started = True
-            return FakeOperationHandle(response)
-
-        if operation is RETRY_POLICY_OPERATION:
-            assert isinstance(input, temporalio.api.common.v1.RetryPolicy)
-            response = temporalio.api.common.v1.RetryPolicy()
-            response.CopyFrom(input)
-            return FakeOperationHandle(response)
-
-        if operation is ACTIVITY_OPTIONS_OPERATION:
-            assert isinstance(input, activity_v1.ActivityOptions)
-            assert input.HasField("retry_policy")
-            assert input.task_queue.name == TASK_QUEUE
-            assert input.schedule_to_close_timeout.seconds == 7
-            assert input.priority.priority_key == 4
-            response = activity_v1.ActivityOptions()
-            response.CopyFrom(input)
             return FakeOperationHandle(response)
 
         raise AssertionError(f"unexpected operation: {operation.name}")
@@ -353,7 +322,7 @@ def build_full_signal_request(
     workflow_id: str,
     signal: str | Callable[..., None | Awaitable[None]],
     signal_input: tuple[typing.Any, ...] | None = None,
-) -> typing.Any:
+) -> output_models.SignalWithStartWorkflowExecutionRequest:
     return output_models.SignalWithStartWorkflowExecutionRequest(
         workflow=ExampleWorkflow.run,
         workflow_id=workflow_id,
@@ -382,23 +351,13 @@ def make_signal_request(
     workflow_id: str = REQUEST_WORKFLOW_ID,
     task_queue: str = TASK_QUEUE,
     signal: str | Callable[..., None | Awaitable[None]] = "wake_up",
-) -> typing.Any:
+) -> output_models.SignalWithStartWorkflowExecutionRequest:
     return output_models.SignalWithStartWorkflowExecutionRequest(
         workflow=workflow,
         workflow_id=workflow_id,
         task_queue=task_queue,
         signal=signal,
     )
-
-
-def build_activity_options(example_data: ExampleData) -> typing.Any:
-    activity_options = output_models.ActivityOptions(
-        retry_policy=example_data.retry_policy,
-        task_queue=TASK_QUEUE,
-        priority=example_data.priority,
-    )
-    activity_options.schedule_to_close_timeout = datetime.timedelta(seconds=7)
-    return activity_options
 
 
 @pytest.fixture
@@ -429,7 +388,9 @@ def install_fake_runtime() -> ClientContext:
     created_clients: list[tuple[type[object], str]] = []
     created_external_handles: list[FakeExternalWorkflowHandle] = []
 
-    def fake_create_nexus_client(*, service: type[object], endpoint: str) -> FakeNexusClient:
+    def fake_create_nexus_client(
+        *, service: type[object], endpoint: str
+    ) -> FakeNexusClient:
         created_clients.append((service, endpoint))
         return fake_client
 
@@ -471,36 +432,17 @@ def install_fake_runtime() -> ClientContext:
 def test_generated_metadata() -> None:
     assert OUTPUT_PATH.exists(), f"expected generated package at {OUTPUT_PATH}"
     signal_operation = SIGNAL_WITH_START_OPERATION
-    retry_operation = RETRY_POLICY_OPERATION
-    activity_operation = ACTIVITY_OPTIONS_OPERATION
     registry = output.__nexus_operation_registry__
 
     assert isinstance(signal_operation, Operation)
-    assert isinstance(retry_operation, Operation)
-    assert isinstance(activity_operation, Operation)
-    assert registry[("WorkflowService", "SignalWithStartWorkflowExecution")] is signal_operation
-    assert registry[("WorkflowService", "RetryPolicyOperation")] is retry_operation
-    assert registry[("WorkflowService", "ActivityOptionsOperation")] is activity_operation
+    assert (
+        registry[("WorkflowService", "SignalWithStartWorkflowExecution")]
+        is signal_operation
+    )
     assert not hasattr(output, "WorkflowService")
     assert not hasattr(output, "SignalWithStartWorkflowExecutionRequest")
     assert not hasattr(output, "UserMetadata")
-    assert not hasattr(output, "ActivityOptions")
     assert not hasattr(output, "workflow")
-
-
-def test_activity_options_round_trip(example_data: ExampleData) -> None:
-    activity_options = build_activity_options(example_data)
-    activity_proto = activity_options.to_proto()
-    assert activity_proto.HasField("retry_policy")
-    assert activity_proto.task_queue.name == TASK_QUEUE
-    assert activity_proto.schedule_to_close_timeout.seconds == 7
-    assert activity_proto.priority.priority_key == 4
-    round_tripped_activity = output_models.ActivityOptions.from_proto(activity_proto)
-    assert isinstance(round_tripped_activity.retry_policy, temporalio.common.RetryPolicy)
-    assert round_tripped_activity.retry_policy.maximum_attempts == 3
-    assert round_tripped_activity.task_queue == TASK_QUEUE
-    assert round_tripped_activity.schedule_to_close_timeout == datetime.timedelta(seconds=7)
-    assert round_tripped_activity.priority == example_data.priority
 
 
 @pytest.mark.asyncio
@@ -508,6 +450,7 @@ async def test_signal_request_api(
     context: ClientContext,
     example_data: ExampleData,
 ) -> None:
+    assert context.created_clients == []
     request = build_full_signal_request(
         example_data,
         workflow_id=REQUEST_WORKFLOW_ID,
@@ -531,11 +474,13 @@ async def test_signal_request_api(
     assert round_tripped_user_metadata.static_details == "str:'Processes 42 records'"
     assert len(request_proto.links) == 0
 
+
 @pytest.mark.asyncio
 async def test_signal_args_api(
     context: ClientContext,
     example_data: ExampleData,
 ) -> None:
+    assert context.created_clients == []
     handle = await output.signal_with_start_workflow_execution(
         workflow=ExampleWorkflow.run,
         workflow_id=ARGS_WORKFLOW_ID,
@@ -559,6 +504,7 @@ async def test_signal_args_api(
 
 @pytest.mark.asyncio
 async def test_signal_minimal_args_api(context: ClientContext) -> None:
+    assert context.created_clients == []
     handle = await output.signal_with_start_workflow_execution(
         workflow="ExampleWorkflow",
         workflow_id=MINIMAL_WORKFLOW_ID,
@@ -573,6 +519,7 @@ async def test_signal_high_arity_request_api(
     context: ClientContext,
     example_data: ExampleData,
 ) -> None:
+    assert context.created_clients == []
     request = build_full_signal_request(
         example_data,
         workflow_id=HIGH_ARITY_WORKFLOW_ID,
@@ -586,31 +533,3 @@ async def test_signal_high_arity_request_api(
         signal_name="wake_up_many",
         signal_input=HIGH_ARITY_SIGNAL_INPUT,
     )
-
-@pytest.mark.asyncio
-async def test_retry_policy_operation(
-    context: ClientContext,
-    example_data: ExampleData,
-) -> None:
-    retry_handle = await output.retry_policy_operation(example_data.retry_policy)
-    retry_round_trip = output_support.retry_policy_from_proto(await retry_handle)
-    assert retry_round_trip.maximum_attempts == 3
-
-
-@pytest.mark.asyncio
-async def test_activity_options_operation(
-    context: ClientContext,
-    example_data: ExampleData,
-) -> None:
-    activity_handle = await output.activity_options_operation(
-        task_queue=TASK_QUEUE,
-        schedule_to_close_timeout=datetime.timedelta(seconds=7),
-        retry_policy=example_data.retry_policy,
-        priority=example_data.priority,
-    )
-    activity_response = output_models.ActivityOptions.from_proto(await activity_handle)
-    assert isinstance(activity_response.retry_policy, temporalio.common.RetryPolicy)
-    assert activity_response.retry_policy.maximum_attempts == 3
-    assert activity_response.task_queue == TASK_QUEUE
-    assert activity_response.schedule_to_close_timeout == datetime.timedelta(seconds=7)
-    assert activity_response.priority == example_data.priority

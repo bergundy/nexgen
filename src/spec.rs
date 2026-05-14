@@ -1066,6 +1066,14 @@ fn build_generated_model_from_record(
     for field in &record.fields {
         let field_context = format!("{context} field `{}`", field.name);
         let directives = parse_directives(field.docs.contents.as_deref(), path, &field_context)?;
+        if directive(&directives, "with-arguments", path, &field_context)?.is_some() {
+            return Err(Error::InvalidWitDirective {
+                path: path.to_path_buf(),
+                context: field_context,
+                directive: "@nexus.with-arguments".to_string(),
+                reason: "renamed to `@nexus.typescript-with-arguments`".to_string(),
+            });
+        }
         let omit_directive = directive(&directives, "omit", path, &field_context)?;
         let proto_field_name =
             directive_value(&directives, "proto-field", path, &field_context, "value")?
@@ -1147,13 +1155,7 @@ fn build_generated_model_from_record(
             required_fields.insert(proto_field_name.clone());
         }
 
-        if let Some(source) = find_language_directive_value(
-            language,
-            &[field.docs.contents.as_deref()],
-            path,
-            &field_context,
-            "source",
-        )? {
+        if let Some(source) = build_source_call(&directives, path, &field_context)? {
             field_sources.insert(proto_field_name.clone(), source);
         }
 
@@ -1579,6 +1581,54 @@ pub(crate) fn find_proto_name_for_type_def(
     directive_value(&directives, "proto", path, context, "value")
 }
 
+fn build_source_call(
+    directives: &[Directive],
+    path: &Path,
+    context: &str,
+) -> Result<Option<String>> {
+    let Some(directive) = directive(directives, "source", path, context)? else {
+        return Ok(None);
+    };
+
+    if directive.value("python").is_some() || directive.value("typescript").is_some() {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.source".to_string(),
+            reason: "use a single support helper name, for example `@nexus.source \"workflow_namespace\"`".to_string(),
+        });
+    }
+
+    let Some(helper_name) = directive.value("value") else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.source".to_string(),
+            reason: "missing required support helper name".to_string(),
+        });
+    };
+
+    if !is_valid_support_helper_name(helper_name) {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.source".to_string(),
+            reason: format!("invalid support helper name `{helper_name}`"),
+        });
+    }
+
+    Ok(Some(format!("{helper_name}()")))
+}
+
+fn is_valid_support_helper_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
 fn build_function_field(
     language: Language,
     directives: &[Directive],
@@ -1723,8 +1773,6 @@ fn build_with_arguments_field(
         return Ok(None);
     }
 
-    reject_legacy_with_arguments_directive(directives, path, context)?;
-
     let Some(directive) = directive(directives, "typescript-with-arguments", path, context)? else {
         return Ok(None);
     };
@@ -1858,7 +1906,6 @@ fn find_flattened_function_type_spec(
                 let context = format!("type `{type_name}`");
                 let directives =
                     parse_directives(type_def.docs.contents.as_deref(), path, &context)?;
-                reject_legacy_with_arguments_directive(&directives, path, &context)?;
                 let function = build_function_field_for_type_alias(
                     language,
                     resolve,
@@ -1898,8 +1945,7 @@ fn find_flattened_function_type_spec(
                     return Ok(Some(FlattenedFunctionTypeSpec {
                         args_name,
                         function: function.map(|(_, function)| function),
-                        with_arguments: with_arguments
-                            .map(|(_, with_arguments)| with_arguments),
+                        with_arguments: with_arguments.map(|(_, with_arguments)| with_arguments),
                     }));
                 }
                 match &type_def.kind {
@@ -2015,24 +2061,6 @@ fn validate_function_signature(
 
     Ok(function.params[0].0.clone())
 }
-
-fn reject_legacy_with_arguments_directive(
-    directives: &[Directive],
-    path: &Path,
-    context: &str,
-) -> Result<()> {
-    if directive(directives, "with-arguments", path, context)?.is_some() {
-        return Err(Error::InvalidWitDirective {
-            path: path.to_path_buf(),
-            context: context.to_string(),
-            directive: "@nexus.with-arguments".to_string(),
-            reason: "renamed to `@nexus.typescript-with-arguments`".to_string(),
-        });
-    }
-
-    Ok(())
-}
-
 
 fn build_service(
     language: Language,
@@ -2639,7 +2667,7 @@ interface workflow-service {
     task-queue: string,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source "workflow_namespace"
     namespace: option<string>,
     /// @nexus.omit
     header: placeholder,
@@ -2784,6 +2812,36 @@ interface workflow-service {
             error
                 .to_string()
                 .contains("renamed to `@nexus.typescript-with-arguments`")
+        );
+    }
+
+    #[test]
+    fn rejects_language_specific_source_expressions() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    namespace: option<string>,
+  }
+
+  request-op: func(request: request) -> request;
+}
+"#;
+
+        let error =
+            ApiSpec::parse_for_language(Language::TypeScript, wit, PathBuf::from("inline.wit"))
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("use a single support helper name")
         );
     }
 
@@ -3091,7 +3149,7 @@ interface workflow-service {
     task-queue: task-queue,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source "workflow_namespace"
     namespace: option<string>,
     /// @nexus.omit
     workflow-execution-timeout: placeholder,

@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nexus_api_gen::generate_to_string;
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
+const TYPE_ROUNDTRIP_EXAMPLE_ID: &str = "type-roundtrip";
 
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -217,8 +218,6 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("versioningOverride?: common.VersioningOverride;"));
     assert!(rendered.contains("priority?: common.Priority;"));
     assert!(!rendered.contains("signal: string;"));
-    assert!(rendered.contains("retryPolicy: common.RetryPolicy;"));
-    assert!(rendered.contains("request: common.RetryPolicy,"));
     assert!(rendered.contains("### support.ts"));
     assert!(rendered.contains("### index.ts"));
     assert!(rendered.contains("export * from './support.ts';"));
@@ -277,4 +276,13 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!rendered.contains("export enum WorkflowIdConflictPolicy"));
     assert!(!rendered.contains("signalWithStartWorkflow("));
     assert!(!rendered.contains("from './model_overrides.ts'"));
+
+    let type_roundtrip_rendered = generate_to_string(
+        nexus_api_gen::language::Language::TypeScript,
+        input_path(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
+        &[descriptor_path(&root)],
+    )
+    .unwrap();
+    assert!(type_roundtrip_rendered.contains("retryPolicy: common.RetryPolicy;"));
+    assert!(type_roundtrip_rendered.contains("request: common.RetryPolicy,"));
 }

@@ -13,8 +13,8 @@ Current status:
 Examples are organized by authored input WIT plus per-language example suites:
 
 - `examples/inputs/workflow-service.wit`
-- `examples/python/workflow-service/workflow_service/`
-- `examples/python/workflow-service/test_workflow_service.py`
+- `examples/python/workflow_service/`
+- `examples/python/workflow_service/test_workflow_service.py`
 - `examples/typescript/workflow-service/output/`
 - `examples/typescript/workflow-service/typecheck.ts`
 - `examples/typescript/workflow-service/output.test.ts`
@@ -145,9 +145,7 @@ interface workflow-service {
     task-queue: string,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    /// @nexus.source
-    ///   python="workflow_namespace()"
-    ///   typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source "workflow_namespace"
     namespace: option<string>,
   }
 

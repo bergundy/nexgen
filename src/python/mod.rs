@@ -3168,8 +3168,12 @@ mod tests {
         root.join("examples/inputs/start-workflow.wit")
     }
 
+    fn type_roundtrip_input_path(root: &std::path::Path) -> PathBuf {
+        root.join("examples/inputs/type-roundtrip.wit")
+    }
+
     fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
-        root.join("examples/python/workflow-service/workflow_service")
+        root.join("examples/python/workflow_service")
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -3201,6 +3205,13 @@ mod tests {
                 if path.is_dir() {
                     visit(root, &path, files);
                 } else if path.extension().and_then(|extension| extension.to_str()) == Some("py") {
+                    if path
+                        .file_name()
+                        .and_then(|file_name| file_name.to_str())
+                        .is_some_and(|file_name| file_name.starts_with("test_"))
+                    {
+                        continue;
+                    }
                     files.insert(
                         path.strip_prefix(root).unwrap().to_path_buf(),
                         fs::read_to_string(&path).unwrap(),
@@ -3307,15 +3318,6 @@ mod tests {
             )
         );
         assert!(
-            output.contains(
-                "raise ValueError(\"missing required field ActivityOptions.retry_policy\")"
-            )
-        );
-        assert!(output.contains("if not proto.HasField(\"retry_policy\"):\n            raise ValueError(\"missing required field ActivityOptions.retry_policy\")"));
-        assert!(output.contains("retry_policy = retry_policy_from_proto(proto.retry_policy)"));
-        assert!(output.contains("request: temporalio.common.RetryPolicy"));
-        assert!(output.contains("retry_policy_to_proto(request)"));
-        assert!(
             output.contains("workflow_id_reuse_policy_to_proto(self.workflow_id_reuse_policy)")
         );
         assert!(
@@ -3383,10 +3385,6 @@ mod tests {
         assert!(output.contains("workflow=workflow,"));
         assert!(output.contains("input=normalized_input,"));
         assert!(output.contains("return await _signal_with_start_workflow_execution(request)"));
-        assert!(output.contains("async def activity_options_operation("));
-        assert!(output.contains("task_queue: str | None = None,"));
-        assert!(output.contains("retry_policy: temporalio.common.RetryPolicy,"));
-        assert!(output.contains("request = ActivityOptions("));
         assert!(!output.contains("SignalWithStartWorkflowExecutionRequest.from_proto"));
         assert!(!output.contains(
             "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
@@ -3410,6 +3408,33 @@ mod tests {
         assert!(!output.contains("class VersioningOverride:"));
         assert!(!output.contains("build_signal_with_start_workflow_request"));
         assert!(!output.contains("from model_overrides import"));
+
+        let type_roundtrip_spec =
+            ApiSpec::load_for_language(Language::Python, &type_roundtrip_input_path(&root))
+                .unwrap();
+        let type_roundtrip_output = generate_source(
+            Language::Python,
+            &type_roundtrip_spec,
+            &descriptors,
+            &crate::SupportFiles::default(),
+        )
+        .unwrap();
+        assert!(
+            type_roundtrip_output.contains(
+                "raise ValueError(\"missing required field ActivityOptions.retry_policy\")"
+            )
+        );
+        assert!(type_roundtrip_output.contains("if not proto.HasField(\"retry_policy\"):\n            raise ValueError(\"missing required field ActivityOptions.retry_policy\")"));
+        assert!(
+            type_roundtrip_output
+                .contains("retry_policy = retry_policy_from_proto(proto.retry_policy)")
+        );
+        assert!(type_roundtrip_output.contains("request: temporalio.common.RetryPolicy"));
+        assert!(type_roundtrip_output.contains("retry_policy_to_proto(request)"));
+        assert!(type_roundtrip_output.contains("async def activity_options_operation("));
+        assert!(type_roundtrip_output.contains("task_queue: str | None = None,"));
+        assert!(type_roundtrip_output.contains("retry_policy: temporalio.common.RetryPolicy,"));
+        assert!(type_roundtrip_output.contains("request = ActivityOptions("));
     }
 
     #[test]
@@ -3467,7 +3492,7 @@ interface workflow-service {
     /// @nexus.proto-field "request_id"
     static-summary: string,
     user-metadata: option<user-metadata>,
-    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source "workflow_namespace"
     namespace: option<string>,
     /// @nexus.omit
     workflow-execution-timeout: placeholder,

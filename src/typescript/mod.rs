@@ -2177,6 +2177,10 @@ mod tests {
         root.join("examples/inputs/workflow-service.wit")
     }
 
+    fn type_roundtrip_input_path(root: &std::path::Path) -> PathBuf {
+        root.join("examples/inputs/type-roundtrip.wit")
+    }
+
     fn sample_typescript_output_path(root: &std::path::Path) -> PathBuf {
         root.join("examples/typescript/workflow-service/output")
     }
@@ -2322,8 +2326,7 @@ mod tests {
         assert!(output.contains("priority?: common.Priority;"));
         assert!(!output.contains("signal: string;"));
         assert!(!output.contains("namespace?: string;"));
-        assert!(output.contains("namespace: workflow.workflowInfo().namespace,"));
-        assert!(output.contains("retryPolicy: common.RetryPolicy;"));
+        assert!(output.contains("namespace: workflow_namespace(),"));
         assert!(output.contains("workflowType: workflowTypeToProto("));
         assert!(output.contains("workflow_function_name("));
         assert!(output.contains("input: _RequestArgsToPayloads(model.input),"));
@@ -2351,9 +2354,6 @@ mod tests {
         assert!(output.contains(
             "): temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionRequest | undefined {"
         ));
-        assert!(output.contains("requiredField(model.retryPolicy"));
-        assert!(output.contains("request: common.RetryPolicy"));
-        assert!(output.contains("retryPolicyToProto(request)"));
         assert!(!output.contains("header?:"));
         assert!(!output.contains("export interface Header"));
         assert!(!output.contains("export interface WorkflowType"));
@@ -2378,6 +2378,21 @@ mod tests {
         assert!(!output.contains("export class WorkflowServiceClient"));
         assert!(!output.contains("from './model_overrides.ts'"));
         assert!(!output.contains("// Included from support.$typescript"));
+
+        let type_roundtrip_spec =
+            ApiSpec::load_for_language(Language::TypeScript, &type_roundtrip_input_path(&root))
+                .unwrap();
+        let type_roundtrip_output = generate_source(
+            Language::TypeScript,
+            &type_roundtrip_spec,
+            &descriptors,
+            &support,
+        )
+        .unwrap();
+        assert!(type_roundtrip_output.contains("retryPolicy: common.RetryPolicy;"));
+        assert!(type_roundtrip_output.contains("requiredField(model.retryPolicy"));
+        assert!(type_roundtrip_output.contains("request: common.RetryPolicy"));
+        assert!(type_roundtrip_output.contains("retryPolicyToProto(request)"));
     }
 
     #[test]

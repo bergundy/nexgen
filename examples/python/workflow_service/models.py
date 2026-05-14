@@ -8,24 +8,19 @@ import dataclasses
 import typing
 from datetime import timedelta
 import temporalio.common
-import temporalio.api.activity.v1.message_pb2
 import temporalio.api.sdk.v1.user_metadata_pb2
 import temporalio.api.workflowservice.v1.request_response_pb2
 
 from ._support import (
-    duration_from_proto,
     duration_to_proto,
     memo_to_proto,
     payload_from_proto,
     payload_to_proto,
     payloads_to_proto,
-    priority_from_proto,
     priority_to_proto,
-    retry_policy_from_proto,
     retry_policy_to_proto,
     search_attributes_to_proto,
     signal_function_to_proto,
-    task_queue_from_proto,
     task_queue_to_proto,
     versioning_override_to_proto,
     workflow_id_conflict_policy_to_proto,
@@ -152,48 +147,4 @@ class UserMetadata:
             message.summary.CopyFrom(payload_to_proto(self.static_summary))
         if self.static_details is not None:
             message.details.CopyFrom(payload_to_proto(self.static_details))
-        return message
-
-
-@dataclasses.dataclass(slots=True)
-class ActivityOptions:
-    retry_policy: temporalio.common.RetryPolicy
-    task_queue: str | None = None
-    schedule_to_close_timeout: timedelta | None = None
-    priority: temporalio.common.Priority | None = None
-
-    @classmethod
-    def from_proto(
-        cls,
-        proto: temporalio.api.activity.v1.message_pb2.ActivityOptions,
-    ) -> ActivityOptions:
-        if not proto.HasField("retry_policy"):
-            raise ValueError("missing required field ActivityOptions.retry_policy")
-        retry_policy = retry_policy_from_proto(proto.retry_policy)
-        return cls(
-            task_queue=task_queue_from_proto(proto.task_queue)
-            if proto.HasField("task_queue")
-            else None,
-            schedule_to_close_timeout=duration_from_proto(
-                proto.schedule_to_close_timeout
-            )
-            if proto.HasField("schedule_to_close_timeout")
-            else None,
-            retry_policy=retry_policy,
-            priority=priority_from_proto(proto.priority)
-            if proto.HasField("priority")
-            else None,
-        )
-
-    def to_proto(self) -> temporalio.api.activity.v1.message_pb2.ActivityOptions:
-        message = temporalio.api.activity.v1.message_pb2.ActivityOptions()
-        if self.task_queue is not None:
-            message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
-        if self.schedule_to_close_timeout is not None:
-            message.schedule_to_close_timeout.CopyFrom(
-                duration_to_proto(self.schedule_to_close_timeout)
-            )
-        message.retry_policy.CopyFrom(retry_policy_to_proto(self.retry_policy))
-        if self.priority is not None:
-            message.priority.CopyFrom(priority_to_proto(self.priority))
         return message

@@ -314,7 +314,10 @@ fn discover_example_ids(repo_root: &Path, language: Language) -> Result<Vec<Stri
             } else {
                 return None;
             };
-            if language_root.join(&example_id).is_dir() {
+            if language_root
+                .join(example_directory_name(language, &example_id))
+                .is_dir()
+            {
                 Some(example_id)
             } else {
                 None
@@ -430,12 +433,18 @@ fn example_input_path(repo_root: &Path, example_id: &str) -> PathBuf {
 fn example_output_path(repo_root: &Path, language: Language, example_id: &str) -> PathBuf {
     match language {
         Language::Python => example_language_root(repo_root, language)
-            .join(example_id)
-            .join(python_example_package_name(example_id)),
+            .join(example_directory_name(language, example_id)),
         Language::TypeScript => example_language_root(repo_root, language)
             .join(example_id)
             .join("output"),
         _ => example_language_root(repo_root, language).join(example_id),
+    }
+}
+
+fn example_directory_name(language: Language, example_id: &str) -> String {
+    match language {
+        Language::Python => python_example_package_name(example_id),
+        _ => example_id.to_string(),
     }
 }
 

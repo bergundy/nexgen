@@ -8,13 +8,9 @@ from . import models
 from .operations.signal_with_start_workflow_execution import (
     signal_with_start_workflow_execution,
 )
-from .operations.retry_policy_operation import retry_policy_operation
-from .operations.activity_options_operation import activity_options_operation
 
 __all__ = [
     "models",
-    "activity_options_operation",
-    "retry_policy_operation",
     "signal_with_start_workflow_execution",
     "__nexus_operation_registry__",
 ]
@@ -25,12 +21,4 @@ __nexus_operation_registry__ = {
         "WorkflowService",
         "SignalWithStartWorkflowExecution",
     ): _service.WorkflowService.signal_with_start_workflow_execution,
-    (
-        "WorkflowService",
-        "RetryPolicyOperation",
-    ): _service.WorkflowService.retry_policy_operation,
-    (
-        "WorkflowService",
-        "ActivityOptionsOperation",
-    ): _service.WorkflowService.activity_options_operation,
 }

@@ -2,12 +2,9 @@ import * as common from "@temporalio/common";
 import * as workflow from "@temporalio/workflow";
 
 import {
-  ActivityOptions,
   SignalWithStartWorkflowExecutionRequest,
   WorkflowService,
-  activityOptionsOperation,
   retryPolicyFromProto,
-  retryPolicyOperation,
   signalWithStartWorkflowExecution,
 } from "./output/index.ts";
 
@@ -28,13 +25,6 @@ const typedSearchAttributes = new common.TypedSearchAttributes([
   { key: customerIdKey, value: "customer-123" },
 ]);
 const versioningOverride: common.VersioningOverride = "AUTO_UPGRADE";
-
-const activityOptions: ActivityOptions = {
-  taskQueue,
-  retryPolicy,
-  scheduleToCloseTimeout: "1 minute",
-  priority,
-};
 
 async function exampleWorkflow(attempts: number, note: string): Promise<void> {
   void attempts;
@@ -69,7 +59,6 @@ const request: SignalWithStartWorkflowExecutionRequest<
   priority,
 };
 
-const activityProto = ActivityOptions.toProto(activityOptions);
 const requestProto = SignalWithStartWorkflowExecutionRequest.toProto(request)!;
 const stringNamedRequestProto = SignalWithStartWorkflowExecutionRequest.toProto(
   {
@@ -79,19 +68,11 @@ const stringNamedRequestProto = SignalWithStartWorkflowExecutionRequest.toProto(
     signal: "wake-up",
   },
 );
-const roundTrippedActivity = ActivityOptions.fromProto(activityProto);
 const serviceName: string = WorkflowService.name;
 const retryLimit = retryPolicy.maximumAttempts;
-const nestedRetryLimit = roundTrippedActivity?.retryPolicy.maximumAttempts;
-const roundTrippedTaskQueue: string | undefined =
-  roundTrippedActivity?.taskQueue;
-const roundTrippedTimeout: common.Duration | undefined =
-  roundTrippedActivity?.scheduleToCloseTimeout;
-const roundTrippedPriorityKey = roundTrippedActivity?.priority?.priorityKey;
 const requestNamespace: string | null | undefined = requestProto.namespace;
 const requestTaskQueueName: string | null | undefined =
   requestProto.taskQueue?.name;
-const retryHandle = retryPolicyOperation(retryPolicy);
 const signalHandle: Promise<workflow.ExternalWorkflowHandle> =
   signalWithStartWorkflowExecution({
     workflow: exampleWorkflow,
@@ -149,16 +130,10 @@ signalWithStartWorkflowExecution({
 
 void serviceName;
 void retryLimit;
-void nestedRetryLimit;
-void roundTrippedTaskQueue;
-void roundTrippedTimeout;
-void roundTrippedPriorityKey;
 void requestNamespace;
 void requestTaskQueueName;
 void requestProto;
 void stringNamedRequestProto;
-void activityOptionsOperation(activityOptions);
-void retryHandle;
 void signalHandle;
 void highAritySignalHandle;
 
