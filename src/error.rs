@@ -93,6 +93,12 @@ pub enum Error {
         source: prost::DecodeError,
     },
 
+    #[error("duplicate descriptor {kind} `{name}`")]
+    DuplicateDescriptorDefinition {
+        kind: &'static str,
+        name: String,
+    },
+
     #[error("language `{language}` is not implemented yet")]
     UnsupportedLanguage { language: Language },
 

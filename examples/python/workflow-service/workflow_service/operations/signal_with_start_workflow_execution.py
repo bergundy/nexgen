@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import collections.abc
 import typing
+import typing_extensions
 from datetime import timedelta
 import temporalio.common
 from temporalio import workflow
@@ -24,6 +25,16 @@ def _nexus_normalize_function_args(
     if isinstance(value, tuple):
         return typing.cast(tuple[object, ...], value)
     return (value,)
+
+
+FirstWorkflowArg = typing.TypeVar("FirstWorkflowArg")
+SignalArg1 = typing.TypeVar("SignalArg1")
+SignalArg2 = typing.TypeVar("SignalArg2")
+SignalArg3 = typing.TypeVar("SignalArg3")
+SignalArg4 = typing.TypeVar("SignalArg4")
+SignalArg5 = typing.TypeVar("SignalArg5")
+SignalArg6 = typing.TypeVar("SignalArg6")
+RemainingWorkflowArgs = typing_extensions.TypeVarTuple("RemainingWorkflowArgs")
 
 
 async def _signal_with_start_workflow_execution(
@@ -104,7 +115,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[FirstWorkflowArg](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -136,18 +147,15 @@ async def signal_with_start_workflow_execution[FirstWorkflowArg](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -233,7 +241,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[FirstWorkflowArg](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -266,18 +274,15 @@ async def signal_with_start_workflow_execution[FirstWorkflowArg](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -303,7 +308,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -335,7 +340,7 @@ async def signal_with_start_workflow_execution[SignalArg1](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -366,7 +371,7 @@ async def signal_with_start_workflow_execution[SignalArg1](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -400,19 +405,15 @@ async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -439,7 +440,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -471,7 +472,7 @@ async def signal_with_start_workflow_execution[SignalArg1](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -502,7 +503,7 @@ async def signal_with_start_workflow_execution[SignalArg1](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -536,19 +537,15 @@ async def signal_with_start_workflow_execution[SignalArg1, FirstWorkflowArg](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -575,7 +572,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -607,7 +604,7 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -638,11 +635,7 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2](
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    FirstWorkflowArg,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -676,20 +669,15 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -716,7 +704,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg3](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -749,7 +737,7 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg3](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -781,12 +769,7 @@ async def signal_with_start_workflow_execution[SignalArg1, SignalArg2, SignalArg
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    FirstWorkflowArg,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -821,21 +804,15 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -863,12 +840,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -901,12 +873,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -938,13 +905,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    FirstWorkflowArg,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -979,22 +940,15 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1022,13 +976,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -1061,13 +1009,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -1099,14 +1041,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-    FirstWorkflowArg,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -1141,23 +1076,15 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1185,14 +1112,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-    SignalArg6,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: str,
@@ -1235,14 +1155,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-    SignalArg6,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -1284,15 +1197,7 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-    SignalArg6,
-    FirstWorkflowArg,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -1337,24 +1242,15 @@ async def signal_with_start_workflow_execution[
 
 
 @typing.overload
-async def signal_with_start_workflow_execution[
-    SignalArg1,
-    SignalArg2,
-    SignalArg3,
-    SignalArg4,
-    SignalArg5,
-    SignalArg6,
-    FirstWorkflowArg,
-    *RemainingWorkflowArgs,
-](
+async def signal_with_start_workflow_execution(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,

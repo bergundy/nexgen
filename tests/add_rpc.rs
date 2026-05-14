@@ -55,7 +55,7 @@ fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
 fn add_rpc_matches_signal_with_start_proto_shape_but_not_handwritten_refinements() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
-    let generated = add_rpc_to_string(&descriptors, "SignalWithStartExecution", None).unwrap();
+    let generated = add_rpc_to_string(&[descriptors], "SignalWithStartExecution", None).unwrap();
 
     let generated_python = parse(Language::Python, &generated, "generated-add-rpc.wit");
     let handwritten_python =
@@ -195,7 +195,7 @@ fn add_rpc_can_extend_an_existing_wit_file() {
     let descriptors = descriptor_path(&root);
     let input = root.join(PRIMARY_EXAMPLE_PATH);
     let generated =
-        add_rpc_to_string(&descriptors, "SignalWorkflowExecution", Some(&input)).unwrap();
+        add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input)).unwrap();
 
     assert!(generated.contains("signal-with-start-workflow-execution: func("));
     assert!(generated.contains("signal-workflow-execution: func("));

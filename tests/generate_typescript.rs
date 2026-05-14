@@ -156,7 +156,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::TypeScript,
         input_path(&root, PRIMARY_EXAMPLE_ID),
-        descriptor_path(&root),
+        &[descriptor_path(&root)],
     )
     .unwrap();
 

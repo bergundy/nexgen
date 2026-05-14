@@ -25,6 +25,7 @@ target
 __pycache__/
 *.pyc
 .pytest_cache/
+examples/python/.idea/
 
 # TypeScript validation app
 examples/typescript/node_modules/

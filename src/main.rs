@@ -37,8 +37,8 @@ struct GenerateArgs {
     lang: CliLanguage,
     #[arg(long)]
     input: PathBuf,
-    #[arg(long)]
-    descriptors: PathBuf,
+    #[arg(long, required = true)]
+    descriptors: Vec<PathBuf>,
     #[arg(long)]
     output: PathBuf,
     #[arg(long)]
@@ -55,8 +55,8 @@ struct BuildExamplesArgs {
 
 #[derive(Args)]
 struct AddRpcArgs {
-    #[arg(long)]
-    descriptors: PathBuf,
+    #[arg(long, required = true)]
+    descriptors: Vec<PathBuf>,
     #[arg(long)]
     rpc: String,
     #[arg(long)]
@@ -110,7 +110,7 @@ fn main() -> ExitCode {
         Commands::Generate(args) => generate_to_file(&GenerateRequest {
             language: args.lang.into(),
             input_path: args.input,
-            descriptor_path: args.descriptors,
+            descriptor_paths: args.descriptors,
             output_path: args.output,
             format: args.format,
         }),
@@ -119,7 +119,7 @@ fn main() -> ExitCode {
             example_ids: args.example_ids,
         }),
         Commands::AddRpc(args) => add_rpc_to_file(&AddRpcRequest {
-            descriptor_path: args.descriptors,
+            descriptor_paths: args.descriptors,
             rpc_name: args.rpc,
             input_path: args.input,
             output_path: args.output,

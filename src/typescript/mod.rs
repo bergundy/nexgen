@@ -1083,14 +1083,14 @@ fn optional_to_proto_expr_from_expr(resolved_type: &ResolvedFieldType, value_exp
 fn required_function_to_proto_expr(owner_name: &str, field_name: &str, converter: &str) -> String {
     let required_value =
         required_field_expr(&format!("model.{field_name}"), owner_name, field_name);
-    function_converter_expr(converter, &required_value)
+    format!("{converter}({required_value})")
 }
 
 fn optional_function_to_proto_expr(field_name: &str, converter: &str) -> String {
     let value_expr = format!("model.{field_name}");
     format!(
         "{value_expr} == null ? undefined : {}",
-        function_converter_expr(converter, &value_expr)
+        format!("{converter}({value_expr})")
     )
 }
 
@@ -1140,10 +1140,6 @@ fn function_value_to_proto_expr(resolved_type: &ResolvedFieldType, name_expr: &s
         },
         _ => name_expr.to_string(),
     }
-}
-
-fn function_converter_expr(converter: &str, value_expr: &str) -> String {
-    format!("{converter}({value_expr})")
 }
 
 fn with_arguments_name_expr(name_expr_template: &str, value_expr: &str) -> String {

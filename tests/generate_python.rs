@@ -122,6 +122,33 @@ fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: 
     assert!(format_status.success());
 }
 
+fn assert_python_310_syntax_compatible(package_dir: &Path) {
+    let checker = r#"
+import ast
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+for path in sorted(root.rglob("*.py")):
+    source = path.read_text()
+    try:
+        ast.parse(source, filename=str(path), feature_version=(3, 10))
+    except SyntaxError as exc:
+        print(f"{path}: {exc}")
+        raise
+"#;
+    let status = Command::new(
+        project_root()
+            .join("examples/python/.venv/bin/python")
+            .to_str()
+            .unwrap(),
+    )
+    .args(["-c", checker, package_dir.to_str().unwrap()])
+    .status()
+    .unwrap();
+    assert!(status.success());
+}
+
 fn unique_output_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -136,6 +163,7 @@ fn python_examples_generation_matches_checked_in_output() {
     for example_id in python_example_ids(&root) {
         let output_path = unique_output_path(&format!("python-{example_id}"));
         generate_formatted_python_output(&root, &example_id, &output_path);
+        assert_python_310_syntax_compatible(&output_path);
         let rendered = read_python_package_files(&output_path);
         let expected = read_python_package_files(&python_output_path(&root, &example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
@@ -188,7 +216,7 @@ fn python_request_models_are_write_only() {
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::Python,
         input_path(&root, PRIMARY_EXAMPLE_ID),
-        descriptor_path(&root),
+        &[descriptor_path(&root)],
     )
     .unwrap();
 
@@ -217,10 +245,13 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains(
         "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],"
     ));
+    assert!(rendered.contains("FirstWorkflowArg = typing.TypeVar(\"FirstWorkflowArg\")"));
     assert!(rendered.contains(
-        "async def signal_with_start_workflow_execution[FirstWorkflowArg, *RemainingWorkflowArgs]("
+        "RemainingWorkflowArgs = typing_extensions.TypeVarTuple(\"RemainingWorkflowArgs\")"
     ));
-    assert!(rendered.contains("input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],"));
+    assert!(rendered.contains(
+        "input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
+    ));
     assert!(rendered.contains(
         "signal: collections.abc.Callable[[typing.Any, SignalArg1], None | collections.abc.Awaitable[None]],"
     ));

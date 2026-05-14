@@ -6,6 +6,7 @@ from __future__ import annotations
 import collections.abc
 import dataclasses
 import typing
+import typing_extensions
 from temporalio import workflow
 import temporalio.api.workflowservice.v1.request_response_pb2
 
@@ -25,6 +26,10 @@ def _nexus_normalize_function_args(
     if isinstance(value, tuple):
         return typing.cast(tuple[object, ...], value)
     return (value,)
+
+
+FirstWorkflowArg = typing.TypeVar("FirstWorkflowArg")
+RemainingWorkflowArgs = typing_extensions.TypeVarTuple("RemainingWorkflowArgs")
 
 
 @dataclasses.dataclass
@@ -134,7 +139,7 @@ async def restart_workflow(
 
 
 @typing.overload
-async def restart_workflow[FirstWorkflowArg](
+async def restart_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -146,15 +151,15 @@ async def restart_workflow[FirstWorkflowArg](
 
 
 @typing.overload
-async def restart_workflow[FirstWorkflowArg, *RemainingWorkflowArgs](
+async def restart_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, *RemainingWorkflowArgs],
+        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],
+    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
 ) -> StartedWorkflow: ...
 
 

@@ -32,13 +32,13 @@ pub struct SupportFiles {
 pub struct GenerateRequest {
     pub language: Language,
     pub input_path: PathBuf,
-    pub descriptor_path: PathBuf,
+    pub descriptor_paths: Vec<PathBuf>,
     pub output_path: PathBuf,
     pub format: bool,
 }
 
 pub struct AddRpcRequest {
-    pub descriptor_path: PathBuf,
+    pub descriptor_paths: Vec<PathBuf>,
     pub rpc_name: String,
     pub input_path: Option<PathBuf>,
     pub output_path: Option<PathBuf>,
@@ -57,11 +57,11 @@ pub struct BuildExamplesRequest {
 pub fn generate_to_string(
     language: Language,
     input_path: impl AsRef<Path>,
-    descriptor_path: impl AsRef<Path>,
+    descriptor_paths: &[PathBuf],
 ) -> Result<String> {
     let input_path = input_path.as_ref();
     let spec = ApiSpec::load_for_language(language, input_path)?;
-    let descriptors = DescriptorIndex::load(descriptor_path.as_ref())?;
+    let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
     let support = load_support_files(language, &spec, input_path)?;
     let generated = generate_files(language, &spec, &descriptors, &support)?;
     Ok(match generated.layout {
@@ -75,7 +75,7 @@ pub fn generate_to_string(
 
 pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
     let spec = ApiSpec::load_for_language(request.language, &request.input_path)?;
-    let descriptors = DescriptorIndex::load(&request.descriptor_path)?;
+    let descriptors = DescriptorIndex::load_many(&request.descriptor_paths)?;
     let support = load_support_files(request.language, &spec, &request.input_path)?;
     let generated = generate_files(request.language, &spec, &descriptors, &support)?;
 
@@ -89,11 +89,11 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
 }
 
 pub fn add_rpc_to_string(
-    descriptor_path: impl AsRef<Path>,
+    descriptor_paths: &[PathBuf],
     rpc_name: &str,
     input_path: Option<&Path>,
 ) -> Result<String> {
-    let descriptors = DescriptorIndex::load(descriptor_path.as_ref())?;
+    let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
     if let Some(input_path) = input_path {
         let input = fs::read_to_string(input_path).map_err(|source| error::Error::ReadFile {
             path: input_path.to_path_buf(),
@@ -107,7 +107,7 @@ pub fn add_rpc_to_string(
 
 pub fn add_rpc_to_file(request: &AddRpcRequest) -> Result<()> {
     let output = add_rpc_to_string(
-        &request.descriptor_path,
+        &request.descriptor_paths,
         &request.rpc_name,
         request.input_path.as_deref(),
     )?;
@@ -395,7 +395,7 @@ fn build_example(repo_root: &Path, language: Language, example_id: &str) -> Resu
     generate_to_file(&GenerateRequest {
         language,
         input_path,
-        descriptor_path,
+        descriptor_paths: vec![descriptor_path],
         output_path: output_path.clone(),
         format: false,
     })?;

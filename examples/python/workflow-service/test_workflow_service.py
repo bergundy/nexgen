@@ -15,6 +15,7 @@ import temporalio.api.common.v1.message_pb2 as common_pb2
 import temporalio.api.workflowservice.v1 as workflowservice_v1
 import temporalio.common
 import temporalio.workflow
+from typing_extensions import assert_type
 
 APP_ROOT = Path(__file__).resolve().parent
 OUTPUT_PATH = APP_ROOT / "workflow_service"
@@ -414,7 +415,7 @@ def assert_handle_matches(
     handle: temporalio.workflow.ExternalWorkflowHandle[typing.Any],
     workflow_id: str,
 ) -> None:
-    _ = typing.assert_type(
+    _ = assert_type(
         handle,
         temporalio.workflow.ExternalWorkflowHandle[typing.Any],
     )
