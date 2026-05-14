@@ -135,14 +135,6 @@ fn typescript_example_suite_typechecks_and_tests() {
     let example_dir = typescript_root(&root);
     ensure_typescript_dependencies(&root);
 
-    let build_status = Command::new("npm")
-        .current_dir(&example_dir)
-        .env("NEXUS_API_GEN_BIN", env!("CARGO_BIN_EXE_nexus-api-gen"))
-        .args(["run", "build-outputs"])
-        .status()
-        .unwrap();
-    assert!(build_status.success());
-
     let typecheck_status = Command::new("npm")
         .current_dir(&example_dir)
         .args(["run", "typecheck"])
@@ -204,7 +196,8 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("request: common.RetryPolicy,"));
     assert!(rendered.contains("// Included from support.$typescript"));
     assert!(rendered.contains("export function retryPolicyFromProto("));
-    assert!(rendered.contains("_RequestFunctionName("));
+    assert!(rendered.contains("workflowType: workflowTypeToProto("));
+    assert!(rendered.contains("workflow_function_name("));
     assert!(rendered.contains("input: _RequestArgsToPayloads(model.input),"));
     assert!(rendered.contains("signalInput: _RequestArgsToPayloads(model.signalInput),"));
     assert!(

@@ -56,6 +56,7 @@ describe("start-workflow generated output", () => {
   test("exposes workflow service metadata", () => {
     expect(WorkflowService.name).toBe("WorkflowService");
     expect(WorkflowService.operations.startWorkflow.name).toBe("StartWorkflow");
+    expect(WorkflowService.operations.restartWorkflow.name).toBe("RestartWorkflow");
     expect(WorkflowService.operations.cancelWorkflow.name).toBe("CancelWorkflow");
   });
 
@@ -86,6 +87,12 @@ describe("start-workflow generated output", () => {
         }),
       })
       .mockResolvedValueOnce({
+        result: async () => ({
+          runId: "run-456",
+          started: true,
+        }),
+      })
+      .mockResolvedValueOnce({
         result: async () => ({}),
       });
 
@@ -106,9 +113,33 @@ describe("start-workflow generated output", () => {
       endpoint: "__temporal_system",
     });
 
-    await handle.cancel();
+    const restartedHandle = await handle.restartWorkflow(
+      exampleWorkflow,
+      "demo-task-queue",
+    );
+
+    expect(restartedHandle).toBeInstanceOf(StartedWorkflow);
+    expect(restartedHandle.namespace).toBe("workflow-namespace");
+    expect(restartedHandle.workflowId).toBe("workflow-id");
+    expect(restartedHandle.runId).toBe("run-456");
     expect(runtime.startOperation).toHaveBeenNthCalledWith(
       2,
+      WorkflowService.operations.restartWorkflow,
+      {
+        namespace: "workflow-namespace",
+        workflowId: "workflow-id",
+        workflowType: {
+          name: "exampleWorkflow",
+        },
+        taskQueue: {
+          name: "demo-task-queue",
+        },
+      },
+    );
+
+    await handle.cancel();
+    expect(runtime.startOperation).toHaveBeenNthCalledWith(
+      3,
       WorkflowService.operations.cancelWorkflow,
       {
         namespace: "workflow-namespace",

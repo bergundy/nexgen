@@ -4,8 +4,8 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use nexus_api_gen::language::Language;
 use nexus_api_gen::{
-    AddRpcRequest, DebugWitDirRequest, GenerateRequest, add_rpc_to_file, debug_wit_dir_to_file,
-    generate_to_file,
+    AddRpcRequest, BuildExamplesRequest, DebugWitDirRequest, GenerateRequest, add_rpc_to_file,
+    build_examples, debug_wit_dir_to_file, generate_to_file,
 };
 
 #[derive(Parser)]
@@ -21,6 +21,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Generate(GenerateArgs),
+    #[command(about = "Rebuild the checked-in Python and TypeScript example outputs")]
+    BuildExamples(BuildExamplesArgs),
     #[command(
         about = "Add an RPC scaffold to an existing WIT file, or generate standalone WIT for one RPC"
     )]
@@ -41,6 +43,14 @@ struct GenerateArgs {
     output: PathBuf,
     #[arg(long)]
     format: bool,
+}
+
+#[derive(Args)]
+struct BuildExamplesArgs {
+    #[arg(long = "lang", value_enum)]
+    langs: Vec<ExampleCliLanguage>,
+    #[arg(value_name = "EXAMPLE_ID")]
+    example_ids: Vec<String>,
 }
 
 #[derive(Args)]
@@ -69,11 +79,26 @@ enum CliLanguage {
     Typescript,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum ExampleCliLanguage {
+    Python,
+    Typescript,
+}
+
 impl From<CliLanguage> for Language {
     fn from(value: CliLanguage) -> Self {
         match value {
             CliLanguage::Python => Language::Python,
             CliLanguage::Typescript => Language::TypeScript,
+        }
+    }
+}
+
+impl From<ExampleCliLanguage> for Language {
+    fn from(value: ExampleCliLanguage) -> Self {
+        match value {
+            ExampleCliLanguage::Python => Language::Python,
+            ExampleCliLanguage::Typescript => Language::TypeScript,
         }
     }
 }
@@ -88,6 +113,10 @@ fn main() -> ExitCode {
             descriptor_path: args.descriptors,
             output_path: args.output,
             format: args.format,
+        }),
+        Commands::BuildExamples(args) => build_examples(&BuildExamplesRequest {
+            languages: args.langs.into_iter().map(Language::from).collect(),
+            example_ids: args.example_ids,
         }),
         Commands::AddRpc(args) => add_rpc_to_file(&AddRpcRequest {
             descriptor_path: args.descriptors,

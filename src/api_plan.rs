@@ -317,13 +317,14 @@ fn root_model_capabilities(
                 continue;
             }
 
-            let output_message = descriptors
-                .message(operation.output_proto())
-                .ok_or_else(|| Error::UnknownOperationOutputProto {
-                    service: service.name.clone(),
-                    operation: operation.name.clone(),
-                    type_name: operation.output_proto().to_string(),
-                })?;
+            let output_message =
+                descriptors
+                    .message(operation.output_proto())
+                    .ok_or_else(|| Error::UnknownOperationOutputProto {
+                        service: service.name.clone(),
+                        operation: operation.name.clone(),
+                        type_name: operation.output_proto().to_string(),
+                    })?;
             capabilities
                 .entry(output_message.full_name.clone())
                 .or_default()
@@ -483,12 +484,15 @@ fn plan_resource(
                     operation_name,
                     request_plan,
                 } => {
-                    let operation = operations.iter().find(|operation| operation.name == operation_name).ok_or_else(|| Error::InvalidResourceMethod {
-                        service: service.name.clone(),
-                        resource: resource.name.to_upper_camel_case(),
-                        method: method.name.to_string(),
-                        reason: format!("bound operation `{operation_name}` was not rendered"),
-                    })?;
+                    let operation = operations
+                        .iter()
+                        .find(|operation| operation.name == operation_name)
+                        .ok_or_else(|| Error::InvalidResourceMethod {
+                            service: service.name.clone(),
+                            resource: resource.name.to_upper_camel_case(),
+                            method: method.name.to_string(),
+                            reason: format!("bound operation `{operation_name}` was not rendered"),
+                        })?;
                     PlannedResourceMethodBindingSpec::Operation {
                         operation_name: operation.name.to_string(),
                         request_plan: request_plan.clone(),
@@ -500,12 +504,11 @@ fn plan_resource(
 
             Ok(PlannedResourceMethod {
                 name: method.name.clone(),
-                params: method
-                    .params
-                    .iter()
-                    .map(planned_resource_field)
-                    .collect(),
-                result_annotation: method.result.as_ref().map(|result| result.annotation.clone()),
+                params: method.params.iter().map(planned_resource_field).collect(),
+                result_annotation: method
+                    .result
+                    .as_ref()
+                    .map(|result| result.annotation.clone()),
                 binding,
             })
         })

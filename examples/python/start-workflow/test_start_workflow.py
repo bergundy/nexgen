@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Generator, Sequence
-import importlib.util
 from pathlib import Path
 import sys
 import typing
@@ -13,24 +12,18 @@ import temporalio.api.workflowservice.v1 as workflowservice_v1
 import temporalio.workflow
 
 APP_ROOT = Path(__file__).resolve().parent
-OUTPUT_PATH = APP_ROOT / "output.py"
+OUTPUT_PATH = APP_ROOT / "start_workflow"
 TASK_QUEUE = "demo-task-queue"
 
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
-def load_output_module() -> typing.Any:
-    spec = importlib.util.spec_from_file_location(
-        "generated_start_workflow_output",
-        OUTPUT_PATH,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"failed to load generated module from {OUTPUT_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+import start_workflow as output
+import start_workflow.models as output_models
 
-
-output: typing.Any = load_output_module()
+START_WORKFLOW_OPERATION = output.__nexus_operation_registry__[("WorkflowService", "StartWorkflow")]
+RESTART_WORKFLOW_OPERATION = output.__nexus_operation_registry__[("WorkflowService", "RestartWorkflow")]
+CANCEL_WORKFLOW_OPERATION = output.__nexus_operation_registry__[("WorkflowService", "CancelWorkflow")]
 
 
 @temporalio.workflow.defn
@@ -82,7 +75,7 @@ class FakeNexusClient:
         input: object,
     ) -> FakeOperationHandle:
         self.calls.append((operation, input))
-        if operation is output.WorkflowService.start_workflow:
+        if operation is START_WORKFLOW_OPERATION:
             assert isinstance(input, workflowservice_v1.StartWorkflowExecutionRequest)
             assert input.namespace == "workflow-namespace"
             assert input.workflow_id == "workflow-id"
@@ -97,7 +90,20 @@ class FakeNexusClient:
             response.started = True
             return FakeOperationHandle(response)
 
-        assert operation is output.WorkflowService.cancel_workflow
+        if operation is RESTART_WORKFLOW_OPERATION:
+            assert isinstance(input, workflowservice_v1.StartWorkflowExecutionRequest)
+            assert input.namespace == "workflow-namespace"
+            assert input.workflow_id == "workflow-id"
+            assert input.workflow_type.name == "ExampleWorkflow"
+            assert input.task_queue.name == TASK_QUEUE
+            assert not input.HasField("input")
+
+            response = workflowservice_v1.StartWorkflowExecutionResponse()
+            response.run_id = "run-456"
+            response.started = True
+            return FakeOperationHandle(response)
+
+        assert operation is CANCEL_WORKFLOW_OPERATION
         assert isinstance(input, workflowservice_v1.RequestCancelWorkflowExecutionRequest)
         assert input.namespace == "workflow-namespace"
         assert input.workflow_execution.workflow_id == "workflow-id"
@@ -107,12 +113,12 @@ class FakeNexusClient:
 
 
 @pytest.fixture
-def context() -> tuple[typing.Any, FakeNexusClient]:
+def fake_client() -> FakeNexusClient:
     fake_client = FakeNexusClient()
     fake_payload_converter = FakePayloadConverter()
 
     def fake_create_nexus_client(*, service: type[object], endpoint: str) -> FakeNexusClient:
-        assert service is output.WorkflowService
+        assert service.__name__ == "WorkflowService"
         assert endpoint == "__temporal_system"
         return fake_client
 
@@ -125,19 +131,19 @@ def context() -> tuple[typing.Any, FakeNexusClient]:
     def fake_workflow_info() -> FakeWorkflowInfo:
         return FakeWorkflowInfo()
 
-    workflow_module = output.workflow  # pyright: ignore[reportPrivateLocalImportUsage]
+    workflow_module = temporalio.workflow
     setattr(workflow_module, "create_nexus_client", fake_create_nexus_client)
     setattr(workflow_module, "payload_converter", fake_workflow_payload_converter)
     setattr(workflow_module, "info", fake_workflow_info)
 
-    client = output.WorkflowServiceClient()
-    return client, fake_client
+    return fake_client
 
 
 def test_generated_metadata() -> None:
-    assert OUTPUT_PATH.exists(), f"expected generated file at {OUTPUT_PATH}"
-    start_operation = output.WorkflowService.start_workflow
-    cancel_operation = output.WorkflowService.cancel_workflow
+    assert OUTPUT_PATH.exists(), f"expected generated package at {OUTPUT_PATH}"
+    start_operation = START_WORKFLOW_OPERATION
+    restart_operation = RESTART_WORKFLOW_OPERATION
+    cancel_operation = CANCEL_WORKFLOW_OPERATION
     registry = output.__nexus_operation_registry__
 
     assert isinstance(start_operation, Operation)
@@ -146,15 +152,21 @@ def test_generated_metadata() -> None:
     assert isinstance(cancel_operation, Operation)
     assert cancel_operation.name == "CancelWorkflow"
     assert registry[("WorkflowService", "CancelWorkflow")] is cancel_operation
+    assert isinstance(restart_operation, Operation)
+    assert restart_operation.name == "RestartWorkflow"
+    assert registry[("WorkflowService", "RestartWorkflow")] is restart_operation
+    assert not hasattr(output, "WorkflowService")
+    assert not hasattr(output, "StartWorkflowExecutionRequest")
+    assert hasattr(output, "StartedWorkflow")
 
 
 def test_cancel_workflow_request_serializes(
-    context: tuple[typing.Any, FakeNexusClient],
+    fake_client: FakeNexusClient,
 ) -> None:
-    _client, _fake_client = context
+    _ = fake_client
 
-    request = output.RequestCancelWorkflowExecutionRequest(
-        workflow_execution=output.WorkflowExecution(workflow_id="workflow-id"),
+    request = output_models.RequestCancelWorkflowExecutionRequest(
+        workflow_execution=output_models.WorkflowExecution(workflow_id="workflow-id"),
         reason="user requested cancellation",
     )
     proto = request.to_proto()
@@ -166,13 +178,11 @@ def test_cancel_workflow_request_serializes(
 
 
 async def test_start_workflow_returns_wrapper_handle(
-    context: tuple[typing.Any, FakeNexusClient],
+    fake_client: FakeNexusClient,
 ) -> None:
-    client, fake_client = context
-
-    handle = await client.start_workflow_args(
+    handle = await output.start_workflow(
         workflow=ExampleWorkflow.run,
-        input=("customer-123",),
+        input="customer-123",
         workflow_id="workflow-id",
         task_queue=TASK_QUEUE,
     )
@@ -186,7 +196,7 @@ async def test_start_workflow_returns_wrapper_handle(
     await handle.cancel()
     assert len(fake_client.calls) == 2
     cancel_operation, cancel_request = fake_client.calls[1]
-    assert cancel_operation is output.WorkflowService.cancel_workflow
+    assert cancel_operation is CANCEL_WORKFLOW_OPERATION
     assert isinstance(
         cancel_request,
         workflowservice_v1.RequestCancelWorkflowExecutionRequest,
@@ -195,5 +205,27 @@ async def test_start_workflow_returns_wrapper_handle(
     assert cancel_request.workflow_execution.workflow_id == "workflow-id"
     assert cancel_request.workflow_execution.run_id == "run-123"
 
+    restarted_handle = await handle.restart_workflow(
+        workflow=ExampleWorkflow.run,
+        task_queue=TASK_QUEUE,
+    )
+    assert len(fake_client.calls) == 3
+    assert isinstance(restarted_handle, output.StartedWorkflow)
+    assert restarted_handle.namespace == "workflow-namespace"
+    assert restarted_handle.workflow_id == "workflow-id"
+    assert restarted_handle.run_id == "run-456"
+
+    restart_operation, restart_request = fake_client.calls[2]
+    assert restart_operation is RESTART_WORKFLOW_OPERATION
+    assert isinstance(
+        restart_request,
+        workflowservice_v1.StartWorkflowExecutionRequest,
+    )
+    assert restart_request.namespace == "workflow-namespace"
+    assert restart_request.workflow_id == "workflow-id"
+    assert restart_request.workflow_type.name == "ExampleWorkflow"
+    assert restart_request.task_queue.name == TASK_QUEUE
+    assert not restart_request.HasField("input")
+
     with pytest.raises(NotImplementedError):
-        await handle.get_result()
+        await restarted_handle.get_result()

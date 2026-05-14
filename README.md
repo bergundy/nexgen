@@ -13,7 +13,7 @@ Current status:
 Examples are organized by authored input WIT plus per-language example suites:
 
 - `examples/inputs/workflow-service.wit`
-- `examples/python/workflow-service/output.py`
+- `examples/python/workflow-service/workflow_service/`
 - `examples/python/workflow-service/test_workflow_service.py`
 - `examples/typescript/workflow-service/output.ts`
 - `examples/typescript/workflow-service/typecheck.ts`
@@ -26,7 +26,7 @@ cargo run -- generate \
   --lang python \
   --input examples/inputs/workflow-service.wit \
   --descriptors examples/descriptors/temporal_api.bin \
-  --output /tmp/output.py
+  --output /tmp/output
 ```
 
 ```bash
@@ -35,6 +35,20 @@ cargo run -- generate \
   --input examples/inputs/workflow-service.wit \
   --descriptors examples/descriptors/temporal_api.bin \
   --output /tmp/output.ts
+```
+
+Rebuild the checked-in example outputs:
+
+```bash
+cargo build-examples
+```
+
+Rebuild one language or one example only:
+
+```bash
+cargo build-examples --lang python
+cargo build-examples workflow-service
+cargo build-examples --lang typescript start-workflow
 ```
 
 Add `--format` to run a formatter after generation:
@@ -47,7 +61,7 @@ cargo run -- generate \
   --lang python \
   --input examples/inputs/workflow-service.wit \
   --descriptors examples/descriptors/temporal_api.bin \
-  --output /tmp/output.py \
+  --output /tmp/output \
   --format
 ```
 
@@ -108,7 +122,7 @@ The tool also ships a bundled WIT package of reusable semantic/common types:
 
 - `nexus:temporal-types/model@1.0.0`
 
-That bundled package can also contribute shared support snippets. Input WIT files can add their own extra support with `@nexus.support`, and all selected support fragments are concatenated into the generated output in declaration order.
+That bundled package can also contribute shared support snippets. Input WIT files can add their own extra support with `@nexus.support`. Python support fragments are copied into the generated `support/` package, and TypeScript support fragments are concatenated into the generated file.
 
 Example:
 
@@ -132,7 +146,7 @@ interface workflow-service {
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
     /// @nexus.source
-    ///   python="workflow.info().namespace"
+    ///   python="workflow_namespace()"
     ///   typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
   }
@@ -156,18 +170,23 @@ interface workflow-service {
 Validate the Python examples:
 
 ```bash
+cargo build-examples --lang python
 cd examples/python
-uv run build_outputs.py
 uv run pytest
 uv run basedpyright
 ```
 
+`cargo test` validates the checked-in example outputs as-is. Use the build step above
+when you want to refresh them.
+
 Validate the TypeScript examples:
 
 ```bash
+cargo build-examples --lang typescript
 cd examples/typescript
 npm install
-npm run build-outputs
 npm run test
 npm run typecheck
 ```
+
+Likewise, `cargo test` does not rebuild the checked-in TypeScript example output.

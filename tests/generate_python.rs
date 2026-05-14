@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use heck::ToSnakeCase;
 use nexus_api_gen::generate_to_string;
+use nexus_api_gen::generator::{GeneratedOutputLayout, generate_files};
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
 
@@ -33,7 +36,9 @@ fn input_path(root: &Path, example_id: &str) -> PathBuf {
 }
 
 fn python_output_path(root: &Path, example_id: &str) -> PathBuf {
-    python_root(root).join(example_id).join("output.py")
+    python_root(root)
+        .join(example_id)
+        .join(example_id.to_snake_case())
 }
 
 fn python_example_ids(root: &Path) -> Vec<String> {
@@ -59,6 +64,30 @@ fn python_example_ids(root: &Path) -> Vec<String> {
         .collect::<Vec<_>>();
     ids.sort();
     ids
+}
+
+fn read_python_package_files(dir: &Path) -> BTreeMap<PathBuf, String> {
+    fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, String>) {
+        let mut entries = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("py") {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read_to_string(&path).unwrap(),
+                );
+            }
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    visit(dir, dir, &mut files);
+    files
 }
 
 fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: &Path) {
@@ -98,7 +127,7 @@ fn unique_output_path(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}.py"))
+    std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}"))
 }
 
 #[test]
@@ -107,10 +136,10 @@ fn python_examples_generation_matches_checked_in_output() {
     for example_id in python_example_ids(&root) {
         let output_path = unique_output_path(&format!("python-{example_id}"));
         generate_formatted_python_output(&root, &example_id, &output_path);
-        let rendered = fs::read_to_string(&output_path).unwrap();
-        let expected = fs::read_to_string(python_output_path(&root, &example_id)).unwrap();
+        let rendered = read_python_package_files(&output_path);
+        let expected = read_python_package_files(&python_output_path(&root, &example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
-        fs::remove_file(output_path).unwrap();
+        fs::remove_dir_all(output_path).unwrap();
     }
 }
 
@@ -118,14 +147,6 @@ fn python_examples_generation_matches_checked_in_output() {
 fn python_example_suite_type_checks_and_runs() {
     let root = project_root();
     let example_dir = python_root(&root);
-
-    let build_status = Command::new("uv")
-        .current_dir(&example_dir)
-        .env("NEXUS_API_GEN_BIN", env!("CARGO_BIN_EXE_nexus-api-gen"))
-        .args(["run", "build_outputs.py"])
-        .status()
-        .unwrap();
-    assert!(build_status.success());
 
     let typecheck_status = Command::new("uv")
         .current_dir(&example_dir)
@@ -145,6 +166,25 @@ fn python_example_suite_type_checks_and_runs() {
 #[test]
 fn python_request_models_are_write_only() {
     let root = project_root();
+    let spec = nexus_api_gen::spec::ApiSpec::load_for_language(
+        nexus_api_gen::language::Language::Python,
+        &input_path(&root, PRIMARY_EXAMPLE_ID),
+    )
+    .unwrap();
+    let descriptors =
+        nexus_api_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
+    let generated = generate_files(
+        nexus_api_gen::language::Language::Python,
+        &spec,
+        &descriptors,
+        &nexus_api_gen::SupportFiles::default(),
+    )
+    .unwrap();
+    assert_eq!(generated.layout, GeneratedOutputLayout::Directory);
+    let models = generated
+        .files
+        .get(&PathBuf::from("models.py"))
+        .expect("Python package should include models.py");
     let rendered = generate_to_string(
         nexus_api_gen::language::Language::Python,
         input_path(&root, PRIMARY_EXAMPLE_ID),
@@ -156,54 +196,60 @@ fn python_request_models_are_write_only() {
     assert!(!rendered.contains(
         "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
     ));
-    assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]:"));
+    assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest:"));
     assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None"));
     assert!(!rendered.contains("(typing.TypedDict, total=False):"));
     assert!(!rendered.contains("typing.Unpack["));
     assert!(!rendered.contains("namespace: str | None = None"));
     assert!(!rendered.contains("namespace: str | None"));
-    assert!(rendered.contains("message.namespace = workflow.info().namespace"));
+    assert!(rendered.contains("message.namespace = workflow_namespace()"));
     assert!(rendered.contains("result = await handle"));
     assert!(rendered.contains(
         "return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
     ));
-    assert!(rendered.contains("async def signal_with_start_workflow_execution[*WorkflowArgs]("));
-    assert!(rendered.contains("request: SignalWithStartWorkflowExecutionRequest[*WorkflowArgs]"));
+    assert!(rendered.contains("async def _signal_with_start_workflow_execution("));
+    assert!(rendered.contains("request: SignalWithStartWorkflowExecutionRequest"));
     assert!(rendered.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
-    assert!(rendered.contains("async def signal_with_start_workflow_execution_args("));
-    assert!(rendered.contains("    @typing.overload"));
+    assert!(rendered.contains("async def signal_with_start_workflow_execution("));
+    assert!(rendered.contains("@typing.overload"));
     assert!(rendered.contains("workflow: str,"));
     assert!(rendered.contains("input: tuple[typing.Any, ...] | None = ...,"));
     assert!(rendered.contains(
         "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[typing.Any]],"
     ));
     assert!(rendered.contains(
-        "async def signal_with_start_workflow_execution_args[FirstWorkflowArg, *RemainingWorkflowArgs]("
+        "async def signal_with_start_workflow_execution[FirstWorkflowArg, *RemainingWorkflowArgs]("
     ));
     assert!(rendered.contains("input: tuple[FirstWorkflowArg, *RemainingWorkflowArgs],"));
     assert!(rendered.contains(
         "signal: collections.abc.Callable[[typing.Any, SignalArg1], None | collections.abc.Awaitable[None]],"
     ));
     assert!(rendered.contains("signal_input: tuple[SignalArg1],"));
-    assert!(rendered.contains("        *,"));
+    assert!(rendered.contains("    *,"));
     assert!(rendered.contains(
         "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[typing.Any]],"
     ));
     assert!(rendered.contains(
         "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
     ));
-    assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None,"));
-    assert!(
-        rendered.contains(
-            "request = SignalWithStartWorkflowExecutionRequest[*tuple[typing.Any, ...]]("
-        )
-    );
+    assert!(rendered.contains("input: object | tuple[object, ...] | None = None,"));
+    assert!(rendered.contains("request = SignalWithStartWorkflowExecutionRequest("));
     assert!(rendered.contains("workflow=workflow,"));
-    assert!(rendered.contains("input=input,"));
-    assert!(rendered.contains("return await self.signal_with_start_workflow_execution(request)"));
-    assert!(rendered.contains("async def activity_options_operation_args("));
+    assert!(rendered.contains("def _nexus_normalize_function_args("));
+    assert!(rendered.contains(
+        "normalized_input = _nexus_normalize_function_args(input)"
+    ));
+    assert!(rendered.contains(
+        "normalized_signal_input = _nexus_normalize_function_args(signal_input)"
+    ));
+    assert!(rendered.contains("input=normalized_input,"));
+    assert!(rendered.contains("signal_input=normalized_signal_input,"));
+    assert!(rendered.contains("return await _signal_with_start_workflow_execution(request)"));
+    assert!(rendered.contains("async def activity_options_operation("));
     assert!(rendered.contains("task_queue: str | None = None,"));
     assert!(rendered.contains("retry_policy: temporalio.common.RetryPolicy,"));
     assert!(rendered.contains("request = ActivityOptions("));
     assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
+    assert!(models.contains("from ._support import ("));
+    assert!(models.contains("retry_policy_to_proto,"));
 }

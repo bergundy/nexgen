@@ -198,6 +198,30 @@ pub(crate) fn resolve_service_resources(
         );
     }
 
+    let mut bound_operation_resources = BTreeMap::new();
+    for resource in &resources {
+        for method in &resource.methods {
+            let ResolvedResourceMethodBinding::Operation { operation_name, .. } = &method.binding
+            else {
+                continue;
+            };
+            if let Some(existing_resource) =
+                bound_operation_resources.insert(operation_name.clone(), resource.name.clone())
+                && existing_resource != resource.name
+            {
+                return Err(Error::InvalidResourceMethod {
+                    service: service.name.clone(),
+                    resource: resource.name.to_upper_camel_case(),
+                    method: method.name.to_string(),
+                    reason: format!(
+                        "bound operation `{operation_name}` is already owned by resource `{}`",
+                        existing_resource.to_upper_camel_case()
+                    ),
+                });
+            }
+        }
+    }
+
     Ok(ResolvedServiceResources {
         resources,
         operation_returns,
@@ -266,6 +290,7 @@ fn resolve_resource_method(
         matching_operations.push((operation.name.clone(), request_plan));
     }
 
+    let preferred_operation_name = method.name.to_upper_camel_case();
     let binding = match matching_operations.len() {
         0 => ResolvedResourceMethodBinding::Stub,
         1 => {
@@ -276,6 +301,22 @@ fn resolve_resource_method(
             }
         }
         _ => {
+            let preferred_matches = matching_operations
+                .iter()
+                .filter(|(name, _)| *name == preferred_operation_name)
+                .collect::<Vec<_>>();
+            if preferred_matches.len() == 1 {
+                let (operation_name, request_plan) = preferred_matches[0].clone();
+                return Ok(ResolvedResourceMethodSpec {
+                    name: method.name.clone(),
+                    params: method.params.clone(),
+                    result: method.result.clone(),
+                    binding: ResolvedResourceMethodBinding::Operation {
+                        operation_name: operation_name.clone(),
+                        request_plan: request_plan.clone(),
+                    },
+                });
+            }
             let matches = matching_operations
                 .iter()
                 .map(|(name, _)| name.as_str())
@@ -483,4 +524,142 @@ pub(crate) fn ensure_unique_resource_names(spec: &ApiSpec) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::descriptors::DescriptorIndex;
+    use crate::language::Language;
+    use crate::spec::ApiSpec;
+
+    use super::{ResolvedResourceMethodBinding, resolve_service_resources};
+
+    fn descriptors() -> DescriptorIndex {
+        DescriptorIndex::load(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("examples/descriptors/temporal_api.bin"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn prefers_exact_operation_name_for_ambiguous_resource_method() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{payloads, task-queue, workflow-function};
+
+  resource started-workflow {
+    constructor(namespace: string, workflow-id: string, run-id: option<string>);
+
+    restart-workflow: func(
+      workflow: workflow-function,
+      task-queue: task-queue,
+      input: option<payloads>,
+    ) -> start-workflow-result;
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionRequest"
+  record start-workflow-request {
+    /// @nexus.proto-field "workflow_type"
+    workflow: workflow-function,
+    workflow-id: string,
+    task-queue: task-queue,
+    namespace: option<string>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionResponse"
+  type start-workflow-result = own<started-workflow>;
+
+  start-workflow: func(request: start-workflow-request) -> start-workflow-result;
+  restart-workflow: func(request: start-workflow-request) -> start-workflow-result;
+}
+"#;
+        let spec =
+            ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+                .unwrap();
+        let service = &spec.services[0];
+        let resolved = resolve_service_resources(&spec, service, &descriptors()).unwrap();
+        let method = &resolved.resources[0].methods[0];
+
+        assert_eq!(method.name, "restart-workflow");
+        match &method.binding {
+            ResolvedResourceMethodBinding::Operation { operation_name, .. } => {
+                assert_eq!(operation_name, "RestartWorkflow");
+            }
+            ResolvedResourceMethodBinding::Stub => {
+                panic!("restart-workflow should bind to RestartWorkflow");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_operation_bound_to_multiple_resources() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{payloads, task-queue, workflow-function};
+
+  resource started-workflow {
+    constructor(namespace: string, workflow-id: string, run-id: option<string>);
+
+    restart-workflow: func(
+      workflow: workflow-function,
+      task-queue: task-queue,
+      input: option<payloads>,
+    );
+  }
+
+  resource archived-workflow {
+    constructor(namespace: string, workflow-id: string, run-id: option<string>);
+
+    restart-workflow: func(
+      workflow: workflow-function,
+      task-queue: task-queue,
+      input: option<payloads>,
+    );
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionRequest"
+  record start-workflow-request {
+    /// @nexus.proto-field "workflow_type"
+    workflow: workflow-function,
+    workflow-id: string,
+    task-queue: task-queue,
+    namespace: option<string>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.StartWorkflowExecutionResponse"
+  record start-workflow-response {
+    run-id: option<string>,
+  }
+
+  restart-workflow: func(request: start-workflow-request) -> start-workflow-response;
+}
+"#;
+        let spec =
+            ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+                .unwrap();
+        let service = &spec.services[0];
+        let error = resolve_service_resources(&spec, service, &descriptors()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "resource method `WorkflowService.ArchivedWorkflow.restart-workflow` is invalid: bound operation `RestartWorkflow` is already owned by resource `StartedWorkflow`"
+        );
+    }
 }

@@ -12,7 +12,6 @@ interface model {
   type payload = placeholder;
 
   /// @nexus.proto "temporal.api.common.v1.Payloads"
-  /// @nexus.type python="collections.abc.Sequence[typing.Any]"
   type payloads = list<payload>;
 
   /// @nexus.proto "temporal.api.common.v1.WorkflowType"
@@ -32,7 +31,8 @@ interface model {
   /// @nexus.function
   ///   args-name="signal-input"
   ///   python-result="None | collections.abc.Awaitable[None]"
-  /// @nexus.with-arguments
+  ///   converter="signal_function_to_proto"
+  /// @nexus.typescript-with-arguments
   ///   args-name="signal-input"
   ///   value-type="workflow.SignalDefinition<any[]>"
   ///   args-type="Value extends workflow.SignalDefinition<infer Args, any> ? Args : never"

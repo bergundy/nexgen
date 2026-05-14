@@ -1,13 +1,19 @@
+# pyright: reportUnusedVariable=false
+# ruff: noqa: F841
+
 from __future__ import annotations
 
 import collections.abc
 import datetime
 import typing
 
+import temporalio.api.activity.v1.message_pb2
+import temporalio.api.common.v1.message_pb2
 import temporalio.common
 import temporalio.workflow
 
-import output  # pyright: ignore[reportImplicitRelativeImport]
+import workflow_service as output  # pyright: ignore[reportImplicitRelativeImport]
+import workflow_service.models as output_models  # pyright: ignore[reportImplicitRelativeImport]
 
 TASK_QUEUE = "demo-task-queue"
 
@@ -53,77 +59,62 @@ typed_search_attributes = temporalio.common.TypedSearchAttributes(
     [temporalio.common.SearchAttributePair(search_key, "sample-value")]
 )
 
-request: output.SignalWithStartWorkflowExecutionRequest[int, str] = (
-    output.SignalWithStartWorkflowExecutionRequest(
-        workflow=ExampleWorkflow.run,
-        workflow_id="workflow-id",
-        task_queue=TASK_QUEUE,
-        signal=ExampleWorkflow.wake_up,
-        input=(7, "nexus"),
-        signal_input=("wake-up",),
-        workflow_execution_timeout=datetime.timedelta(seconds=30),
-        retry_policy=retry_policy,
-        workflow_id_reuse_policy=temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
-        workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
-        memo={"category": "payments", "attempt": 7},
-        search_attributes=typed_search_attributes,
-        user_metadata=output.UserMetadata(
-            summary="Nightly sync",
-            details="Processes 42 records",
-        ),
-        priority=priority,
-        versioning_override=versioning_override,
-    )
-)
-
-client = output.WorkflowServiceClient()
-handle = client.signal_with_start_workflow_execution_args(
+handle = output.signal_with_start_workflow_execution(
     workflow=ExampleWorkflow.run,
     workflow_id="workflow-id",
     task_queue=TASK_QUEUE,
     signal=ExampleWorkflow.wake_up,
     input=(7, "nexus"),
-    signal_input=("wake-up",),
+    signal_input="wake-up",
+    workflow_execution_timeout=datetime.timedelta(seconds=30),
+    retry_policy=retry_policy,
+    workflow_id_reuse_policy=temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+    workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
+    memo={"category": "payments", "attempt": 7},
+    search_attributes=typed_search_attributes,
+    user_metadata=output_models.UserMetadata(
+        summary="Nightly sync",
+        details="Processes 42 records",
+    ),
+    priority=priority,
+    versioning_override=versioning_override,
 )
 typed_handle: collections.abc.Awaitable[
     temporalio.workflow.ExternalWorkflowHandle[typing.Any]
 ] = handle
-_ = typed_handle
 
-minimal_handle = client.signal_with_start_workflow_execution_args(
-    workflow="ExampleWorkflow",
-    workflow_id="workflow-minimal",
-    task_queue=TASK_QUEUE,
-    signal="wake_up",
-)
 minimal_typed_handle: collections.abc.Awaitable[
     temporalio.workflow.ExternalWorkflowHandle[typing.Any]
-] = minimal_handle
-_ = minimal_typed_handle
+] = output.signal_with_start_workflow_execution(
+        workflow="ExampleWorkflow",
+        workflow_id="workflow-minimal",
+        task_queue=TASK_QUEUE,
+        signal="wake_up",
+)
 
-high_arity_request: output.SignalWithStartWorkflowExecutionRequest[
-    *tuple[typing.Any, ...]
-] = output.SignalWithStartWorkflowExecutionRequest(
-    workflow="ExampleWorkflow",
-    workflow_id="workflow-high-arity",
+high_arity_typed_handle: collections.abc.Awaitable[
+    temporalio.workflow.ExternalWorkflowHandle[typing.Any]
+] = output.signal_with_start_workflow_execution(
+        workflow="ExampleWorkflow",
+        workflow_id="workflow-high-arity",
+        task_queue=TASK_QUEUE,
+        signal="wake_up_many",
+        signal_input=("one", "two", "three", "four", "five", "six", "seven"),
+)
+
+retry_handle: collections.abc.Awaitable[
+    temporalio.workflow.NexusOperationHandle[
+        temporalio.api.common.v1.message_pb2.RetryPolicy
+    ]
+] = output.retry_policy_operation(retry_policy)
+
+activity_handle: collections.abc.Awaitable[
+    temporalio.workflow.NexusOperationHandle[
+        temporalio.api.activity.v1.message_pb2.ActivityOptions
+    ]
+] = output.activity_options_operation(
     task_queue=TASK_QUEUE,
-    signal=ExampleWorkflow.wake_up_many,
-    signal_input=("one", "two", "three", "four", "five", "six", "seven"),
-)
-_ = typing.assert_type(
-    high_arity_request,
-    output.SignalWithStartWorkflowExecutionRequest[*tuple[typing.Any, ...]],
-)
-
-activity_options = output.ActivityOptions(
+    schedule_to_close_timeout=datetime.timedelta(seconds=7),
     retry_policy=retry_policy,
-    task_queue=TASK_QUEUE,
     priority=priority,
 )
-activity_options.schedule_to_close_timeout = datetime.timedelta(seconds=7)
-
-retry_handle = client.retry_policy_operation(retry_policy)
-_ = retry_handle
-
-activity_handle = client.activity_options_operation(activity_options)
-_ = activity_handle

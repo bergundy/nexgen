@@ -1,0 +1,2 @@
+[alias]
+build-examples = "run --quiet -- build-examples"

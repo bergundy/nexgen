@@ -18,6 +18,10 @@ interface workflow-service {
     constructor(namespace: string, workflow-id: string, run-id: option<string>);
 
     cancel: func(reason: option<string>);
+    restart-workflow: func(
+      workflow: workflow-function,
+      task-queue: task-queue,
+    ) -> start-workflow-result;
     get-result: func() -> payloads;
   }
 
@@ -28,7 +32,7 @@ interface workflow-service {
     workflow-id: string,
     task-queue: task-queue,
     /// @nexus.source
-    ///   python="workflow.info().namespace"
+    ///   python="workflow_namespace()"
     ///   typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
   }
@@ -39,7 +43,7 @@ interface workflow-service {
   /// @nexus.proto "temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionRequest"
   record cancel-workflow-request {
     /// @nexus.source
-    ///   python="workflow.info().namespace"
+    ///   python="workflow_namespace()"
     ///   typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
     workflow-execution: workflow-execution,
@@ -51,6 +55,7 @@ interface workflow-service {
   }
 
   start-workflow: func(request: start-workflow-request) -> start-workflow-result;
+  restart-workflow: func(request: start-workflow-request) -> start-workflow-result;
 
   cancel-workflow: func(request: cancel-workflow-request) -> cancel-workflow-response;
 }

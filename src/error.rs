@@ -24,6 +24,12 @@ pub enum Error {
         source: io::Error,
     },
 
+    #[error("generated file path `{path}` is invalid: {reason}")]
+    InvalidGeneratedPath { path: PathBuf, reason: String },
+
+    #[error("generated file path `{path}` conflicts with another generated file")]
+    GeneratedFileConflict { path: PathBuf },
+
     #[error("refusing to overwrite existing path `{path}`")]
     OutputPathExists { path: PathBuf },
 
@@ -38,6 +44,21 @@ pub enum Error {
     #[error("formatter `{command}` failed for `{path}` with status {status}")]
     FormatterFailed {
         path: PathBuf,
+        command: String,
+        status: ExitStatus,
+    },
+
+    #[error("failed to run command `{command}` in `{cwd}`: {source}")]
+    RunCommand {
+        cwd: PathBuf,
+        command: String,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("command `{command}` failed in `{cwd}` with status {status}")]
+    CommandFailed {
+        cwd: PathBuf,
         command: String,
         status: ExitStatus,
     },
@@ -71,6 +92,12 @@ pub enum Error {
 
     #[error("RPC name `{name}` is ambiguous; matches: {matches:?}")]
     AmbiguousRpcName { name: String, matches: Vec<String> },
+
+    #[error("unknown {language} example `{example_id}`")]
+    UnknownExampleId {
+        language: Language,
+        example_id: String,
+    },
 
     #[error("cannot generate add-rpc WIT for `{context}`: {reason}")]
     UnsupportedAddRpc { context: String, reason: String },

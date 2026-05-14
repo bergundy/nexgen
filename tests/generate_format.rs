@@ -29,7 +29,9 @@ mod tests {
 
     fn write_formatter_script(dir: &Path, name: &str, marker: &str) -> PathBuf {
         let script_path = dir.join(name);
-        let script = format!("#!/bin/sh\nprintf '\\n{marker}\\n' >> \"$2\"\n");
+        let script = format!(
+            "#!/bin/sh\ntarget=\"$2\"\nif [ -d \"$target\" ]; then\n  target=\"$target/__init__.py\"\nfi\nprintf '\\n{marker}\\n' >> \"$target\"\n"
+        );
         fs::write(&script_path, script).unwrap();
         let mut permissions = fs::metadata(&script_path).unwrap().permissions();
         permissions.set_mode(0o755);
@@ -47,7 +49,7 @@ mod tests {
         let root = project_root();
         let temp_dir = unique_temp_dir("python-format");
         fs::create_dir_all(&temp_dir).unwrap();
-        let output_path = temp_dir.join("output.py");
+        let output_path = temp_dir.join("output");
         write_formatter_script(&temp_dir, "ruff", "# formatted by test");
 
         let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
@@ -69,7 +71,7 @@ mod tests {
 
         assert!(status.success());
 
-        let rendered = fs::read_to_string(&output_path).unwrap();
+        let rendered = fs::read_to_string(output_path.join("__init__.py")).unwrap();
         assert!(rendered.contains("# formatted by test"));
 
         let _ = fs::remove_dir_all(temp_dir);

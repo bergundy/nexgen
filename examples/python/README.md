@@ -5,7 +5,14 @@ Shared `uv`-managed Python example suite for generated outputs.
 - Authored WIT inputs live in `examples/inputs/*.wit`
 - Python-specific support files, checked-in generated outputs, and pytest files
   live in `examples/python/<example-id>/`
-- `build_outputs.py` regenerates `output.py` for every Python example by default
+- `build_outputs.py` is a thin wrapper around `cargo build-examples --lang python`
+- `cargo test` validates the checked-in generated packages and does not rebuild them
+
+Top-level rebuild command:
+
+```bash
+cargo build-examples --lang python
+```
 
 Current workflow:
 

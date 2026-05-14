@@ -44,7 +44,7 @@ interface workflow-service {
     priority: option<priority>,
     versioning-override: option<versioning-override>,
     user-metadata: option<user-metadata>,
-    /// @nexus.source python="workflow.info().namespace" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
     namespace: option<string>,
   }
 

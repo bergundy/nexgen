@@ -153,7 +153,9 @@ def workflow_id_conflict_policy_from_proto(
 def workflow_id_conflict_policy_to_proto(
     policy: temporalio.common.WorkflowIDConflictPolicy,
 ) -> workflow_enums_pb2.WorkflowIdConflictPolicy.ValueType:
-    return typing.cast(workflow_enums_pb2.WorkflowIdConflictPolicy.ValueType, int(policy))
+    return typing.cast(
+        workflow_enums_pb2.WorkflowIdConflictPolicy.ValueType, int(policy)
+    )
 
 
 def search_attributes_to_proto(

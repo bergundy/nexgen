@@ -5,8 +5,14 @@ Shared Node/TypeScript example suite for generated outputs.
 - Authored WIT inputs live in `examples/inputs/*.wit`
 - TypeScript-specific support files, checked-in generated outputs, vitest files,
   and typecheck files live in `examples/typescript/<example-id>/`
-- `build_outputs.mjs` regenerates `output.ts` for every TypeScript example by
-  default
+- `build_outputs.mjs` is a thin wrapper around
+  `cargo build-examples --lang typescript`
+
+Top-level rebuild command:
+
+```bash
+cargo build-examples --lang typescript
+```
 
 Current workflow:
 

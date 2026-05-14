@@ -32,6 +32,11 @@ void client.cancelWorkflow({
 async function useHandle(): Promise<void> {
   const handle = await handlePromise;
   await handle.cancel();
+  const restartedHandlePromise: Promise<StartedWorkflow> = handle.restartWorkflow(
+    exampleWorkflow,
+    "demo-task-queue",
+  );
+  void restartedHandlePromise;
   const resultPromise: Promise<common.Payload[]> = handle.getResult();
   void resultPromise;
 }
