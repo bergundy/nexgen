@@ -178,6 +178,33 @@ fn python_examples_generation_matches_checked_in_output() {
 }
 
 #[test]
+fn cli_generates_wit_direct_example_without_descriptors() {
+    let root = project_root();
+    let output_path = unique_output_path("python-user-service-no-descriptors");
+    let output = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .args([
+            "generate",
+            "--lang",
+            "python",
+            "--input",
+            input_path(&root, "user-service").to_str().unwrap(),
+            "--output",
+            output_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_path.join("__init__.py").is_file());
+    assert!(output_path.join("models.py").is_file());
+    fs::remove_dir_all(output_path).unwrap();
+}
+
+#[test]
 fn python_example_suite_type_checks_and_runs() {
     let root = project_root();
     let example_dir = python_root(&root);

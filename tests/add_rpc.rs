@@ -1,5 +1,7 @@
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use nexus_api_gen::add_rpc_to_string;
 use nexus_api_gen::language::Language;
@@ -13,6 +15,22 @@ fn project_root() -> PathBuf {
 
 fn descriptor_path(root: &std::path::Path) -> PathBuf {
     root.join("examples/descriptors/temporal_api.bin")
+}
+
+fn unique_temp_dir(name: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("nexus-api-gen-{name}-{unique}"))
+}
+
+fn write_temp_wit(name: &str, contents: &str) -> PathBuf {
+    let temp_dir = unique_temp_dir(name);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let path = temp_dir.join("input.wit");
+    fs::write(&path, contents).unwrap();
+    path
 }
 
 fn parse(language: Language, wit: &str, path: &str) -> ApiSpec {
@@ -214,4 +232,57 @@ fn add_rpc_can_extend_an_existing_wit_file() {
             .is_some()
     );
     assert!(service.operation("SignalWorkflowExecution").is_some());
+}
+
+#[test]
+fn add_rpc_adds_missing_field_to_existing_operation_request() {
+    let root = project_root();
+    let descriptors = descriptor_path(&root);
+    let complete =
+        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let input = complete.replace("    input: option<payloads>,\n", "");
+    let input_path = write_temp_wit("add-rpc-existing-partial", &input);
+
+    let generated = add_rpc_to_string(
+        &[descriptors.clone()],
+        "SignalWorkflowExecution",
+        Some(&input_path),
+    )
+    .unwrap();
+
+    assert!(generated.contains("signal-workflow-execution: func("));
+    assert!(generated.contains("input: option<payloads>,"));
+    assert_eq!(generated.matches("input: option<payloads>,").count(), 1);
+
+    let parsed = parse(Language::Python, &generated, input_path.to_str().unwrap());
+    let request = parsed
+        .type_override("temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    assert_eq!(request.field_name_override("input"), Some("input"));
+
+    fs::remove_dir_all(input_path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn add_rpc_fails_when_existing_operation_request_conflicts_with_descriptor() {
+    let root = project_root();
+    let descriptors = descriptor_path(&root);
+    let complete =
+        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let input = complete.replace(
+        "    signal-name: string,\n",
+        "    signal-name: option<string>,\n",
+    );
+    let input_path = write_temp_wit("add-rpc-existing-conflict", &input);
+
+    let error = add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path))
+        .unwrap_err();
+
+    let message = error.to_string();
+    assert!(message.contains("existing WIT field is `signal-name: option<string>`"));
+    assert!(message.contains("descriptor requires `signal-name: string`"));
+
+    fs::remove_dir_all(input_path.parent().unwrap()).unwrap();
 }

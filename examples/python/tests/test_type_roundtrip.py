@@ -13,7 +13,6 @@ import temporalio.workflow
 
 import type_roundtrip as output
 import type_roundtrip.models as output_models
-import type_roundtrip.service as output_service
 import type_roundtrip._support as output_support
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "type_roundtrip"
@@ -49,22 +48,26 @@ class FakeOperationHandle:
 
 class FakeNexusClient:
     def __init__(self) -> None:
-        self.calls: list[tuple[Operation[object, object], object]] = []
+        self.calls: list[tuple[str, object]] = []
 
     async def start_operation(
         self,
-        operation: Operation[object, object],
+        operation: str,
         input: object,
+        *,
+        output_type: type[object] | None = None,
     ) -> FakeOperationHandle:
         self.calls.append((operation, input))
 
-        if operation is RETRY_POLICY_OPERATION:
+        if operation == "RetryPolicyOperation":
+            assert output_type is temporalio.api.common.v1.RetryPolicy
             assert isinstance(input, temporalio.api.common.v1.RetryPolicy)
             response = temporalio.api.common.v1.RetryPolicy()
             response.CopyFrom(input)
             return FakeOperationHandle(response)
 
-        if operation is ACTIVITY_OPTIONS_OPERATION:
+        if operation == "ActivityOptionsOperation":
+            assert output_type is activity_v1.ActivityOptions
             assert isinstance(input, activity_v1.ActivityOptions)
             assert input.HasField("retry_policy")
             assert input.task_queue.name == TASK_QUEUE
@@ -74,17 +77,15 @@ class FakeNexusClient:
             response.CopyFrom(input)
             return FakeOperationHandle(response)
 
-        raise AssertionError(f"unexpected operation: {operation.name}")
+        raise AssertionError(f"unexpected operation: {operation}")
 
 
 @pytest.fixture
 def fake_client() -> FakeNexusClient:
     fake_client = FakeNexusClient()
 
-    def fake_create_nexus_client(
-        *, service: type[object], endpoint: str
-    ) -> FakeNexusClient:
-        assert service is output_service.TypeRoundtripService
+    def fake_create_nexus_client(*, service: str, endpoint: str) -> FakeNexusClient:
+        assert service == "TypeRoundtripService"
         assert endpoint == "__temporal_system"
         return fake_client
 

@@ -219,34 +219,6 @@ export const SignalWithStartWorkflowExecutionRequest = {
   },
 };
 
-export interface Payloads {
-  payloads?: common.Payload[];
-}
-
-export const Payloads = {
-  fromProto(
-    proto: temporal.api.common.v1.IPayloads | null | undefined,
-  ): Payloads | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      payloads: proto.payloads?.map((value: any) => payloadFromProto(value)!),
-    };
-  },
-
-  toProto(
-    model: Payloads | null | undefined,
-  ): temporal.api.common.v1.IPayloads | undefined {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      payloads: model.payloads?.map((value) => payloadToProto(value)),
-    };
-  },
-};
-
 export interface UserMetadata {
   staticSummary?: common.Payload;
   staticDetails?: common.Payload;

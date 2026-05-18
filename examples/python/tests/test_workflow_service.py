@@ -82,7 +82,7 @@ class ExampleData:
 @dataclasses.dataclass
 class ClientContext:
     fake_client: FakeNexusClient
-    created_clients: list[tuple[type[object], str]]
+    created_clients: list[tuple[str, str]]
     created_external_handles: list[FakeExternalWorkflowHandle]
 
 
@@ -150,16 +150,22 @@ class FakePayloadConverter:
 
 class FakeNexusClient:
     def __init__(self) -> None:
-        self.calls: list[tuple[Operation[object, object], object]] = []
+        self.calls: list[tuple[str, object]] = []
 
     async def start_operation(
         self,
-        operation: Operation[object, object],
+        operation: str,
         input: object,
+        *,
+        output_type: type[object] | None = None,
     ) -> FakeOperationHandle:
         self.calls.append((operation, input))
 
-        if operation is SIGNAL_WITH_START_OPERATION:
+        if operation == "SignalWithStartWorkflowExecution":
+            assert (
+                output_type
+                is workflowservice_v1.SignalWithStartWorkflowExecutionResponse
+            )
             assert isinstance(
                 input,
                 workflowservice_v1.SignalWithStartWorkflowExecutionRequest,
@@ -197,7 +203,7 @@ class FakeNexusClient:
             response.started = True
             return FakeOperationHandle(response)
 
-        raise AssertionError(f"unexpected operation: {operation.name}")
+        raise AssertionError(f"unexpected operation: {operation}")
 
 
 def expected_run_id(workflow_id: str) -> str:
@@ -385,12 +391,10 @@ def assert_handle_matches(
 def install_fake_runtime() -> ClientContext:
     fake_client = FakeNexusClient()
     fake_payload_converter = FakePayloadConverter()
-    created_clients: list[tuple[type[object], str]] = []
+    created_clients: list[tuple[str, str]] = []
     created_external_handles: list[FakeExternalWorkflowHandle] = []
 
-    def fake_create_nexus_client(
-        *, service: type[object], endpoint: str
-    ) -> FakeNexusClient:
+    def fake_create_nexus_client(*, service: str, endpoint: str) -> FakeNexusClient:
         created_clients.append((service, endpoint))
         return fake_client
 
@@ -532,4 +536,36 @@ async def test_signal_high_arity_request_api(
         workflow_id=HIGH_ARITY_WORKFLOW_ID,
         signal_name="wake_up_many",
         signal_input=HIGH_ARITY_SIGNAL_INPUT,
+    )
+
+
+if typing.TYPE_CHECKING:
+    output.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+        workflow=ExampleWorkflow.run,  # pyright: ignore[reportArgumentType]
+        workflow_id="missing-workflow-input",
+        task_queue=TASK_QUEUE,
+        signal="wake_up",
+    )
+
+    output.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+        workflow=ExampleWorkflow.run,
+        input=(3, 4),  # pyright: ignore[reportArgumentType]
+        workflow_id="bad-workflow-input",
+        task_queue=TASK_QUEUE,
+        signal="wake_up",
+    )
+
+    output.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+        workflow="ExampleWorkflow",
+        workflow_id="missing-signal-input",
+        task_queue=TASK_QUEUE,
+        signal=ExampleWorkflow.wake_up,  # pyright: ignore[reportArgumentType]
+    )
+
+    output.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+        workflow="ExampleWorkflow",
+        workflow_id="bad-signal-input",
+        task_queue=TASK_QUEUE,
+        signal=ExampleWorkflow.wake_up,
+        signal_input=("wrong", 7),  # pyright: ignore[reportArgumentType]
     )

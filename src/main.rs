@@ -10,9 +10,7 @@ use nexus_api_gen::{
 
 #[derive(Parser)]
 #[command(name = "nexus-api-gen")]
-#[command(
-    about = "Generate language-specific Nexus operation bindings from WIT and protobuf descriptors"
-)]
+#[command(about = "Generate language-specific Nexus operation bindings from WIT")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -37,7 +35,7 @@ struct GenerateArgs {
     lang: CliLanguage,
     #[arg(long)]
     input: PathBuf,
-    #[arg(long, required = true)]
+    #[arg(long)]
     descriptors: Vec<PathBuf>,
     #[arg(long)]
     output: PathBuf,

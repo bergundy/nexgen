@@ -271,12 +271,12 @@ fn load_support_files(
     spec: &ApiSpec,
     _input_path: &Path,
 ) -> Result<SupportFiles> {
-    let support_contents = if spec.support.fragments.is_empty() {
+    let support_fragments = spec.support.fragments_for_language(language);
+    let support_contents = if support_fragments.is_empty() {
         None
     } else {
         Some(
-            spec.support
-                .fragments
+            support_fragments
                 .iter()
                 .map(|fragment| fragment.contents.as_str())
                 .collect::<Vec<_>>()
@@ -434,9 +434,7 @@ fn example_output_path(repo_root: &Path, language: Language, example_id: &str) -
     match language {
         Language::Python => example_language_root(repo_root, language)
             .join(example_directory_name(language, example_id)),
-        Language::TypeScript => example_language_root(repo_root, language)
-            .join(example_id)
-            .join("output"),
+        Language::TypeScript => example_language_root(repo_root, language).join(example_id),
         _ => example_language_root(repo_root, language).join(example_id),
     }
 }

@@ -81,7 +81,7 @@ pub fn generate_files(
     let plan = build_api_plan(spec, descriptors)?;
 
     match language {
-        Language::Python => python::generate(&plan, &spec.support.fragments),
+        Language::Python => python::generate(&plan, spec.support.fragments_for_language(language)),
         Language::TypeScript => typescript::generate(&plan, support),
         language => Err(Error::UnsupportedLanguage { language }),
     }

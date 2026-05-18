@@ -7,7 +7,8 @@ use prost_types::field_descriptor_proto::Type;
 use crate::descriptors::DescriptorIndex;
 use crate::error::{Error, Result};
 use crate::spec::{
-    ApiSpec, ResourceFieldSpec, ResourceMethodSpec, ResourceResultSpec, ServiceSpec,
+    ApiSpec, AuthoredFieldTypeSpec, GeneratedModelSpec, ResourceFieldSpec, ResourceMethodSpec,
+    ResourceResultSpec, ServiceSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +160,9 @@ pub(crate) fn resolve_service_resources(
         let Some(resource_name) = operation.output_resource() else {
             continue;
         };
+        if operation.output_proto().is_none() {
+            continue;
+        }
         let resource = service
             .resource(resource_name)
             .ok_or_else(|| Error::InvalidResource {
@@ -173,13 +177,33 @@ pub(crate) fn resolve_service_resources(
             .fields
             .iter()
             .map(|field| {
+                let Some(input_proto) = operation.input_proto() else {
+                    return Err(Error::InvalidResource {
+                        service: service.name.clone(),
+                        resource: resource.name.to_upper_camel_case(),
+                        reason: format!(
+                            "operation `{}` returns a resource directly and does not need field bindings",
+                            operation.name
+                        ),
+                    });
+                };
+                let Some(output_proto) = operation.output_proto() else {
+                    return Err(Error::InvalidResource {
+                        service: service.name.clone(),
+                        resource: resource.name.to_upper_camel_case(),
+                        reason: format!(
+                            "operation `{}` returns a resource directly and does not need field bindings",
+                            operation.name
+                        ),
+                    });
+                };
                 let source = bind_resource_return_field(
                     spec,
                     &service.name,
                     &resource.name,
                     descriptors,
-                    operation.input_proto(),
-                    operation.output_proto(),
+                    input_proto,
+                    output_proto,
                     &field.name,
                 )?;
                 Ok(ResolvedResourceFieldBinding {
@@ -270,7 +294,7 @@ fn resolve_resource_method(
     let mut matching_operations = Vec::new();
     for operation in &service.operations {
         let Some(request_plan) =
-            synthesize_request_plan(spec, descriptors, operation.input_proto(), &environment)?
+            synthesize_operation_request_plan(spec, descriptors, operation, &environment)?
         else {
             continue;
         };
@@ -281,9 +305,11 @@ fn resolve_resource_method(
                     continue;
                 }
             } else if let Some(proto_name) = &result.proto {
-                if operation.output_proto() != proto_name {
+                if operation.output_proto() != Some(proto_name.as_str()) {
                     continue;
                 }
+            } else {
+                continue;
             }
         }
 
@@ -337,6 +363,21 @@ fn resolve_resource_method(
         result: method.result.clone(),
         binding,
     })
+}
+
+fn synthesize_operation_request_plan(
+    spec: &ApiSpec,
+    descriptors: &DescriptorIndex,
+    operation: &crate::spec::OperationSpec,
+    environment: &BTreeMap<String, RequestPlanSource>,
+) -> Result<Option<RequestPlan>> {
+    if let Some(input_proto) = operation.input_proto() {
+        return synthesize_request_plan(spec, descriptors, input_proto, environment);
+    }
+    let Some(input_record) = operation.input_record() else {
+        return Ok(None);
+    };
+    synthesize_wit_request_plan(spec, descriptors, input_record, environment)
 }
 
 fn bind_resource_return_field(
@@ -415,12 +456,68 @@ fn synthesize_request_plan(
     }))
 }
 
+fn synthesize_wit_request_plan(
+    spec: &ApiSpec,
+    descriptors: &DescriptorIndex,
+    record_name: &str,
+    environment: &BTreeMap<String, RequestPlanSource>,
+) -> Result<Option<RequestPlan>> {
+    let mut fields = Vec::new();
+    for field in visible_wit_record_fields(spec, record_name)? {
+        if let Some(source) = environment.get(&field.wit_name) {
+            fields.push(RequestPlanField {
+                field_name: field.wit_name,
+                value: RequestPlan::Source(source.clone()),
+            });
+            continue;
+        }
+
+        if let Some(child_record_name) = field.message_name.as_deref()
+            && let Some(value) =
+                synthesize_wit_request_plan(spec, descriptors, child_record_name, environment)?
+        {
+            fields.push(RequestPlanField {
+                field_name: field.wit_name,
+                value,
+            });
+            continue;
+        }
+
+        if let Some(child_message_name) = field.proto_name.strip_prefix("proto:")
+            && let Some(value) =
+                synthesize_request_plan(spec, descriptors, child_message_name, environment)?
+        {
+            fields.push(RequestPlanField {
+                field_name: field.wit_name,
+                value,
+            });
+            continue;
+        }
+
+        if field.required {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(RequestPlan::Construct {
+        message_name: record_name.to_string(),
+        fields,
+    }))
+}
+
 fn visible_message_fields(
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
     message_name: &str,
 ) -> Result<Vec<MessageFieldInfo>> {
     Ok(all_message_fields(spec, descriptors, message_name)?
+        .into_iter()
+        .filter(|field| !field.hidden)
+        .collect())
+}
+
+fn visible_wit_record_fields(spec: &ApiSpec, record_name: &str) -> Result<Vec<MessageFieldInfo>> {
+    Ok(all_wit_record_fields(spec, record_name)?
         .into_iter()
         .filter(|field| !field.hidden)
         .collect())
@@ -467,6 +564,56 @@ fn all_message_fields(
         .iter()
         .map(|field| build_message_field_info(field, type_override, generated_model, descriptors))
         .collect()
+}
+
+fn all_wit_record_fields(spec: &ApiSpec, record_name: &str) -> Result<Vec<MessageFieldInfo>> {
+    let record = spec
+        .records
+        .get(record_name)
+        .ok_or_else(|| Error::UnknownTypeOverride {
+            type_name: record_name.to_string(),
+        })?;
+    record
+        .generated_model
+        .declared_fields
+        .iter()
+        .map(|field_name| build_wit_record_field_info(field_name, spec, &record.generated_model))
+        .collect()
+}
+
+fn build_wit_record_field_info(
+    field_name: &str,
+    spec: &ApiSpec,
+    generated_model: &GeneratedModelSpec,
+) -> Result<MessageFieldInfo> {
+    let wit_name = generated_model
+        .field_name_override(field_name)
+        .map(str::to_string)
+        .unwrap_or_else(|| field_name.to_kebab_case());
+    let required = generated_model
+        .field_wit_type(field_name)
+        .is_some_and(|field_type| !matches!(field_type, AuthoredFieldTypeSpec::Option(_)));
+    let hidden = generated_model.field_source(field_name).is_some();
+    let message_name = generated_model
+        .field_wit_type(field_name)
+        .and_then(|field_type| wit_field_message_name(field_type, spec));
+    Ok(MessageFieldInfo {
+        proto_name: field_name.to_string(),
+        wit_name,
+        required,
+        hidden,
+        message_name,
+    })
+}
+
+fn wit_field_message_name(field_type: &AuthoredFieldTypeSpec, spec: &ApiSpec) -> Option<String> {
+    match field_type.without_option() {
+        AuthoredFieldTypeSpec::Record(record_name) => Some(record_name.clone()),
+        AuthoredFieldTypeSpec::Proto(proto_name) if spec.type_override(proto_name).is_some() => {
+            Some(format!("proto:{proto_name}"))
+        }
+        _ => None,
+    }
 }
 
 fn build_message_field_info(

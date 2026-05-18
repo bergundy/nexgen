@@ -8,8 +8,8 @@ import typing
 import typing_extensions
 from datetime import timedelta
 from temporalio import workflow
+import temporalio.api.workflowservice.v1.request_response_pb2
 
-from ..service import WorkflowService
 from ..models import StartWorkflowExecutionRequest
 from .._resources import StartedWorkflow
 
@@ -32,13 +32,14 @@ async def _start_workflow(
     request: StartWorkflowExecutionRequest,
 ) -> StartedWorkflow:
     request_proto = request.to_proto()
-    nexus_client: workflow.NexusClient[WorkflowService] = workflow.create_nexus_client(
-        service=WorkflowService,
+    nexus_client = workflow.create_nexus_client(
+        service="WorkflowService",
         endpoint="__temporal_system",
     )
     handle = await nexus_client.start_operation(
-        WorkflowService.start_workflow,
-        request_proto,
+        operation="StartWorkflow",
+        input=request_proto,
+        output_type=temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse,
     )
     result = await handle
     return StartedWorkflow(

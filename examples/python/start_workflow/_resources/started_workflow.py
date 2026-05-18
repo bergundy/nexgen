@@ -11,7 +11,6 @@ from datetime import timedelta
 from temporalio import workflow
 import temporalio.api.workflowservice.v1.request_response_pb2
 
-from ..service import WorkflowService
 from ..models import (
     RequestCancelWorkflowExecutionRequest,
     StartWorkflowExecutionRequest,
@@ -76,13 +75,14 @@ async def _cancel_workflow(
 ) -> workflow.NexusOperationHandle[
     temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
 ]:
-    nexus_client: workflow.NexusClient[WorkflowService] = workflow.create_nexus_client(
-        service=WorkflowService,
+    nexus_client = workflow.create_nexus_client(
+        service="WorkflowService",
         endpoint="__temporal_system",
     )
     return await nexus_client.start_operation(
-        WorkflowService.cancel_workflow,
-        request.to_proto(),
+        operation="CancelWorkflow",
+        input=request.to_proto(),
+        output_type=temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
     )
 
 
@@ -104,13 +104,14 @@ async def _restart_workflow(
     request: StartWorkflowExecutionRequest,
 ) -> StartedWorkflow:
     request_proto = request.to_proto()
-    nexus_client: workflow.NexusClient[WorkflowService] = workflow.create_nexus_client(
-        service=WorkflowService,
+    nexus_client = workflow.create_nexus_client(
+        service="WorkflowService",
         endpoint="__temporal_system",
     )
     handle = await nexus_client.start_operation(
-        WorkflowService.restart_workflow,
-        request_proto,
+        operation="RestartWorkflow",
+        input=request_proto,
+        output_type=temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse,
     )
     result = await handle
     return StartedWorkflow(

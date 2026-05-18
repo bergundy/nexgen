@@ -1,0 +1,77 @@
+package temporal:type-showcase@1.0.0;
+
+world system {
+  export type-showcase;
+}
+
+/// @nexus.endpoint "__type_showcase"
+interface type-showcase {
+  enum user-status {
+    active,
+    suspended,
+    deleted,
+  }
+
+  flags user-capability {
+    read-profile,
+    update-email,
+    deactivate,
+  }
+
+  variant notification-target {
+    email(string),
+    sms(string),
+    none,
+  }
+
+  record postal-address {
+    street: string,
+    city: string,
+    country: string,
+    coordinates: option<tuple<f64, f64>>,
+  }
+
+  record user-profile {
+    tags: list<string>,
+    metadata: map<string, string>,
+    capabilities: user-capability,
+    sync-state: result<string, string>,
+    notification-target: notification-target,
+    address: option<postal-address>,
+  }
+
+  resource user {
+    constructor(user-id: string, email: string, display-name: string, status: user-status, profile: user-profile);
+
+    update-email: func(email: string) -> user-result;
+    rename: func(display-name: string) -> user-result;
+    deactivate: func(reason: option<string>);
+  }
+
+  record get-user-request {
+    user-id: string,
+    consistency-token: option<string>,
+  }
+
+  type user-result = own<user>;
+
+  record update-email-request {
+    user-id: string,
+    email: string,
+  }
+
+  record rename-request {
+    user-id: string,
+    display-name: string,
+  }
+
+  record deactivate-request {
+    user-id: string,
+    reason: option<string>,
+  }
+
+  get-user: func(request: get-user-request) -> user-result;
+  update-email: func(request: update-email-request) -> user-result;
+  rename: func(request: rename-request) -> user-result;
+  deactivate: func(request: deactivate-request);
+}

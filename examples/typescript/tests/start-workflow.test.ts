@@ -31,7 +31,7 @@ import {
   StartWorkflowExecutionRequest,
   WorkflowService,
   startWorkflow,
-} from "./output/index.ts";
+} from "../start-workflow/index.ts";
 
 describe("start-workflow generated output", () => {
   test("serializes start-workflow requests", () => {
@@ -56,8 +56,12 @@ describe("start-workflow generated output", () => {
   test("exposes workflow service metadata", () => {
     expect(WorkflowService.name).toBe("WorkflowService");
     expect(WorkflowService.operations.startWorkflow.name).toBe("StartWorkflow");
-    expect(WorkflowService.operations.restartWorkflow.name).toBe("RestartWorkflow");
-    expect(WorkflowService.operations.cancelWorkflow.name).toBe("CancelWorkflow");
+    expect(WorkflowService.operations.restartWorkflow.name).toBe(
+      "RestartWorkflow",
+    );
+    expect(WorkflowService.operations.cancelWorkflow.name).toBe(
+      "CancelWorkflow",
+    );
   });
 
   test("serializes cancel-workflow requests", () => {
@@ -155,3 +159,24 @@ describe("start-workflow generated output", () => {
     );
   });
 });
+
+if (false) {
+  async function exampleWorkflow(customerId: string): Promise<string> {
+    return customerId;
+  }
+
+  // @ts-expect-error missing workflow args for a callable workflow
+  startWorkflow({
+    workflow: exampleWorkflow,
+    workflowId: "missing-input",
+    taskQueue: "demo-task-queue",
+  });
+
+  // @ts-expect-error workflow args must match the workflow callable
+  startWorkflow({
+    workflow: exampleWorkflow,
+    input: [7],
+    workflowId: "bad-input",
+    taskQueue: "demo-task-queue",
+  });
+}

@@ -7,7 +7,9 @@ use crate::descriptors::{DescriptorIndex, MessageMetadata};
 use crate::error::{Error, Result};
 use crate::language::Language;
 use crate::python;
-use crate::spec::{ApiSpec, AuthoredFieldTypeSpec, GeneratedModelSpec, TypeOverrideSpec};
+use crate::spec::{
+    ApiSpec, AuthoredFieldTypeSpec, GeneratedModelSpec, LanguageStringSpec, TypeOverrideSpec,
+};
 use crate::typescript;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -34,6 +36,8 @@ pub(crate) fn validate_type_overrides(
             )?;
         } else if descriptors.enumeration(type_name).is_some() {
             validate_enum_type_override(type_name, type_override)?;
+        } else if descriptors.file_count() == 0 {
+            continue;
         } else {
             return Err(Error::UnknownTypeOverride {
                 type_name: type_name.clone(),
@@ -53,13 +57,16 @@ fn language_message_usages(
 
     for service in &spec.services {
         for operation in &service.operations {
-            let input_message = descriptors
-                .message(operation.input_proto())
-                .ok_or_else(|| Error::UnknownOperationInputProto {
+            let Some(input_proto) = operation.input_proto() else {
+                continue;
+            };
+            let input_message = descriptors.message(input_proto).ok_or_else(|| {
+                Error::UnknownOperationInputProto {
                     service: service.name.clone(),
                     operation: operation.name.clone(),
-                    type_name: operation.input_proto().to_string(),
-                })?;
+                    type_name: input_proto.to_string(),
+                }
+            })?;
             usages
                 .entry(input_message.full_name.clone())
                 .or_default()
@@ -69,14 +76,16 @@ fn language_message_usages(
                 continue;
             }
 
-            let output_message =
-                descriptors
-                    .message(operation.output_proto())
-                    .ok_or_else(|| Error::UnknownOperationOutputProto {
-                        service: service.name.clone(),
-                        operation: operation.name.clone(),
-                        type_name: operation.output_proto().to_string(),
-                    })?;
+            let Some(output_proto) = operation.output_proto() else {
+                continue;
+            };
+            let output_message = descriptors.message(output_proto).ok_or_else(|| {
+                Error::UnknownOperationOutputProto {
+                    service: service.name.clone(),
+                    operation: operation.name.clone(),
+                    type_name: output_proto.to_string(),
+                }
+            })?;
             usages
                 .entry(output_message.full_name.clone())
                 .or_default()
@@ -150,8 +159,8 @@ fn validate_generated_model_fields(
     message_name: &str,
     type_override: &TypeOverrideSpec,
     field_names: &BTreeMap<String, String>,
-    field_annotations: &BTreeMap<String, String>,
-    field_flattened_annotations: &BTreeMap<String, String>,
+    field_annotations: &BTreeMap<String, LanguageStringSpec>,
+    field_flattened_annotations: &BTreeMap<String, LanguageStringSpec>,
     field_sources: &BTreeMap<String, String>,
     message: &MessageMetadata,
     usage: MessageUsage,
@@ -355,28 +364,25 @@ fn validate_invocation_fields(
         }
     }
 
-    for (field_name, with_arguments) in &generated_model.with_arguments {
-        if language != Language::TypeScript {
-            return Err(Error::InvalidTypeOverrideField {
-                message: message_name.to_string(),
-                field: field_name.clone(),
-                property: "withArguments",
-                reason: "withArguments fields are only supported for TypeScript".to_string(),
-            });
-        }
-        if let Some((existing, _)) = seen_args_fields.insert(
-            with_arguments.args_field.as_str(),
-            (field_name, "withArguments"),
-        ) {
-            return Err(Error::InvalidTypeOverrideField {
-                message: message_name.to_string(),
-                field: field_name.clone(),
-                property: "withArguments",
-                reason: format!(
-                    "argsField `{}` is already used by field `{existing}`",
-                    with_arguments.args_field
-                ),
-            });
+    if language == Language::TypeScript {
+        for (field_name, with_arguments) in &generated_model.with_arguments {
+            if let Some((existing, _)) = seen_args_fields.insert(
+                with_arguments.args_field.as_str(),
+                (field_name, "withArguments"),
+            ) {
+                if existing == field_name {
+                    continue;
+                }
+                return Err(Error::InvalidTypeOverrideField {
+                    message: message_name.to_string(),
+                    field: field_name.clone(),
+                    property: "withArguments",
+                    reason: format!(
+                        "argsField `{}` is already used by field `{existing}`",
+                        with_arguments.args_field
+                    ),
+                });
+            }
         }
     }
 
@@ -439,6 +445,10 @@ fn validate_invocation_fields(
             descriptors,
             "function",
         )?;
+    }
+
+    if language != Language::TypeScript {
+        return Ok(());
     }
 
     for (field_name, with_arguments) in &generated_model.with_arguments {
@@ -637,6 +647,7 @@ fn authored_field_matches_proto(
     field: &FieldDescriptorProto,
     descriptors: &DescriptorIndex,
 ) -> Result<bool> {
+    let authored_type = authored_type.validation_type();
     if field_is_map(field, descriptors) {
         let AuthoredFieldTypeSpec::Map(authored_key, authored_value) =
             authored_type.without_option()
@@ -686,6 +697,7 @@ fn authored_field_matches_singular_proto(
     authored_type: &AuthoredFieldTypeSpec,
     field: &FieldDescriptorProto,
 ) -> Result<bool> {
+    let authored_type = authored_type.validation_type();
     let matches = match field_type(field) {
         Some(Type::Double | Type::Float) => {
             matches!(authored_type, AuthoredFieldTypeSpec::Float)

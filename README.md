@@ -1,41 +1,90 @@
 # nexus-api-gen
 
-Rust CLI for generating language-specific Nexus operation bindings from a WIT definition plus a protobuf descriptor set.
+Rust CLI for generating language-specific Nexus operation bindings from WIT.
+
+The WIT definition is the source of truth for the public API. Protobuf descriptor sets are optional and are only needed when the WIT opts into proto-backed models or when using `add-rpc` to scaffold WIT from an existing proto RPC.
 
 Current status:
 
 - Python generation is implemented
 - TypeScript generation is implemented
-- request models are write-only
-- response and nested models remain bidirectional where generated
-- support files, native type substitutions, sourced fields, function/argument pairing, and output transforms are all driven from WIT `@nexus` directives
+- WIT records, enums, flags, variants, results, resources, resource methods, and no-result operations are supported without proto backing
+- proto-backed request models can serialize into proto inputs when WIT types are annotated with `@nexus.proto`
+- proto-backed response and nested models remain bidirectional where generated
+- support files, native type substitutions, sourced fields, function metadata, flattened API fields, and output transforms are driven from WIT `@nexus` directives
 
-Examples are organized by authored input WIT plus per-language example suites:
+## WIT-Direct Generation
 
-- `examples/inputs/workflow-service.wit`
-- `examples/python/workflow_service/`
-- `examples/python/workflow_service/test_workflow_service.py`
-- `examples/typescript/workflow-service/output/`
-- `examples/typescript/workflow-service/typecheck.ts`
-- `examples/typescript/workflow-service/output.test.ts`
+Start with a WIT file that describes the API surface directly:
 
-Generate from the shared example input:
+```wit
+package temporal:user-service@1.0.0;
+
+world system {
+  export user-service;
+}
+
+/// @nexus.endpoint "__user_service"
+interface user-service {
+  resource user {
+    constructor(user-id: string, email: string);
+
+    update-email: func(email: string) -> user-result;
+  }
+
+  record get-user-request {
+    user-id: string,
+  }
+
+  type user-result = own<user>;
+
+  record update-email-request {
+    user-id: string,
+    email: string,
+  }
+
+  get-user: func(request: get-user-request) -> user-result;
+  update-email: func(request: update-email-request) -> user-result;
+}
+```
+
+Generate Python:
 
 ```bash
 cargo run -- generate \
   --lang python \
-  --input examples/inputs/workflow-service.wit \
-  --descriptors examples/descriptors/temporal_api.bin \
-  --output /tmp/output
+  --input examples/inputs/user-service.wit \
+  --output /tmp/user_service
 ```
+
+Generate TypeScript:
 
 ```bash
 cargo run -- generate \
   --lang typescript \
-  --input examples/inputs/workflow-service.wit \
-  --descriptors examples/descriptors/temporal_api.bin \
-  --output /tmp/output
+  --input examples/inputs/user-service.wit \
+  --output /tmp/user-service
 ```
+
+Add `--format` to run a formatter after generation:
+
+- Python: `ruff format`
+- TypeScript: `prettier --write`
+
+The `user-service` example is intentionally small and WIT-native. The `type-showcase` example demonstrates broader WIT type coverage: records, enums, flags, variants, results, maps, tuples, resources, resource methods, and an operation with no return value without proto annotations.
+
+## Examples
+
+Each example starts with authored WIT under `examples/inputs/`. Checked-in
+generated output lives under `examples/python/<example_name>/` and
+`examples/typescript/<example-name>/`, with language-specific tests under each
+language's `tests/` directory.
+
+- `user-service`: a small WIT-direct API showing the basic shape of an operation returning a resource and a resource method that calls another operation.
+- `type-showcase`: a WIT-direct API focused on type coverage, including records, enums, flags, variants, results, maps, tuples, resources, resource methods, and no-result operations.
+- `start-workflow`: a proto-backed Temporal workflow-start API that returns a generated resource handle with follow-up operations such as cancel, restart, and get-result.
+- `workflow-service`: a proto-backed `SignalWithStartWorkflowExecution` example showing flattened APIs, function arguments, sourced fields, support converters, and output transforms.
+- `type-roundtrip`: a proto-backed type roundtrip example for focused native/proto conversion coverage, including retry policies, activity options, durations, task queues, and priority.
 
 Rebuild the checked-in example outputs:
 
@@ -47,25 +96,102 @@ Rebuild one language or one example only:
 
 ```bash
 cargo build-examples --lang python
-cargo build-examples workflow-service
-cargo build-examples --lang typescript start-workflow
+cargo build-examples user-service
+cargo build-examples --lang typescript user-service
 ```
 
-Add `--format` to run a formatter after generation:
+Write the prepared WIT workspace the loader actually parses, including repo-provided builtins under `deps/`:
 
-- Python: `ruff format`
-- TypeScript: `prettier --write`
+```bash
+cargo run -- debug-wit-dir \
+  --input examples/inputs/user-service.wit \
+  --output /tmp/user-service-wit
+```
+
+## WIT Directives
+
+The WIT file defines the public surface. `@nexus` directives carry the parts WIT does not express directly:
+
+- service endpoint names
+- support file paths
+- language-native override types
+- flattened API-only field types
+- sourced field expressions
+- function conversion metadata
+- output transforms
+
+Input WIT files can add support code with `@nexus.support`. Python support fragments are copied into the generated private `_support` package, and TypeScript support fragments are emitted as `support.ts` next to the generated `index.ts`.
+
+## Proto Backing
+
+Proto backing is opt-in per WIT type. Use it when an operation should accept or return generated API models while converting to or from protobuf messages at the Nexus boundary.
+
+Proto-backed WIT uses:
+
+- `@nexus.proto` on a WIT type to identify the protobuf message or enum it represents
+- `@nexus.proto-field` when the WIT field name differs from the proto field name
+- `--descriptors` on `generate` so the generator can validate fields and derive proto conversion code
+
+Example:
+
+```wit
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+/// @nexus.endpoint "__temporal_system"
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{signal-function, task-queue, workflow-function};
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record signal-with-start-workflow-execution-request {
+    /// @nexus.proto-field "workflow_type"
+    workflow: workflow-function,
+    workflow-id: string,
+    task-queue: task-queue,
+    /// @nexus.proto-field "signal_name"
+    signal: signal-function,
+    /// @nexus.source "workflow_namespace"
+    namespace: option<string>,
+  }
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
+  record signal-with-start-workflow-execution-response {
+    run-id: option<string>,
+  }
+
+  /// @nexus.output-transform
+  ///   python-type="workflow.ExternalWorkflowHandle[typing.Any]"
+  ///   python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
+  ///   typescript-type="workflow.ExternalWorkflowHandle"
+  ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
+  signal-with-start-workflow-execution: func(
+    request: signal-with-start-workflow-execution-request,
+  ) -> signal-with-start-workflow-execution-response;
+}
+```
+
+Generate a proto-backed example:
 
 ```bash
 cargo run -- generate \
   --lang python \
   --input examples/inputs/workflow-service.wit \
   --descriptors examples/descriptors/temporal_api.bin \
-  --output /tmp/output \
-  --format
+  --output /tmp/workflow_service
 ```
 
-Generate WIT for a proto RPC from the descriptor set:
+`--descriptors` can be passed more than once when a proto-backed API depends on multiple descriptor files. Duplicate files or duplicate symbols are rejected.
+
+The tool also ships a bundled WIT package of reusable Temporal semantic/common types:
+
+- `nexus:temporal-types/model@1.0.0`
+
+That bundled package contributes its own support snippets and proto mappings for common Temporal SDK types.
+
+Generate WIT for a proto RPC from a descriptor set:
 
 ```bash
 cargo run -- add-rpc \
@@ -101,69 +227,7 @@ cargo run -- add-rpc \
   --output examples/inputs/workflow-service.wit
 ```
 
-Write the prepared WIT workspace the loader actually parses, including repo-provided builtins under `deps/`:
-
-```bash
-cargo run -- debug-wit-dir \
-  --input examples/inputs/workflow-service.wit \
-  --output /tmp/workflow-service-wit
-```
-
-The WIT file defines the public surface. `@nexus` directives carry the parts WIT does not express directly:
-
-- support file paths
-- proto type and field mapping
-- language-native override types
-- sourced field expressions
-- function and paired-argument metadata
-- output transforms
-
-The tool also ships a bundled WIT package of reusable semantic/common types:
-
-- `nexus:temporal-types/model@1.0.0`
-
-That bundled package can also contribute shared support snippets. Input WIT files can add their own extra support with `@nexus.support`. Python support fragments are copied into the generated `support/` package, and TypeScript support fragments are concatenated into the generated file.
-
-Example:
-
-```wit
-package temporal:nexus@1.0.0;
-
-world system {
-  export workflow-service;
-}
-
-/// @nexus.endpoint "__temporal_system"
-interface workflow-service {
-  use nexus:temporal-types/model@1.0.0.{retry-policy, signal-function, workflow-function};
-
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
-    /// @nexus.proto-field "workflow_type"
-    workflow: workflow-function,
-    workflow-id: string,
-    task-queue: string,
-    /// @nexus.proto-field "signal_name"
-    signal: signal-function,
-    /// @nexus.source "workflow_namespace"
-    namespace: option<string>,
-  }
-
-  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record signal-with-start-workflow-execution-response {
-    run-id: option<string>,
-  }
-
-  /// @nexus.output-transform
-  ///   python-type="workflow.ExternalWorkflowHandle[typing.Any]"
-  ///   python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
-  ///   typescript-type="workflow.ExternalWorkflowHandle"
-  ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
-  signal-with-start-workflow-execution: func(
-    request: signal-with-start-workflow-execution-request,
-  ) -> signal-with-start-workflow-execution-response;
-}
-```
+## Validation
 
 Validate the Python examples:
 
@@ -173,9 +237,6 @@ cd examples/python
 uv run pytest
 uv run basedpyright
 ```
-
-`cargo test` validates the checked-in example outputs as-is. Use the build step above
-when you want to refresh them.
 
 Validate the TypeScript examples:
 
@@ -187,4 +248,4 @@ npm run test
 npm run typecheck
 ```
 
-Likewise, `cargo test` does not rebuild the checked-in TypeScript example output.
+`cargo test` validates the checked-in example outputs as-is. Use `cargo build-examples` when you want to refresh them.

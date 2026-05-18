@@ -10,7 +10,7 @@ def main() -> None:
     app_root = Path(__file__).resolve().parent
     repo_root = app_root.parent.parent
     _ = subprocess.run(
-        generator_command() + ["build-examples", "--lang", "python", *sys.argv[1:]],
+        generator_command() + ["--lang", "python", *sys.argv[1:]],
         check=True,
         cwd=repo_root,
     )
@@ -18,7 +18,7 @@ def main() -> None:
 
 def generator_command() -> list[str]:
     if configured_binary := os.environ.get("NEXUS_API_GEN_BIN"):
-        return [configured_binary]
+        return [configured_binary, "build-examples"]
 
     return ["cargo", "build-examples"]
 

@@ -5,7 +5,7 @@ import {
   ActivityOptions,
   TypeRoundtripService,
   retryPolicyFromProto,
-} from "./output/index.ts";
+} from "../type-roundtrip/index.ts";
 
 describe("type-roundtrip generated output", () => {
   test("exposes type roundtrip service metadata", () => {

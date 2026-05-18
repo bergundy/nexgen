@@ -68,15 +68,18 @@ class FakePayloadConverter:
 
 class FakeNexusClient:
     def __init__(self) -> None:
-        self.calls: list[tuple[Operation[object, object], object]] = []
+        self.calls: list[tuple[str, object]] = []
 
     async def start_operation(
         self,
-        operation: Operation[object, object],
+        operation: str,
         input: object,
+        *,
+        output_type: type[object] | None = None,
     ) -> FakeOperationHandle:
         self.calls.append((operation, input))
-        if operation is START_WORKFLOW_OPERATION:
+        if operation == "StartWorkflow":
+            assert output_type is workflowservice_v1.StartWorkflowExecutionResponse
             assert isinstance(input, workflowservice_v1.StartWorkflowExecutionRequest)
             assert input.namespace == "workflow-namespace"
             assert input.workflow_id == "workflow-id"
@@ -91,7 +94,8 @@ class FakeNexusClient:
             response.started = True
             return FakeOperationHandle(response)
 
-        if operation is RESTART_WORKFLOW_OPERATION:
+        if operation == "RestartWorkflow":
+            assert output_type is workflowservice_v1.StartWorkflowExecutionResponse
             assert isinstance(input, workflowservice_v1.StartWorkflowExecutionRequest)
             assert input.namespace == "workflow-namespace"
             assert input.workflow_id == "workflow-id"
@@ -104,7 +108,8 @@ class FakeNexusClient:
             response.started = True
             return FakeOperationHandle(response)
 
-        assert operation is CANCEL_WORKFLOW_OPERATION
+        assert operation == "CancelWorkflow"
+        assert output_type is workflowservice_v1.RequestCancelWorkflowExecutionResponse
         assert isinstance(
             input, workflowservice_v1.RequestCancelWorkflowExecutionRequest
         )
@@ -120,10 +125,8 @@ def fake_client() -> FakeNexusClient:
     fake_client = FakeNexusClient()
     fake_payload_converter = FakePayloadConverter()
 
-    def fake_create_nexus_client(
-        *, service: type[object], endpoint: str
-    ) -> FakeNexusClient:
-        assert service.__name__ == "WorkflowService"
+    def fake_create_nexus_client(*, service: str, endpoint: str) -> FakeNexusClient:
+        assert service == "WorkflowService"
         assert endpoint == "__temporal_system"
         return fake_client
 
@@ -201,7 +204,7 @@ async def test_start_workflow_returns_wrapper_handle(
     await handle.cancel()
     assert len(fake_client.calls) == 2
     cancel_operation, cancel_request = fake_client.calls[1]
-    assert cancel_operation is CANCEL_WORKFLOW_OPERATION
+    assert cancel_operation == "CancelWorkflow"
     assert isinstance(
         cancel_request,
         workflowservice_v1.RequestCancelWorkflowExecutionRequest,
@@ -221,7 +224,7 @@ async def test_start_workflow_returns_wrapper_handle(
     assert restarted_handle.run_id == "run-456"
 
     restart_operation, restart_request = fake_client.calls[2]
-    assert restart_operation is RESTART_WORKFLOW_OPERATION
+    assert restart_operation == "RestartWorkflow"
     assert isinstance(
         restart_request,
         workflowservice_v1.StartWorkflowExecutionRequest,

@@ -4,13 +4,15 @@ use std::path::Path;
 use heck::ToKebabCase;
 use prost_types::FieldDescriptorProto;
 use prost_types::field_descriptor_proto::{Label, Type};
-use wit_parser::{Interface, Resolve, WorldItem, WorldKey};
+use wit_parser::{
+    FunctionKind, Interface, Resolve, Type as WitType, TypeDefKind, TypeId, WorldItem, WorldKey,
+};
 
 use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata, RpcMetadata};
 use crate::error::{Error, Result};
 use crate::spec::{
-    BuiltinWitMetadata, find_proto_name_for_type_def, load_builtin_wit_metadata,
-    parse_wit_with_builtins, select_world,
+    BuiltinWitMetadata, find_proto_name_for_type, find_proto_name_for_type_def,
+    load_builtin_wit_metadata, parse_wit_with_builtins, select_world,
 };
 
 const DEFAULT_PACKAGE_NAME: &str = "temporal:nexus@1.0.0";
@@ -39,7 +41,10 @@ pub fn generate_add_rpc_wit_with_input(
 
     if let Some(interface) = existing.interfaces.get(&interface_name) {
         if interface.function_names.contains(&operation_name) {
-            return Ok(input.to_string());
+            let update = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
+                .with_existing_interface(interface)
+                .build_existing_operation_update(interface, &operation_name)?;
+            return update.apply(input, &interface_name);
         }
 
         let rendered = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
@@ -98,6 +103,8 @@ impl ExistingWitDocument {
 #[derive(Debug, Clone, Default)]
 struct ExistingInterface {
     function_names: BTreeSet<String>,
+    functions: BTreeMap<String, ExistingFunction>,
+    records_by_proto: BTreeMap<String, ExistingRecord>,
     type_names_by_proto: BTreeMap<String, String>,
     type_names_in_scope: BTreeSet<String>,
 }
@@ -111,8 +118,18 @@ impl ExistingInterface {
         interface_source: Option<&str>,
     ) -> Result<Self> {
         let function_names = interface.functions.keys().cloned().collect();
+        let mut functions = BTreeMap::new();
         let mut type_names_by_proto = BTreeMap::new();
         let mut type_names_in_scope = BTreeSet::new();
+        let mut records_by_proto = BTreeMap::new();
+
+        for (function_name, function) in &interface.functions {
+            let context = format!("interface `{export_name}` function `{function_name}`");
+            functions.insert(
+                function_name.clone(),
+                ExistingFunction::from_resolve(resolve, function, path, &context)?,
+            );
+        }
 
         for (type_name, type_id) in &interface.types {
             type_names_in_scope.insert(type_name.clone());
@@ -121,7 +138,13 @@ impl ExistingInterface {
             let Some(proto_name) = find_proto_name_for_type_def(type_def, path, &context)? else {
                 continue;
             };
-            type_names_by_proto.insert(proto_name, type_name.clone());
+            type_names_by_proto.insert(proto_name.clone(), type_name.clone());
+            if let TypeDefKind::Record(record) = &type_def.kind {
+                records_by_proto.insert(
+                    proto_name,
+                    ExistingRecord::from_resolve(resolve, type_name, record),
+                );
+            }
         }
         if let Some(interface_source) = interface_source {
             type_names_in_scope.extend(collect_used_type_names(interface_source));
@@ -129,10 +152,100 @@ impl ExistingInterface {
 
         Ok(Self {
             function_names,
+            functions,
+            records_by_proto,
             type_names_by_proto,
             type_names_in_scope,
         })
     }
+}
+
+#[derive(Debug, Clone)]
+struct ExistingFunction {
+    parameter_name: Option<String>,
+    input_type_name: Option<String>,
+    input_proto: Option<String>,
+    output_type_name: Option<String>,
+    output_proto: Option<String>,
+    params_len: usize,
+    has_result: bool,
+    freestanding: bool,
+}
+
+impl ExistingFunction {
+    fn from_resolve(
+        resolve: &Resolve,
+        function: &wit_parser::Function,
+        path: &Path,
+        context: &str,
+    ) -> Result<Self> {
+        let (parameter_name, input_type_name, input_proto) =
+            if let Some((parameter_name, input_type)) = function.params.first() {
+                (
+                    Some(parameter_name.clone()),
+                    wit_type_name(resolve, input_type),
+                    find_proto_name_for_type(resolve, input_type, path, context)?,
+                )
+            } else {
+                (None, None, None)
+            };
+        let (output_type_name, output_proto) = if let Some(output_type) = function.result.as_ref() {
+            (
+                wit_type_name(resolve, output_type),
+                find_proto_name_for_type(resolve, output_type, path, context)?,
+            )
+        } else {
+            (None, None)
+        };
+
+        Ok(Self {
+            parameter_name,
+            input_type_name,
+            input_proto,
+            output_type_name,
+            output_proto,
+            params_len: function.params.len(),
+            has_result: function.result.is_some(),
+            freestanding: matches!(
+                function.kind,
+                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding
+            ),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExistingRecord {
+    wit_name: String,
+    fields: BTreeMap<String, ExistingField>,
+}
+
+impl ExistingRecord {
+    fn from_resolve(resolve: &Resolve, wit_name: &str, record: &wit_parser::Record) -> Self {
+        let mut fields = BTreeMap::new();
+        for field in &record.fields {
+            let proto_name = proto_field_name_from_docs(field.docs.contents.as_deref())
+                .unwrap_or_else(|| field.name.replace('-', "_"));
+            fields.insert(
+                proto_name,
+                ExistingField {
+                    wit_name: field.name.clone(),
+                    type_expr: render_wit_type(resolve, &field.ty),
+                },
+            );
+        }
+
+        Self {
+            wit_name: wit_name.to_string(),
+            fields,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExistingField {
+    wit_name: String,
+    type_expr: String,
 }
 
 struct AddRpcBuilder<'a> {
@@ -188,6 +301,165 @@ impl<'a> AddRpcBuilder<'a> {
         })
     }
 
+    fn build_existing_operation_update(
+        mut self,
+        interface: &ExistingInterface,
+        operation_name: &str,
+    ) -> Result<ExistingOperationUpdate> {
+        let input_type = self.render_type_reference(&self.rpc.input_type, &self.rpc.full_name)?;
+        let output_type = self.render_type_reference(&self.rpc.output_type, &self.rpc.full_name)?;
+        let Some(function) = interface.functions.get(operation_name) else {
+            return Err(Error::UnsupportedAddRpc {
+                context: self.rpc.full_name.clone(),
+                reason: format!("existing operation `{operation_name}` was not found"),
+            });
+        };
+        self.validate_existing_function(function, operation_name, &input_type, &output_type)?;
+
+        let mut record_updates = Vec::new();
+        for proto_name in [&self.rpc.input_type, &self.rpc.output_type] {
+            let proto_name = proto_name.trim_start_matches('.');
+            let Some(message) = self.descriptors.message(proto_name) else {
+                continue;
+            };
+            let Some(record) = interface.records_by_proto.get(proto_name) else {
+                return Err(Error::UnsupportedAddRpc {
+                    context: self.rpc.full_name.clone(),
+                    reason: format!(
+                        "existing operation `{operation_name}` uses proto `{proto_name}`, but no matching WIT record was found"
+                    ),
+                });
+            };
+            let expected_fields = self.render_message_fields(message)?;
+            let missing_fields =
+                self.missing_record_fields(record, &expected_fields, proto_name)?;
+            if !missing_fields.is_empty() {
+                record_updates.push(RecordFieldUpdate {
+                    record_name: record.wit_name.clone(),
+                    fields: missing_fields,
+                });
+            }
+        }
+
+        Ok(ExistingOperationUpdate {
+            builtin_uses: self.builtin_uses,
+            rendered_definitions: self.rendered_definitions,
+            record_updates,
+        })
+    }
+
+    fn validate_existing_function(
+        &self,
+        function: &ExistingFunction,
+        operation_name: &str,
+        input_type: &str,
+        output_type: &str,
+    ) -> Result<()> {
+        let mut conflicts = Vec::new();
+        if !function.freestanding {
+            conflicts.push("operation is not a freestanding function".to_string());
+        }
+        if function.params_len != 1 {
+            conflicts.push(format!(
+                "operation has {} parameters instead of 1",
+                function.params_len
+            ));
+        }
+        if function.parameter_name.as_deref() != Some("request") {
+            conflicts.push(format!(
+                "operation parameter is `{}` instead of `request`",
+                function.parameter_name.as_deref().unwrap_or("<missing>")
+            ));
+        }
+        if function.input_type_name.as_deref() != Some(input_type) {
+            conflicts.push(format!(
+                "operation request type is `{}` instead of `{input_type}`",
+                function.input_type_name.as_deref().unwrap_or("<missing>")
+            ));
+        }
+        if function.input_proto.as_deref() != Some(self.rpc.input_type.trim_start_matches('.')) {
+            conflicts.push(format!(
+                "operation request proto is `{}` instead of `{}`",
+                function.input_proto.as_deref().unwrap_or("<missing>"),
+                self.rpc.input_type.trim_start_matches('.')
+            ));
+        }
+        if !function.has_result {
+            conflicts.push("operation does not declare a result type".to_string());
+        }
+        if function.output_type_name.as_deref() != Some(output_type) {
+            conflicts.push(format!(
+                "operation result type is `{}` instead of `{output_type}`",
+                function.output_type_name.as_deref().unwrap_or("<missing>")
+            ));
+        }
+        if function.output_proto.as_deref() != Some(self.rpc.output_type.trim_start_matches('.')) {
+            conflicts.push(format!(
+                "operation result proto is `{}` instead of `{}`",
+                function.output_proto.as_deref().unwrap_or("<missing>"),
+                self.rpc.output_type.trim_start_matches('.')
+            ));
+        }
+
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+
+        Err(Error::UnsupportedAddRpc {
+            context: self.rpc.full_name.clone(),
+            reason: format!(
+                "existing operation `{operation_name}` conflicts with descriptor: {}",
+                conflicts.join("; ")
+            ),
+        })
+    }
+
+    fn missing_record_fields(
+        &self,
+        record: &ExistingRecord,
+        expected_fields: &[RenderedFieldSpec],
+        proto_name: &str,
+    ) -> Result<Vec<String>> {
+        let expected_by_proto = expected_fields
+            .iter()
+            .map(|field| (field.proto_name.as_str(), field))
+            .collect::<BTreeMap<_, _>>();
+
+        for existing_proto_name in record.fields.keys() {
+            if !expected_by_proto.contains_key(existing_proto_name.as_str()) {
+                return Err(Error::UnsupportedAddRpc {
+                    context: proto_name.to_string(),
+                    reason: format!(
+                        "existing WIT record `{}` contains non-descriptor field `{existing_proto_name}`",
+                        record.wit_name
+                    ),
+                });
+            }
+        }
+
+        let mut missing = Vec::new();
+        for expected in expected_fields {
+            let Some(existing) = record.fields.get(&expected.proto_name) else {
+                missing.push(expected.line.clone());
+                continue;
+            };
+            if existing.wit_name != expected.wit_name || existing.type_expr != expected.type_expr {
+                return Err(Error::UnsupportedAddRpc {
+                    context: format!("{proto_name}.{}", expected.proto_name),
+                    reason: format!(
+                        "existing WIT field is `{}: {}` but descriptor requires `{}: {}`",
+                        existing.wit_name,
+                        existing.type_expr,
+                        expected.wit_name,
+                        expected.type_expr
+                    ),
+                });
+            }
+        }
+
+        Ok(missing)
+    }
+
     fn render_type_reference(&mut self, proto_name: &str, context: &str) -> Result<String> {
         let proto_name = proto_name.trim_start_matches('.');
         if let Some(existing_name) = self.available_type_names.get(proto_name) {
@@ -224,26 +496,36 @@ impl<'a> AddRpcBuilder<'a> {
     }
 
     fn render_message(&mut self, message: &MessageMetadata, wit_name: &str) -> Result<String> {
-        let mut rendered_fields = Vec::new();
-        for field in &message.descriptor.field {
-            let field_name = field_name(field, &message.full_name)?;
-            let wit_field_type = self.render_field_type(field, &message.full_name, field_name)?;
-            rendered_fields.push(format!(
-                "    {}: {},",
-                field_name.to_kebab_case(),
-                wit_field_type
-            ));
-        }
+        let rendered_fields = self.render_message_fields(message)?;
 
         let mut rendered = String::new();
         rendered.push_str(&format!("  /// @nexus.proto \"{}\"\n", message.full_name));
         rendered.push_str(&format!("  record {wit_name} {{\n"));
         for field in rendered_fields {
-            rendered.push_str(&field);
+            rendered.push_str(&field.line);
             rendered.push('\n');
         }
         rendered.push_str("  }\n");
         Ok(rendered)
+    }
+
+    fn render_message_fields(
+        &mut self,
+        message: &MessageMetadata,
+    ) -> Result<Vec<RenderedFieldSpec>> {
+        let mut rendered_fields = Vec::new();
+        for field in &message.descriptor.field {
+            let field_name = field_name(field, &message.full_name)?;
+            let wit_field_type = self.render_field_type(field, &message.full_name, field_name)?;
+            let wit_field_name = field_name.to_kebab_case();
+            rendered_fields.push(RenderedFieldSpec {
+                proto_name: field_name.to_string(),
+                wit_name: wit_field_name.clone(),
+                type_expr: wit_field_type.clone(),
+                line: format!("    {wit_field_name}: {wit_field_type},"),
+            });
+        }
+        Ok(rendered_fields)
     }
 
     fn render_enum(&mut self, enumeration: &EnumMetadata, wit_name: &str) -> Result<String> {
@@ -375,6 +657,50 @@ impl<'a> AddRpcBuilder<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RenderedFieldSpec {
+    proto_name: String,
+    wit_name: String,
+    type_expr: String,
+    line: String,
+}
+
+struct ExistingOperationUpdate {
+    builtin_uses: BTreeMap<String, BTreeSet<String>>,
+    rendered_definitions: Vec<String>,
+    record_updates: Vec<RecordFieldUpdate>,
+}
+
+impl ExistingOperationUpdate {
+    fn apply(&self, input: &str, interface_name: &str) -> Result<String> {
+        let mut source = input.to_string();
+        let interface_additions =
+            render_interface_additions(&self.builtin_uses, &self.rendered_definitions);
+        if !interface_additions.is_empty() {
+            source = insert_into_named_block(
+                &source,
+                "interface",
+                interface_name,
+                &interface_additions,
+            )?;
+        }
+        for update in &self.record_updates {
+            source = insert_into_named_block(
+                &source,
+                "record",
+                &update.record_name,
+                &update.fields.join("\n"),
+            )?;
+        }
+        Ok(source)
+    }
+}
+
+struct RecordFieldUpdate {
+    record_name: String,
+    fields: Vec<String>,
+}
+
 struct RenderedAddRpcWit {
     rpc_full_name: String,
     interface_name: String,
@@ -413,42 +739,51 @@ impl RenderedAddRpcWit {
     }
 
     fn render_interface_items(&self) -> String {
-        let mut rendered = String::new();
-
-        if !self.builtin_uses.is_empty() {
-            rendered.push_str(&self.render_builtin_use_block());
-        }
-
-        if !self.rendered_definitions.is_empty() {
-            if !rendered.is_empty() {
-                rendered.push('\n');
-            }
-            for (index, definition) in self.rendered_definitions.iter().enumerate() {
-                rendered.push_str(definition);
-                if index + 1 != self.rendered_definitions.len() {
-                    rendered.push('\n');
-                }
-            }
-        }
-
+        let mut rendered =
+            render_interface_additions(&self.builtin_uses, &self.rendered_definitions);
         if !rendered.is_empty() {
             rendered.push('\n');
         }
         rendered.push_str(&self.operation);
         rendered
     }
+}
 
-    fn render_builtin_use_block(&self) -> String {
-        let mut rendered = String::new();
-        for (use_path, builtins) in &self.builtin_uses {
-            rendered.push_str(&format!("  use {use_path}.{{\n"));
-            for builtin in builtins {
-                rendered.push_str(&format!("    {builtin},\n"));
-            }
-            rendered.push_str("  };\n");
-        }
-        rendered
+fn render_interface_additions(
+    builtin_uses: &BTreeMap<String, BTreeSet<String>>,
+    rendered_definitions: &[String],
+) -> String {
+    let mut rendered = String::new();
+
+    if !builtin_uses.is_empty() {
+        rendered.push_str(&render_builtin_use_block(builtin_uses));
     }
+
+    if !rendered_definitions.is_empty() {
+        if !rendered.is_empty() {
+            rendered.push('\n');
+        }
+        for (index, definition) in rendered_definitions.iter().enumerate() {
+            rendered.push_str(definition);
+            if index + 1 != rendered_definitions.len() {
+                rendered.push('\n');
+            }
+        }
+    }
+
+    rendered
+}
+
+fn render_builtin_use_block(builtin_uses: &BTreeMap<String, BTreeSet<String>>) -> String {
+    let mut rendered = String::new();
+    for (use_path, builtins) in builtin_uses {
+        rendered.push_str(&format!("  use {use_path}.{{\n"));
+        for builtin in builtins {
+            rendered.push_str(&format!("    {builtin},\n"));
+        }
+        rendered.push_str("  };\n");
+    }
+    rendered
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -471,11 +806,25 @@ fn insert_into_named_block(
         });
     };
 
+    let insertion_start = source[..block.end_start]
+        .char_indices()
+        .rev()
+        .find_map(|(index, character)| match character {
+            ' ' | '\t' => None,
+            '\n' => Some(index + 1),
+            _ => Some(block.end_start),
+        })
+        .unwrap_or(block.end_start);
     let mut rendered = String::with_capacity(source.len() + snippet.len() + 1);
-    rendered.push_str(&source[..block.end_start]);
-    rendered.push('\n');
+    rendered.push_str(&source[..insertion_start]);
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
     rendered.push_str(snippet);
-    rendered.push_str(&source[block.end_start..]);
+    if !snippet.ends_with('\n') {
+        rendered.push('\n');
+    }
+    rendered.push_str(&source[insertion_start..]);
     Ok(rendered)
 }
 
@@ -597,6 +946,86 @@ fn collect_used_type_names(interface_source: &str) -> BTreeSet<String> {
     }
 
     used_names
+}
+
+fn proto_field_name_from_docs(docs: Option<&str>) -> Option<String> {
+    let docs = docs?;
+    for line in docs.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("@nexus.proto-field") else {
+            continue;
+        };
+        let rest = rest.trim();
+        if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+            return Some(rest[1..rest.len() - 1].to_string());
+        }
+    }
+    None
+}
+
+fn wit_type_name(resolve: &Resolve, ty: &WitType) -> Option<String> {
+    let WitType::Id(type_id) = ty else {
+        return None;
+    };
+    resolve.types[*type_id].name.clone()
+}
+
+fn render_wit_type(resolve: &Resolve, ty: &WitType) -> String {
+    match ty {
+        WitType::Bool => "bool".to_string(),
+        WitType::U8 => "u8".to_string(),
+        WitType::U16 => "u16".to_string(),
+        WitType::U32 => "u32".to_string(),
+        WitType::U64 => "u64".to_string(),
+        WitType::S8 => "s8".to_string(),
+        WitType::S16 => "s16".to_string(),
+        WitType::S32 => "s32".to_string(),
+        WitType::S64 => "s64".to_string(),
+        WitType::F32 => "f32".to_string(),
+        WitType::F64 => "f64".to_string(),
+        WitType::Char => "char".to_string(),
+        WitType::String => "string".to_string(),
+        WitType::ErrorContext => "error-context".to_string(),
+        WitType::Id(type_id) => render_wit_type_id(resolve, *type_id),
+    }
+}
+
+fn render_wit_type_id(resolve: &Resolve, type_id: TypeId) -> String {
+    let type_def = &resolve.types[type_id];
+    if let Some(name) = &type_def.name {
+        return name.clone();
+    }
+    match &type_def.kind {
+        TypeDefKind::Option(inner) => format!("option<{}>", render_wit_type(resolve, inner)),
+        TypeDefKind::List(inner) => format!("list<{}>", render_wit_type(resolve, inner)),
+        TypeDefKind::Type(inner) => render_wit_type(resolve, inner),
+        TypeDefKind::Tuple(tuple) => format!(
+            "tuple<{}>",
+            tuple
+                .types
+                .iter()
+                .map(|ty| render_wit_type(resolve, ty))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        TypeDefKind::Result(result) => {
+            let ok = result
+                .ok
+                .as_ref()
+                .map(|ty| render_wit_type(resolve, ty))
+                .unwrap_or_else(|| "_".to_string());
+            let err = result
+                .err
+                .as_ref()
+                .map(|ty| render_wit_type(resolve, ty))
+                .unwrap_or_else(|| "_".to_string());
+            format!("result<{ok}, {err}>")
+        }
+        _ => type_def
+            .name
+            .clone()
+            .unwrap_or_else(|| type_def.kind.as_str().to_string()),
+    }
 }
 
 fn field_name<'a>(field: &'a FieldDescriptorProto, parent_type: &str) -> Result<&'a str> {

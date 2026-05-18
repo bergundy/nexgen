@@ -9,8 +9,8 @@ import typing_extensions
 from datetime import timedelta
 import temporalio.common
 from temporalio import workflow
+import temporalio.api.workflowservice.v1.request_response_pb2
 
-from ..service import WorkflowService
 from ..models import (
     SignalWithStartWorkflowExecutionRequest,
     UserMetadata,
@@ -41,13 +41,14 @@ async def _signal_with_start_workflow_execution(
     request: SignalWithStartWorkflowExecutionRequest,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]:
     request_proto = request.to_proto()
-    nexus_client: workflow.NexusClient[WorkflowService] = workflow.create_nexus_client(
-        service=WorkflowService,
+    nexus_client = workflow.create_nexus_client(
+        service="WorkflowService",
         endpoint="__temporal_system",
     )
     handle = await nexus_client.start_operation(
-        WorkflowService.signal_with_start_workflow_execution,
-        request_proto,
+        operation="SignalWithStartWorkflowExecution",
+        input=request_proto,
+        output_type=temporalio.api.workflowservice.v1.request_response_pb2.SignalWithStartWorkflowExecutionResponse,
     )
     result = await handle
     return workflow.get_external_workflow_handle(

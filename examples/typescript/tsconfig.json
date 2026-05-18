@@ -9,5 +9,12 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["**/output/**/*.ts", "**/typecheck.ts", "**/*.test.ts"]
+  "include": [
+    "start-workflow/**/*.ts",
+    "user-service/**/*.ts",
+    "type-showcase/**/*.ts",
+    "type-roundtrip/**/*.ts",
+    "workflow-service/**/*.ts",
+    "tests/**/*.ts"
+  ]
 }

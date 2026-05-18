@@ -142,34 +142,6 @@ export const StartWorkflowExecutionRequest = {
   },
 };
 
-export interface Payloads {
-  payloads?: common.Payload[];
-}
-
-export const Payloads = {
-  fromProto(
-    proto: temporal.api.common.v1.IPayloads | null | undefined,
-  ): Payloads | undefined {
-    if (proto == null) {
-      return undefined;
-    }
-    return {
-      payloads: proto.payloads?.map((value: any) => payloadFromProto(value)!),
-    };
-  },
-
-  toProto(
-    model: Payloads | null | undefined,
-  ): temporal.api.common.v1.IPayloads | undefined {
-    if (model == null) {
-      return undefined;
-    }
-    return {
-      payloads: model.payloads?.map((value) => payloadToProto(value)),
-    };
-  },
-};
-
 export interface RequestCancelWorkflowExecutionRequest {
   workflowExecution: WorkflowExecution;
   reason?: string;
@@ -272,7 +244,7 @@ export class StartedWorkflow {
     public readonly runId: string | undefined,
   ) {}
 
-  public async cancel(reason?: string | undefined): Promise<void> {
+  public async cancel(reason?: string): Promise<void> {
     const handle = await cancelWorkflow({
       workflowExecution: { workflowId: this.workflowId, runId: this.runId },
       reason: reason,

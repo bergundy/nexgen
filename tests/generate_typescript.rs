@@ -35,7 +35,7 @@ fn input_path(root: &Path, example_id: &str) -> PathBuf {
 }
 
 fn typescript_output_path(root: &Path, example_id: &str) -> PathBuf {
-    typescript_root(root).join(example_id).join("output")
+    typescript_root(root).join(example_id)
 }
 
 fn typescript_example_ids(root: &Path) -> Vec<String> {
