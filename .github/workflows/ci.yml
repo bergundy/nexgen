@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          working-directory: examples/python
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: examples/typescript/package-lock.json
+
+      - name: Install Python dependencies
+        working-directory: examples/python
+        run: uv sync --locked
+
+      - name: Install TypeScript dependencies
+        working-directory: examples/typescript
+        run: npm ci
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Run Rust tests
+        run: cargo test
+
+      - name: Generate Python examples
+        run: cargo build-examples --lang python
+
+      - name: Check Python formatting
+        working-directory: examples/python
+        run: uv run ruff format --check .
+
+      - name: Typecheck Python examples
+        working-directory: examples/python
+        run: uv run basedpyright
+
+      - name: Test Python examples
+        working-directory: examples/python
+        run: uv run pytest tests --workflow-environment local
+
+      - name: Generate TypeScript examples
+        run: cargo build-examples --lang typescript
+
+      - name: Check TypeScript formatting
+        working-directory: examples/typescript
+        run: npm exec -- prettier --check .
+
+      - name: Typecheck TypeScript examples
+        working-directory: examples/typescript
+        run: npm run typecheck
+
+      - name: Test TypeScript examples
+        working-directory: examples/typescript
+        run: npm run test
+
+      - name: Check generated output drift
+        run: git diff --exit-code
