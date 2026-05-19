@@ -36,10 +36,7 @@ export function registerNexusResource(
   registry().set(typeId, factory);
 }
 
-export function markNexusResource(
-  constructor: Function,
-  typeId: string,
-): void {
+export function markNexusResource(constructor: Function, typeId: string): void {
   Object.defineProperty(constructor, NEXUS_TYPE_ID, { value: typeId });
 }
 

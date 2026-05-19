@@ -16,7 +16,9 @@ import user_service
 import user_service.models
 import user_service.service
 
-GET_USER_OPERATION = user_service.__nexus_operation_registry__[("UserService", "GetUser")]
+GET_USER_OPERATION = user_service.__nexus_operation_registry__[
+    ("UserService", "GetUser")
+]
 UPDATE_EMAIL_OPERATION = user_service.__nexus_operation_registry__[
     ("UserService", "UpdateEmail")
 ]

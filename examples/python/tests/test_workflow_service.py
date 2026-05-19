@@ -219,7 +219,9 @@ def build_full_signal_request(
 @service_handler(service=workflow_service.service.WorkflowService)
 class WorkflowServiceHandler:
     def __init__(self) -> None:
-        self.calls: list[workflowservice_v1.SignalWithStartWorkflowExecutionRequest] = []
+        self.calls: list[
+            workflowservice_v1.SignalWithStartWorkflowExecutionRequest
+        ] = []
 
     @sync_operation
     async def signal_with_start_workflow_execution(

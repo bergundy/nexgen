@@ -63,7 +63,9 @@ def _type_args(hint: object) -> tuple[object, ...]:
 
 
 def _type_hints(value: type[object]) -> collections.abc.Mapping[str, object]:
-    return typing.cast(collections.abc.Mapping[str, object], typing.get_type_hints(value))
+    return typing.cast(
+        collections.abc.Mapping[str, object], typing.get_type_hints(value)
+    )
 
 
 def _without_none(hint: object) -> object:
@@ -127,7 +129,9 @@ def _to_json(value: object, hint: object | None = None) -> JsonValue:
             if len(tuple_value) == 1:
                 return {"tag": first}
             payload_hint = None
-            tuple_hint = _variant_tuple_hint(_without_none(hint), first) if hint else None
+            tuple_hint = (
+                _variant_tuple_hint(_without_none(hint), first) if hint else None
+            )
             if tuple_hint is not None:
                 args = _type_args(tuple_hint)
                 if len(args) > 1:
@@ -203,10 +207,7 @@ def _from_json(value: JsonValue, hint: object) -> object:
         if not isinstance(value, list):
             raise TypeError("tuple values must be encoded as arrays")
         args = _type_args(hint_obj)
-        return tuple(
-            _from_json(item, args[index])
-            for index, item in enumerate(value)
-        )
+        return tuple(_from_json(item, args[index]) for index, item in enumerate(value))
     if origin is list:
         if not isinstance(value, list):
             raise TypeError("list values must be encoded as arrays")

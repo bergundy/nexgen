@@ -111,7 +111,9 @@ class StartWorkflowCallerWorkflow:
         except NotImplementedError:
             pass
         else:
-            raise AssertionError("started-workflow.get_result should not be implemented")
+            raise AssertionError(
+                "started-workflow.get_result should not be implemented"
+            )
         return (
             handle.namespace,
             handle.workflow_id,

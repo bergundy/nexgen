@@ -24,11 +24,15 @@ import type_showcase
 import type_showcase.models
 import type_showcase.service
 
-GET_USER_OPERATION = type_showcase.__nexus_operation_registry__[("TypeShowcase", "GetUser")]
+GET_USER_OPERATION = type_showcase.__nexus_operation_registry__[
+    ("TypeShowcase", "GetUser")
+]
 UPDATE_EMAIL_OPERATION = type_showcase.__nexus_operation_registry__[
     ("TypeShowcase", "UpdateEmail")
 ]
-RENAME_OPERATION = type_showcase.__nexus_operation_registry__[("TypeShowcase", "Rename")]
+RENAME_OPERATION = type_showcase.__nexus_operation_registry__[
+    ("TypeShowcase", "Rename")
+]
 DEACTIVATE_OPERATION = type_showcase.__nexus_operation_registry__[
     ("TypeShowcase", "Deactivate")
 ]
