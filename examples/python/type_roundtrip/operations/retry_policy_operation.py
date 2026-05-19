@@ -15,7 +15,7 @@ async def retry_policy_operation(
 ) -> workflow.NexusOperationHandle[temporalio.api.common.v1.message_pb2.RetryPolicy,]:
     nexus_client = workflow.create_nexus_client(
         service="TypeRoundtripService",
-        endpoint="__temporal_system",
+        endpoint="temporal-system",
     )
     return await nexus_client.start_operation(
         operation="RetryPolicyOperation",

@@ -18,7 +18,7 @@ async def _activity_options_operation(
 ]:
     nexus_client = workflow.create_nexus_client(
         service="TypeRoundtripService",
-        endpoint="__temporal_system",
+        endpoint="temporal-system",
     )
     return await nexus_client.start_operation(
         operation="ActivityOptionsOperation",

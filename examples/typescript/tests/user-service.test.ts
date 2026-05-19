@@ -1,34 +1,16 @@
-import { describe, expect, test, vi } from "vitest";
+import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "vitest";
+import * as nexus from "nexus-rpc";
 
-const runtime = vi.hoisted(() => {
-  const startOperation = vi.fn();
-  const createNexusServiceClient = vi.fn(() => ({
-    startOperation,
-  }));
-  return {
-    startOperation,
-    createNexusServiceClient,
-  };
-});
-
-vi.mock("@temporalio/workflow", async () => {
-  const actual = await vi.importActual<typeof import("@temporalio/workflow")>(
-    "@temporalio/workflow",
-  );
-  return {
-    ...actual,
-    createNexusServiceClient: runtime.createNexusServiceClient,
-  };
-});
-
+import { GetUserRequest, User, UserService } from "../user-service/index.ts";
 import {
-  GetUserRequest,
-  User,
-  UserService,
-  getUser,
-} from "../user-service/index.ts";
+  executeWorkflowWithNexus,
+  withWorkflowEnvironment,
+} from "./helpers.ts";
 
-const userResource = (email: string) => new User("user-123", email);
+const workflowsPath = fileURLToPath(
+  new URL("./workflows/user-service.ts", import.meta.url),
+);
 
 describe("user-service generated output", () => {
   test("exposes basic WIT-native service metadata", () => {
@@ -38,42 +20,51 @@ describe("user-service generated output", () => {
     expect(GetUserRequest).toEqual({});
   });
 
-  test("passes WIT records directly and returns a user resource", async () => {
-    runtime.startOperation
-      .mockResolvedValueOnce({
-        result: async () => userResource("old@example.com"),
-      })
-      .mockResolvedValueOnce({
-        result: async () => userResource("new@example.com"),
+  test("passes WIT records through a real Nexus client", async () => {
+    await withWorkflowEnvironment(async (env) => {
+      const calls: Array<[string, unknown]> = [];
+      const handler = nexus.serviceHandler(UserService, {
+        async getUser(_ctx, input) {
+          calls.push(["GetUser", input]);
+          return new User(input.userId, "old@example.com");
+        },
+        async updateEmail(_ctx, input) {
+          calls.push(["UpdateEmail", input]);
+          return new User(input.userId, input.email);
+        },
       });
 
-    const user = await getUser({ userId: "user-123" });
+      const result = await executeWorkflowWithNexus<{
+        initialEmail: string;
+        updatedEmail: string;
+        userId: string;
+      }>(env, {
+        endpoint: "user-service",
+        nexusServices: [handler],
+        workflowType: "userServiceCaller",
+        workflowsPath,
+      });
 
-    expect(user).toBeInstanceOf(User);
-    expect(user.userId).toBe("user-123");
-    expect(user.email).toBe("old@example.com");
-    expect(runtime.createNexusServiceClient).toHaveBeenCalledWith({
-      service: UserService,
-      endpoint: "__user_service",
+      expect(result).toEqual({
+        initialEmail: "old@example.com",
+        updatedEmail: "new@example.com",
+        userId: "user-123",
+      });
+      expect(calls).toEqual([
+        [
+          "GetUser",
+          {
+            userId: "user-123",
+          },
+        ],
+        [
+          "UpdateEmail",
+          {
+            email: "new@example.com",
+            userId: "user-123",
+          },
+        ],
+      ]);
     });
-    expect(runtime.startOperation).toHaveBeenNthCalledWith(
-      1,
-      UserService.operations.getUser,
-      {
-        userId: "user-123",
-      },
-    );
-
-    const updatedUser = await user.updateEmail("new@example.com");
-    expect(updatedUser).toBeInstanceOf(User);
-    expect(updatedUser.email).toBe("new@example.com");
-    expect(runtime.startOperation).toHaveBeenNthCalledWith(
-      2,
-      UserService.operations.updateEmail,
-      {
-        userId: "user-123",
-        email: "new@example.com",
-      },
-    );
   });
 });

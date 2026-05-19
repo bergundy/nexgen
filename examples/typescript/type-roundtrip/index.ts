@@ -118,7 +118,7 @@ export async function retryPolicyOperation(
 ): Promise<workflow.NexusOperationHandle<temporal.api.common.v1.IRetryPolicy>> {
   const client = workflow.createNexusServiceClient({
     service: TypeRoundtripService,
-    endpoint: "__temporal_system",
+    endpoint: "temporal-system",
   });
   return await client.startOperation(
     TypeRoundtripService.operations.retryPolicyOperation,
@@ -133,7 +133,7 @@ export async function activityOptionsOperation(
 > {
   const client = workflow.createNexusServiceClient({
     service: TypeRoundtripService,
-    endpoint: "__temporal_system",
+    endpoint: "temporal-system",
   });
   return await client.startOperation(
     TypeRoundtripService.operations.activityOptionsOperation,

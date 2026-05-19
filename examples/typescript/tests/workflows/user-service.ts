@@ -1,0 +1,15 @@
+import { getUser } from "../../user-service/index.ts";
+
+export async function userServiceCaller(): Promise<{
+  initialEmail: string;
+  updatedEmail: string;
+  userId: string;
+}> {
+  const user = await getUser({ userId: "user-123" });
+  const updatedUser = await user.updateEmail("new@example.com");
+  return {
+    initialEmail: user.email,
+    updatedEmail: updatedUser.email,
+    userId: user.userId,
+  };
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 from temporalio import workflow
+import nexus_api_gen_runtime
 
 from ..models import (
     DeactivateRequest,
@@ -60,7 +61,7 @@ async def _update_email(
 ) -> User:
     nexus_client = workflow.create_nexus_client(
         service="TypeShowcase",
-        endpoint="__type_showcase",
+        endpoint="type-showcase",
     )
     handle = await nexus_client.start_operation(
         operation="UpdateEmail",
@@ -87,7 +88,7 @@ async def _rename(
 ) -> User:
     nexus_client = workflow.create_nexus_client(
         service="TypeShowcase",
-        endpoint="__type_showcase",
+        endpoint="type-showcase",
     )
     handle = await nexus_client.start_operation(
         operation="Rename",
@@ -114,7 +115,7 @@ async def _deactivate(
 ) -> workflow.NexusOperationHandle[None,]:
     nexus_client = workflow.create_nexus_client(
         service="TypeShowcase",
-        endpoint="__type_showcase",
+        endpoint="type-showcase",
     )
     return await nexus_client.start_operation(
         operation="Deactivate",
@@ -132,3 +133,6 @@ async def deactivate(
         user_id=user_id,
     )
     return await _deactivate(request)
+
+
+nexus_api_gen_runtime.register_nexus_type(User, "TypeShowcase::resource::user")

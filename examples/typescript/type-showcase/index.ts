@@ -4,6 +4,11 @@ import * as common from "@temporalio/common";
 import * as nexus from "nexus-rpc";
 import type { google, temporal } from "@temporalio/proto";
 import * as workflow from "@temporalio/workflow";
+import {
+  nexusValue,
+  markNexusResource,
+  registerNexusResource,
+} from "../nexus-api-gen-runtime.ts";
 
 import {
   retryPolicyFromProto,
@@ -83,12 +88,12 @@ export interface RenameRequest {
 
 export const RenameRequest = {};
 
-export interface DeactivateRequest {
-  reason?: string;
+export interface SetProfileRequest {
+  profile: UserProfile;
   userId: string;
 }
 
-export const DeactivateRequest = {};
+export const SetProfileRequest = {};
 
 export interface UserProfile {
   address?: PostalAddress;
@@ -109,6 +114,13 @@ export interface PostalAddress {
 }
 
 export const PostalAddress = {};
+
+export interface DeactivateRequest {
+  reason?: string;
+  userId: string;
+}
+
+export const DeactivateRequest = {};
 
 export class User {
   public constructor(
@@ -133,21 +145,33 @@ export class User {
   }
 }
 
+registerNexusResource("TypeShowcase::resource::user", (fields): User => {
+  return new User(
+    fields.userId as string,
+    fields.email as string,
+    fields.displayName as string,
+    fields.status as UserStatus,
+    fields.profile as UserProfile,
+  );
+});
+markNexusResource(User, "TypeShowcase::resource::user");
+
 export const TypeShowcase = nexus.service("TypeShowcase", {
   getUser: nexus.operation<GetUserRequest, User>({ name: "GetUser" }),
   updateEmail: nexus.operation<UpdateEmailRequest, User>({
     name: "UpdateEmail",
   }),
   rename: nexus.operation<RenameRequest, User>({ name: "Rename" }),
+  setProfile: nexus.operation<SetProfileRequest, User>({ name: "SetProfile" }),
   deactivate: nexus.operation<DeactivateRequest, void>({ name: "Deactivate" }),
 });
 
 export async function getUser(request: GetUserRequest): Promise<User> {
   const client = workflow.createNexusServiceClient({
     service: TypeShowcase,
-    endpoint: "__type_showcase",
+    endpoint: "type-showcase",
   });
-  const requestProto = request;
+  const requestProto = nexusValue("type-showcase.get-user-request", request);
   const handle = await client.startOperation(
     TypeShowcase.operations.getUser,
     requestProto,
@@ -158,9 +182,12 @@ export async function getUser(request: GetUserRequest): Promise<User> {
 export async function updateEmail(request: UpdateEmailRequest): Promise<User> {
   const client = workflow.createNexusServiceClient({
     service: TypeShowcase,
-    endpoint: "__type_showcase",
+    endpoint: "type-showcase",
   });
-  const requestProto = request;
+  const requestProto = nexusValue(
+    "type-showcase.update-email-request",
+    request,
+  );
   const handle = await client.startOperation(
     TypeShowcase.operations.updateEmail,
     requestProto,
@@ -171,11 +198,24 @@ export async function updateEmail(request: UpdateEmailRequest): Promise<User> {
 export async function rename(request: RenameRequest): Promise<User> {
   const client = workflow.createNexusServiceClient({
     service: TypeShowcase,
-    endpoint: "__type_showcase",
+    endpoint: "type-showcase",
   });
-  const requestProto = request;
+  const requestProto = nexusValue("type-showcase.rename-request", request);
   const handle = await client.startOperation(
     TypeShowcase.operations.rename,
+    requestProto,
+  );
+  return await handle.result();
+}
+
+export async function setProfile(request: SetProfileRequest): Promise<User> {
+  const client = workflow.createNexusServiceClient({
+    service: TypeShowcase,
+    endpoint: "type-showcase",
+  });
+  const requestProto = nexusValue("type-showcase.set-profile-request", request);
+  const handle = await client.startOperation(
+    TypeShowcase.operations.setProfile,
     requestProto,
   );
   return await handle.result();
@@ -186,10 +226,10 @@ export async function deactivate(
 ): Promise<workflow.NexusOperationHandle<void>> {
   const client = workflow.createNexusServiceClient({
     service: TypeShowcase,
-    endpoint: "__type_showcase",
+    endpoint: "type-showcase",
   });
   return await client.startOperation(
     TypeShowcase.operations.deactivate,
-    request,
+    nexusValue("type-showcase.deactivate-request", request),
   );
 }

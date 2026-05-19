@@ -9,6 +9,7 @@ import typing
 import typing_extensions
 from datetime import timedelta
 from temporalio import workflow
+import nexus_api_gen_runtime
 import temporalio.api.workflowservice.v1.request_response_pb2
 
 from ..models import (
@@ -77,7 +78,7 @@ async def _cancel_workflow(
 ]:
     nexus_client = workflow.create_nexus_client(
         service="WorkflowService",
-        endpoint="__temporal_system",
+        endpoint="temporal-system",
     )
     return await nexus_client.start_operation(
         operation="CancelWorkflow",
@@ -106,7 +107,7 @@ async def _restart_workflow(
     request_proto = request.to_proto()
     nexus_client = workflow.create_nexus_client(
         service="WorkflowService",
-        endpoint="__temporal_system",
+        endpoint="temporal-system",
     )
     handle = await nexus_client.start_operation(
         operation="RestartWorkflow",
@@ -186,3 +187,8 @@ async def restart_workflow(
         workflow_start_delay=workflow_start_delay,
     )
     return await _restart_workflow(request)
+
+
+nexus_api_gen_runtime.register_nexus_type(
+    StartedWorkflow, "WorkflowService::resource::started-workflow"
+)

@@ -1262,10 +1262,20 @@ fn planned_value_type_from_authored(
         ),
         AuthoredFieldTypeSpec::Result { ok, err } => PlannedValueType::Result {
             ok: ok.as_ref().map(|ok| {
-                Box::new(planned_value_type_from_authored(ok, spec, descriptors, plan))
+                Box::new(planned_value_type_from_authored(
+                    ok,
+                    spec,
+                    descriptors,
+                    plan,
+                ))
             }),
             err: err.as_ref().map(|err| {
-                Box::new(planned_value_type_from_authored(err, spec, descriptors, plan))
+                Box::new(planned_value_type_from_authored(
+                    err,
+                    spec,
+                    descriptors,
+                    plan,
+                ))
             }),
         },
         AuthoredFieldTypeSpec::Alias {

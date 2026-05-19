@@ -4,7 +4,7 @@ world system {
   export user-service;
 }
 
-/// @nexus.endpoint "__user_service"
+/// @nexus.endpoint "user-service"
 interface user-service {
   resource user {
     constructor(user-id: string, email: string);

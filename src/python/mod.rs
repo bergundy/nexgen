@@ -193,7 +193,9 @@ struct RenderedVariantCase {
 
 #[derive(Debug)]
 struct RenderedModel {
+    full_name: String,
     name: String,
+    source: PlannedMessageSource,
     proto_ref: Option<String>,
     proto_module_path: Option<String>,
     capabilities: ModelCapabilities,
@@ -901,7 +903,9 @@ fn ensure_rendered_model(
     models.insert(
         message.info.full_name.clone(),
         RenderedModel {
+            full_name: message.info.full_name.clone(),
             name: planned_model.name.clone(),
+            source: message.source,
             proto_ref,
             proto_module_path,
             capabilities: planned_model.capabilities,
@@ -1955,6 +1959,10 @@ fn operation_key(service_name: &str, operation_name: &str) -> String {
     format!("{service_name}::{operation_name}")
 }
 
+fn python_resource_type_id(service: &RenderedService<'_>, resource: &PlannedResource) -> String {
+    format!("{}::resource::{}", service.name, resource.name)
+}
+
 fn resource_module_name(resource: &PlannedResource) -> String {
     python_ident(&resource.name.to_snake_case())
 }
@@ -2266,6 +2274,12 @@ fn render_models_module(
     support_names: &[String],
 ) -> String {
     let mut module_imports = BTreeSet::new();
+    if models
+        .iter()
+        .any(|model| model.source == PlannedMessageSource::Wit)
+    {
+        module_imports.insert("nexus_api_gen_runtime".to_string());
+    }
     for model in models {
         if let Some(proto_module_path) = &model.proto_module_path {
             module_imports.insert(proto_module_path.clone());
@@ -2323,6 +2337,8 @@ fn render_models_module(
         }
     }
 
+    render_nexus_type_registrations(&mut body, models);
+
     let mut output = String::new();
     render_generated_file_header(&mut output);
     output.push('\n');
@@ -2341,6 +2357,28 @@ fn render_models_module(
     }
 
     output
+}
+
+fn render_nexus_type_registrations(output: &mut String, models: &[&RenderedModel]) {
+    if !models
+        .iter()
+        .any(|model| model.source == PlannedMessageSource::Wit)
+    {
+        return;
+    }
+    if !output.is_empty() {
+        output.push_str("\n\n");
+    }
+    for model in models
+        .iter()
+        .filter(|model| model.source == PlannedMessageSource::Wit)
+    {
+        output.push_str("nexus_api_gen_runtime.register_nexus_type(");
+        output.push_str(&model.name);
+        output.push_str(", ");
+        output.push_str(&python_string_literal(&model.full_name));
+        output.push_str(")\n");
+    }
 }
 
 fn render_resources_package_init(services: &[RenderedService<'_>]) -> String {
@@ -2398,7 +2436,7 @@ fn render_resource_module_file(
     resource_names: &[String],
     support_names: &[String],
 ) -> String {
-    let module_imports = bound_operations
+    let mut module_imports = bound_operations
         .iter()
         .flat_map(|bound_operation| {
             [
@@ -2408,6 +2446,7 @@ fn render_resource_module_file(
         })
         .flatten()
         .collect::<BTreeSet<_>>();
+    module_imports.insert("nexus_api_gen_runtime".to_string());
 
     let mut body = String::new();
     if bound_operations.iter().any(|bound_operation| {
@@ -2439,6 +2478,14 @@ fn render_resource_module_file(
             }
         }
     }
+    body.push_str("\n\n");
+    body.push_str("nexus_api_gen_runtime.register_nexus_type(");
+    body.push_str(&resource.type_name);
+    body.push_str(", ");
+    body.push_str(&python_string_literal(&python_resource_type_id(
+        service, resource,
+    )));
+    body.push_str(")\n");
 
     let mut output = String::new();
     render_generated_file_header(&mut output);

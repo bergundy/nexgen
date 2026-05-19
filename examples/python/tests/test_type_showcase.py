@@ -1,35 +1,53 @@
 from __future__ import annotations
 
-from collections.abc import Generator
+import base64
+import json
 from pathlib import Path
+from typing import cast
+import uuid
 
+import nexus_api_gen_runtime
+from nexusrpc.handler import StartOperationContext, service_handler, sync_operation
 from nexusrpc import Operation
-import pytest
-import temporalio.workflow
+from temporalio.api.common.v1 import Payloads
+from temporalio import workflow
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 APP_ROOT = Path(__file__).resolve().parent
 OUTPUT_PATH = APP_ROOT.parent / "type_showcase"
+WIRE_FIXTURE_DIR = APP_ROOT.parent.parent / "wire" / "type-showcase"
+PYTHON_WIRE_FIXTURE = WIRE_FIXTURE_DIR / "set-profile-request.python.payloads"
+TYPESCRIPT_WIRE_FIXTURE = WIRE_FIXTURE_DIR / "set-profile-request.typescript.payloads"
 
-import type_showcase as output
-import type_showcase.models as output_models
+import type_showcase
+import type_showcase.models
+import type_showcase.service
 
-GET_USER_OPERATION = output.__nexus_operation_registry__[("TypeShowcase", "GetUser")]
-UPDATE_EMAIL_OPERATION = output.__nexus_operation_registry__[
+GET_USER_OPERATION = type_showcase.__nexus_operation_registry__[("TypeShowcase", "GetUser")]
+UPDATE_EMAIL_OPERATION = type_showcase.__nexus_operation_registry__[
     ("TypeShowcase", "UpdateEmail")
 ]
-RENAME_OPERATION = output.__nexus_operation_registry__[("TypeShowcase", "Rename")]
-DEACTIVATE_OPERATION = output.__nexus_operation_registry__[
+RENAME_OPERATION = type_showcase.__nexus_operation_registry__[("TypeShowcase", "Rename")]
+DEACTIVATE_OPERATION = type_showcase.__nexus_operation_registry__[
     ("TypeShowcase", "Deactivate")
 ]
 
 
-def user_profile() -> output_models.UserProfile:
-    return output_models.UserProfile(
-        capabilities=output_models.UserCapability.ReadProfile
-        | output_models.UserCapability.UpdateEmail,
+def sample_set_profile_request() -> type_showcase.models.SetProfileRequest:
+    return type_showcase.models.SetProfileRequest(
+        user_id="user-123",
+        profile=user_profile(),
+    )
+
+
+def user_profile() -> type_showcase.models.UserProfile:
+    return type_showcase.models.UserProfile(
+        capabilities=type_showcase.models.UserCapability.ReadProfile
+        | type_showcase.models.UserCapability.UpdateEmail,
         notification_target=("email", "old@example.com"),
         sync_state=("ok", "synced"),
-        address=output_models.PostalAddress(
+        address=type_showcase.models.PostalAddress(
             street="1 Main St",
             city="Portland",
             country="US",
@@ -44,99 +62,133 @@ def user_resource(
     *,
     email: str,
     display_name: str,
-) -> output.User:
-    return output.User(
+) -> type_showcase.User:
+    return type_showcase.User(
         user_id="user-123",
         email=email,
         display_name=display_name,
-        status=output_models.UserStatus.Active,
+        status=type_showcase.models.UserStatus.Active,
         profile=user_profile(),
     )
 
 
-class FakeOperationHandle:
-    def __init__(
-        self,
-        response: object,
-    ) -> None:
-        self._response: object = response
-
-    def __await__(
-        self,
-    ) -> Generator[object, None, object]:
-        async def wait_for_result() -> object:
-            return self._response
-
-        return wait_for_result().__await__()
+def write_payloads(path: Path, payloads: Payloads) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text(
+        base64.b64encode(payloads.SerializeToString()).decode() + "\n",
+        encoding="utf-8",
+    )
 
 
-class FakeNexusClient:
+def read_payloads(path: Path) -> Payloads:
+    payloads = Payloads()
+    _ = payloads.ParseFromString(base64.b64decode(path.read_text(encoding="utf-8")))
+    return payloads
+
+
+async def encode_request(request: type_showcase.models.SetProfileRequest) -> Payloads:
+    return await nexus_api_gen_runtime.nexus_data_converter.encode_wrapper([request])
+
+
+async def decode_request(payloads: Payloads) -> type_showcase.models.SetProfileRequest:
+    values = cast(
+        list[object],
+        await nexus_api_gen_runtime.nexus_data_converter.decode_wrapper(
+            payloads,
+            [type_showcase.models.SetProfileRequest],
+        ),
+    )
+    assert len(values) == 1
+    value = values[0]
+    assert isinstance(value, type_showcase.models.SetProfileRequest)
+    return value
+
+
+def payload_json(payloads: Payloads) -> dict[str, object]:
+    assert len(payloads.payloads) == 1
+    payload = payloads.payloads[0]
+    assert payload.metadata["encoding"] == b"json/nexus"
+    assert payload.metadata["nexusType"] == b"type-showcase.set-profile-request"
+    value = cast(object, json.loads(payload.data))
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
+
+
+@service_handler(service=type_showcase.service.TypeShowcase)
+class TypeShowcaseHandler:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
-    async def start_operation(
+    @sync_operation
+    async def get_user(
         self,
-        operation: str,
-        input: object,
-        *,
-        output_type: type[object] | None = None,
-    ) -> FakeOperationHandle:
-        self.calls.append((operation, input))
-        if operation == "GetUser":
-            assert output_type is output.User
-            assert isinstance(input, output_models.GetUserRequest)
-            assert input.user_id == "user-123"
-            assert input.consistency_token == "read-123"
-            return FakeOperationHandle(
-                user_resource(email="old@example.com", display_name="Old Name")
-            )
+        _ctx: StartOperationContext,
+        input: type_showcase.models.GetUserRequest,
+    ) -> type_showcase.User:
+        self.calls.append(("GetUser", input))
+        assert input.user_id == "user-123"
+        assert input.consistency_token == "read-123"
+        return user_resource(email="old@example.com", display_name="Old Name")
 
-        if operation == "UpdateEmail":
-            assert output_type is output.User
-            assert isinstance(input, output_models.UpdateEmailRequest)
-            assert input.user_id == "user-123"
-            assert input.email == "new@example.com"
-            return FakeOperationHandle(
-                user_resource(email=input.email, display_name="Old Name")
-            )
+    @sync_operation
+    async def update_email(
+        self,
+        _ctx: StartOperationContext,
+        input: type_showcase.models.UpdateEmailRequest,
+    ) -> type_showcase.User:
+        self.calls.append(("UpdateEmail", input))
+        assert input.user_id == "user-123"
+        assert input.email == "new@example.com"
+        return user_resource(email=input.email, display_name="Old Name")
 
-        if operation == "Rename":
-            assert output_type is output.User
-            assert isinstance(input, output_models.RenameRequest)
-            assert input.user_id == "user-123"
-            assert input.display_name == "New Name"
-            return FakeOperationHandle(
-                user_resource(email="new@example.com", display_name=input.display_name)
-            )
+    @sync_operation
+    async def rename(
+        self,
+        _ctx: StartOperationContext,
+        input: type_showcase.models.RenameRequest,
+    ) -> type_showcase.User:
+        self.calls.append(("Rename", input))
+        assert input.user_id == "user-123"
+        assert input.display_name == "New Name"
+        return user_resource(email="new@example.com", display_name=input.display_name)
 
-        assert operation == "Deactivate"
-        assert output_type is None
-        assert isinstance(input, output_models.DeactivateRequest)
+    @sync_operation
+    async def set_profile(
+        self,
+        _ctx: StartOperationContext,
+        input: type_showcase.models.SetProfileRequest,
+    ) -> type_showcase.User:
+        self.calls.append(("SetProfile", input))
+        return user_resource(email="old@example.com", display_name="Old Name")
+
+    @sync_operation
+    async def deactivate(
+        self,
+        _ctx: StartOperationContext,
+        input: type_showcase.models.DeactivateRequest,
+    ) -> None:
+        self.calls.append(("Deactivate", input))
         assert input.user_id == "user-123"
         assert input.reason == "requested"
-        return FakeOperationHandle(None)
 
 
-@pytest.fixture
-def fake_client(monkeypatch: pytest.MonkeyPatch) -> FakeNexusClient:
-    fake_client = FakeNexusClient()
-
-    def fake_create_nexus_client(*, service: str, endpoint: str) -> FakeNexusClient:
-        assert service == "TypeShowcase"
-        assert endpoint == "__type_showcase"
-        return fake_client
-
-    monkeypatch.setattr(
-        temporalio.workflow,
-        "create_nexus_client",
-        fake_create_nexus_client,
-    )
-    return fake_client
+@workflow.defn
+class TypeShowcaseCallerWorkflow:
+    @workflow.run
+    async def run(self) -> type_showcase.User:
+        user = await type_showcase.get_user(
+            user_id="user-123",
+            consistency_token="read-123",
+        )
+        updated_user = await user.update_email("new@example.com")
+        renamed_user = await updated_user.rename("New Name")
+        await renamed_user.deactivate(reason="requested")
+        return renamed_user
 
 
 def test_generated_metadata() -> None:
     assert OUTPUT_PATH.exists(), f"expected generated package at {OUTPUT_PATH}"
-    registry = output.__nexus_operation_registry__
+    registry = type_showcase.__nexus_operation_registry__
 
     assert isinstance(GET_USER_OPERATION, Operation)
     assert GET_USER_OPERATION.name == "GetUser"
@@ -147,16 +199,22 @@ def test_generated_metadata() -> None:
     assert isinstance(RENAME_OPERATION, Operation)
     assert RENAME_OPERATION.name == "Rename"
     assert registry[("TypeShowcase", "Rename")] is RENAME_OPERATION
+    set_profile_operation = type_showcase.__nexus_operation_registry__[
+        ("TypeShowcase", "SetProfile")
+    ]
+    assert isinstance(set_profile_operation, Operation)
+    assert set_profile_operation.name == "SetProfile"
+    assert registry[("TypeShowcase", "SetProfile")] is set_profile_operation
     assert isinstance(DEACTIVATE_OPERATION, Operation)
     assert DEACTIVATE_OPERATION.name == "Deactivate"
     assert registry[("TypeShowcase", "Deactivate")] is DEACTIVATE_OPERATION
-    assert not hasattr(output, "TypeShowcase")
-    assert hasattr(output, "User")
-    assert not hasattr(output_models, "DeactivateResponse")
-    assert not hasattr(output_models.GetUserRequest, "to_proto")
-    assert output_models.UserStatus.Active == 0
-    assert output_models.UserCapability.ReadProfile == 1
-    assert output_models.UserCapability.UpdateEmail == 2
+    assert not hasattr(type_showcase, "TypeShowcase")
+    assert hasattr(type_showcase, "User")
+    assert not hasattr(type_showcase.models, "DeactivateResponse")
+    assert not hasattr(type_showcase.models.GetUserRequest, "to_proto")
+    assert type_showcase.models.UserStatus.Active == 0
+    assert type_showcase.models.UserCapability.ReadProfile == 1
+    assert type_showcase.models.UserCapability.UpdateEmail == 2
 
 
 def test_generated_wit_native_models_cover_common_wit_shapes() -> None:
@@ -164,8 +222,8 @@ def test_generated_wit_native_models_cover_common_wit_shapes() -> None:
 
     assert profile.notification_target == ("email", "old@example.com")
     assert profile.capabilities == (
-        output_models.UserCapability.ReadProfile
-        | output_models.UserCapability.UpdateEmail
+        type_showcase.models.UserCapability.ReadProfile
+        | type_showcase.models.UserCapability.UpdateEmail
     )
     assert profile.sync_state == ("ok", "synced")
     assert profile.address is not None
@@ -174,50 +232,73 @@ def test_generated_wit_native_models_cover_common_wit_shapes() -> None:
     assert profile.tags == ["admin", "beta"]
 
 
-async def test_get_user_returns_wit_user_resource(
-    fake_client: FakeNexusClient,
-) -> None:
-    user = await output.get_user(
-        user_id="user-123",
-        consistency_token="read-123",
-    )
+async def test_type_showcase_request_wire_fixtures_are_cross_language_compatible() -> (
+    None
+):
+    expected = sample_set_profile_request()
+    python_payloads = await encode_request(expected)
+    write_payloads(PYTHON_WIRE_FIXTURE, python_payloads)
 
-    assert len(fake_client.calls) == 1
-    assert isinstance(user, output.User)
+    assert payload_json(python_payloads)["user-id"] == "user-123"
+    assert await decode_request(read_payloads(PYTHON_WIRE_FIXTURE)) == expected
+    assert await decode_request(read_payloads(TYPESCRIPT_WIRE_FIXTURE)) == expected
+
+
+async def test_get_user_returns_wit_user_resource_through_real_nexus_client(
+    env: WorkflowEnvironment,
+) -> None:
+    task_queue = str(uuid.uuid4())
+    service_handler = TypeShowcaseHandler()
+
+    async with Worker(
+        env.client,
+        task_queue=task_queue,
+        workflows=[TypeShowcaseCallerWorkflow],
+        nexus_service_handlers=[service_handler],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        endpoint = await env.create_nexus_endpoint("type-showcase", task_queue)
+        try:
+            user = await env.client.execute_workflow(
+                TypeShowcaseCallerWorkflow.run,
+                id=str(uuid.uuid4()),
+                task_queue=task_queue,
+            )
+        finally:
+            await env.delete_nexus_endpoint(endpoint)
+
+    assert isinstance(user, type_showcase.User)
     assert user.user_id == "user-123"
-    assert user.email == "old@example.com"
-    assert user.display_name == "Old Name"
-    assert user.status is output_models.UserStatus.Active
+    assert user.email == "new@example.com"
+    assert user.display_name == "New Name"
+    assert user.status is type_showcase.models.UserStatus.Active
     assert user.profile.notification_target == ("email", "old@example.com")
     assert user.profile.sync_state == ("ok", "synced")
     assert (
-        user.profile.capabilities & output_models.UserCapability.ReadProfile
-    ) == output_models.UserCapability.ReadProfile
+        user.profile.capabilities & type_showcase.models.UserCapability.ReadProfile
+    ) == type_showcase.models.UserCapability.ReadProfile
 
-    updated_user = await user.update_email("new@example.com")
-    assert len(fake_client.calls) == 2
-    update_operation, update_request = fake_client.calls[1]
+    assert len(service_handler.calls) == 4
+    get_user_operation, get_user_request = service_handler.calls[0]
+    assert get_user_operation == "GetUser"
+    assert isinstance(get_user_request, type_showcase.models.GetUserRequest)
+    assert get_user_request.user_id == "user-123"
+    assert get_user_request.consistency_token == "read-123"
+
+    update_operation, update_request = service_handler.calls[1]
     assert update_operation == "UpdateEmail"
-    assert isinstance(update_request, output_models.UpdateEmailRequest)
+    assert isinstance(update_request, type_showcase.models.UpdateEmailRequest)
     assert update_request.user_id == "user-123"
     assert update_request.email == "new@example.com"
-    assert updated_user.email == "new@example.com"
-    assert updated_user.display_name == "Old Name"
 
-    renamed_user = await updated_user.rename("New Name")
-    assert len(fake_client.calls) == 3
-    rename_operation, rename_request = fake_client.calls[2]
+    rename_operation, rename_request = service_handler.calls[2]
     assert rename_operation == "Rename"
-    assert isinstance(rename_request, output_models.RenameRequest)
+    assert isinstance(rename_request, type_showcase.models.RenameRequest)
     assert rename_request.user_id == "user-123"
     assert rename_request.display_name == "New Name"
-    assert renamed_user.email == "new@example.com"
-    assert renamed_user.display_name == "New Name"
 
-    await renamed_user.deactivate(reason="requested")
-    assert len(fake_client.calls) == 4
-    deactivate_operation, deactivate_request = fake_client.calls[3]
+    deactivate_operation, deactivate_request = service_handler.calls[3]
     assert deactivate_operation == "Deactivate"
-    assert isinstance(deactivate_request, output_models.DeactivateRequest)
+    assert isinstance(deactivate_request, type_showcase.models.DeactivateRequest)
     assert deactivate_request.user_id == "user-123"
     assert deactivate_request.reason == "requested"

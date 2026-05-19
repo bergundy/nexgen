@@ -322,6 +322,7 @@ struct RenderedOperation<'a> {
     input_type_parameters: Vec<RenderedTypeParameter>,
     input_annotation: String,
     input_to_proto_expr: String,
+    input_nexus_type_id: Option<String>,
     output_annotation: String,
     output_transform_expr: Option<String>,
     output_resource_return: Option<PlannedOperationResourceReturn>,
@@ -598,6 +599,11 @@ fn resolve_operation<'a>(
         input_type_parameters,
         input_annotation,
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
+        input_nexus_type_id: if operation.input.source == PlannedMessageSource::Wit {
+            Some(operation.input.info.full_name.clone())
+        } else {
+            None
+        },
         output_annotation: output_transform
             .and_then(|transform| {
                 transform
@@ -1302,9 +1308,9 @@ fn resolve_planned_value_type(
             }
         }
         PlannedValueType::Result { ok, err } => {
-            let ok = ok.as_ref().map(|ok| {
-                resolve_planned_value_type(ok, api_plan, enums, flags, variants, models)
-            });
+            let ok = ok
+                .as_ref()
+                .map(|ok| resolve_planned_value_type(ok, api_plan, enums, flags, variants, models));
             let err = err.as_ref().map(|err| {
                 resolve_planned_value_type(err, api_plan, enums, flags, variants, models)
             });
@@ -1779,6 +1785,26 @@ fn render_module(
     output.push_str(GENERATED_HEADER);
     output.push_str("\n\n");
     render_typescript_imports(&mut output, requirements);
+    let uses_nexus_value = services.iter().any(|service| {
+        service
+            .operations
+            .iter()
+            .any(|operation| operation.input_nexus_type_id.is_some())
+    });
+    let uses_nexus_resource = services.iter().any(|service| !service.resources.is_empty());
+    if uses_nexus_value || uses_nexus_resource {
+        output.push_str("import { ");
+        let mut imports = Vec::new();
+        if uses_nexus_value {
+            imports.push("nexusValue");
+        }
+        if uses_nexus_resource {
+            imports.push("markNexusResource");
+            imports.push("registerNexusResource");
+        }
+        output.push_str(&imports.join(", "));
+        output.push_str(" } from '../nexus-api-gen-runtime.ts';\n");
+    }
 
     if let Some(support_exports) = support_exports {
         if !support_exports.value_names.is_empty() {
@@ -1865,6 +1891,8 @@ fn render_module(
         }
     }
 
+    render_nexus_type_registrations(&mut output, services);
+
     for (index, service) in services.iter().enumerate() {
         if index > 0 || !services.is_empty() {
             output.push('\n');
@@ -1873,6 +1901,44 @@ fn render_module(
     }
 
     output
+}
+
+fn render_nexus_type_registrations(output: &mut String, services: &[RenderedService<'_>]) {
+    let has_resources = services.iter().any(|service| !service.resources.is_empty());
+    if !has_resources {
+        return;
+    }
+    output.push('\n');
+    for service in services {
+        for resource in &service.resources {
+            let type_id = typescript_resource_type_id(service, resource);
+            output.push_str("registerNexusResource(");
+            output.push_str(&typescript_string_literal(&type_id));
+            output.push_str(", (fields): ");
+            output.push_str(&resource.type_name);
+            output.push_str(" => {\n");
+            output.push_str("  return new ");
+            output.push_str(&resource.type_name);
+            output.push_str("(\n");
+            for field in &resource.fields {
+                output.push_str("    fields.");
+                output.push_str(&typescript_generated_field_name(&field.name));
+                output.push_str(" as ");
+                output.push_str(&typescript_resource_field_annotation(
+                    &field.kind,
+                    field.optional,
+                ));
+                output.push_str(",\n");
+            }
+            output.push_str("  );\n");
+            output.push_str("});\n");
+            output.push_str("markNexusResource(");
+            output.push_str(&resource.type_name);
+            output.push_str(", ");
+            output.push_str(&typescript_string_literal(&type_id));
+            output.push_str(");\n\n");
+        }
+    }
 }
 
 fn render_enum(output: &mut String, enumeration: &RenderedEnum) {
@@ -2269,6 +2335,13 @@ fn render_service(output: &mut String, service: &RenderedService<'_>) {
         output.push('\n');
         render_operation_function(output, service, operation);
     }
+}
+
+fn typescript_resource_type_id(
+    service: &RenderedService<'_>,
+    resource: &PlannedResource,
+) -> String {
+    format!("{}::resource::{}", service.name, resource.name)
 }
 
 fn render_resource(output: &mut String, resource: &PlannedResource, service: &RenderedService<'_>) {
@@ -2715,7 +2788,7 @@ fn render_operation_function(
         output.push_str(&operation.attr_name);
         output.push_str(",\n");
         output.push_str("    ");
-        output.push_str(&operation.input_to_proto_expr);
+        output.push_str(&typescript_operation_input_expr(operation));
         output.push_str(",\n");
         output.push_str("  );\n");
         output.push_str("}\n");
@@ -2730,7 +2803,7 @@ fn render_operation_function(
     output.push_str(",\n");
     output.push_str("  });\n");
     output.push_str("  const requestProto = ");
-    output.push_str(&operation.input_to_proto_expr);
+    output.push_str(&typescript_operation_input_expr(operation));
     output.push_str(";\n");
     output.push_str("  const handle = await client.startOperation(\n");
     output.push_str("    ");
@@ -2760,6 +2833,18 @@ fn render_operation_function(
         output.push_str("  return await handle.result();\n");
     }
     output.push_str("}\n");
+}
+
+fn typescript_operation_input_expr(operation: &RenderedOperation<'_>) -> String {
+    if let Some(type_id) = &operation.input_nexus_type_id {
+        format!(
+            "nexusValue({}, {})",
+            typescript_string_literal(type_id),
+            operation.input_to_proto_expr
+        )
+    } else {
+        operation.input_to_proto_expr.clone()
+    }
 }
 
 fn required_field_expr(value_expr: &str, owner_name: &str, field_name: &str) -> String {

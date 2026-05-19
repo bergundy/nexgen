@@ -4,6 +4,10 @@ import * as common from "@temporalio/common";
 import * as nexus from "nexus-rpc";
 import type { google, temporal } from "@temporalio/proto";
 import * as workflow from "@temporalio/workflow";
+import {
+  markNexusResource,
+  registerNexusResource,
+} from "../nexus-api-gen-runtime.ts";
 
 import {
   retryPolicyFromProto,
@@ -276,6 +280,21 @@ export class StartedWorkflow {
   }
 }
 
+registerNexusResource(
+  "WorkflowService::resource::started-workflow",
+  (fields): StartedWorkflow => {
+    return new StartedWorkflow(
+      fields.namespace as string,
+      fields.workflowId as string,
+      fields.runId as string | undefined,
+    );
+  },
+);
+markNexusResource(
+  StartedWorkflow,
+  "WorkflowService::resource::started-workflow",
+);
+
 export const WorkflowService = nexus.service("WorkflowService", {
   startWorkflow: nexus.operation<
     temporal.api.workflowservice.v1.IStartWorkflowExecutionRequest,
@@ -300,7 +319,7 @@ export async function startWorkflow<
 ): Promise<StartedWorkflow> {
   const client = workflow.createNexusServiceClient({
     service: WorkflowService,
-    endpoint: "__temporal_system",
+    endpoint: "temporal-system",
   });
   const requestProto = StartWorkflowExecutionRequest.toProto(request) ?? {};
   const handle = await client.startOperation(
@@ -324,7 +343,7 @@ export async function restartWorkflow<
 ): Promise<StartedWorkflow> {
   const client = workflow.createNexusServiceClient({
     service: WorkflowService,
-    endpoint: "__temporal_system",
+    endpoint: "temporal-system",
   });
   const requestProto = StartWorkflowExecutionRequest.toProto(request) ?? {};
   const handle = await client.startOperation(
@@ -346,7 +365,7 @@ export async function cancelWorkflow(
 > {
   const client = workflow.createNexusServiceClient({
     service: WorkflowService,
-    endpoint: "__temporal_system",
+    endpoint: "temporal-system",
   });
   return await client.startOperation(
     WorkflowService.operations.cancelWorkflow,

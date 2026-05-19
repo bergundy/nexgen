@@ -1,58 +1,19 @@
-import { describe, expect, test, vi } from "vitest";
+import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "vitest";
+import type { temporal } from "@temporalio/proto";
+import * as nexus from "nexus-rpc";
 
-const runtime = vi.hoisted(() => {
-  const startOperation = vi.fn();
-  const createNexusServiceClient = vi.fn(() => ({
-    startOperation,
-  }));
-  return {
-    startOperation,
-    createNexusServiceClient,
-  };
-});
-
-vi.mock("@temporalio/workflow", async () => {
-  const actual = await vi.importActual<typeof import("@temporalio/workflow")>(
-    "@temporalio/workflow",
-  );
-  return {
-    ...actual,
-    workflowInfo: () =>
-      ({
-        namespace: "workflow-namespace",
-      }) as ReturnType<typeof actual.workflowInfo>,
-    createNexusServiceClient: runtime.createNexusServiceClient,
-  };
-});
-
+import { StartedWorkflow, WorkflowService } from "../start-workflow/index.ts";
 import {
-  RequestCancelWorkflowExecutionRequest,
-  StartedWorkflow,
-  StartWorkflowExecutionRequest,
-  WorkflowService,
-  startWorkflow,
-} from "../start-workflow/index.ts";
+  executeWorkflowWithNexus,
+  withWorkflowEnvironment,
+} from "./helpers.ts";
+
+const workflowsPath = fileURLToPath(
+  new URL("./workflows/start-workflow.ts", import.meta.url),
+);
 
 describe("start-workflow generated output", () => {
-  test("serializes start-workflow requests", () => {
-    async function exampleWorkflow(customerId: string): Promise<string> {
-      return customerId;
-    }
-
-    const proto = StartWorkflowExecutionRequest.toProto({
-      workflow: exampleWorkflow,
-      input: ["customer-123"],
-      workflowId: "workflow-id",
-      taskQueue: "demo-task-queue",
-    });
-
-    expect(proto?.workflowType?.name).toBe("exampleWorkflow");
-    expect(proto?.workflowId).toBe("workflow-id");
-    expect(proto?.taskQueue?.name).toBe("demo-task-queue");
-    expect(proto?.input?.payloads).toHaveLength(1);
-    expect(proto?.namespace).toBe("workflow-namespace");
-  });
-
   test("exposes workflow service metadata", () => {
     expect(WorkflowService.name).toBe("WorkflowService");
     expect(WorkflowService.operations.startWorkflow.name).toBe("StartWorkflow");
@@ -64,119 +25,78 @@ describe("start-workflow generated output", () => {
     );
   });
 
-  test("serializes cancel-workflow requests", () => {
-    const proto = RequestCancelWorkflowExecutionRequest.toProto({
-      workflowExecution: {
-        workflowId: "workflow-id",
-      },
-      reason: "user requested cancellation",
-    });
-
-    expect(proto?.namespace).toBe("workflow-namespace");
-    expect(proto?.workflowExecution?.workflowId).toBe("workflow-id");
-    expect(proto?.workflowExecution?.runId).toBeUndefined();
-    expect(proto?.reason).toBe("user requested cancellation");
-  });
-
-  test("returns a started workflow wrapper handle", async () => {
-    async function exampleWorkflow(customerId: string): Promise<string> {
-      return customerId;
-    }
-
-    runtime.startOperation
-      .mockResolvedValueOnce({
-        result: async () => ({
-          runId: "run-123",
-          started: true,
-        }),
-      })
-      .mockResolvedValueOnce({
-        result: async () => ({
-          runId: "run-456",
-          started: true,
-        }),
-      })
-      .mockResolvedValueOnce({
-        result: async () => ({}),
+  test("returns a started workflow wrapper handle through a real Nexus client", async () => {
+    await withWorkflowEnvironment(async (env) => {
+      const calls: Array<[string, unknown]> = [];
+      const handler = nexus.serviceHandler(WorkflowService, {
+        async startWorkflow(_ctx, input) {
+          calls.push(["StartWorkflow", input]);
+          return {
+            runId: "run-123",
+            started: true,
+          };
+        },
+        async restartWorkflow(_ctx, input) {
+          calls.push(["RestartWorkflow", input]);
+          return {
+            runId: "run-456",
+            started: true,
+          };
+        },
+        async cancelWorkflow(_ctx, input) {
+          calls.push(["CancelWorkflow", input]);
+          return {};
+        },
       });
 
-    const handle = await startWorkflow({
-      workflow: exampleWorkflow,
-      input: ["customer-123"],
-      workflowId: "workflow-id",
-      taskQueue: "demo-task-queue",
-    });
+      const result = await executeWorkflowWithNexus<{
+        namespace: string;
+        restartedRunId: string | undefined;
+        runId: string | undefined;
+        workflowId: string;
+      }>(env, {
+        endpoint: "temporal-system",
+        nexusServices: [handler],
+        workflowType: "startWorkflowCaller",
+        workflowsPath,
+      });
 
-    expect(handle).toBeInstanceOf(StartedWorkflow);
-    expect(handle.namespace).toBe("workflow-namespace");
-    expect(handle.workflowId).toBe("workflow-id");
-    expect(handle.runId).toBe("run-123");
-    expect(runtime.createNexusServiceClient).toHaveBeenCalledWith({
-      service: WorkflowService,
-      endpoint: "__temporal_system",
-    });
-
-    const restartedHandle = await handle.restartWorkflow(
-      exampleWorkflow,
-      "demo-task-queue",
-    );
-
-    expect(restartedHandle).toBeInstanceOf(StartedWorkflow);
-    expect(restartedHandle.namespace).toBe("workflow-namespace");
-    expect(restartedHandle.workflowId).toBe("workflow-id");
-    expect(restartedHandle.runId).toBe("run-456");
-    expect(runtime.startOperation).toHaveBeenNthCalledWith(
-      2,
-      WorkflowService.operations.restartWorkflow,
-      {
-        namespace: "workflow-namespace",
+      expect(result).toEqual({
+        namespace: "default",
+        restartedRunId: "run-456",
+        runId: "run-123",
         workflowId: "workflow-id",
-        workflowType: {
-          name: "exampleWorkflow",
-        },
-        taskQueue: {
-          name: "demo-task-queue",
-        },
-      },
-    );
+      });
 
-    await handle.cancel();
-    expect(runtime.startOperation).toHaveBeenNthCalledWith(
-      3,
-      WorkflowService.operations.cancelWorkflow,
-      {
-        namespace: "workflow-namespace",
-        workflowExecution: {
-          workflowId: "workflow-id",
-          runId: "run-123",
-        },
-        reason: undefined,
-      },
-    );
+      expect(calls).toHaveLength(3);
+      const startRequest = calls[0]?.[1] as
+        | temporal.api.workflowservice.v1.IStartWorkflowExecutionRequest
+        | undefined;
+      expect(startRequest?.namespace).toBe("default");
+      expect(startRequest?.workflowId).toBe("workflow-id");
+      expect(startRequest?.workflowType?.name).toBe("exampleWorkflow");
+      expect(startRequest?.taskQueue?.name).toBe("demo-task-queue");
+      expect(startRequest?.input?.payloads).toHaveLength(1);
 
-    await expect(handle.getResult()).rejects.toThrow(
-      "started-workflow.getResult is not yet implemented",
-    );
+      const restartRequest = calls[1]?.[1] as
+        | temporal.api.workflowservice.v1.IStartWorkflowExecutionRequest
+        | undefined;
+      expect(restartRequest?.namespace).toBe("default");
+      expect(restartRequest?.workflowId).toBe("workflow-id");
+      expect(restartRequest?.workflowType?.name).toBe("exampleWorkflow");
+      expect(restartRequest?.taskQueue?.name).toBe("demo-task-queue");
+      expect(restartRequest?.input).toBeUndefined();
+
+      const cancelRequest = calls[2]?.[1] as
+        | temporal.api.workflowservice.v1.IRequestCancelWorkflowExecutionRequest
+        | undefined;
+      expect(cancelRequest?.namespace).toBe("default");
+      expect(cancelRequest?.workflowExecution?.workflowId).toBe("workflow-id");
+      expect(cancelRequest?.workflowExecution?.runId).toBe("run-123");
+
+      await expect(
+        new StartedWorkflow("default", "workflow-id", "run-456").getResult(),
+      ).rejects.toThrow("started-workflow.getResult is not yet implemented");
+    });
   });
 });
-
-if (false) {
-  async function exampleWorkflow(customerId: string): Promise<string> {
-    return customerId;
-  }
-
-  // @ts-expect-error missing workflow args for a callable workflow
-  startWorkflow({
-    workflow: exampleWorkflow,
-    workflowId: "missing-input",
-    taskQueue: "demo-task-queue",
-  });
-
-  // @ts-expect-error workflow args must match the workflow callable
-  startWorkflow({
-    workflow: exampleWorkflow,
-    input: [7],
-    workflowId: "bad-input",
-    taskQueue: "demo-task-queue",
-  });
-}

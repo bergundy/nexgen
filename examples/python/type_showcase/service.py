@@ -9,6 +9,7 @@ from .models import (
     DeactivateRequest,
     GetUserRequest,
     RenameRequest,
+    SetProfileRequest,
     UpdateEmailRequest,
 )
 from ._resources.user import User
@@ -30,6 +31,11 @@ class TypeShowcase:
         RenameRequest,
         User,
     ] = Operation(name="Rename")
+
+    set_profile: Operation[
+        SetProfileRequest,
+        User,
+    ] = Operation(name="SetProfile")
 
     deactivate: Operation[
         DeactivateRequest,

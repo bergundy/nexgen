@@ -5,30 +5,35 @@ from __future__ import annotations
 
 from temporalio import workflow
 
-from ..models import GetUserRequest
+from ..models import (
+    SetProfileRequest,
+    UserProfile,
+)
 from .._resources import User
 
 
-async def _get_user(
-    request: GetUserRequest,
+async def _set_profile(
+    request: SetProfileRequest,
 ) -> User:
     nexus_client = workflow.create_nexus_client(
-        service="UserService",
-        endpoint="user-service",
+        service="TypeShowcase",
+        endpoint="type-showcase",
     )
     handle = await nexus_client.start_operation(
-        operation="GetUser",
+        operation="SetProfile",
         input=request,
         output_type=User,
     )
     return await handle
 
 
-async def get_user(
+async def set_profile(
     *,
+    profile: UserProfile,
     user_id: str,
 ) -> User:
-    request = GetUserRequest(
+    request = SetProfileRequest(
+        profile=profile,
         user_id=user_id,
     )
-    return await _get_user(request)
+    return await _set_profile(request)

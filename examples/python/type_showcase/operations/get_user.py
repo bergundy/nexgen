@@ -14,7 +14,7 @@ async def _get_user(
 ) -> User:
     nexus_client = workflow.create_nexus_client(
         service="TypeShowcase",
-        endpoint="__type_showcase",
+        endpoint="type-showcase",
     )
     handle = await nexus_client.start_operation(
         operation="GetUser",

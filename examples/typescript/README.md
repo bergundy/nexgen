@@ -6,6 +6,8 @@ Shared Node/TypeScript example suite for generated outputs.
 - Checked-in generated outputs live in `examples/typescript/<example-id>/`
 - Generated support fragments are emitted as `support.ts` next to the
   generated `index.ts`
+- `nexus-api-gen-runtime.ts` and `nexus-api-gen-payload-converter.cjs` provide
+  shared example runtime serialization helpers for WIT-direct generated values
 - Vitest files live in `examples/typescript/tests/`
 - `build_outputs.mjs` is a thin wrapper around
   `cargo build-examples --lang typescript`
@@ -34,3 +36,11 @@ node build_outputs.mjs workflow-service
 ```
 
 Set `NEXUS_API_GEN_BIN=/path/to/nexus-api-gen` to make `build_outputs.mjs` use an already-built binary instead of the cargo alias.
+
+## Runtime
+
+`nexus-api-gen-runtime.ts` is a small hand-written runtime used by the generated TypeScript examples. It provides shared support for marking generated resource/model values and serializing WIT-direct values with the `json/nexus` payload encoding used in the example tests.
+
+`nexus-api-gen-payload-converter.cjs` exports the same payload converter in a CommonJS module so the Temporal TypeScript SDK can load it through `payloadConverterPath` when running real workflow/Nexus tests.
+
+These runtime files exist because that serialization behavior is not yet built into the TypeScript SDK. They should eventually be removed once the SDK can natively serialize Nexus API generator values and resources.

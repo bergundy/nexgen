@@ -4,6 +4,11 @@ import * as common from "@temporalio/common";
 import * as nexus from "nexus-rpc";
 import type { google, temporal } from "@temporalio/proto";
 import * as workflow from "@temporalio/workflow";
+import {
+  nexusValue,
+  markNexusResource,
+  registerNexusResource,
+} from "../nexus-api-gen-runtime.ts";
 
 import {
   retryPolicyFromProto,
@@ -69,6 +74,11 @@ export class User {
   }
 }
 
+registerNexusResource("UserService::resource::user", (fields): User => {
+  return new User(fields.userId as string, fields.email as string);
+});
+markNexusResource(User, "UserService::resource::user");
+
 export const UserService = nexus.service("UserService", {
   getUser: nexus.operation<GetUserRequest, User>({ name: "GetUser" }),
   updateEmail: nexus.operation<UpdateEmailRequest, User>({
@@ -79,9 +89,9 @@ export const UserService = nexus.service("UserService", {
 export async function getUser(request: GetUserRequest): Promise<User> {
   const client = workflow.createNexusServiceClient({
     service: UserService,
-    endpoint: "__user_service",
+    endpoint: "user-service",
   });
-  const requestProto = request;
+  const requestProto = nexusValue("user-service.get-user-request", request);
   const handle = await client.startOperation(
     UserService.operations.getUser,
     requestProto,
@@ -92,9 +102,9 @@ export async function getUser(request: GetUserRequest): Promise<User> {
 export async function updateEmail(request: UpdateEmailRequest): Promise<User> {
   const client = workflow.createNexusServiceClient({
     service: UserService,
-    endpoint: "__user_service",
+    endpoint: "user-service",
   });
-  const requestProto = request;
+  const requestProto = nexusValue("user-service.update-email-request", request);
   const handle = await client.startOperation(
     UserService.operations.updateEmail,
     requestProto,

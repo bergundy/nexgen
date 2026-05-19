@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import typing
+import nexus_api_gen_runtime
 
 
 class UserStatus(enum.IntEnum):
@@ -39,9 +40,9 @@ class RenameRequest:
 
 
 @dataclasses.dataclass(slots=True)
-class DeactivateRequest:
+class SetProfileRequest:
+    profile: UserProfile
     user_id: str
-    reason: str | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -62,8 +63,31 @@ class PostalAddress:
     coordinates: tuple[float, float] | None = None
 
 
+@dataclasses.dataclass(slots=True)
+class DeactivateRequest:
+    user_id: str
+    reason: str | None = None
+
+
 NotificationTarget = (
     tuple[typing.Literal["email"], str]
     | tuple[typing.Literal["sms"], str]
     | tuple[typing.Literal["none"]]
+)
+
+
+nexus_api_gen_runtime.register_nexus_type(
+    GetUserRequest, "type-showcase.get-user-request"
+)
+nexus_api_gen_runtime.register_nexus_type(
+    UpdateEmailRequest, "type-showcase.update-email-request"
+)
+nexus_api_gen_runtime.register_nexus_type(RenameRequest, "type-showcase.rename-request")
+nexus_api_gen_runtime.register_nexus_type(
+    SetProfileRequest, "type-showcase.set-profile-request"
+)
+nexus_api_gen_runtime.register_nexus_type(UserProfile, "type-showcase.user-profile")
+nexus_api_gen_runtime.register_nexus_type(PostalAddress, "type-showcase.postal-address")
+nexus_api_gen_runtime.register_nexus_type(
+    DeactivateRequest, "type-showcase.deactivate-request"
 )

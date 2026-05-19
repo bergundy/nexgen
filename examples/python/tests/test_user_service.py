@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Generator
 from pathlib import Path
+import uuid
 
 from nexusrpc import Operation
-import pytest
-import temporalio.workflow
+from nexusrpc.handler import StartOperationContext, service_handler, sync_operation
+from temporalio import workflow
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 APP_ROOT = Path(__file__).resolve().parent
 OUTPUT_PATH = APP_ROOT.parent / "user_service"
 
-import user_service as output
-import user_service.models as output_models
+import user_service
+import user_service.models
+import user_service.service
 
-GET_USER_OPERATION = output.__nexus_operation_registry__[("UserService", "GetUser")]
-UPDATE_EMAIL_OPERATION = output.__nexus_operation_registry__[
+GET_USER_OPERATION = user_service.__nexus_operation_registry__[("UserService", "GetUser")]
+UPDATE_EMAIL_OPERATION = user_service.__nexus_operation_registry__[
     ("UserService", "UpdateEmail")
 ]
 
@@ -22,75 +25,51 @@ UPDATE_EMAIL_OPERATION = output.__nexus_operation_registry__[
 def user_resource(
     *,
     email: str,
-) -> output.User:
-    return output.User(
+) -> user_service.User:
+    return user_service.User(
         user_id="user-123",
         email=email,
     )
 
 
-class FakeOperationHandle:
-    def __init__(
-        self,
-        response: object,
-    ) -> None:
-        self._response: object = response
-
-    def __await__(
-        self,
-    ) -> Generator[object, None, object]:
-        async def wait_for_result() -> object:
-            return self._response
-
-        return wait_for_result().__await__()
-
-
-class FakeNexusClient:
+@service_handler(service=user_service.service.UserService)
+class UserServiceHandler:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
-    async def start_operation(
+    @sync_operation
+    async def get_user(
         self,
-        operation: str,
-        input: object,
-        *,
-        output_type: type[object] | None = None,
-    ) -> FakeOperationHandle:
-        self.calls.append((operation, input))
-        if operation == "GetUser":
-            assert output_type is output.User
-            assert isinstance(input, output_models.GetUserRequest)
-            assert input.user_id == "user-123"
-            return FakeOperationHandle(user_resource(email="old@example.com"))
+        _ctx: StartOperationContext,
+        input: user_service.models.GetUserRequest,
+    ) -> user_service.User:
+        self.calls.append(("GetUser", input))
+        assert input.user_id == "user-123"
+        return user_resource(email="old@example.com")
 
-        assert operation == "UpdateEmail"
-        assert output_type is output.User
-        assert isinstance(input, output_models.UpdateEmailRequest)
+    @sync_operation
+    async def update_email(
+        self,
+        _ctx: StartOperationContext,
+        input: user_service.models.UpdateEmailRequest,
+    ) -> user_service.User:
+        self.calls.append(("UpdateEmail", input))
         assert input.user_id == "user-123"
         assert input.email == "new@example.com"
-        return FakeOperationHandle(user_resource(email=input.email))
+        return user_resource(email=input.email)
 
 
-@pytest.fixture
-def fake_client(monkeypatch: pytest.MonkeyPatch) -> FakeNexusClient:
-    fake_client = FakeNexusClient()
-
-    def fake_create_nexus_client(*, service: str, endpoint: str) -> FakeNexusClient:
-        assert service == "UserService"
-        assert endpoint == "__user_service"
-        return fake_client
-
-    monkeypatch.setattr(
-        temporalio.workflow,
-        "create_nexus_client",
-        fake_create_nexus_client,
-    )
-    return fake_client
+@workflow.defn
+class UserServiceCallerWorkflow:
+    @workflow.run
+    async def run(self) -> user_service.User:
+        user = await user_service.get_user(user_id="user-123")
+        return await user.update_email("new@example.com")
 
 
 def test_generated_metadata() -> None:
     assert OUTPUT_PATH.exists(), f"expected generated package at {OUTPUT_PATH}"
-    registry = output.__nexus_operation_registry__
+    registry = user_service.__nexus_operation_registry__
 
     assert isinstance(GET_USER_OPERATION, Operation)
     assert GET_USER_OPERATION.name == "GetUser"
@@ -98,26 +77,44 @@ def test_generated_metadata() -> None:
     assert isinstance(UPDATE_EMAIL_OPERATION, Operation)
     assert UPDATE_EMAIL_OPERATION.name == "UpdateEmail"
     assert registry[("UserService", "UpdateEmail")] is UPDATE_EMAIL_OPERATION
-    assert not hasattr(output, "UserService")
-    assert hasattr(output, "User")
-    assert not hasattr(output_models.GetUserRequest, "to_proto")
+    assert not hasattr(user_service, "UserService")
+    assert hasattr(user_service, "User")
+    assert not hasattr(user_service.models.GetUserRequest, "to_proto")
 
 
-async def test_get_user_returns_user_resource(
-    fake_client: FakeNexusClient,
-) -> None:
-    user = await output.get_user(user_id="user-123")
+async def test_get_user_returns_user_resource(env: WorkflowEnvironment) -> None:
+    task_queue = str(uuid.uuid4())
+    service_handler = UserServiceHandler()
 
-    assert len(fake_client.calls) == 1
-    assert isinstance(user, output.User)
+    async with Worker(
+        env.client,
+        task_queue=task_queue,
+        workflows=[UserServiceCallerWorkflow],
+        nexus_service_handlers=[service_handler],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        endpoint = await env.create_nexus_endpoint("user-service", task_queue)
+        try:
+            user = await env.client.execute_workflow(
+                UserServiceCallerWorkflow.run,
+                id=str(uuid.uuid4()),
+                task_queue=task_queue,
+            )
+        finally:
+            await env.delete_nexus_endpoint(endpoint)
+
+    assert isinstance(user, user_service.User)
     assert user.user_id == "user-123"
-    assert user.email == "old@example.com"
+    assert user.email == "new@example.com"
 
-    updated_user = await user.update_email("new@example.com")
-    assert len(fake_client.calls) == 2
-    update_operation, update_request = fake_client.calls[1]
+    assert len(service_handler.calls) == 2
+    get_user_operation, get_user_request = service_handler.calls[0]
+    assert get_user_operation == "GetUser"
+    assert isinstance(get_user_request, user_service.models.GetUserRequest)
+    assert get_user_request.user_id == "user-123"
+
+    update_operation, update_request = service_handler.calls[1]
     assert update_operation == "UpdateEmail"
-    assert isinstance(update_request, output_models.UpdateEmailRequest)
+    assert isinstance(update_request, user_service.models.UpdateEmailRequest)
     assert update_request.user_id == "user-123"
     assert update_request.email == "new@example.com"
-    assert updated_user.email == "new@example.com"

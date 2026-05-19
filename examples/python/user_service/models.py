@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import nexus_api_gen_runtime
 
 
 @dataclasses.dataclass(slots=True)
@@ -15,3 +16,11 @@ class GetUserRequest:
 class UpdateEmailRequest:
     email: str
     user_id: str
+
+
+nexus_api_gen_runtime.register_nexus_type(
+    GetUserRequest, "user-service.get-user-request"
+)
+nexus_api_gen_runtime.register_nexus_type(
+    UpdateEmailRequest, "user-service.update-email-request"
+)

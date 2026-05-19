@@ -4,7 +4,7 @@ world system {
   export type-showcase;
 }
 
-/// @nexus.endpoint "__type_showcase"
+/// @nexus.endpoint "type-showcase"
 interface type-showcase {
   enum user-status {
     active,
@@ -65,6 +65,11 @@ interface type-showcase {
     display-name: string,
   }
 
+  record set-profile-request {
+    user-id: string,
+    profile: user-profile,
+  }
+
   record deactivate-request {
     user-id: string,
     reason: option<string>,
@@ -73,5 +78,6 @@ interface type-showcase {
   get-user: func(request: get-user-request) -> user-result;
   update-email: func(request: update-email-request) -> user-result;
   rename: func(request: rename-request) -> user-result;
+  set-profile: func(request: set-profile-request) -> user-result;
   deactivate: func(request: deactivate-request);
 }
