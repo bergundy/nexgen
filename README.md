@@ -27,13 +27,14 @@ Current status:
 Each example starts with authored WIT under `examples/inputs/`. Checked-in
 generated output lives under `examples/python/<example_name>/` and
 `examples/typescript/<example-name>/`, with language-specific tests under each
-language's `tests/` directory.
+language's `tests/` directory. See [`examples/README.md`](examples/README.md)
+for links to each example's WIT, generated code, and tests.
 
-- `user-service`: a small WIT-direct API showing the basic shape of an operation returning a resource and a resource method that calls another operation.
-- `type-showcase`: a WIT-direct API focused on type coverage, including records, enums, flags, variants, results, maps, tuples, resources, resource methods, and no-result operations.
-- `start-workflow`: a proto-backed Temporal workflow-start API that returns a generated resource handle with follow-up operations such as cancel, restart, and get-result.
-- `workflow-service`: a proto-backed `SignalWithStartWorkflowExecution` example showing flattened APIs, function arguments, sourced fields, support converters, and output transforms.
-- `type-roundtrip`: a proto-backed type roundtrip example for focused native/proto conversion coverage, including retry policies, activity options, durations, task queues, and priority.
+- [`user-service`](examples/inputs/user-service.wit): a small WIT-direct API showing the basic shape of an operation returning a resource and a resource method that calls another operation.
+- [`type-showcase`](examples/inputs/type-showcase.wit): a WIT-direct API focused on type coverage, including records, enums, flags, variants, results, maps, tuples, resources, resource methods, and no-result operations.
+- [`start-workflow`](examples/inputs/start-workflow.wit): a proto-backed Temporal workflow-start API that returns a generated resource handle with follow-up operations such as cancel, restart, and get-result.
+- [`workflow-service`](examples/inputs/workflow-service.wit): a proto-backed `SignalWithStartWorkflowExecution` example showing flattened APIs, function arguments, sourced fields, support converters, and output transforms.
+- [`type-roundtrip`](examples/inputs/type-roundtrip.wit): a proto-backed type roundtrip example for focused native/proto conversion coverage, including retry policies, activity options, durations, task queues, and priority.
 
 Rebuild the checked-in example outputs:
 
