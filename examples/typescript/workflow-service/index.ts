@@ -14,7 +14,7 @@ import {
   signal_function_to_proto,
   taskQueueFromProto,
   taskQueueToProto,
-  workflow_namespace,
+  workflowNamespace,
   payloadFromProto,
   payloadToProto,
   memoFromProto,
@@ -214,7 +214,7 @@ export const SignalWithStartWorkflowExecutionRequest = {
           : versioningOverrideToProto(model.versioningOverride),
       priority:
         model.priority == null ? undefined : priorityToProto(model.priority),
-      namespace: workflow_namespace(),
+      namespace: workflowNamespace(),
     };
   },
 };

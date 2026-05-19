@@ -32,7 +32,7 @@ interface workflow-service {
     workflow-id: string,
     task-queue: task-queue,
     workflow-start-delay: option<duration>,
-    /// @nexus.source "workflow_namespace"
+    /// @nexus.source python="workflow_namespace" typescript="workflowNamespace"
     namespace: option<string>,
     /// @nexus.omit
     workflow-execution-timeout: placeholder,
@@ -85,7 +85,7 @@ interface workflow-service {
 
   /// @nexus.proto "temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionRequest"
   record cancel-workflow-request {
-    /// @nexus.source "workflow_namespace"
+    /// @nexus.source python="workflow_namespace" typescript="workflowNamespace"
     namespace: option<string>,
     workflow-execution: workflow-execution,
     reason: option<string>,

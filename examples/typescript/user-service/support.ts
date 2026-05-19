@@ -99,7 +99,7 @@ export function taskQueueToProto(
   return { name: taskQueue };
 }
 
-export function workflow_namespace(): string {
+export function workflowNamespace(): string {
   return workflow.workflowInfo().namespace;
 }
 

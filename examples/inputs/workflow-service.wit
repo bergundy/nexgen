@@ -46,7 +46,7 @@ interface workflow-service {
     versioning-override: option<versioning-override>,
     workflow-start-delay: option<duration>,
     user-metadata: option<user-metadata>,
-    /// @nexus.source "workflow_namespace"
+    /// @nexus.source python="workflow_namespace" typescript="workflowNamespace"
     namespace: option<string>,
     /// @nexus.omit
     control: placeholder,

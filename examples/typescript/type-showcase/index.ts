@@ -19,7 +19,7 @@ import {
   signal_function_to_proto,
   taskQueueFromProto,
   taskQueueToProto,
-  workflow_namespace,
+  workflowNamespace,
   payloadFromProto,
   payloadToProto,
   memoFromProto,

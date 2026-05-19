@@ -3105,7 +3105,7 @@ mod tests {
         assert!(output.contains("priority?: common.Priority;"));
         assert!(!output.contains("signal: string;"));
         assert!(!output.contains("namespace?: string;"));
-        assert!(output.contains("namespace: workflow_namespace(),"));
+        assert!(output.contains("namespace: workflowNamespace(),"));
         assert!(output.contains("workflowType: workflowTypeToProto("));
         assert!(output.contains("workflow_function_name("));
         assert!(output.contains("input: _RequestArgsToPayloads(model.input),"));

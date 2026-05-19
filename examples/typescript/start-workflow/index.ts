@@ -18,7 +18,7 @@ import {
   signal_function_to_proto,
   taskQueueFromProto,
   taskQueueToProto,
-  workflow_namespace,
+  workflowNamespace,
   payloadFromProto,
   payloadToProto,
   memoFromProto,
@@ -141,7 +141,7 @@ export const StartWorkflowExecutionRequest = {
         model.workflowStartDelay == null
           ? undefined
           : durationToProto(model.workflowStartDelay),
-      namespace: workflow_namespace(),
+      namespace: workflowNamespace(),
     };
   },
 };
@@ -170,7 +170,7 @@ export const RequestCancelWorkflowExecutionRequest = {
           ),
         ) ?? {},
       reason: model.reason,
-      namespace: workflow_namespace(),
+      namespace: workflowNamespace(),
     };
   },
 };

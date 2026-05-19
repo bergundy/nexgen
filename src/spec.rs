@@ -47,25 +47,26 @@ pub struct BuiltinWitMetadata {
 }
 
 impl ApiSpec {
-    pub fn load_for_language(_language: Language, path: &Path) -> Result<Self> {
+    pub fn load_for_language(language: Language, path: &Path) -> Result<Self> {
         let input = fs::read_to_string(path).map_err(|source| Error::ReadFile {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::parse(&input, path.to_path_buf())
+        Self::parse_for_language(language, &input, path.to_path_buf())
     }
 
-    pub fn parse_for_language(_language: Language, input: &str, path: PathBuf) -> Result<Self> {
-        Self::parse(input, path)
+    pub fn parse_for_language(language: Language, input: &str, path: PathBuf) -> Result<Self> {
+        Self::parse(input, path, language)
     }
 
-    pub fn parse(input: &str, path: PathBuf) -> Result<Self> {
+    pub fn parse(input: &str, path: PathBuf, language: Language) -> Result<Self> {
         let parsed = parse_wit_with_builtins(input, &path)?;
         Self::from_wit(
             &parsed.resolve,
             parsed.package_id,
             &parsed.package_origins,
             path,
+            language,
         )
     }
 
@@ -78,6 +79,7 @@ impl ApiSpec {
         package_id: PackageId,
         package_origins: &PackageOrigins,
         path: PathBuf,
+        language: Language,
     ) -> Result<Self> {
         let package = &resolve.packages[package_id];
         let world_id = select_world(resolve, package_id, &path)?;
@@ -96,6 +98,7 @@ impl ApiSpec {
                     resolve,
                     interface,
                     &path,
+                    language,
                     &mut types,
                     &mut records,
                     &mut enums,
@@ -1107,6 +1110,7 @@ fn collect_interface_types(
     resolve: &Resolve,
     interface: &Interface,
     path: &Path,
+    language: Language,
     types: &mut BTreeMap<String, TypeOverrideSpec>,
     records: &mut BTreeMap<String, WitRecordSpec>,
     enums: &mut BTreeMap<String, WitEnumSpec>,
@@ -1121,7 +1125,7 @@ fn collect_interface_types(
     for type_id in interface.types.values() {
         let type_def = &resolve.types[*type_id];
         if let Some(record) =
-            build_wit_record_spec(resolve, *type_id, type_def, path, &interface_name)?
+            build_wit_record_spec(resolve, *type_id, type_def, path, &interface_name, language)?
         {
             if records.insert(record.full_name.clone(), record).is_some() {
                 return Err(Error::InvalidWit {
@@ -1173,7 +1177,7 @@ fn collect_interface_types(
             }
         }
         let Some((proto_name, type_override)) =
-            build_type_override(resolve, type_def, path, &interface_name)?
+            build_type_override(resolve, type_def, path, &interface_name, language)?
         else {
             continue;
         };
@@ -1283,6 +1287,7 @@ fn build_wit_record_spec(
     type_def: &TypeDef,
     path: &Path,
     interface_name: &str,
+    language: Language,
 ) -> Result<Option<WitRecordSpec>> {
     let TypeDefKind::Record(record) = &type_def.kind else {
         return Ok(None);
@@ -1291,7 +1296,7 @@ fn build_wit_record_spec(
     let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
     let context = format!("type `{interface_name}.{type_name}`");
     let (required_fields, _omitted_fields, generated_model) =
-        build_generated_model_from_record(resolve, record, path, &context)?;
+        build_generated_model_from_record(resolve, record, path, &context, language)?;
 
     Ok(Some(WitRecordSpec {
         name: type_name.to_upper_camel_case(),
@@ -1324,6 +1329,7 @@ fn build_type_override(
     type_def: &TypeDef,
     path: &Path,
     interface_name: &str,
+    language: Language,
 ) -> Result<Option<(String, TypeOverrideSpec)>> {
     let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
     let context = format!("type `{interface_name}.{type_name}`");
@@ -1357,7 +1363,7 @@ fn build_type_override(
 
     let (required_fields, omitted_fields, generated_model) = match &type_def.kind {
         TypeDefKind::Record(record) => {
-            build_generated_model_from_record(resolve, record, path, &context)?
+            build_generated_model_from_record(resolve, record, path, &context, language)?
         }
         _ => (
             BTreeSet::new(),
@@ -1384,6 +1390,7 @@ fn build_generated_model_from_record(
     record: &wit_parser::Record,
     path: &Path,
     context: &str,
+    language: Language,
 ) -> Result<(BTreeSet<String>, BTreeSet<String>, GeneratedModelSpec)> {
     let mut required_fields = BTreeSet::new();
     let mut omitted_fields = BTreeSet::new();
@@ -1489,7 +1496,7 @@ fn build_generated_model_from_record(
             required_fields.insert(proto_field_name.clone());
         }
 
-        if let Some(source) = build_source_call(&directives, path, &field_context)? {
+        if let Some(source) = build_source_call(&directives, path, &field_context, language)? {
             field_sources.insert(proto_field_name.clone(), source);
         }
 
@@ -1862,21 +1869,15 @@ fn build_source_call(
     directives: &[Directive],
     path: &Path,
     context: &str,
+    language: Language,
 ) -> Result<Option<String>> {
     let Some(directive) = directive(directives, "source", path, context)? else {
         return Ok(None);
     };
 
-    if directive.value("python").is_some() || directive.value("typescript").is_some() {
-        return Err(Error::InvalidWitDirective {
-            path: path.to_path_buf(),
-            context: context.to_string(),
-            directive: "@nexus.source".to_string(),
-            reason: "use a single support helper name, for example `@nexus.source \"workflow_namespace\"`".to_string(),
-        });
-    }
-
-    let Some(helper_name) = directive.value("value") else {
+    let Some(helper_name) =
+        directive_language_value(directive, language).or_else(|| directive.value("value"))
+    else {
         return Err(Error::InvalidWitDirective {
             path: path.to_path_buf(),
             context: context.to_string(),
@@ -3086,7 +3087,7 @@ interface workflow-service {
     }
 
     #[test]
-    fn rejects_language_specific_source_expressions() {
+    fn accepts_language_specific_source_helpers() {
         let wit = r#"
 package temporal:nexus@1.0.0;
 
@@ -3097,7 +3098,7 @@ world system {
 interface workflow-service {
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record request {
-    /// @nexus.source python="workflow_namespace()" typescript="workflow.workflowInfo().namespace"
+    /// @nexus.source python="workflow_namespace" typescript="workflowNamespace"
     namespace: option<string>,
   }
 
@@ -3105,13 +3106,29 @@ interface workflow-service {
 }
 "#;
 
-        let error =
+        let python =
+            ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+                .unwrap();
+        let typescript =
             ApiSpec::parse_for_language(Language::TypeScript, wit, PathBuf::from("inline.wit"))
-                .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("use a single support helper name")
+                .unwrap();
+        assert_eq!(
+            python
+                .type_override(
+                    "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                )
+                .unwrap()
+                .field_source("namespace"),
+            Some("workflow_namespace()")
+        );
+        assert_eq!(
+            typescript
+                .type_override(
+                    "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+                )
+                .unwrap()
+                .field_source("namespace"),
+            Some("workflowNamespace()")
         );
     }
 
