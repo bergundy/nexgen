@@ -257,6 +257,12 @@ fn add_rpc_can_update_existing_signal_with_start_operation() {
     assert!(!generated.contains("signal-input: option<payloads>,"));
     assert!(generated.contains("time-skipping-config: placeholder,"));
     assert!(generated.contains("signal-link: placeholder,"));
+    assert!(!generated.contains("record link-workflow-event"));
+    assert!(!generated.contains("record link-batch-job"));
+    assert!(!generated.contains("record link-activity"));
+    assert!(!generated.contains("record link-nexus-operation"));
+    assert!(!generated.contains("record link-workflow"));
+    assert!(!generated.contains("record link {"));
     assert!(generated.contains("/// @nexus.endpoint \"temporal-system\""));
     assert!(!generated.contains("/// @nexus.endpoint \"__REPLACE_ME__\""));
 
@@ -358,10 +364,7 @@ fn add_rpc_fails_when_existing_operation_request_conflicts_with_descriptor() {
     let descriptors = descriptor_path(&root);
     let complete =
         add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
-    let input = complete.replace(
-        "    signal-name: string,\n",
-        "    signal-name: bool,\n",
-    );
+    let input = complete.replace("    signal-name: string,\n", "    signal-name: bool,\n");
     let input_path = write_temp_wit("add-rpc-existing-conflict", &input);
 
     let error = add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path))

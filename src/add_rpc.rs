@@ -337,9 +337,7 @@ impl<'a> AddRpcBuilder<'a> {
                     ),
                 });
             };
-            let expected_fields = self.render_message_fields(message)?;
-            let missing_fields =
-                self.missing_record_fields(record, &expected_fields, proto_name)?;
+            let missing_fields = self.missing_record_fields(record, message, proto_name)?;
             if !missing_fields.is_empty() {
                 record_updates.push(RecordFieldUpdate {
                     record_name: record.wit_name.clone(),
@@ -422,18 +420,20 @@ impl<'a> AddRpcBuilder<'a> {
     }
 
     fn missing_record_fields(
-        &self,
+        &mut self,
         record: &ExistingRecord,
-        expected_fields: &[RenderedFieldSpec],
+        message: &MessageMetadata,
         proto_name: &str,
     ) -> Result<Vec<String>> {
-        let expected_by_proto = expected_fields
+        let expected_by_proto = message
+            .descriptor
+            .field
             .iter()
-            .map(|field| (field.proto_name.as_str(), field))
-            .collect::<BTreeMap<_, _>>();
+            .map(|field| field_name(field, proto_name))
+            .collect::<Result<BTreeSet<_>>>()?;
 
         for existing_proto_name in record.fields.keys() {
-            if !expected_by_proto.contains_key(existing_proto_name.as_str()) {
+            if !expected_by_proto.contains(existing_proto_name.as_str()) {
                 return Err(Error::UnsupportedAddRpc {
                     context: proto_name.to_string(),
                     reason: format!(
@@ -445,23 +445,26 @@ impl<'a> AddRpcBuilder<'a> {
         }
 
         let mut missing = Vec::new();
-        for expected in expected_fields {
-            let Some(existing) = record.fields.get(&expected.proto_name) else {
-                if self.record_has_field_covering_proto(record, &expected.proto_name) {
+        for field in &message.descriptor.field {
+            let field_name = field_name(field, proto_name)?;
+            let Some(existing) = record.fields.get(field_name) else {
+                if self.record_has_field_covering_proto(record, field_name) {
                     continue;
                 }
+                let expected = self.render_message_field(message, field)?;
                 missing.push(expected.line.clone());
                 continue;
             };
             if existing.omitted {
                 continue;
             }
+            let expected = self.render_message_field_for_comparison(message, field)?;
             let name_matches =
                 existing.wit_name == expected.wit_name || existing.explicit_proto_field;
             let type_matches = self.type_is_compatible(&existing.type_expr, &expected.type_expr);
             if !name_matches || !type_matches {
                 return Err(Error::UnsupportedAddRpc {
-                    context: format!("{proto_name}.{}", expected.proto_name),
+                    context: format!("{proto_name}.{}", field_name),
                     reason: format!(
                         "existing WIT field is `{}: {}` but descriptor requires `{}: {}`",
                         existing.wit_name,
@@ -572,17 +575,46 @@ impl<'a> AddRpcBuilder<'a> {
     ) -> Result<Vec<RenderedFieldSpec>> {
         let mut rendered_fields = Vec::new();
         for field in &message.descriptor.field {
-            let field_name = field_name(field, &message.full_name)?;
-            let wit_field_type = self.render_field_type(field, &message.full_name, field_name)?;
-            let wit_field_name = field_name.to_kebab_case();
-            rendered_fields.push(RenderedFieldSpec {
-                proto_name: field_name.to_string(),
-                wit_name: wit_field_name.clone(),
-                type_expr: wit_field_type.clone(),
-                line: format!("    {wit_field_name}: {wit_field_type},"),
-            });
+            rendered_fields.push(self.render_message_field(message, field)?);
         }
         Ok(rendered_fields)
+    }
+
+    fn render_message_field(
+        &mut self,
+        message: &MessageMetadata,
+        field: &FieldDescriptorProto,
+    ) -> Result<RenderedFieldSpec> {
+        let field_name = field_name(field, &message.full_name)?;
+        let wit_field_type = self.render_field_type(field, &message.full_name, field_name)?;
+        let wit_field_name = field_name.to_kebab_case();
+        Ok(RenderedFieldSpec {
+            wit_name: wit_field_name.clone(),
+            type_expr: wit_field_type.clone(),
+            line: format!("    {wit_field_name}: {wit_field_type},"),
+        })
+    }
+
+    fn render_message_field_for_comparison(
+        &mut self,
+        message: &MessageMetadata,
+        field: &FieldDescriptorProto,
+    ) -> Result<RenderedFieldSpec> {
+        let builtin_uses = self.builtin_uses.clone();
+        let available_type_names = self.available_type_names.clone();
+        let reserved_type_names = self.reserved_type_names.clone();
+        let rendered_types = self.rendered_types.clone();
+        let rendered_definitions = self.rendered_definitions.clone();
+
+        let rendered = self.render_message_field(message, field);
+
+        self.builtin_uses = builtin_uses;
+        self.available_type_names = available_type_names;
+        self.reserved_type_names = reserved_type_names;
+        self.rendered_types = rendered_types;
+        self.rendered_definitions = rendered_definitions;
+
+        rendered
     }
 
     fn render_enum(&mut self, enumeration: &EnumMetadata, wit_name: &str) -> Result<String> {
@@ -718,7 +750,6 @@ impl<'a> AddRpcBuilder<'a> {
 
 #[derive(Debug, Clone)]
 struct RenderedFieldSpec {
-    proto_name: String,
     wit_name: String,
     type_expr: String,
     line: String,
