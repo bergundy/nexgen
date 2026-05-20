@@ -47,19 +47,23 @@ interface workflow-service {
     workflow-start-delay: option<duration>,
     user-metadata: option<user-metadata>,
     /// @nexus.source python="workflow_namespace" typescript="workflowNamespace"
-    namespace: option<string>,
+    namespace: string,
     /// @nexus.omit
     control: placeholder,
     /// @nexus.omit
     header: placeholder,
     /// @nexus.omit
     links: placeholder,
+    /// @nexus.omit
+    time-skipping-config: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
     started: option<bool>,
+    /// @nexus.omit
+    signal-link: placeholder,
   }
 
   /// @nexus.output-transform

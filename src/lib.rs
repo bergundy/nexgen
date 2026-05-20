@@ -64,6 +64,7 @@ pub fn generate_to_string(
     let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
     let support = load_support_files(language, &spec, input_path)?;
     let generated = generate_files(language, &spec, &descriptors, &support)?;
+    print_warnings(&generated);
     Ok(match generated.layout {
         GeneratedOutputLayout::SingleFile => generated
             .single_file_contents()
@@ -78,6 +79,7 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
     let descriptors = DescriptorIndex::load_many(&request.descriptor_paths)?;
     let support = load_support_files(request.language, &spec, &request.input_path)?;
     let generated = generate_files(request.language, &spec, &descriptors, &support)?;
+    print_warnings(&generated);
 
     write_generated_files(&request.output_path, &generated)?;
 
@@ -189,6 +191,12 @@ fn render_generated_files_for_debug(generated: &GeneratedFiles) -> String {
         .map(|(path, contents)| format!("### {}\n{contents}", path.display()))
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn print_warnings(generated: &GeneratedFiles) {
+    for warning in &generated.warnings {
+        eprintln!("warning: {warning}");
+    }
 }
 
 fn write_generated_files(output_path: &Path, generated: &GeneratedFiles) -> Result<()> {

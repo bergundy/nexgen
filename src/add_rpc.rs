@@ -224,13 +224,18 @@ impl ExistingRecord {
     fn from_resolve(resolve: &Resolve, wit_name: &str, record: &wit_parser::Record) -> Self {
         let mut fields = BTreeMap::new();
         for field in &record.fields {
-            let proto_name = proto_field_name_from_docs(field.docs.contents.as_deref())
+            let docs = field.docs.contents.as_deref();
+            let explicit_proto_name = proto_field_name_from_docs(docs);
+            let proto_name = explicit_proto_name
+                .clone()
                 .unwrap_or_else(|| field.name.replace('-', "_"));
             fields.insert(
                 proto_name,
                 ExistingField {
                     wit_name: field.name.clone(),
                     type_expr: render_wit_type(resolve, &field.ty),
+                    explicit_proto_field: explicit_proto_name.is_some(),
+                    omitted: field_has_omit_directive(docs),
                 },
             );
         }
@@ -246,6 +251,8 @@ impl ExistingRecord {
 struct ExistingField {
     wit_name: String,
     type_expr: String,
+    explicit_proto_field: bool,
+    omitted: bool,
 }
 
 struct AddRpcBuilder<'a> {
@@ -440,10 +447,19 @@ impl<'a> AddRpcBuilder<'a> {
         let mut missing = Vec::new();
         for expected in expected_fields {
             let Some(existing) = record.fields.get(&expected.proto_name) else {
+                if self.record_has_field_covering_proto(record, &expected.proto_name) {
+                    continue;
+                }
                 missing.push(expected.line.clone());
                 continue;
             };
-            if existing.wit_name != expected.wit_name || existing.type_expr != expected.type_expr {
+            if existing.omitted {
+                continue;
+            }
+            let name_matches =
+                existing.wit_name == expected.wit_name || existing.explicit_proto_field;
+            let type_matches = self.type_is_compatible(&existing.type_expr, &expected.type_expr);
+            if !name_matches || !type_matches {
                 return Err(Error::UnsupportedAddRpc {
                     context: format!("{proto_name}.{}", expected.proto_name),
                     reason: format!(
@@ -458,6 +474,47 @@ impl<'a> AddRpcBuilder<'a> {
         }
 
         Ok(missing)
+    }
+
+    fn type_is_compatible(&self, existing: &str, expected: &str) -> bool {
+        if existing == expected {
+            return true;
+        }
+
+        match (option_inner_type(existing), option_inner_type(expected)) {
+            (Some(existing_inner), Some(expected_inner)) => {
+                self.type_is_compatible(existing_inner, expected_inner)
+            }
+            (None, Some(expected_inner)) => self.type_is_compatible(existing, expected_inner),
+            (Some(existing_inner), None) => self.type_is_compatible(existing_inner, expected),
+            (None, None) => self.base_type_is_compatible(existing, expected),
+        }
+    }
+
+    fn base_type_is_compatible(&self, existing: &str, expected: &str) -> bool {
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![existing];
+        while let Some(current) = pending.pop() {
+            if current == expected {
+                return true;
+            }
+            if !visited.insert(current.to_string()) {
+                continue;
+            }
+            if let Some(targets) = self.builtin_wit.type_compatibility.get(current) {
+                pending.extend(targets.iter().map(String::as_str));
+            }
+        }
+        false
+    }
+
+    fn record_has_field_covering_proto(&self, record: &ExistingRecord, proto_name: &str) -> bool {
+        record.fields.values().any(|field| {
+            self.builtin_wit
+                .type_covered_fields
+                .get(base_type_expr(&field.type_expr))
+                .is_some_and(|covered_fields| covered_fields.contains(proto_name))
+        })
     }
 
     fn render_type_reference(&mut self, proto_name: &str, context: &str) -> Result<String> {
@@ -594,7 +651,9 @@ impl<'a> AddRpcBuilder<'a> {
             return Ok(format!("list<{base_type}>"));
         }
 
-        if field_has_presence(field, field_type) {
+        if field_has_presence(field, field_type)
+            || !field_supports_required_without_presence(field_type)
+        {
             return Ok(format!("option<{base_type}>"));
         }
 
@@ -963,6 +1022,13 @@ fn proto_field_name_from_docs(docs: Option<&str>) -> Option<String> {
     None
 }
 
+fn field_has_omit_directive(docs: Option<&str>) -> bool {
+    docs.into_iter()
+        .flat_map(str::lines)
+        .map(str::trim)
+        .any(|line| line == "@nexus.omit")
+}
+
 fn wit_type_name(resolve: &Resolve, ty: &WitType) -> Option<String> {
     let WitType::Id(type_id) = ty else {
         return None;
@@ -1028,6 +1094,16 @@ fn render_wit_type_id(resolve: &Resolve, type_id: TypeId) -> String {
     }
 }
 
+fn option_inner_type(type_expr: &str) -> Option<&str> {
+    type_expr
+        .strip_prefix("option<")
+        .and_then(|inner| inner.strip_suffix('>'))
+}
+
+fn base_type_expr(type_expr: &str) -> &str {
+    option_inner_type(type_expr).unwrap_or(type_expr)
+}
+
 fn field_name<'a>(field: &'a FieldDescriptorProto, parent_type: &str) -> Result<&'a str> {
     field
         .name
@@ -1042,6 +1118,10 @@ fn field_has_presence(field: &FieldDescriptorProto, field_type: Type) -> bool {
     field.proto3_optional.unwrap_or(false)
         || field.oneof_index.is_some()
         || matches!(field_type, Type::Message | Type::Group)
+}
+
+fn field_supports_required_without_presence(field_type: Type) -> bool {
+    matches!(field_type, Type::String | Type::Bytes)
 }
 
 fn descriptor_relative_name(full_name: &str, package: &str) -> String {

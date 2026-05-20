@@ -677,11 +677,15 @@ pub(crate) fn ensure_unique_resource_names(spec: &ApiSpec) -> Result<()> {
 mod tests {
     use std::path::PathBuf;
 
+    use prost_types::FileDescriptorSet;
+
     use crate::descriptors::DescriptorIndex;
     use crate::language::Language;
     use crate::spec::ApiSpec;
 
-    use super::{ResolvedResourceMethodBinding, resolve_service_resources};
+    use super::{
+        RequestPlan, RequestPlanSource, ResolvedResourceMethodBinding, resolve_service_resources,
+    };
 
     fn descriptors() -> DescriptorIndex {
         DescriptorIndex::load(
@@ -689,6 +693,10 @@ mod tests {
                 .join("examples/descriptors/temporal_api.bin"),
         )
         .unwrap()
+    }
+
+    fn empty_descriptors() -> DescriptorIndex {
+        DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap()
     }
 
     #[test]
@@ -806,5 +814,111 @@ interface workflow-service {
             error.to_string(),
             "resource method `WorkflowService.ArchivedWorkflow.restart-workflow` is invalid: bound operation `RestartWorkflow` is already owned by resource `StartedWorkflow`"
         );
+    }
+
+    #[test]
+    fn resource_method_can_bind_operation_when_operation_name_differs_but_fields_match() {
+        let wit = r#"
+package temporal:users@1.0.0;
+
+world system {
+  export user-service;
+}
+
+/// @nexus.endpoint "__user_service"
+interface user-service {
+  resource user {
+    constructor(user-id: string, email: string);
+
+    update-email: func(email: string) -> user-result;
+  }
+
+  type user-result = own<user>;
+
+  record update-email-request {
+    user-id: string,
+    email: string,
+  }
+
+  updates-email: func(request: update-email-request) -> user-result;
+}
+"#;
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap();
+        let service = &spec.services[0];
+        let resolved = resolve_service_resources(&spec, service, &empty_descriptors()).unwrap();
+        let method = &resolved.resources[0].methods[0];
+
+        assert_eq!(method.name, "update-email");
+        match &method.binding {
+            ResolvedResourceMethodBinding::Operation {
+                operation_name,
+                request_plan,
+            } => {
+                assert_eq!(operation_name, "UpdatesEmail");
+                let RequestPlan::Construct {
+                    message_name,
+                    fields,
+                } = request_plan
+                else {
+                    panic!("request plan should construct update-email-request");
+                };
+                assert_eq!(message_name, "user-service.update-email-request");
+                assert_eq!(fields.len(), 2);
+                assert!(fields.contains(&super::RequestPlanField {
+                    field_name: "user-id".to_string(),
+                    value: RequestPlan::Source(RequestPlanSource::ResourceField(
+                        "user-id".to_string()
+                    )),
+                }));
+                assert!(fields.contains(&super::RequestPlanField {
+                    field_name: "email".to_string(),
+                    value: RequestPlan::Source(RequestPlanSource::MethodParam("email".to_string())),
+                }));
+            }
+            ResolvedResourceMethodBinding::Stub => {
+                panic!("update-email should bind to UpdatesEmail");
+            }
+        }
+    }
+
+    #[test]
+    fn resource_method_does_not_bind_operation_when_required_request_field_name_differs() {
+        let wit = r#"
+package temporal:users@1.0.0;
+
+world system {
+  export user-service;
+}
+
+/// @nexus.endpoint "__user_service"
+interface user-service {
+  resource user {
+    constructor(user-id: string, email: string);
+
+    update-email: func(email: string) -> user-result;
+  }
+
+  type user-result = own<user>;
+
+  record update-email-request {
+    users-id: string,
+    email: string,
+  }
+
+  update-email: func(request: update-email-request) -> user-result;
+}
+"#;
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap();
+        let service = &spec.services[0];
+        let resolved = resolve_service_resources(&spec, service, &empty_descriptors()).unwrap();
+        let method = &resolved.resources[0].methods[0];
+
+        assert_eq!(method.name, "update-email");
+        assert!(matches!(
+            method.binding,
+            ResolvedResourceMethodBinding::Stub
+        ));
     }
 }

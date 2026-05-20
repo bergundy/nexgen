@@ -4366,12 +4366,16 @@ interface workflow-service {
     versioning-override: placeholder,
     /// @nexus.omit
     priority: placeholder,
+    /// @nexus.omit
+    time-skipping-config: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
     started: option<bool>,
+    /// @nexus.omit
+    signal-link: placeholder,
   }
 
   signal-with-start-workflow-execution: func(

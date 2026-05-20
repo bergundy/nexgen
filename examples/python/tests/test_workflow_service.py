@@ -16,19 +16,21 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from typing_extensions import assert_type
-
-APP_ROOT = Path(__file__).resolve().parent
-OUTPUT_PATH = APP_ROOT.parent / "workflow_service"
-
 import workflow_service
 import workflow_service.models
 import workflow_service.service
+
+APP_ROOT = Path(__file__).resolve().parent
+OUTPUT_PATH = APP_ROOT.parent / "workflow_service"
 
 SIGNAL_WITH_START_OPERATION = workflow_service.__nexus_operation_registry__[
     ("WorkflowService", "SignalWithStartWorkflowExecution")
 ]
 
 TASK_QUEUE = "demo-task-queue"
+IDENTITY = "example-worker"
+REQUEST_ID = "example-request"
+CRON_SCHEDULE = ""
 
 REQUEST_WORKFLOW_ID = "workflow-request"
 ARGS_WORKFLOW_ID = "workflow-args"
@@ -202,10 +204,13 @@ def build_full_signal_request(
         signal=signal,
         input=FULL_WORKFLOW_INPUT,
         workflow_execution_timeout=datetime.timedelta(seconds=30),
+        identity=IDENTITY,
+        request_id=REQUEST_ID,
         retry_policy=example_data.retry_policy,
         workflow_id_reuse_policy=temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
         workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
         signal_input=signal_input,
+        cron_schedule=CRON_SCHEDULE,
         search_attributes=example_data.typed_search_attributes,
         user_metadata=workflow_service.models.UserMetadata(
             static_summary="Nightly sync",
@@ -261,9 +266,12 @@ class WorkflowServiceCallerWorkflow:
             input=FULL_WORKFLOW_INPUT,
             signal_input="wake-up",
             workflow_execution_timeout=datetime.timedelta(seconds=30),
+            identity=IDENTITY,
+            request_id=REQUEST_ID,
             retry_policy=example_data.retry_policy,
             workflow_id_reuse_policy=temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
             workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
+            cron_schedule=CRON_SCHEDULE,
             search_attributes=example_data.typed_search_attributes,
             static_summary="Nightly sync",
             static_details="Processes 42 records",
@@ -274,7 +282,10 @@ class WorkflowServiceCallerWorkflow:
             workflow="ExampleWorkflow",
             workflow_id=MINIMAL_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
+            identity=IDENTITY,
+            request_id=REQUEST_ID,
             signal="wake_up",
+            cron_schedule=CRON_SCHEDULE,
         )
         high_arity_request = build_full_signal_request(
             example_data,
@@ -365,7 +376,10 @@ if typing.TYPE_CHECKING:
         workflow=ExampleWorkflow.run,  # pyright: ignore[reportArgumentType]
         workflow_id="missing-workflow-input",
         task_queue=TASK_QUEUE,
+        identity=IDENTITY,
+        request_id=REQUEST_ID,
         signal="wake_up",
+        cron_schedule=CRON_SCHEDULE,
     )
 
     workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
@@ -373,20 +387,29 @@ if typing.TYPE_CHECKING:
         input=(3, 4),  # pyright: ignore[reportArgumentType]
         workflow_id="bad-workflow-input",
         task_queue=TASK_QUEUE,
+        identity=IDENTITY,
+        request_id=REQUEST_ID,
         signal="wake_up",
+        cron_schedule=CRON_SCHEDULE,
     )
 
     workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
         workflow="ExampleWorkflow",
         workflow_id="missing-signal-input",
         task_queue=TASK_QUEUE,
+        identity=IDENTITY,
+        request_id=REQUEST_ID,
         signal=ExampleWorkflow.wake_up,  # pyright: ignore[reportArgumentType]
+        cron_schedule=CRON_SCHEDULE,
     )
 
     workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
         workflow="ExampleWorkflow",
         workflow_id="bad-signal-input",
         task_queue=TASK_QUEUE,
+        identity=IDENTITY,
+        request_id=REQUEST_ID,
         signal=ExampleWorkflow.wake_up,
         signal_input=("wrong", 7),  # pyright: ignore[reportArgumentType]
+        cron_schedule=CRON_SCHEDULE,
     )

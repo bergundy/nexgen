@@ -43,6 +43,8 @@ pub struct BuiltinTypeMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinWitMetadata {
     pub proto_types: BTreeMap<String, BuiltinTypeMetadata>,
+    pub type_compatibility: BTreeMap<String, BTreeSet<String>>,
+    pub type_covered_fields: BTreeMap<String, BTreeSet<String>>,
     pub type_use_paths: BTreeMap<String, String>,
 }
 
@@ -187,6 +189,8 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
     let package_origins = collect_package_origins(&resolve, &source_map)?;
 
     let mut proto_types = BTreeMap::new();
+    let mut type_compatibility = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut type_covered_fields = BTreeMap::<String, BTreeSet<String>>::new();
     let mut type_use_paths = BTreeMap::new();
 
     for (package_id, package) in resolve.packages.iter() {
@@ -234,6 +238,46 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
                 let directives =
                     parse_directives(type_def.docs.contents.as_deref(), &origin_path, &context)?;
 
+                for directive in &directives {
+                    if directive.name != "add-rpc-compatible-with" {
+                        continue;
+                    }
+                    let Some(target) = directive.value("value") else {
+                        return Err(Error::InvalidWitDirective {
+                            path: origin_path.join("model.wit"),
+                            context: context.clone(),
+                            directive: "@nexus.add-rpc-compatible-with".to_string(),
+                            reason: "missing compatibility target".to_string(),
+                        });
+                    };
+                    type_compatibility
+                        .entry(type_name.to_string())
+                        .or_default()
+                        .insert(target.to_string());
+                }
+
+                for directive in &directives {
+                    if directive.name != "function" && directive.name != "typescript-with-arguments"
+                    {
+                        continue;
+                    }
+                    let Some(signature_name) = directive.value("signature") else {
+                        continue;
+                    };
+                    let covered_field = resolve_function_signature_args_name(
+                        &resolve,
+                        type_def,
+                        signature_name,
+                        &origin_path,
+                        &context,
+                    )?
+                    .replace('-', "_");
+                    type_covered_fields
+                        .entry(type_name.to_string())
+                        .or_default()
+                        .insert(covered_field);
+                }
+
                 if let Some(existing) =
                     type_use_paths.insert(type_name.to_string(), use_path.clone())
                 {
@@ -274,6 +318,8 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
 
     Ok(BuiltinWitMetadata {
         proto_types,
+        type_compatibility,
+        type_covered_fields,
         type_use_paths,
     })
 }
@@ -2941,12 +2987,16 @@ interface workflow-service {
     namespace: option<string>,
     /// @nexus.omit
     header: placeholder,
+    /// @nexus.omit
+    time-skipping-config: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
     started: option<bool>,
+    /// @nexus.omit
+    signal-link: placeholder,
   }
 
   /// @nexus.output-transform
@@ -3479,12 +3529,16 @@ interface workflow-service {
     versioning-override: placeholder,
     /// @nexus.omit
     priority: placeholder,
+    /// @nexus.omit
+    time-skipping-config: placeholder,
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
   record signal-with-start-workflow-execution-response {
     run-id: option<string>,
     started: option<bool>,
+    /// @nexus.omit
+    signal-link: placeholder,
   }
 
   signal-with-start-workflow-execution: func(

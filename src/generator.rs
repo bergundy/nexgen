@@ -22,6 +22,7 @@ pub enum GeneratedOutputLayout {
 pub struct GeneratedFiles {
     pub layout: GeneratedOutputLayout,
     pub files: BTreeMap<PathBuf, String>,
+    pub warnings: Vec<String>,
 }
 
 impl GeneratedFiles {
@@ -31,6 +32,7 @@ impl GeneratedFiles {
         Self {
             layout: GeneratedOutputLayout::SingleFile,
             files,
+            warnings: Vec::new(),
         }
     }
 
@@ -38,6 +40,7 @@ impl GeneratedFiles {
         Self {
             layout: GeneratedOutputLayout::Directory,
             files,
+            warnings: Vec::new(),
         }
     }
 
@@ -79,12 +82,15 @@ pub fn generate_files(
     validate_type_overrides(spec, descriptors, language)?;
     ensure_unique_resource_names(spec)?;
     let plan = build_api_plan(spec, descriptors)?;
+    let warnings = generation_warnings(&plan);
 
-    match language {
+    let mut generated = match language {
         Language::Python => python::generate(&plan, spec.support.fragments_for_language(language)),
         Language::TypeScript => typescript::generate(&plan, support),
         language => Err(Error::UnsupportedLanguage { language }),
-    }
+    }?;
+    generated.warnings = warnings;
+    Ok(generated)
 }
 
 pub fn generate_source(
@@ -106,4 +112,88 @@ pub fn generate_source(
             .collect::<Vec<_>>()
             .join("\n\n"),
     })
+}
+
+fn generation_warnings(plan: &crate::api_plan::ApiPlan) -> Vec<String> {
+    plan.services
+        .iter()
+        .flat_map(|service| {
+            service.resources.iter().flat_map(|resource| {
+                resource.methods.iter().filter_map(|method| {
+                    matches!(
+                        method.binding,
+                        crate::api_plan::PlannedResourceMethodBindingSpec::Stub
+                    )
+                    .then(|| {
+                        format!(
+                            "resource method `{}.{}` generated as a stub because no operation could be bound",
+                            resource.type_name, method.name
+                        )
+                    })
+                })
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use prost_types::FileDescriptorSet;
+
+    use crate::SupportFiles;
+    use crate::descriptors::DescriptorIndex;
+    use crate::language::Language;
+    use crate::spec::ApiSpec;
+
+    use super::generate_files;
+
+    #[test]
+    fn warns_when_resource_method_generates_as_stub() {
+        let wit = r#"
+package temporal:users@1.0.0;
+
+world system {
+  export user-service;
+}
+
+/// @nexus.endpoint "__user_service"
+interface user-service {
+  resource user {
+    constructor(user-id: string, email: string);
+
+    update-email: func(email: string) -> user-result;
+  }
+
+  type user-result = own<user>;
+
+  record update-email-request {
+    users-id: string,
+    email: string,
+  }
+
+  update-email: func(request: update-email-request) -> user-result;
+}
+"#;
+        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
+            .unwrap();
+        let descriptors =
+            DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap();
+        let generated = generate_files(
+            Language::Python,
+            &spec,
+            &descriptors,
+            &SupportFiles::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            generated.warnings,
+            vec![
+                "resource method `User.update-email` generated as a stub because no operation could be bound"
+                    .to_string()
+            ]
+        );
+    }
 }

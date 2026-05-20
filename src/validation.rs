@@ -216,14 +216,6 @@ fn validate_generated_model_fields(
                 conflicting_property: "omit",
             });
         }
-        if type_override.required_fields.contains(field_name) {
-            return Err(Error::ConflictingTypeOverrideFieldProperties {
-                message: message_name.to_string(),
-                field: field_name.to_string(),
-                property: "source",
-                conflicting_property: "required",
-            });
-        }
         if usage.output {
             return Err(Error::UnsupportedSourcedTypeField {
                 message: message_name.to_string(),

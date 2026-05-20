@@ -62,7 +62,10 @@ describe("workflow-service generated output", () => {
       expect(request?.workflowType?.name).toBe("exampleWorkflow");
       expect(request?.workflowId).toBe("workflow-id");
       expect(request?.taskQueue?.name).toBe("demo-task-queue");
+      expect(request?.identity).toBe("example-worker");
+      expect(request?.requestId).toBe("example-request");
       expect(request?.signalName).toBe("wake-up");
+      expect(request?.cronSchedule).toBe("");
       expect(request?.input?.payloads).toHaveLength(2);
       expect(request?.signalInput?.payloads).toHaveLength(2);
       expect(request?.workflowRunTimeout?.seconds).toMatchObject({ low: 300 });
@@ -80,6 +83,9 @@ if (false) {
   }
 
   const taskQueue = "demo-task-queue";
+  const identity = "example-worker";
+  const requestId = "example-request";
+  const cronSchedule = "";
   const wakeUpSignal = workflow.defineSignal<[number, string]>("wake-up");
 
   const request: SignalWithStartWorkflowExecutionRequest<
@@ -90,8 +96,11 @@ if (false) {
     input: [3, "nexus"],
     workflowId: "workflow-id",
     taskQueue,
+    identity,
+    requestId,
     signal: wakeUpSignal,
     signalInput: [7, "hello"],
+    cronSchedule,
   };
 
   // @ts-expect-error sourced fields are not part of the generated request surface
@@ -102,7 +111,10 @@ if (false) {
     workflow: exampleWorkflow,
     workflowId: "missing-workflow-input",
     taskQueue,
+    identity,
+    requestId,
     signal: "wake-up",
+    cronSchedule,
   });
 
   // @ts-expect-error workflow args must match the workflow callable
@@ -111,7 +123,10 @@ if (false) {
     input: [3, 4],
     workflowId: "bad-workflow-input",
     taskQueue,
+    identity,
+    requestId,
     signal: "wake-up",
+    cronSchedule,
   });
 
   // @ts-expect-error missing signal args for a signal definition
@@ -119,7 +134,10 @@ if (false) {
     workflow: "ExampleWorkflow",
     workflowId: "missing-signal-input",
     taskQueue,
+    identity,
+    requestId,
     signal: wakeUpSignal,
+    cronSchedule,
   });
 
   // @ts-expect-error signal args must match the signal definition
@@ -127,8 +145,11 @@ if (false) {
     workflow: "ExampleWorkflow",
     workflowId: "bad-signal-input",
     taskQueue,
+    identity,
+    requestId,
     signal: wakeUpSignal,
     signalInput: ["wrong", 7],
+    cronSchedule,
   });
 
   // @ts-expect-error request models are write-only

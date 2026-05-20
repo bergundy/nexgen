@@ -33,6 +33,7 @@ interface model {
   /// @nexus.function
   ///   primary=true
   ///   signature="workflow-call"
+  /// @nexus.add-rpc-compatible-with "workflow-type"
   /// @nexus.type
   ///   python="str | collections.abc.Callable[..., collections.abc.Awaitable[object]]"
   ///   typescript="string | common.Workflow"
@@ -41,6 +42,7 @@ interface model {
   /// @nexus.function
   ///   signature="signal-call"
   ///   converter="signal_function_to_proto"
+  /// @nexus.add-rpc-compatible-with "string"
   /// @nexus.typescript-with-arguments
   ///   signature="signal-call"
   ///   value-type="workflow.SignalDefinition<any[]>"

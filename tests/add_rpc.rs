@@ -222,6 +222,8 @@ fn add_rpc_can_extend_an_existing_wit_file() {
     assert!(generated.contains("signal-name: string,"));
     assert!(generated.contains("input: option<payloads>,"));
     assert!(generated.contains("workflow-execution: option<workflow-execution>,"));
+    assert!(generated.contains("/// @nexus.endpoint \"temporal-system\""));
+    assert!(!generated.contains("/// @nexus.endpoint \"__REPLACE_ME__\""));
     assert!(!generated.contains("package temporal:nexus@1.0.0;\n\npackage temporal:nexus@1.0.0;"));
 
     let parsed = parse(Language::Python, &generated, "extended-input.wit");
@@ -232,6 +234,39 @@ fn add_rpc_can_extend_an_existing_wit_file() {
             .is_some()
     );
     assert!(service.operation("SignalWorkflowExecution").is_some());
+}
+
+#[test]
+fn add_rpc_can_update_existing_signal_with_start_operation() {
+    let root = project_root();
+    let descriptors = descriptor_path(&root);
+    let input = root.join(PRIMARY_EXAMPLE_PATH);
+    let generated =
+        add_rpc_to_string(&[descriptors], "SignalWithStartExecution", Some(&input)).unwrap();
+
+    assert!(generated.contains("signal-with-start-workflow-execution: func("));
+    assert_eq!(
+        generated
+            .matches("signal-with-start-workflow-execution: func(")
+            .count(),
+        1
+    );
+    assert!(generated.contains("workflow: workflow-function,"));
+    assert!(generated.contains("signal: signal-function,"));
+    assert!(!generated.contains("input: option<payloads>,"));
+    assert!(!generated.contains("signal-input: option<payloads>,"));
+    assert!(generated.contains("time-skipping-config: placeholder,"));
+    assert!(generated.contains("signal-link: placeholder,"));
+    assert!(generated.contains("/// @nexus.endpoint \"temporal-system\""));
+    assert!(!generated.contains("/// @nexus.endpoint \"__REPLACE_ME__\""));
+
+    let parsed = parse(Language::Python, &generated, "updated-existing-input.wit");
+    let service = &parsed.services[0];
+    assert!(
+        service
+            .operation("SignalWithStartWorkflowExecution")
+            .is_some()
+    );
 }
 
 #[test]
@@ -266,6 +301,58 @@ fn add_rpc_adds_missing_field_to_existing_operation_request() {
 }
 
 #[test]
+fn add_rpc_allows_existing_required_field_when_descriptor_field_is_optional() {
+    let root = project_root();
+    let descriptors = descriptor_path(&root);
+    let complete =
+        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let input = complete.replace("    input: option<payloads>,\n", "    input: payloads,\n");
+    let input_path = write_temp_wit("add-rpc-existing-required-tightening", &input);
+
+    let generated =
+        add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path)).unwrap();
+
+    assert!(generated.contains("input: payloads,"));
+    assert!(!generated.contains("input: option<payloads>,"));
+
+    let parsed = parse(Language::Python, &generated, input_path.to_str().unwrap());
+    let request = parsed
+        .type_override("temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    assert_eq!(request.field_name_override("input"), Some("input"));
+
+    fs::remove_dir_all(input_path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn add_rpc_allows_existing_optional_field_when_descriptor_field_is_required() {
+    let root = project_root();
+    let descriptors = descriptor_path(&root);
+    let complete =
+        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let input = complete.replace("    identity: string,\n", "    identity: option<string>,\n");
+    let input_path = write_temp_wit("add-rpc-existing-optional-relaxation", &input);
+
+    let generated =
+        add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path)).unwrap();
+
+    assert!(generated.contains("identity: option<string>,"));
+    assert!(!generated.contains("identity: string,"));
+
+    let parsed = parse(Language::Python, &generated, input_path.to_str().unwrap());
+    let request = parsed
+        .type_override("temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest")
+        .unwrap()
+        .generated_model()
+        .unwrap();
+    assert_eq!(request.field_name_override("identity"), Some("identity"));
+
+    fs::remove_dir_all(input_path.parent().unwrap()).unwrap();
+}
+
+#[test]
 fn add_rpc_fails_when_existing_operation_request_conflicts_with_descriptor() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
@@ -273,7 +360,7 @@ fn add_rpc_fails_when_existing_operation_request_conflicts_with_descriptor() {
         add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
     let input = complete.replace(
         "    signal-name: string,\n",
-        "    signal-name: option<string>,\n",
+        "    signal-name: bool,\n",
     );
     let input_path = write_temp_wit("add-rpc-existing-conflict", &input);
 
@@ -281,7 +368,7 @@ fn add_rpc_fails_when_existing_operation_request_conflicts_with_descriptor() {
         .unwrap_err();
 
     let message = error.to_string();
-    assert!(message.contains("existing WIT field is `signal-name: option<string>`"));
+    assert!(message.contains("existing WIT field is `signal-name: bool`"));
     assert!(message.contains("descriptor requires `signal-name: string`"));
 
     fs::remove_dir_all(input_path.parent().unwrap()).unwrap();
