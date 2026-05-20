@@ -3091,7 +3091,7 @@ interface workflow-service {
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record signal-with-start-workflow-execution-response {
+  record signal-with-start-workflow-response {
     run-id: option<string>,
     started: option<bool>,
     /// @nexus.omit
@@ -3105,7 +3105,7 @@ interface workflow-service {
   ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
   signal-with-start-workflow-execution: func(
     request: signal-with-start-workflow-request
-  ) -> signal-with-start-workflow-execution-response;
+  ) -> signal-with-start-workflow-response;
 }
 "#;
 
@@ -3634,7 +3634,7 @@ interface workflow-service {
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record signal-with-start-workflow-execution-response {
+  record signal-with-start-workflow-response {
     run-id: option<string>,
     started: option<bool>,
     /// @nexus.omit
@@ -3643,7 +3643,7 @@ interface workflow-service {
 
   signal-with-start-workflow-execution: func(
     request: signal-with-start-workflow-request
-  ) -> signal-with-start-workflow-execution-response;
+  ) -> signal-with-start-workflow-response;
 }
 "#;
 

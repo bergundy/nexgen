@@ -179,7 +179,7 @@ interface workflow-service {
   }
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse"
-  record signal-with-start-workflow-execution-response {
+  record signal-with-start-workflow-response {
     run-id: option<string>,
   }
 
@@ -191,7 +191,7 @@ interface workflow-service {
   /// @nexus.operation name="SignalWithStartWorkflowExecution"
   signal-with-start-workflow: func(
     request: signal-with-start-workflow-request,
-  ) -> signal-with-start-workflow-execution-response;
+  ) -> signal-with-start-workflow-response;
 }
 ```
 
