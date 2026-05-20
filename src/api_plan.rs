@@ -39,6 +39,7 @@ pub(crate) struct PlannedService {
 #[derive(Debug, Clone)]
 pub(crate) struct PlannedOperation {
     pub(crate) name: String,
+    pub(crate) wire_name: String,
     pub(crate) input: PlannedMessageType,
     pub(crate) output: PlannedOperationOutput,
     pub(crate) output_transform: Option<OperationOutputTransformSpec>,
@@ -332,6 +333,13 @@ pub(crate) fn message_model_name(full_name: &str) -> String {
         .to_string()
 }
 
+fn planned_proto_model_name(message: &MessageMetadata, spec: &ApiSpec) -> String {
+    spec.type_override(&message.full_name)
+        .and_then(|type_override| type_override.model_name())
+        .map(str::to_string)
+        .unwrap_or_else(|| message_model_name(&message.full_name))
+}
+
 pub(crate) fn enum_name(full_name: &str) -> String {
     full_name
         .rsplit('.')
@@ -539,6 +547,7 @@ fn plan_operation(
 
     Ok(PlannedOperation {
         name: operation.name.clone(),
+        wire_name: operation.wire_name.clone(),
         input,
         output,
         output_transform: operation.output_transform().cloned(),
@@ -790,16 +799,14 @@ fn planned_resource_field(
 }
 
 fn planned_message_reference(message: &MessageMetadata, spec: &ApiSpec) -> PlannedMessageType {
+    let type_override = spec.type_override(&message.full_name);
     PlannedMessageType {
         info: PlannedTypeInfo::from_message(message),
-        model_name: message_model_name(&message.full_name),
-        replacement: spec
-            .type_override(&message.full_name)
+        model_name: planned_proto_model_name(message, spec),
+        replacement: type_override
             .and_then(|type_override| type_override.replacement())
             .cloned(),
-        authored_type: spec
-            .type_override(&message.full_name)
-            .and_then(|type_override| type_override.authored_type.clone()),
+        authored_type: type_override.and_then(|type_override| type_override.authored_type.clone()),
         source: PlannedMessageSource::Proto,
     }
 }
@@ -887,20 +894,18 @@ fn ensure_model_plan(
         return;
     }
 
-    let generated_model = spec
-        .type_override(&message.full_name)
+    let type_override = spec.type_override(&message.full_name);
+    let generated_model = type_override
         .and_then(|type_override| type_override.generated_model())
         .cloned()
         .unwrap_or_default();
-    let flatten_in_api = spec
-        .type_override(&message.full_name)
-        .is_some_and(|type_override| type_override.flatten_in_api());
+    let flatten_in_api = type_override.is_some_and(|type_override| type_override.flatten_in_api());
 
     plan.models.insert(
         message.full_name.clone(),
         PlannedModel {
             info: PlannedTypeInfo::from_message(message),
-            name: message_model_name(&message.full_name),
+            name: planned_proto_model_name(message, spec),
             capabilities: requested_capabilities,
             flatten_in_api,
             generated_model: generated_model.clone(),
@@ -1052,7 +1057,7 @@ fn plan_field(
         .and_then(|type_override| type_override.generated_model());
 
     PlannedField {
-        owner_name: message_model_name(&message.full_name),
+        owner_name: planned_proto_model_name(message, spec),
         authored_name: generated_model
             .and_then(|generated_model| generated_model.field_name_override(&proto_name))
             .unwrap_or(&proto_name)

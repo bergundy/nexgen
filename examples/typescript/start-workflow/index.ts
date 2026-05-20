@@ -86,30 +86,30 @@ function _RequestArgsToPayloads(
   return payloads == null ? undefined : { payloads };
 }
 
-type StartWorkflowExecutionRequestBase = {
+type StartWorkflowRequestBase = {
   workflowId: string;
   taskQueue: string;
   workflowStartDelay?: common.Duration;
 };
 
-export type StartWorkflowExecutionRequest<
+export type StartWorkflowRequest<
   WorkflowFn extends (...args: any[]) => Promise<any> = (
     ...args: any[]
   ) => Promise<any>,
 > = _RequestWithFunctionField<
   WorkflowFn,
-  StartWorkflowExecutionRequestBase,
+  StartWorkflowRequestBase,
   "workflow",
-  "input"
+  "args"
 >;
 
-export const StartWorkflowExecutionRequest = {
+export const StartWorkflowRequest = {
   toProto<
     WorkflowFn extends (...args: any[]) => Promise<any> = (
       ...args: any[]
     ) => Promise<any>,
   >(
-    model: StartWorkflowExecutionRequest<WorkflowFn> | null | undefined,
+    model: StartWorkflowRequest<WorkflowFn> | null | undefined,
   ):
     | temporal.api.workflowservice.v1.IStartWorkflowExecutionRequest
     | undefined {
@@ -119,24 +119,16 @@ export const StartWorkflowExecutionRequest = {
     return {
       workflowId: requiredField(
         model.workflowId,
-        "StartWorkflowExecutionRequest",
+        "StartWorkflowRequest",
         "workflowId",
       ),
       workflowType: workflowTypeToProto(
-        requiredField(
-          model.workflow,
-          "StartWorkflowExecutionRequest",
-          "workflow",
-        ),
+        requiredField(model.workflow, "StartWorkflowRequest", "workflow"),
       ),
       taskQueue: taskQueueToProto(
-        requiredField(
-          model.taskQueue,
-          "StartWorkflowExecutionRequest",
-          "taskQueue",
-        ),
+        requiredField(model.taskQueue, "StartWorkflowRequest", "taskQueue"),
       ),
-      input: _RequestArgsToPayloads(model.input),
+      input: _RequestArgsToPayloads(model.args),
       workflowStartDelay:
         model.workflowStartDelay == null
           ? undefined
@@ -146,14 +138,14 @@ export const StartWorkflowExecutionRequest = {
   },
 };
 
-export interface RequestCancelWorkflowExecutionRequest {
+export interface CancelWorkflowRequest {
   workflowExecution: WorkflowExecution;
   reason?: string;
 }
 
-export const RequestCancelWorkflowExecutionRequest = {
+export const CancelWorkflowRequest = {
   toProto(
-    model: RequestCancelWorkflowExecutionRequest | null | undefined,
+    model: CancelWorkflowRequest | null | undefined,
   ):
     | temporal.api.workflowservice.v1.IRequestCancelWorkflowExecutionRequest
     | undefined {
@@ -165,7 +157,7 @@ export const RequestCancelWorkflowExecutionRequest = {
         WorkflowExecution.toProto(
           requiredField(
             model.workflowExecution,
-            "RequestCancelWorkflowExecutionRequest",
+            "CancelWorkflowRequest",
             "workflowExecution",
           ),
         ) ?? {},
@@ -214,15 +206,15 @@ export const WorkflowExecution = {
   },
 };
 
-export interface RequestCancelWorkflowExecutionResponse {}
+export interface CancelWorkflowResponse {}
 
-export const RequestCancelWorkflowExecutionResponse = {
+export const CancelWorkflowResponse = {
   fromProto(
     proto:
       | temporal.api.workflowservice.v1.IRequestCancelWorkflowExecutionResponse
       | null
       | undefined,
-  ): RequestCancelWorkflowExecutionResponse | undefined {
+  ): CancelWorkflowResponse | undefined {
     if (proto == null) {
       return undefined;
     }
@@ -230,7 +222,7 @@ export const RequestCancelWorkflowExecutionResponse = {
   },
 
   toProto(
-    model: RequestCancelWorkflowExecutionResponse | null | undefined,
+    model: CancelWorkflowResponse | null | undefined,
   ):
     | temporal.api.workflowservice.v1.IRequestCancelWorkflowExecutionResponse
     | undefined {
@@ -314,14 +306,12 @@ export async function startWorkflow<
   WorkflowFn extends (...args: any[]) => Promise<any> = (
     ...args: any[]
   ) => Promise<any>,
->(
-  request: StartWorkflowExecutionRequest<WorkflowFn>,
-): Promise<StartedWorkflow> {
+>(request: StartWorkflowRequest<WorkflowFn>): Promise<StartedWorkflow> {
   const client = workflow.createNexusServiceClient({
     service: WorkflowService,
     endpoint: "temporal-system",
   });
-  const requestProto = StartWorkflowExecutionRequest.toProto(request) ?? {};
+  const requestProto = StartWorkflowRequest.toProto(request) ?? {};
   const handle = await client.startOperation(
     WorkflowService.operations.startWorkflow,
     requestProto,
@@ -338,14 +328,12 @@ export async function restartWorkflow<
   WorkflowFn extends (...args: any[]) => Promise<any> = (
     ...args: any[]
   ) => Promise<any>,
->(
-  request: StartWorkflowExecutionRequest<WorkflowFn>,
-): Promise<StartedWorkflow> {
+>(request: StartWorkflowRequest<WorkflowFn>): Promise<StartedWorkflow> {
   const client = workflow.createNexusServiceClient({
     service: WorkflowService,
     endpoint: "temporal-system",
   });
-  const requestProto = StartWorkflowExecutionRequest.toProto(request) ?? {};
+  const requestProto = StartWorkflowRequest.toProto(request) ?? {};
   const handle = await client.startOperation(
     WorkflowService.operations.restartWorkflow,
     requestProto,
@@ -359,7 +347,7 @@ export async function restartWorkflow<
 }
 
 export async function cancelWorkflow(
-  request: RequestCancelWorkflowExecutionRequest,
+  request: CancelWorkflowRequest,
 ): Promise<
   workflow.NexusOperationHandle<temporal.api.workflowservice.v1.IRequestCancelWorkflowExecutionResponse>
 > {
@@ -369,6 +357,6 @@ export async function cancelWorkflow(
   });
   return await client.startOperation(
     WorkflowService.operations.cancelWorkflow,
-    RequestCancelWorkflowExecutionRequest.toProto(request) ?? {},
+    CancelWorkflowRequest.toProto(request) ?? {},
   );
 }

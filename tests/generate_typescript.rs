@@ -188,8 +188,8 @@ fn typescript_renders_required_fields_and_custom_message_types() {
 
     assert!(rendered.contains("type _RequestWithFunctionField<"));
     assert!(rendered.contains("type _RequestWithArgumentsField<"));
-    assert!(rendered.contains("type SignalWithStartWorkflowExecutionRequestBase = {"));
-    assert!(rendered.contains("export type SignalWithStartWorkflowExecutionRequest<"));
+    assert!(rendered.contains("type SignalWithStartWorkflowRequestBase = {"));
+    assert!(rendered.contains("export type SignalWithStartWorkflowRequest<"));
     assert!(rendered.contains(
         "WorkflowFn extends (...args: any[]) => Promise<any> = (...args: any[]) => Promise<any>,"
     ));
@@ -203,7 +203,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
         )
     );
     assert!(rendered.contains(
-        "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowExecutionRequestBase, \"workflow\", \"input\">"
+        "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowRequestBase, \"workflow\", \"args\">"
     ));
     assert!(rendered.contains("workflowId: string;"));
     assert!(rendered.contains("taskQueue: string;"));
@@ -224,8 +224,8 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("export function retryPolicyFromProto("));
     assert!(rendered.contains("workflowType: workflowTypeToProto("));
     assert!(rendered.contains("workflow_function_name("));
-    assert!(rendered.contains("input: _RequestArgsToPayloads(model.input),"));
-    assert!(rendered.contains("signalInput: _RequestArgsToPayloads(model.signalInput),"));
+    assert!(rendered.contains("input: _RequestArgsToPayloads(model.args),"));
+    assert!(rendered.contains("signalInput: _RequestArgsToPayloads(model.signalArgs),"));
     assert!(
         rendered
             .contains("signalName: ((value) => typeof value === 'string' ? value : (value.name))(")
@@ -254,16 +254,16 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("return workflow.getExternalWorkflowHandle("));
     assert!(rendered.contains("request.workflowId"));
     assert!(rendered.contains("result.runId ?? undefined"));
-    assert!(rendered.contains("export async function signalWithStartWorkflowExecution<"));
+    assert!(rendered.contains("export async function signalWithStartWorkflow<"));
     assert!(
         rendered
-            .contains("request: SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>,")
+            .contains("request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,")
     );
     assert!(rendered.contains("const client = workflow.createNexusServiceClient({"));
     assert!(!rendered.contains("export class WorkflowServiceClient"));
     assert!(rendered.contains("): Promise<workflow.ExternalWorkflowHandle> {"));
-    assert!(!rendered.contains("SignalWithStartWorkflowExecutionRequest = {\n  fromProto("));
-    assert!(!rendered.contains("export interface SignalWithStartWorkflowExecutionRequest {"));
+    assert!(!rendered.contains("SignalWithStartWorkflowRequest = {\n  fromProto("));
+    assert!(!rendered.contains("export interface SignalWithStartWorkflowRequest {"));
     assert!(!rendered.contains("export interface RetryPolicy"));
     assert!(!rendered.contains("export interface WorkflowType"));
     assert!(!rendered.contains("export interface TaskQueue"));
@@ -274,7 +274,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!rendered.contains("export interface VersioningOverride"));
     assert!(!rendered.contains("export enum WorkflowIdReusePolicy"));
     assert!(!rendered.contains("export enum WorkflowIdConflictPolicy"));
-    assert!(!rendered.contains("signalWithStartWorkflow("));
+    assert!(!rendered.contains("signalWithStartWorkflowExecution("));
     assert!(!rendered.contains("from './model_overrides.ts'"));
 
     let type_roundtrip_rendered = generate_to_string(

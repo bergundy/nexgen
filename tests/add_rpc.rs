@@ -88,9 +88,13 @@ fn add_rpc_matches_signal_with_start_proto_shape_but_not_handwritten_refinements
         generated_python_service.name,
         handwritten_python_service.name
     );
-    assert_eq!(
+    assert_ne!(
         generated_python_service.operations[0].name,
         handwritten_python_service.operations[0].name
+    );
+    assert_eq!(
+        generated_python_service.operations[0].wire_name,
+        handwritten_python_service.operations[0].wire_name
     );
     assert_eq!(
         generated_python_service.operations[0].input_proto,
@@ -215,7 +219,7 @@ fn add_rpc_can_extend_an_existing_wit_file() {
     let generated =
         add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input)).unwrap();
 
-    assert!(generated.contains("signal-with-start-workflow-execution: func("));
+    assert!(generated.contains("signal-with-start-workflow: func("));
     assert!(generated.contains("signal-workflow-execution: func("));
     assert!(generated.contains("record signal-workflow-execution-request {"));
     assert!(generated.contains("record signal-workflow-execution-response {"));
@@ -230,7 +234,7 @@ fn add_rpc_can_extend_an_existing_wit_file() {
     let service = &parsed.services[0];
     assert!(
         service
-            .operation("SignalWithStartWorkflowExecution")
+            .operation("SignalWithStartWorkflow")
             .is_some()
     );
     assert!(service.operation("SignalWorkflowExecution").is_some());
@@ -244,11 +248,9 @@ fn add_rpc_can_update_existing_signal_with_start_operation() {
     let generated =
         add_rpc_to_string(&[descriptors], "SignalWithStartExecution", Some(&input)).unwrap();
 
-    assert!(generated.contains("signal-with-start-workflow-execution: func("));
+    assert!(generated.contains("signal-with-start-workflow: func("));
     assert_eq!(
-        generated
-            .matches("signal-with-start-workflow-execution: func(")
-            .count(),
+        generated.matches("signal-with-start-workflow: func(").count(),
         1
     );
     assert!(generated.contains("workflow: workflow-function,"));
@@ -268,11 +270,8 @@ fn add_rpc_can_update_existing_signal_with_start_operation() {
 
     let parsed = parse(Language::Python, &generated, "updated-existing-input.wit");
     let service = &parsed.services[0];
-    assert!(
-        service
-            .operation("SignalWithStartWorkflowExecution")
-            .is_some()
-    );
+    let operation = service.operation("SignalWithStartWorkflow").unwrap();
+    assert_eq!(operation.wire_name, "SignalWithStartWorkflowExecution");
 }
 
 #[test]

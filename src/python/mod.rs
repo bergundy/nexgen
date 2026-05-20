@@ -134,6 +134,7 @@ struct RenderedService<'a> {
 #[derive(Debug)]
 struct RenderedOperation<'a> {
     name: &'a str,
+    wire_name: &'a str,
     attr_name: String,
     input_ref: String,
     input_module_path: Option<String>,
@@ -558,6 +559,7 @@ fn resolve_operation<'a>(
     };
     Ok(RenderedOperation {
         name: operation.name.as_str(),
+        wire_name: operation.wire_name.as_str(),
         attr_name: python_ident(&operation.name.to_snake_case()),
         input_ref,
         input_module_path,
@@ -2767,7 +2769,7 @@ fn render_package_init(
             output.push_str(service.name);
             output.push_str("\",\n");
             output.push_str("        \"");
-            output.push_str(operation.name);
+            output.push_str(operation.wire_name);
             output.push_str("\",\n");
             output.push_str("    ): ");
             output.push_str("_service.");
@@ -2803,7 +2805,7 @@ fn render_service_definition(output: &mut String, service: &RenderedService<'_>)
         output.push_str(&service_type_ref(&operation.output_ref));
         output.push_str(",\n");
         output.push_str("    ] = Operation(name=");
-        output.push_str(&python_string_literal(operation.name));
+        output.push_str(&python_string_literal(operation.wire_name));
         output.push_str(")\n");
 
         if operation_index + 1 != service.operations.len() {
@@ -3609,7 +3611,7 @@ fn render_request_only_operation_function(
         render_inline_nexus_client(output, service, "    ");
         output.push_str("    return await nexus_client.start_operation(\n");
         output.push_str("        operation=");
-        output.push_str(&python_string_literal(operation.name));
+        output.push_str(&python_string_literal(operation.wire_name));
         output.push_str(",\n");
         output.push_str("        ");
         output.push_str("input=");
@@ -3628,7 +3630,7 @@ fn render_request_only_operation_function(
         render_inline_nexus_client(output, service, "    ");
         output.push_str("    handle = await nexus_client.start_operation(\n");
         output.push_str("        operation=");
-        output.push_str(&python_string_literal(operation.name));
+        output.push_str(&python_string_literal(operation.wire_name));
         output.push_str(",\n");
         output.push_str("        ");
         output.push_str("input=");
@@ -3648,7 +3650,7 @@ fn render_request_only_operation_function(
     render_inline_nexus_client(output, service, "    ");
     output.push_str("    handle = await nexus_client.start_operation(\n");
     output.push_str("        operation=");
-    output.push_str(&python_string_literal(operation.name));
+    output.push_str(&python_string_literal(operation.wire_name));
     output.push_str(",\n");
     output.push_str("        input=request_proto,\n");
     if !operation.output_none {
@@ -4129,15 +4131,15 @@ mod tests {
         assert!(output.contains(
             "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]"
         ));
-        assert!(output.contains("class SignalWithStartWorkflowExecutionRequest:"));
-        assert!(output.contains("input: tuple[typing.Any, ...] | None = None"));
+        assert!(output.contains("class SignalWithStartWorkflowRequest:"));
+        assert!(output.contains("args: tuple[typing.Any, ...] | None = None"));
         assert!(!output.contains("namespace: str | None = None"));
         assert!(output.contains("message.namespace = workflow_namespace()"));
         assert!(output.contains("result = await handle"));
         assert!(output.contains(
             "return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
         ));
-        assert!(output.contains("signal_input: tuple[typing.Any, ...] | None = None"));
+        assert!(output.contains("signal_args: tuple[typing.Any, ...] | None = None"));
         assert!(output.contains(
             "workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = None"
         ));
@@ -4165,20 +4167,20 @@ mod tests {
             output
                 .contains("workflow_id_conflict_policy_to_proto(self.workflow_id_conflict_policy)")
         );
-        assert!(output.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
+        assert!(output.contains("message.input.CopyFrom(payloads_to_proto(self.args))"));
         assert!(!output.contains("header:"));
         assert!(!output.contains("header_to_proto("));
         assert!(!output.contains("links:"));
         assert!(!output.contains("link_to_proto("));
-        assert!(output.contains("async def _signal_with_start_workflow_execution("));
-        assert!(output.contains("request: SignalWithStartWorkflowExecutionRequest"));
+        assert!(output.contains("async def _signal_with_start_workflow("));
+        assert!(output.contains("request: SignalWithStartWorkflowRequest"));
         assert!(output.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
         assert!(!output.contains("(typing.TypedDict, total=False):"));
         assert!(!output.contains("typing.Unpack["));
-        assert!(output.contains("input: object | tuple[object, ...] | None"));
+        assert!(output.contains("args: object | tuple[object, ...] | None"));
         assert!(output.contains("@typing.overload"));
         assert!(output.contains("workflow: str,"));
-        assert!(output.contains("input: tuple[typing.Any, ...] | None = ...,"));
+        assert!(output.contains("args: tuple[typing.Any, ...] | None = ...,"));
         assert!(output.contains(
             "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],"
         ));
@@ -4186,17 +4188,17 @@ mod tests {
         assert!(output.contains(
             "RemainingWorkflowArgs = typing_extensions.TypeVarTuple(\"RemainingWorkflowArgs\")"
         ));
-        assert!(output.contains("async def signal_with_start_workflow_execution("));
-        assert!(output.contains("input: FirstWorkflowArg,"));
+        assert!(output.contains("async def signal_with_start_workflow("));
+        assert!(output.contains("args: FirstWorkflowArg,"));
         assert!(output.contains(
-            "input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
+            "args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
         ));
         assert!(output.contains(
             "signal: collections.abc.Callable[[typing.Any, SignalArg1], None | collections.abc.Awaitable[None]],"
         ));
-        assert!(output.contains("signal_input: SignalArg1,"));
-        assert!(output.contains("signal_input: tuple[SignalArg1],"));
-        assert!(output.contains("async def signal_with_start_workflow_execution("));
+        assert!(output.contains("signal_args: SignalArg1,"));
+        assert!(output.contains("signal_args: tuple[SignalArg1],"));
+        assert!(output.contains("async def signal_with_start_workflow("));
         assert!(output.contains("    *,"));
         assert!(output.contains(
             "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],"
@@ -4204,7 +4206,7 @@ mod tests {
         assert!(output.contains(
             "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
         ));
-        assert!(output.contains("input: object | tuple[object, ...] | None = None,"));
+        assert!(output.contains("args: object | tuple[object, ...] | None = None,"));
         assert!(output.contains("static_summary: str | None = None,"));
         assert!(output.contains("static_details: str | None = None,"));
         assert!(!output.contains("user_metadata_static_summary:"));
@@ -4212,26 +4214,26 @@ mod tests {
         assert!(output.contains("def _nexus_normalize_function_args("));
         assert!(
             output
-                .contains("normalized_signal_input = _nexus_normalize_function_args(signal_input)")
+                .contains("normalized_signal_args = _nexus_normalize_function_args(signal_args)")
         );
-        assert!(output.contains("normalized_input = _nexus_normalize_function_args(input)"));
+        assert!(output.contains("normalized_args = _nexus_normalize_function_args(args)"));
         assert!(output.contains("user_metadata = ("));
         assert!(output.contains("if static_summary is None and static_details is None"));
         assert!(output.contains("static_summary=static_summary,"));
         assert!(output.contains("static_details=static_details,"));
-        assert!(output.contains("input=normalized_input,"));
-        assert!(output.contains("signal_input=normalized_signal_input,"));
+        assert!(output.contains("args=normalized_args,"));
+        assert!(output.contains("signal_args=normalized_signal_args,"));
         assert!(output.contains("user_metadata=user_metadata,"));
-        assert!(output.contains("request = SignalWithStartWorkflowExecutionRequest("));
+        assert!(output.contains("request = SignalWithStartWorkflowRequest("));
         assert!(output.contains("workflow=workflow,"));
-        assert!(output.contains("input=normalized_input,"));
-        assert!(output.contains("return await _signal_with_start_workflow_execution(request)"));
-        assert!(!output.contains("SignalWithStartWorkflowExecutionRequest.from_proto"));
+        assert!(output.contains("args=normalized_args,"));
+        assert!(output.contains("return await _signal_with_start_workflow(request)"));
+        assert!(!output.contains("SignalWithStartWorkflowRequest.from_proto"));
         assert!(!output.contains(
-            "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
+            "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowRequest:"
         ));
-        assert!(!output.contains("class SignalWithStartWorkflowExecutionRequestTyped["));
-        assert!(!output.contains("async def signal_with_start_workflow_execution_typed("));
+        assert!(!output.contains("class SignalWithStartWorkflowRequestTyped["));
+        assert!(!output.contains("async def signal_with_start_workflow_typed("));
         assert!(!output.contains("class RetryPolicy:"));
         assert!(!output.contains("class WorkflowType:"));
         assert!(!output.contains("class TaskQueue:"));
@@ -4323,7 +4325,7 @@ interface workflow-service {
   };
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
+  record signal-with-start-workflow-request {
     /// @nexus.proto-field "workflow_type"
     workflow: workflow-function,
     workflow-id: string,
@@ -4379,7 +4381,7 @@ interface workflow-service {
   }
 
   signal-with-start-workflow-execution: func(
-    request: signal-with-start-workflow-execution-request,
+    request: signal-with-start-workflow-request,
   ) -> signal-with-start-workflow-execution-response;
 }
 "#;
@@ -4409,7 +4411,7 @@ interface workflow-service {
                 type_name,
                 field,
                 conflicting_field,
-            } if type_name == "SignalWithStartWorkflowExecutionRequest"
+            } if type_name == "SignalWithStartWorkflowRequest"
                 && field == "static_summary"
                 && conflicting_field.contains("static_summary")
         ));

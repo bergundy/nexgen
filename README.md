@@ -167,7 +167,7 @@ interface workflow-service {
   use nexus:temporal-types/model@1.0.0.{signal-function, task-queue, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
+  record signal-with-start-workflow-request {
     /// @nexus.proto-field "workflow_type"
     workflow: workflow-function,
     workflow-id: string,
@@ -188,8 +188,9 @@ interface workflow-service {
   ///   python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
   ///   typescript-type="workflow.ExternalWorkflowHandle"
   ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
-  signal-with-start-workflow-execution: func(
-    request: signal-with-start-workflow-execution-request,
+  /// @nexus.operation name="SignalWithStartWorkflowExecution"
+  signal-with-start-workflow: func(
+    request: signal-with-start-workflow-request,
   ) -> signal-with-start-workflow-execution-response;
 }
 ```

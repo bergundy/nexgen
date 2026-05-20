@@ -253,12 +253,12 @@ fn python_request_models_are_write_only() {
     )
     .unwrap();
 
-    assert!(!rendered.contains("SignalWithStartWorkflowExecutionRequest.from_proto"));
+    assert!(!rendered.contains("SignalWithStartWorkflowRequest.from_proto"));
     assert!(!rendered.contains(
-        "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowExecutionRequest:"
+        "proto: temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,\n    ) -> SignalWithStartWorkflowRequest:"
     ));
-    assert!(rendered.contains("class SignalWithStartWorkflowExecutionRequest:"));
-    assert!(rendered.contains("input: tuple[typing.Any, ...] | None = None"));
+    assert!(rendered.contains("class SignalWithStartWorkflowRequest:"));
+    assert!(rendered.contains("args: tuple[typing.Any, ...] | None = None"));
     assert!(!rendered.contains("(typing.TypedDict, total=False):"));
     assert!(!rendered.contains("typing.Unpack["));
     assert!(!rendered.contains("namespace: str | None = None"));
@@ -268,13 +268,13 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains(
         "return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
     ));
-    assert!(rendered.contains("async def _signal_with_start_workflow_execution("));
-    assert!(rendered.contains("request: SignalWithStartWorkflowExecutionRequest"));
+    assert!(rendered.contains("async def _signal_with_start_workflow("));
+    assert!(rendered.contains("request: SignalWithStartWorkflowRequest"));
     assert!(rendered.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
-    assert!(rendered.contains("async def signal_with_start_workflow_execution("));
+    assert!(rendered.contains("async def signal_with_start_workflow("));
     assert!(rendered.contains("@typing.overload"));
     assert!(rendered.contains("workflow: str,"));
-    assert!(rendered.contains("input: tuple[typing.Any, ...] | None = ...,"));
+    assert!(rendered.contains("args: tuple[typing.Any, ...] | None = ...,"));
     assert!(rendered.contains(
         "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],"
     ));
@@ -283,12 +283,12 @@ fn python_request_models_are_write_only() {
         "RemainingWorkflowArgs = typing_extensions.TypeVarTuple(\"RemainingWorkflowArgs\")"
     ));
     assert!(rendered.contains(
-        "input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
+        "args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
     ));
     assert!(rendered.contains(
         "signal: collections.abc.Callable[[typing.Any, SignalArg1], None | collections.abc.Awaitable[None]],"
     ));
-    assert!(rendered.contains("signal_input: tuple[SignalArg1],"));
+    assert!(rendered.contains("signal_args: tuple[SignalArg1],"));
     assert!(rendered.contains("    *,"));
     assert!(rendered.contains(
         "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],"
@@ -296,27 +296,27 @@ fn python_request_models_are_write_only() {
     assert!(rendered.contains(
         "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
     ));
-    assert!(rendered.contains("input: object | tuple[object, ...] | None = None,"));
+    assert!(rendered.contains("args: object | tuple[object, ...] | None = None,"));
     assert!(rendered.contains("static_summary: str | None = None,"));
     assert!(rendered.contains("static_details: str | None = None,"));
     assert!(!rendered.contains("user_metadata_static_summary:"));
     assert!(!rendered.contains("user_metadata_static_details:"));
-    assert!(rendered.contains("request = SignalWithStartWorkflowExecutionRequest("));
+    assert!(rendered.contains("request = SignalWithStartWorkflowRequest("));
     assert!(rendered.contains("workflow=workflow,"));
     assert!(rendered.contains("def _nexus_normalize_function_args("));
-    assert!(rendered.contains("normalized_input = _nexus_normalize_function_args(input)"));
+    assert!(rendered.contains("normalized_args = _nexus_normalize_function_args(args)"));
     assert!(
-        rendered.contains("normalized_signal_input = _nexus_normalize_function_args(signal_input)")
+        rendered.contains("normalized_signal_args = _nexus_normalize_function_args(signal_args)")
     );
     assert!(rendered.contains("user_metadata = ("));
     assert!(rendered.contains("if static_summary is None and static_details is None"));
     assert!(rendered.contains("static_summary=static_summary,"));
     assert!(rendered.contains("static_details=static_details,"));
-    assert!(rendered.contains("input=normalized_input,"));
-    assert!(rendered.contains("signal_input=normalized_signal_input,"));
+    assert!(rendered.contains("args=normalized_args,"));
+    assert!(rendered.contains("signal_args=normalized_signal_args,"));
     assert!(rendered.contains("user_metadata=user_metadata,"));
-    assert!(rendered.contains("return await _signal_with_start_workflow_execution(request)"));
-    assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.input))"));
+    assert!(rendered.contains("return await _signal_with_start_workflow(request)"));
+    assert!(rendered.contains("message.input.CopyFrom(payloads_to_proto(self.args))"));
     assert!(models.contains("from ._support import ("));
     assert!(models.contains("retry_policy_to_proto,"));
 

@@ -195,21 +195,21 @@ def build_full_signal_request(
     *,
     workflow_id: str,
     signal: str | Callable[..., None | Awaitable[None]],
-    signal_input: tuple[typing.Any, ...] | None = None,
-) -> workflow_service.models.SignalWithStartWorkflowExecutionRequest:
-    return workflow_service.models.SignalWithStartWorkflowExecutionRequest(
+    signal_args: tuple[typing.Any, ...] | None = None,
+) -> workflow_service.models.SignalWithStartWorkflowRequest:
+    return workflow_service.models.SignalWithStartWorkflowRequest(
         workflow=ExampleWorkflow.run,
         workflow_id=workflow_id,
         task_queue=TASK_QUEUE,
         signal=signal,
-        input=FULL_WORKFLOW_INPUT,
+        args=FULL_WORKFLOW_INPUT,
         workflow_execution_timeout=datetime.timedelta(seconds=30),
         identity=IDENTITY,
         request_id=REQUEST_ID,
         retry_policy=example_data.retry_policy,
         workflow_id_reuse_policy=temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
         workflow_id_conflict_policy=temporalio.common.WorkflowIDConflictPolicy.TERMINATE_EXISTING,
-        signal_input=signal_input,
+        signal_args=signal_args,
         cron_schedule=CRON_SCHEDULE,
         search_attributes=example_data.typed_search_attributes,
         user_metadata=workflow_service.models.UserMetadata(
@@ -229,7 +229,7 @@ class WorkflowServiceHandler:
         ] = []
 
     @sync_operation
-    async def signal_with_start_workflow_execution(
+    async def signal_with_start_workflow(
         self,
         _ctx: StartOperationContext,
         input: workflowservice_v1.SignalWithStartWorkflowExecutionRequest,
@@ -258,13 +258,13 @@ class WorkflowServiceCallerWorkflow:
         assert round_tripped_user_metadata.static_summary
         assert round_tripped_user_metadata.static_details
 
-        request_handle = await workflow_service.signal_with_start_workflow_execution(
+        request_handle = await workflow_service.signal_with_start_workflow(
             workflow=ExampleWorkflow.run,
             workflow_id=ARGS_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
             signal=ExampleWorkflow.wake_up,
-            input=FULL_WORKFLOW_INPUT,
-            signal_input="wake-up",
+            args=FULL_WORKFLOW_INPUT,
+            signal_args="wake-up",
             workflow_execution_timeout=datetime.timedelta(seconds=30),
             identity=IDENTITY,
             request_id=REQUEST_ID,
@@ -278,7 +278,7 @@ class WorkflowServiceCallerWorkflow:
             priority=example_data.priority,
             versioning_override=example_data.versioning_override,
         )
-        minimal_handle = await workflow_service.signal_with_start_workflow_execution(
+        minimal_handle = await workflow_service.signal_with_start_workflow(
             workflow="ExampleWorkflow",
             workflow_id=MINIMAL_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
@@ -291,7 +291,7 @@ class WorkflowServiceCallerWorkflow:
             example_data,
             workflow_id=HIGH_ARITY_WORKFLOW_ID,
             signal=ExampleWorkflow.wake_up_many,
-            signal_input=HIGH_ARITY_SIGNAL_INPUT,
+            signal_args=HIGH_ARITY_SIGNAL_INPUT,
         )
         high_arity_proto = high_arity_request.to_proto()
         assert_full_signal_request(
@@ -329,7 +329,7 @@ def test_generated_metadata() -> None:
         is signal_operation
     )
     assert not hasattr(workflow_service, "WorkflowService")
-    assert not hasattr(workflow_service, "SignalWithStartWorkflowExecutionRequest")
+    assert not hasattr(workflow_service, "SignalWithStartWorkflowRequest")
     assert not hasattr(workflow_service, "UserMetadata")
     assert not hasattr(workflow_service, "workflow")
 
@@ -372,7 +372,7 @@ async def test_signal_with_start_uses_real_nexus_client(
 
 
 if typing.TYPE_CHECKING:
-    workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+    workflow_service.signal_with_start_workflow(  # pyright: ignore[reportCallIssue]
         workflow=ExampleWorkflow.run,  # pyright: ignore[reportArgumentType]
         workflow_id="missing-workflow-input",
         task_queue=TASK_QUEUE,
@@ -382,9 +382,9 @@ if typing.TYPE_CHECKING:
         cron_schedule=CRON_SCHEDULE,
     )
 
-    workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+    workflow_service.signal_with_start_workflow(  # pyright: ignore[reportCallIssue]
         workflow=ExampleWorkflow.run,
-        input=(3, 4),  # pyright: ignore[reportArgumentType]
+        args=(3, 4),  # pyright: ignore[reportArgumentType]
         workflow_id="bad-workflow-input",
         task_queue=TASK_QUEUE,
         identity=IDENTITY,
@@ -393,7 +393,7 @@ if typing.TYPE_CHECKING:
         cron_schedule=CRON_SCHEDULE,
     )
 
-    workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+    workflow_service.signal_with_start_workflow(  # pyright: ignore[reportCallIssue]
         workflow="ExampleWorkflow",
         workflow_id="missing-signal-input",
         task_queue=TASK_QUEUE,
@@ -403,13 +403,13 @@ if typing.TYPE_CHECKING:
         cron_schedule=CRON_SCHEDULE,
     )
 
-    workflow_service.signal_with_start_workflow_execution(  # pyright: ignore[reportCallIssue]
+    workflow_service.signal_with_start_workflow(  # pyright: ignore[reportCallIssue]
         workflow="ExampleWorkflow",
         workflow_id="bad-signal-input",
         task_queue=TASK_QUEUE,
         identity=IDENTITY,
         request_id=REQUEST_ID,
         signal=ExampleWorkflow.wake_up,
-        signal_input=("wrong", 7),  # pyright: ignore[reportArgumentType]
+        signal_args=("wrong", 7),  # pyright: ignore[reportArgumentType]
         cron_schedule=CRON_SCHEDULE,
     )

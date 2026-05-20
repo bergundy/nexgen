@@ -12,7 +12,7 @@ from temporalio import workflow
 import temporalio.api.workflowservice.v1.request_response_pb2
 
 from ..models import (
-    SignalWithStartWorkflowExecutionRequest,
+    SignalWithStartWorkflowRequest,
     UserMetadata,
 )
 
@@ -37,8 +37,8 @@ SignalArg6 = typing.TypeVar("SignalArg6")
 RemainingWorkflowArgs = typing_extensions.TypeVarTuple("RemainingWorkflowArgs")
 
 
-async def _signal_with_start_workflow_execution(
-    request: SignalWithStartWorkflowExecutionRequest,
+async def _signal_with_start_workflow(
+    request: SignalWithStartWorkflowRequest,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]:
     request_proto = request.to_proto()
     nexus_client = workflow.create_nexus_client(
@@ -57,12 +57,12 @@ async def _signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -72,7 +72,7 @@ async def signal_with_start_workflow_execution(
     workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy
     | None = ...,
     signal: str,
-    signal_input: tuple[typing.Any, ...] | None = ...,
+    signal_args: tuple[typing.Any, ...] | None = ...,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -88,7 +88,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -102,7 +102,7 @@ async def signal_with_start_workflow_execution(
     workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy
     | None = ...,
     signal: str,
-    signal_input: tuple[typing.Any, ...] | None = ...,
+    signal_args: tuple[typing.Any, ...] | None = ...,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -118,14 +118,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -135,7 +135,7 @@ async def signal_with_start_workflow_execution(
     workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy
     | None = ...,
     signal: str,
-    signal_input: tuple[typing.Any, ...] | None = ...,
+    signal_args: tuple[typing.Any, ...] | None = ...,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -151,7 +151,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -159,7 +159,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -169,7 +169,7 @@ async def signal_with_start_workflow_execution(
     workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy
     | None = ...,
     signal: str,
-    signal_input: tuple[typing.Any, ...] | None = ...,
+    signal_args: tuple[typing.Any, ...] | None = ...,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -185,12 +185,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -217,7 +217,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -248,14 +248,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -282,7 +282,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -290,7 +290,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -317,12 +317,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -334,7 +334,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: SignalArg1,
+    signal_args: SignalArg1,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -350,7 +350,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -366,7 +366,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: SignalArg1,
+    signal_args: SignalArg1,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -382,14 +382,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -401,7 +401,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: SignalArg1,
+    signal_args: SignalArg1,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -417,7 +417,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -425,7 +425,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -437,7 +437,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: SignalArg1,
+    signal_args: SignalArg1,
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -453,12 +453,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -470,7 +470,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1],
+    signal_args: tuple[SignalArg1],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -486,7 +486,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -502,7 +502,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1],
+    signal_args: tuple[SignalArg1],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -518,14 +518,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -537,7 +537,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1],
+    signal_args: tuple[SignalArg1],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -553,7 +553,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -561,7 +561,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -573,7 +573,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1],
+    signal_args: tuple[SignalArg1],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -589,12 +589,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -606,7 +606,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1, SignalArg2], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1, SignalArg2],
+    signal_args: tuple[SignalArg1, SignalArg2],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -622,7 +622,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -638,7 +638,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1, SignalArg2], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1, SignalArg2],
+    signal_args: tuple[SignalArg1, SignalArg2],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -654,14 +654,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -673,7 +673,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1, SignalArg2], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1, SignalArg2],
+    signal_args: tuple[SignalArg1, SignalArg2],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -689,7 +689,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -697,7 +697,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -709,7 +709,7 @@ async def signal_with_start_workflow_execution(
     signal: collections.abc.Callable[
         [typing.Any, SignalArg1, SignalArg2], None | collections.abc.Awaitable[None]
     ],
-    signal_input: tuple[SignalArg1, SignalArg2],
+    signal_args: tuple[SignalArg1, SignalArg2],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -725,12 +725,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -743,7 +743,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -759,7 +759,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -776,7 +776,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -792,14 +792,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -812,7 +812,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -828,7 +828,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -836,7 +836,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -849,7 +849,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -865,12 +865,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -883,7 +883,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -899,7 +899,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -916,7 +916,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -932,14 +932,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -952,7 +952,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -968,7 +968,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -976,7 +976,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -989,7 +989,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -1005,12 +1005,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1023,7 +1023,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -1039,7 +1039,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -1056,7 +1056,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -1072,14 +1072,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1092,7 +1092,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -1108,7 +1108,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -1116,7 +1116,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1129,7 +1129,7 @@ async def signal_with_start_workflow_execution(
         [typing.Any, SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
+    signal_args: tuple[SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
     cron_schedule: str | None = ...,
     memo: collections.abc.Mapping[str, typing.Any] | None = ...,
@@ -1145,12 +1145,12 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1171,7 +1171,7 @@ async def signal_with_start_workflow_execution(
         ],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[
+    signal_args: tuple[
         SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5, SignalArg6
     ],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
@@ -1189,7 +1189,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
@@ -1214,7 +1214,7 @@ async def signal_with_start_workflow_execution(
         ],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[
+    signal_args: tuple[
         SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5, SignalArg6
     ],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
@@ -1232,14 +1232,14 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1260,7 +1260,7 @@ async def signal_with_start_workflow_execution(
         ],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[
+    signal_args: tuple[
         SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5, SignalArg6
     ],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
@@ -1278,7 +1278,7 @@ async def signal_with_start_workflow_execution(
 
 
 @typing.overload
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: collections.abc.Callable[
@@ -1286,7 +1286,7 @@ async def signal_with_start_workflow_execution(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_execution_timeout: timedelta | None = ...,
     workflow_run_timeout: timedelta | None = ...,
     workflow_task_timeout: timedelta | None = ...,
@@ -1307,7 +1307,7 @@ async def signal_with_start_workflow_execution(
         ],
         None | collections.abc.Awaitable[None],
     ],
-    signal_input: tuple[
+    signal_args: tuple[
         SignalArg1, SignalArg2, SignalArg3, SignalArg4, SignalArg5, SignalArg6
     ],
     retry_policy: temporalio.common.RetryPolicy | None = ...,
@@ -1324,12 +1324,12 @@ async def signal_with_start_workflow_execution(
 ) -> workflow.ExternalWorkflowHandle[typing.Any]: ...
 
 
-async def signal_with_start_workflow_execution(
+async def signal_with_start_workflow(
     *,
     workflow_id: str,
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
     task_queue: str,
-    input: object | tuple[object, ...] | None = None,
+    args: object | tuple[object, ...] | None = None,
     workflow_execution_timeout: timedelta | None = None,
     workflow_run_timeout: timedelta | None = None,
     workflow_task_timeout: timedelta | None = None,
@@ -1339,7 +1339,7 @@ async def signal_with_start_workflow_execution(
     workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy
     | None = None,
     signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],
-    signal_input: object | tuple[object, ...] | None = None,
+    signal_args: object | tuple[object, ...] | None = None,
     retry_policy: temporalio.common.RetryPolicy | None = None,
     cron_schedule: str | None = None,
     memo: collections.abc.Mapping[str, typing.Any] | None = None,
@@ -1352,8 +1352,8 @@ async def signal_with_start_workflow_execution(
     versioning_override: temporalio.common.VersioningOverride | None = None,
     priority: temporalio.common.Priority | None = None,
 ) -> workflow.ExternalWorkflowHandle[typing.Any]:
-    normalized_signal_input = _nexus_normalize_function_args(signal_input)
-    normalized_input = _nexus_normalize_function_args(input)
+    normalized_signal_args = _nexus_normalize_function_args(signal_args)
+    normalized_args = _nexus_normalize_function_args(args)
     user_metadata = (
         None
         if static_summary is None and static_details is None
@@ -1362,11 +1362,11 @@ async def signal_with_start_workflow_execution(
             static_details=static_details,
         )
     )
-    request = SignalWithStartWorkflowExecutionRequest(
+    request = SignalWithStartWorkflowRequest(
         workflow_id=workflow_id,
         workflow=workflow,
         task_queue=task_queue,
-        input=normalized_input,
+        args=normalized_args,
         workflow_execution_timeout=workflow_execution_timeout,
         workflow_run_timeout=workflow_run_timeout,
         workflow_task_timeout=workflow_task_timeout,
@@ -1375,7 +1375,7 @@ async def signal_with_start_workflow_execution(
         workflow_id_reuse_policy=workflow_id_reuse_policy,
         workflow_id_conflict_policy=workflow_id_conflict_policy,
         signal=signal,
-        signal_input=normalized_signal_input,
+        signal_args=normalized_signal_args,
         retry_policy=retry_policy,
         cron_schedule=cron_schedule,
         memo=memo,
@@ -1385,4 +1385,4 @@ async def signal_with_start_workflow_execution(
         versioning_override=versioning_override,
         priority=priority,
     )
-    return await _signal_with_start_workflow_execution(request)
+    return await _signal_with_start_workflow(request)

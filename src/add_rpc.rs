@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use heck::ToKebabCase;
+use heck::{ToKebabCase, ToUpperCamelCase};
 use prost_types::FieldDescriptorProto;
 use prost_types::field_descriptor_proto::{Label, Type};
 use wit_parser::{
@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::spec::{
     BuiltinWitMetadata, find_proto_name_for_type, find_proto_name_for_type_def,
     load_builtin_wit_metadata, parse_wit_with_builtins, select_world,
+    wire_operation_name_from_docs,
 };
 
 const DEFAULT_PACKAGE_NAME: &str = "temporal:nexus@1.0.0";
@@ -44,6 +45,13 @@ pub fn generate_add_rpc_wit_with_input(
             let update = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
                 .with_existing_interface(interface)
                 .build_existing_operation_update(interface, &operation_name)?;
+            return update.apply(input, &interface_name);
+        }
+        if let Some(existing_operation_name) = interface.function_names_by_wire_name.get(&rpc.name)
+        {
+            let update = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
+                .with_existing_interface(interface)
+                .build_existing_operation_update(interface, existing_operation_name)?;
             return update.apply(input, &interface_name);
         }
 
@@ -103,6 +111,7 @@ impl ExistingWitDocument {
 #[derive(Debug, Clone, Default)]
 struct ExistingInterface {
     function_names: BTreeSet<String>,
+    function_names_by_wire_name: BTreeMap<String, String>,
     functions: BTreeMap<String, ExistingFunction>,
     records_by_proto: BTreeMap<String, ExistingRecord>,
     type_names_by_proto: BTreeMap<String, String>,
@@ -118,6 +127,7 @@ impl ExistingInterface {
         interface_source: Option<&str>,
     ) -> Result<Self> {
         let function_names = interface.functions.keys().cloned().collect();
+        let mut function_names_by_wire_name = BTreeMap::new();
         let mut functions = BTreeMap::new();
         let mut type_names_by_proto = BTreeMap::new();
         let mut type_names_in_scope = BTreeSet::new();
@@ -125,9 +135,13 @@ impl ExistingInterface {
 
         for (function_name, function) in &interface.functions {
             let context = format!("interface `{export_name}` function `{function_name}`");
+            let function =
+                ExistingFunction::from_resolve(resolve, function, path, &context)?;
+            function_names_by_wire_name
+                .insert(function.wire_name.clone(), function_name.clone());
             functions.insert(
                 function_name.clone(),
-                ExistingFunction::from_resolve(resolve, function, path, &context)?,
+                function,
             );
         }
 
@@ -152,6 +166,7 @@ impl ExistingInterface {
 
         Ok(Self {
             function_names,
+            function_names_by_wire_name,
             functions,
             records_by_proto,
             type_names_by_proto,
@@ -162,6 +177,7 @@ impl ExistingInterface {
 
 #[derive(Debug, Clone)]
 struct ExistingFunction {
+    wire_name: String,
     parameter_name: Option<String>,
     input_type_name: Option<String>,
     input_proto: Option<String>,
@@ -179,6 +195,12 @@ impl ExistingFunction {
         path: &Path,
         context: &str,
     ) -> Result<Self> {
+        let wire_name = wire_operation_name_from_docs(
+            function.docs.contents.as_deref(),
+            path,
+            context,
+            &function.name.to_upper_camel_case(),
+        )?;
         let (parameter_name, input_type_name, input_proto) =
             if let Some((parameter_name, input_type)) = function.params.first() {
                 (
@@ -199,6 +221,7 @@ impl ExistingFunction {
         };
 
         Ok(Self {
+            wire_name,
             parameter_name,
             input_type_name,
             input_proto,

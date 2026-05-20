@@ -5,9 +5,9 @@ import * as workflow from "@temporalio/workflow";
 import * as nexus from "nexus-rpc";
 
 import {
-  SignalWithStartWorkflowExecutionRequest,
+  SignalWithStartWorkflowRequest,
   WorkflowService,
-  signalWithStartWorkflowExecution,
+  signalWithStartWorkflow,
 } from "../workflow-service/index.ts";
 import {
   executeWorkflowWithNexus,
@@ -21,16 +21,16 @@ const workflowsPath = fileURLToPath(
 describe("workflow-service generated output", () => {
   test("exposes workflow service metadata", () => {
     expect(WorkflowService.name).toBe("WorkflowService");
-    expect(
-      WorkflowService.operations.signalWithStartWorkflowExecution.name,
-    ).toBe("SignalWithStartWorkflowExecution");
+    expect(WorkflowService.operations.signalWithStartWorkflow.name).toBe(
+      "SignalWithStartWorkflowExecution",
+    );
   });
 
   test("serializes signal-with-start requests through a real Nexus client", async () => {
     await withWorkflowEnvironment(async (env) => {
       const calls: Array<[string, unknown]> = [];
       const handler = nexus.serviceHandler(WorkflowService, {
-        async signalWithStartWorkflowExecution(_ctx, input) {
+        async signalWithStartWorkflow(_ctx, input) {
           calls.push(["SignalWithStartWorkflowExecution", input]);
           return {
             runId: "run-123",
@@ -88,18 +88,18 @@ if (false) {
   const cronSchedule = "";
   const wakeUpSignal = workflow.defineSignal<[number, string]>("wake-up");
 
-  const request: SignalWithStartWorkflowExecutionRequest<
+  const request: SignalWithStartWorkflowRequest<
     typeof exampleWorkflow,
     typeof wakeUpSignal
   > = {
     workflow: exampleWorkflow,
-    input: [3, "nexus"],
+    args: [3, "nexus"],
     workflowId: "workflow-id",
     taskQueue,
     identity,
     requestId,
     signal: wakeUpSignal,
-    signalInput: [7, "hello"],
+    signalArgs: [7, "hello"],
     cronSchedule,
   };
 
@@ -107,7 +107,7 @@ if (false) {
   request.namespace;
 
   // @ts-expect-error missing workflow args for a callable workflow
-  signalWithStartWorkflowExecution({
+  signalWithStartWorkflow({
     workflow: exampleWorkflow,
     workflowId: "missing-workflow-input",
     taskQueue,
@@ -118,9 +118,9 @@ if (false) {
   });
 
   // @ts-expect-error workflow args must match the workflow callable
-  signalWithStartWorkflowExecution({
+  signalWithStartWorkflow({
     workflow: exampleWorkflow,
-    input: [3, 4],
+    args: [3, 4],
     workflowId: "bad-workflow-input",
     taskQueue,
     identity,
@@ -130,7 +130,7 @@ if (false) {
   });
 
   // @ts-expect-error missing signal args for a signal definition
-  signalWithStartWorkflowExecution({
+  signalWithStartWorkflow({
     workflow: "ExampleWorkflow",
     workflowId: "missing-signal-input",
     taskQueue,
@@ -141,17 +141,17 @@ if (false) {
   });
 
   // @ts-expect-error signal args must match the signal definition
-  signalWithStartWorkflowExecution({
+  signalWithStartWorkflow({
     workflow: "ExampleWorkflow",
     workflowId: "bad-signal-input",
     taskQueue,
     identity,
     requestId,
     signal: wakeUpSignal,
-    signalInput: ["wrong", 7],
+    signalArgs: ["wrong", 7],
     cronSchedule,
   });
 
   // @ts-expect-error request models are write-only
-  SignalWithStartWorkflowExecutionRequest.fromProto({});
+  SignalWithStartWorkflowRequest.fromProto({});
 }

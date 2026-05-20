@@ -5,13 +5,11 @@ from __future__ import annotations
 
 from . import service as _service
 from . import models
-from .operations.signal_with_start_workflow_execution import (
-    signal_with_start_workflow_execution,
-)
+from .operations.signal_with_start_workflow import signal_with_start_workflow
 
 __all__ = [
     "models",
-    "signal_with_start_workflow_execution",
+    "signal_with_start_workflow",
     "__nexus_operation_registry__",
 ]
 
@@ -20,5 +18,5 @@ __nexus_operation_registry__ = {
     (
         "WorkflowService",
         "SignalWithStartWorkflowExecution",
-    ): _service.WorkflowService.signal_with_start_workflow_execution,
+    ): _service.WorkflowService.signal_with_start_workflow,
 }

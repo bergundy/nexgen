@@ -31,12 +31,12 @@ from ._support import (
 
 
 @dataclasses.dataclass(slots=True)
-class SignalWithStartWorkflowExecutionRequest:
+class SignalWithStartWorkflowRequest:
     workflow_id: str
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
     task_queue: str
     signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]
-    input: tuple[typing.Any, ...] | None = None
+    args: tuple[typing.Any, ...] | None = None
     workflow_execution_timeout: timedelta | None = None
     workflow_run_timeout: timedelta | None = None
     workflow_task_timeout: timedelta | None = None
@@ -46,7 +46,7 @@ class SignalWithStartWorkflowExecutionRequest:
     workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = (
         None
     )
-    signal_input: tuple[typing.Any, ...] | None = None
+    signal_args: tuple[typing.Any, ...] | None = None
     retry_policy: temporalio.common.RetryPolicy | None = None
     cron_schedule: str | None = None
     memo: collections.abc.Mapping[str, typing.Any] | None = None
@@ -67,8 +67,8 @@ class SignalWithStartWorkflowExecutionRequest:
         message.workflow_id = self.workflow_id
         message.workflow_type.CopyFrom(workflow_type_to_proto(self.workflow))
         message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
-        if self.input is not None:
-            message.input.CopyFrom(payloads_to_proto(self.input))
+        if self.args is not None:
+            message.input.CopyFrom(payloads_to_proto(self.args))
         if self.workflow_execution_timeout is not None:
             message.workflow_execution_timeout.CopyFrom(
                 duration_to_proto(self.workflow_execution_timeout)
@@ -94,8 +94,8 @@ class SignalWithStartWorkflowExecutionRequest:
                 self.workflow_id_conflict_policy
             )
         message.signal_name = signal_function_to_proto(self.signal)
-        if self.signal_input is not None:
-            message.signal_input.CopyFrom(payloads_to_proto(self.signal_input))
+        if self.signal_args is not None:
+            message.signal_input.CopyFrom(payloads_to_proto(self.signal_args))
         if self.retry_policy is not None:
             message.retry_policy.CopyFrom(retry_policy_to_proto(self.retry_policy))
         if self.cron_schedule is not None:

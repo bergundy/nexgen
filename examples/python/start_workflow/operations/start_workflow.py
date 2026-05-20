@@ -10,7 +10,7 @@ from datetime import timedelta
 from temporalio import workflow
 import temporalio.api.workflowservice.v1.request_response_pb2
 
-from ..models import StartWorkflowExecutionRequest
+from ..models import StartWorkflowRequest
 from .._resources import StartedWorkflow
 
 
@@ -29,7 +29,7 @@ RemainingWorkflowArgs = typing_extensions.TypeVarTuple("RemainingWorkflowArgs")
 
 
 async def _start_workflow(
-    request: StartWorkflowExecutionRequest,
+    request: StartWorkflowRequest,
 ) -> StartedWorkflow:
     request_proto = request.to_proto()
     nexus_client = workflow.create_nexus_client(
@@ -55,7 +55,7 @@ async def start_workflow(
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
@@ -78,7 +78,7 @@ async def start_workflow(
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
@@ -92,7 +92,7 @@ async def start_workflow(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
@@ -102,15 +102,15 @@ async def start_workflow(
     workflow_id: str,
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
     task_queue: str,
-    input: object | tuple[object, ...] | None = None,
+    args: object | tuple[object, ...] | None = None,
     workflow_start_delay: timedelta | None = None,
 ) -> StartedWorkflow:
-    normalized_input = _nexus_normalize_function_args(input)
-    request = StartWorkflowExecutionRequest(
+    normalized_args = _nexus_normalize_function_args(args)
+    request = StartWorkflowRequest(
         workflow_id=workflow_id,
         workflow=workflow,
         task_queue=task_queue,
-        input=normalized_input,
+        args=normalized_args,
         workflow_start_delay=workflow_start_delay,
     )
     return await _start_workflow(request)

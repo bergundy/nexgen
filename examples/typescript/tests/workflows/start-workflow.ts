@@ -12,7 +12,7 @@ export async function startWorkflowCaller(): Promise<{
 }> {
   const handle = await startWorkflow({
     workflow: exampleWorkflow,
-    input: ["customer-123"],
+    args: ["customer-123"],
     workflowId: "workflow-id",
     taskQueue: "demo-task-queue",
   });

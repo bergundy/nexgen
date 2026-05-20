@@ -264,14 +264,19 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
                     let Some(signature_name) = directive.value("signature") else {
                         continue;
                     };
-                    let covered_field = resolve_function_signature_args_name(
-                        &resolve,
-                        type_def,
-                        signature_name,
-                        &origin_path,
-                        &context,
-                    )?
-                    .replace('-', "_");
+                    let covered_field = directive
+                        .value("args-field")
+                        .map(str::to_string)
+                        .unwrap_or(
+                            resolve_function_signature_args_name(
+                                &resolve,
+                                type_def,
+                                signature_name,
+                                &origin_path,
+                                &context,
+                            )?,
+                        )
+                        .replace('-', "_");
                     type_covered_fields
                         .entry(type_name.to_string())
                         .or_default()
@@ -367,6 +372,7 @@ pub struct SupportFragmentSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperationSpec {
     pub name: String,
+    pub wire_name: String,
     pub input_proto: String,
     pub output_proto: String,
     pub input_record: Option<String>,
@@ -921,6 +927,7 @@ impl LanguageStringSpec {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypeOverrideSpec {
+    pub model_name: Option<String>,
     pub required_fields: BTreeSet<String>,
     pub omitted_fields: BTreeSet<String>,
     pub replacement: Option<TypeReplacementSpec>,
@@ -933,6 +940,10 @@ pub struct TypeOverrideSpec {
 impl TypeOverrideSpec {
     pub fn is_field_required(&self, field_name: &str) -> bool {
         self.required_fields.contains(field_name)
+    }
+
+    pub fn model_name(&self) -> Option<&str> {
+        self.model_name.as_deref()
     }
 
     pub fn is_field_omitted(&self, field_name: &str) -> bool {
@@ -1148,6 +1159,7 @@ pub struct WithArgumentsFieldSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FlattenedFunctionTypeSpec {
     args_name: String,
+    args_field: String,
     function: Option<FunctionFieldSpec>,
     with_arguments: Option<WithArgumentsFieldSpec>,
 }
@@ -1419,6 +1431,7 @@ fn build_type_override(
     };
 
     let type_override = TypeOverrideSpec {
+        model_name: authored_record.then(|| type_name.to_upper_camel_case()),
         required_fields,
         omitted_fields,
         replacement,
@@ -1584,7 +1597,7 @@ fn build_generated_model_from_record(
         }
 
         if let Some(flattened_function_type) = flattened_function_type {
-            let args_proto_field_name = flattened_function_type.args_name.to_snake_case();
+            let args_proto_field_name = flattened_function_type.args_field.clone();
             if !authored_proto_fields.insert(args_proto_field_name.clone()) {
                 return Err(Error::InvalidWit {
                     path: path.to_path_buf(),
@@ -2041,7 +2054,10 @@ fn build_function_field_for_type_alias(
             FunctionFieldSpec {
                 primary,
                 result: FunctionResultSpec::Wit(result),
-                args_field: args_name.to_snake_case(),
+                args_field: function_directive
+                    .value("args-field")
+                    .unwrap_or(&args_name)
+                    .to_snake_case(),
                 converter,
             },
         )));
@@ -2182,7 +2198,10 @@ fn build_with_arguments_field_for_type_alias(
     Ok(Some((
         args_name.clone(),
         WithArgumentsFieldSpec {
-            args_field: args_name.to_snake_case(),
+            args_field: directive
+                .value("args-field")
+                .unwrap_or(&args_name)
+                .to_snake_case(),
             value_type: value_type.to_string(),
             args_type: args_type.to_string(),
             name_expr: name_expr.to_string(),
@@ -2219,8 +2238,11 @@ fn find_flattened_function_type_spec(
                     &context,
                 )?;
                 if function.is_some() || with_arguments.is_some() {
-                    let args_name = match (&function, &with_arguments) {
-                        (Some((function_args_name, _)), Some((with_arguments_args_name, _))) => {
+                    let (args_name, args_field) = match (&function, &with_arguments) {
+                        (
+                            Some((function_args_name, function)),
+                            Some((with_arguments_args_name, with_arguments)),
+                        ) => {
                             if function_args_name != with_arguments_args_name {
                                 return Err(Error::InvalidWitDirective {
                                     path: path.to_path_buf(),
@@ -2231,15 +2253,30 @@ fn find_flattened_function_type_spec(
                                     ),
                                 });
                             }
-                            function_args_name.clone()
+                            if function.args_field != with_arguments.args_field {
+                                return Err(Error::InvalidWitDirective {
+                                    path: path.to_path_buf(),
+                                    context,
+                                    directive: "@nexus.typescript-with-arguments".to_string(),
+                                    reason: format!(
+                                        "args-field `{}` does not match function args-field `{}`",
+                                        with_arguments.args_field, function.args_field
+                                    ),
+                                });
+                            }
+                            (function_args_name.clone(), function.args_field.clone())
                         }
-                        (Some((args_name, _)), None) | (None, Some((args_name, _))) => {
-                            args_name.clone()
+                        (Some((args_name, function)), None) => {
+                            (args_name.clone(), function.args_field.clone())
+                        }
+                        (None, Some((args_name, with_arguments))) => {
+                            (args_name.clone(), with_arguments.args_field.clone())
                         }
                         (None, None) => unreachable!("checked for a present flattened function"),
                     };
                     return Ok(Some(FlattenedFunctionTypeSpec {
                         args_name,
+                        args_field,
                         function: function.map(|(_, function)| function),
                         with_arguments: with_arguments.map(|(_, with_arguments)| with_arguments),
                     }));
@@ -2377,6 +2414,7 @@ fn build_service(
         })
         .map(|(_, function)| build_operation(resolve, function, path, &context, &service_name))
         .collect::<Result<Vec<_>>>()?;
+    ensure_unique_wire_operation_names(path, &context, &operations)?;
 
     let mut resources = Vec::new();
     for type_id in interface.types.values() {
@@ -2395,6 +2433,26 @@ fn build_service(
         operations,
         resources,
     })
+}
+
+fn ensure_unique_wire_operation_names(
+    path: &Path,
+    context: &str,
+    operations: &[OperationSpec],
+) -> Result<()> {
+    let mut seen = BTreeMap::<String, String>::new();
+    for operation in operations {
+        if let Some(existing) = seen.insert(operation.wire_name.clone(), operation.name.clone()) {
+            return Err(Error::InvalidWit {
+                path: path.to_path_buf(),
+                reason: format!(
+                    "{context} operations `{existing}` and `{}` both use Nexus operation name `{}`",
+                    operation.name, operation.wire_name
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn build_resource(
@@ -2540,6 +2598,8 @@ fn build_operation(
     let operation_name = function.name.to_upper_camel_case();
     let context = format!("{service_context} operation `{operation_name}`");
     let directives = parse_directives(function.docs.contents.as_deref(), path, &context)?;
+    let wire_operation_name =
+        build_wire_operation_name(&directives, path, &context, &operation_name)?;
 
     let [(parameter_name, input_type)] = function.params.as_slice() else {
         return Err(Error::InvalidWit {
@@ -2593,6 +2653,7 @@ fn build_operation(
 
     Ok(OperationSpec {
         name: operation_name,
+        wire_name: wire_operation_name,
         input_proto: input_proto.unwrap_or_default(),
         output_proto: output_proto.unwrap_or_default(),
         input_record,
@@ -2600,6 +2661,44 @@ fn build_operation(
         output_resource,
         output_transform,
     })
+}
+
+fn build_wire_operation_name(
+    directives: &[Directive],
+    path: &Path,
+    context: &str,
+    default_wire_operation_name: &str,
+) -> Result<String> {
+    let Some(directive) = directive(directives, "operation", path, context)? else {
+        return Ok(default_wire_operation_name.to_string());
+    };
+    let Some(name) = directive.value("name").or_else(|| directive.value("value")) else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.operation".to_string(),
+            reason: "missing required `name`".to_string(),
+        });
+    };
+    if name.is_empty() {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.operation".to_string(),
+            reason: "`name` cannot be empty".to_string(),
+        });
+    }
+    Ok(name.to_string())
+}
+
+pub(crate) fn wire_operation_name_from_docs(
+    docs: Option<&str>,
+    path: &Path,
+    context: &str,
+    default_wire_operation_name: &str,
+) -> Result<String> {
+    let directives = parse_directives(docs, path, context)?;
+    build_wire_operation_name(&directives, path, context, default_wire_operation_name)
 }
 
 fn build_operation_output_transform(
@@ -2976,7 +3075,7 @@ interface workflow-service {
   use nexus:temporal-types/model@1.0.0.{placeholder, retry-policy, signal-function, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
+  record signal-with-start-workflow-request {
     /// @nexus.proto-field "workflow_type"
     workflow: workflow-function,
     workflow-id: string,
@@ -3005,7 +3104,7 @@ interface workflow-service {
   ///   typescript-type="workflow.ExternalWorkflowHandle"
   ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
   signal-with-start-workflow-execution: func(
-    request: signal-with-start-workflow-execution-request
+    request: signal-with-start-workflow-request
   ) -> signal-with-start-workflow-execution-response;
 }
 "#;
@@ -3065,13 +3164,14 @@ interface workflow-service {
         assert!(request.is_field_omitted("header"));
         let model = request.generated_model().unwrap();
         assert_eq!(model.field_name_override("workflow_type"), Some("workflow"));
-        assert_eq!(model.field_name_override("input"), Some("input"));
+        assert_eq!(model.field_name_override("input"), Some("args"));
         assert_eq!(
             model.field_name_override("workflow_id"),
             Some("workflow-id")
         );
         assert!(model.function("workflow_type").unwrap().primary);
         assert_eq!(model.function("workflow_type").unwrap().converter, None);
+        assert_eq!(model.function("workflow_type").unwrap().args_field, "input");
         assert_eq!(
             model.field_source("namespace"),
             Some("workflow_namespace()")
@@ -3485,7 +3585,7 @@ interface workflow-service {
   use nexus:temporal-types/model@1.0.0.{duration, placeholder, signal-function, task-queue, workflow-function};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
+  record signal-with-start-workflow-request {
     /// @nexus.proto-field "workflow_type"
     workflow: workflow-function,
     workflow-id: string,
@@ -3542,7 +3642,7 @@ interface workflow-service {
   }
 
   signal-with-start-workflow-execution: func(
-    request: signal-with-start-workflow-execution-request
+    request: signal-with-start-workflow-request
   ) -> signal-with-start-workflow-execution-response;
 }
 "#;
@@ -3711,7 +3811,7 @@ world system {
 
 interface workflow-service {
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
+  record signal-with-start-workflow-request {
     /// @nexus.proto-field "workflow_id"
     workflow-id: string,
     /// @nexus.proto-field "workflow_id"

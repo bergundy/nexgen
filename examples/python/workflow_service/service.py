@@ -10,7 +10,7 @@ import temporalio.api.workflowservice.v1.request_response_pb2
 
 @service
 class WorkflowService:
-    signal_with_start_workflow_execution: Operation[
+    signal_with_start_workflow: Operation[
         temporalio.api.workflowservice.v1.request_response_pb2.SignalWithStartWorkflowExecutionRequest,
         temporalio.api.workflowservice.v1.request_response_pb2.SignalWithStartWorkflowExecutionResponse,
     ] = Operation(name="SignalWithStartWorkflowExecution")

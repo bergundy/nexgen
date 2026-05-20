@@ -316,6 +316,7 @@ struct RenderedService<'a> {
 #[derive(Debug)]
 struct RenderedOperation<'a> {
     name: &'a str,
+    wire_name: &'a str,
     attr_name: String,
     input_proto_ref: String,
     output_proto_ref: String,
@@ -593,6 +594,7 @@ fn resolve_operation<'a>(
 
     Ok(RenderedOperation {
         name: operation.name.as_str(),
+        wire_name: operation.wire_name.as_str(),
         attr_name: typescript_ident(&operation.name.to_lower_camel_case()),
         input_proto_ref: operation_type_ref(&operation.input),
         output_proto_ref,
@@ -2322,7 +2324,7 @@ fn render_service(output: &mut String, service: &RenderedService<'_>) {
         output.push_str(&operation.output_proto_ref);
         output.push('\n');
         output.push_str("  >({ name: ");
-        output.push_str(&typescript_string_literal(operation.name));
+        output.push_str(&typescript_string_literal(operation.wire_name));
         output.push_str(" }),\n");
     }
     output.push_str("});\n\n");
@@ -3077,8 +3079,8 @@ mod tests {
         assert!(output.contains("export function retryPolicyFromProto("));
         assert!(output.contains("type _RequestWithFunctionField<"));
         assert!(output.contains("type _RequestWithArgumentsField<"));
-        assert!(output.contains("type SignalWithStartWorkflowExecutionRequestBase = {"));
-        assert!(output.contains("export type SignalWithStartWorkflowExecutionRequest<"));
+        assert!(output.contains("type SignalWithStartWorkflowRequestBase = {"));
+        assert!(output.contains("export type SignalWithStartWorkflowRequest<"));
         assert!(output.contains(
             "WorkflowFn extends (...args: any[]) => Promise<any> = (...args: any[]) => Promise<any>,"
         ));
@@ -3090,7 +3092,7 @@ mod tests {
             "SignalValue extends workflow.SignalDefinition<infer Args, any> ? Args : never"
         ));
         assert!(output.contains(
-            "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowExecutionRequestBase, \"workflow\", \"input\">"
+            "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowRequestBase, \"workflow\", \"args\">"
         ));
         assert!(output.contains("workflowId: string;"));
         assert!(output.contains("taskQueue: string;"));
@@ -3108,11 +3110,10 @@ mod tests {
         assert!(output.contains("namespace: workflowNamespace(),"));
         assert!(output.contains("workflowType: workflowTypeToProto("));
         assert!(output.contains("workflow_function_name("));
-        assert!(output.contains("input: _RequestArgsToPayloads(model.input),"));
-        assert!(output.contains("signalInput: _RequestArgsToPayloads(model.signalInput),"));
-        assert!(output.contains(
-            "signalName: ((value) => typeof value === 'string' ? value : (value.name))("
-        ));
+        assert!(output.contains("input: _RequestArgsToPayloads(model.args),"));
+        assert!(output.contains("signalInput: _RequestArgsToPayloads(model.signalArgs),"));
+        assert!(output.contains("signalName: ((value) =>"));
+        assert!(output.contains("typeof value === \"string\" ? value : value.name"));
         assert!(output.contains("workflowType: workflowTypeToProto("));
         assert!(output.contains("taskQueue: taskQueueToProto("));
         assert!(output.contains(
@@ -3142,16 +3143,16 @@ mod tests {
         assert!(!output.contains("export interface SearchAttributes"));
         assert!(!output.contains("export interface Priority"));
         assert!(!output.contains("export interface VersioningOverride"));
-        assert!(!output.contains("SignalWithStartWorkflowExecutionRequest = {\n  fromProto("));
-        assert!(!output.contains("SignalWithStartWorkflowExecutionRequest.fromProto"));
-        assert!(!output.contains("export interface SignalWithStartWorkflowExecutionRequest {"));
+        assert!(!output.contains("SignalWithStartWorkflowRequest = {\n  fromProto("));
+        assert!(!output.contains("SignalWithStartWorkflowRequest.fromProto"));
+        assert!(!output.contains("export interface SignalWithStartWorkflowRequest {"));
         assert!(!output.contains("export interface RetryPolicy"));
         assert!(!output.contains("export enum WorkflowIdReusePolicy"));
         assert!(!output.contains("export enum WorkflowIdConflictPolicy"));
-        assert!(!output.contains("signalWithStartWorkflow("));
-        assert!(output.contains("export async function signalWithStartWorkflowExecution<"));
+        assert!(!output.contains("signalWithStartWorkflowExecution("));
+        assert!(output.contains("export async function signalWithStartWorkflow<"));
         assert!(output.contains(
-            "request: SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>,"
+            "request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,"
         ));
         assert!(output.contains("const client = workflow.createNexusServiceClient({"));
         assert!(!output.contains("export class WorkflowServiceClient"));
@@ -3188,7 +3189,7 @@ interface workflow-service {
   use nexus:temporal-types/model@1.0.0.{duration, placeholder, workflow-id-reuse-policy};
 
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
-  record signal-with-start-workflow-execution-request {
+  record signal-with-start-workflow-request {
     workflow-id: string,
     workflow-id-reuse-policy: option<workflow-id-reuse-policy>,
     /// @nexus.omit
@@ -3249,7 +3250,7 @@ interface workflow-service {
   }
 
   signal-with-start-workflow-execution: func(
-    request: signal-with-start-workflow-execution-request,
+    request: signal-with-start-workflow-request,
   ) -> signal-with-start-workflow-execution-response;
 }
 "#;

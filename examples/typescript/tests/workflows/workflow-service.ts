@@ -1,5 +1,5 @@
 import * as workflow from "@temporalio/workflow";
-import { signalWithStartWorkflowExecution } from "../../workflow-service/index.ts";
+import { signalWithStartWorkflow } from "../../workflow-service/index.ts";
 
 export async function exampleWorkflow(
   attempts: number,
@@ -15,15 +15,15 @@ export async function workflowServiceCaller(): Promise<{
   runId: string | undefined;
   workflowId: string;
 }> {
-  const handle = await signalWithStartWorkflowExecution({
+  const handle = await signalWithStartWorkflow({
     workflow: exampleWorkflow,
-    input: [3, "nexus"],
+    args: [3, "nexus"],
     workflowId: "workflow-id",
     taskQueue: "demo-task-queue",
     identity: "example-worker",
     requestId: "example-request",
     signal: wakeUpSignal,
-    signalInput: [7, "hello"],
+    signalArgs: [7, "hello"],
     cronSchedule: "",
     workflowRunTimeout: "5 minutes",
   });

@@ -97,7 +97,7 @@ class StartWorkflowCallerWorkflow:
     async def run(self) -> tuple[str, str, str | None, str | None]:
         handle = await start_workflow.start_workflow(
             workflow=ExampleWorkflow.run,
-            input="customer-123",
+            args="customer-123",
             workflow_id="workflow-id",
             task_queue=TASK_QUEUE,
         )

@@ -82,7 +82,7 @@ function _RequestArgsToPayloads(
   return payloads == null ? undefined : { payloads };
 }
 
-type SignalWithStartWorkflowExecutionRequestBase = {
+type SignalWithStartWorkflowRequestBase = {
   workflowId: string;
   taskQueue: string;
   workflowExecutionTimeout?: common.Duration;
@@ -102,7 +102,7 @@ type SignalWithStartWorkflowExecutionRequestBase = {
   priority?: common.Priority;
 };
 
-export type SignalWithStartWorkflowExecutionRequest<
+export type SignalWithStartWorkflowRequest<
   WorkflowFn extends (...args: any[]) => Promise<any> = (
     ...args: any[]
   ) => Promise<any>,
@@ -113,15 +113,15 @@ export type SignalWithStartWorkflowExecutionRequest<
   SignalValue extends workflow.SignalDefinition<infer Args, any> ? Args : never,
   _RequestWithFunctionField<
     WorkflowFn,
-    SignalWithStartWorkflowExecutionRequestBase,
+    SignalWithStartWorkflowRequestBase,
     "workflow",
-    "input"
+    "args"
   >,
   "signal",
-  "signalInput"
+  "signalArgs"
 >;
 
-export const SignalWithStartWorkflowExecutionRequest = {
+export const SignalWithStartWorkflowRequest = {
   toProto<
     WorkflowFn extends (...args: any[]) => Promise<any> = (
       ...args: any[]
@@ -130,7 +130,7 @@ export const SignalWithStartWorkflowExecutionRequest = {
       workflow.SignalDefinition<any[]>,
   >(
     model:
-      | SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>
+      | SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>
       | null
       | undefined,
   ):
@@ -142,24 +142,24 @@ export const SignalWithStartWorkflowExecutionRequest = {
     return {
       workflowId: requiredField(
         model.workflowId,
-        "SignalWithStartWorkflowExecutionRequest",
+        "SignalWithStartWorkflowRequest",
         "workflowId",
       ),
       workflowType: workflowTypeToProto(
         requiredField(
           model.workflow,
-          "SignalWithStartWorkflowExecutionRequest",
+          "SignalWithStartWorkflowRequest",
           "workflow",
         ),
       ),
       taskQueue: taskQueueToProto(
         requiredField(
           model.taskQueue,
-          "SignalWithStartWorkflowExecutionRequest",
+          "SignalWithStartWorkflowRequest",
           "taskQueue",
         ),
       ),
-      input: _RequestArgsToPayloads(model.input),
+      input: _RequestArgsToPayloads(model.args),
       workflowExecutionTimeout:
         model.workflowExecutionTimeout == null
           ? undefined
@@ -183,13 +183,9 @@ export const SignalWithStartWorkflowExecutionRequest = {
           ? undefined
           : workflowIdConflictPolicyToProto(model.workflowIdConflictPolicy),
       signalName: ((value) => (typeof value === "string" ? value : value.name))(
-        requiredField(
-          model.signal,
-          "SignalWithStartWorkflowExecutionRequest",
-          "signal",
-        ),
+        requiredField(model.signal, "SignalWithStartWorkflowRequest", "signal"),
       ),
-      signalInput: _RequestArgsToPayloads(model.signalInput),
+      signalInput: _RequestArgsToPayloads(model.signalArgs),
       retryPolicy:
         model.retryPolicy == null
           ? undefined
@@ -259,29 +255,28 @@ export const UserMetadata = {
 };
 
 export const WorkflowService = nexus.service("WorkflowService", {
-  signalWithStartWorkflowExecution: nexus.operation<
+  signalWithStartWorkflow: nexus.operation<
     temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionRequest,
     temporal.api.workflowservice.v1.ISignalWithStartWorkflowExecutionResponse
   >({ name: "SignalWithStartWorkflowExecution" }),
 });
 
-export async function signalWithStartWorkflowExecution<
+export async function signalWithStartWorkflow<
   WorkflowFn extends (...args: any[]) => Promise<any> = (
     ...args: any[]
   ) => Promise<any>,
   SignalValue extends workflow.SignalDefinition<any[]> =
     workflow.SignalDefinition<any[]>,
 >(
-  request: SignalWithStartWorkflowExecutionRequest<WorkflowFn, SignalValue>,
+  request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,
 ): Promise<workflow.ExternalWorkflowHandle> {
   const client = workflow.createNexusServiceClient({
     service: WorkflowService,
     endpoint: "temporal-system",
   });
-  const requestProto =
-    SignalWithStartWorkflowExecutionRequest.toProto(request) ?? {};
+  const requestProto = SignalWithStartWorkflowRequest.toProto(request) ?? {};
   const handle = await client.startOperation(
-    WorkflowService.operations.signalWithStartWorkflowExecution,
+    WorkflowService.operations.signalWithStartWorkflow,
     requestProto,
   );
   const result = await handle.result();

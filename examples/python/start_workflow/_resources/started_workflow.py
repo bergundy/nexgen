@@ -13,8 +13,8 @@ import nexus_api_gen_runtime
 import temporalio.api.workflowservice.v1.request_response_pb2
 
 from ..models import (
-    RequestCancelWorkflowExecutionRequest,
-    StartWorkflowExecutionRequest,
+    CancelWorkflowRequest,
+    StartWorkflowRequest,
     WorkflowExecution,
 )
 
@@ -43,7 +43,7 @@ class StartedWorkflow:
         self,
         reason: str | None = None,
     ) -> None:
-        request = RequestCancelWorkflowExecutionRequest(
+        request = CancelWorkflowRequest(
             workflow_execution=WorkflowExecution(
                 workflow_id=self.workflow_id, run_id=self.run_id
             ),
@@ -58,7 +58,7 @@ class StartedWorkflow:
         | collections.abc.Callable[..., collections.abc.Awaitable[object]],
         task_queue: str,
     ) -> StartedWorkflow:
-        request = StartWorkflowExecutionRequest(
+        request = StartWorkflowRequest(
             workflow_id=self.workflow_id,
             workflow=workflow,
             task_queue=task_queue,
@@ -72,7 +72,7 @@ class StartedWorkflow:
 
 
 async def _cancel_workflow(
-    request: RequestCancelWorkflowExecutionRequest,
+    request: CancelWorkflowRequest,
 ) -> workflow.NexusOperationHandle[
     temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
 ]:
@@ -94,7 +94,7 @@ async def cancel_workflow(
 ) -> workflow.NexusOperationHandle[
     temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
 ]:
-    request = RequestCancelWorkflowExecutionRequest(
+    request = CancelWorkflowRequest(
         workflow_execution=workflow_execution,
         reason=reason,
     )
@@ -102,7 +102,7 @@ async def cancel_workflow(
 
 
 async def _restart_workflow(
-    request: StartWorkflowExecutionRequest,
+    request: StartWorkflowRequest,
 ) -> StartedWorkflow:
     request_proto = request.to_proto()
     nexus_client = workflow.create_nexus_client(
@@ -128,7 +128,7 @@ async def restart_workflow(
     workflow_id: str,
     workflow: str,
     task_queue: str,
-    input: tuple[typing.Any, ...] | None = ...,
+    args: tuple[typing.Any, ...] | None = ...,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
@@ -151,7 +151,7 @@ async def restart_workflow(
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
     task_queue: str,
-    input: FirstWorkflowArg,
+    args: FirstWorkflowArg,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
@@ -165,7 +165,7 @@ async def restart_workflow(
         collections.abc.Awaitable[object],
     ],
     task_queue: str,
-    input: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
@@ -175,15 +175,15 @@ async def restart_workflow(
     workflow_id: str,
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
     task_queue: str,
-    input: object | tuple[object, ...] | None = None,
+    args: object | tuple[object, ...] | None = None,
     workflow_start_delay: timedelta | None = None,
 ) -> StartedWorkflow:
-    normalized_input = _nexus_normalize_function_args(input)
-    request = StartWorkflowExecutionRequest(
+    normalized_args = _nexus_normalize_function_args(args)
+    request = StartWorkflowRequest(
         workflow_id=workflow_id,
         workflow=workflow,
         task_queue=task_queue,
-        input=normalized_input,
+        args=normalized_args,
         workflow_start_delay=workflow_start_delay,
     )
     return await _restart_workflow(request)

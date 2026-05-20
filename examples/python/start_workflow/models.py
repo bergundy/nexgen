@@ -20,11 +20,11 @@ from ._support import (
 
 
 @dataclasses.dataclass(slots=True)
-class StartWorkflowExecutionRequest:
+class StartWorkflowRequest:
     workflow_id: str
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
     task_queue: str
-    input: tuple[typing.Any, ...] | None = None
+    args: tuple[typing.Any, ...] | None = None
     workflow_start_delay: timedelta | None = None
 
     def to_proto(
@@ -34,8 +34,8 @@ class StartWorkflowExecutionRequest:
         message.workflow_id = self.workflow_id
         message.workflow_type.CopyFrom(workflow_type_to_proto(self.workflow))
         message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
-        if self.input is not None:
-            message.input.CopyFrom(payloads_to_proto(self.input))
+        if self.args is not None:
+            message.input.CopyFrom(payloads_to_proto(self.args))
         if self.workflow_start_delay is not None:
             message.workflow_start_delay.CopyFrom(
                 duration_to_proto(self.workflow_start_delay)
@@ -45,7 +45,7 @@ class StartWorkflowExecutionRequest:
 
 
 @dataclasses.dataclass(slots=True)
-class RequestCancelWorkflowExecutionRequest:
+class CancelWorkflowRequest:
     workflow_execution: WorkflowExecution
     reason: str | None = None
 
@@ -87,12 +87,12 @@ class WorkflowExecution:
 
 
 @dataclasses.dataclass(slots=True)
-class RequestCancelWorkflowExecutionResponse:
+class CancelWorkflowResponse:
     @classmethod
     def from_proto(
         cls,
         _proto: temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
-    ) -> RequestCancelWorkflowExecutionResponse:
+    ) -> CancelWorkflowResponse:
         return cls()
 
     def to_proto(
