@@ -68,56 +68,56 @@ export type NotificationTarget =
   | { tag: "none" };
 
 export interface GetUserRequest {
-  consistencyToken?: string;
   userId: string;
+  consistencyToken?: string;
 }
 
 export const GetUserRequest = {};
 
 export interface UpdateEmailRequest {
-  email: string;
   userId: string;
+  email: string;
 }
 
 export const UpdateEmailRequest = {};
 
 export interface RenameRequest {
-  displayName: string;
   userId: string;
+  displayName: string;
 }
 
 export const RenameRequest = {};
 
 export interface SetProfileRequest {
-  profile: UserProfile;
   userId: string;
+  profile: UserProfile;
 }
 
 export const SetProfileRequest = {};
 
 export interface UserProfile {
-  address?: PostalAddress;
-  capabilities: UserCapability;
-  metadata?: Record<string, string>;
-  notificationTarget: NotificationTarget;
-  syncState: { tag: "ok"; value: string } | { tag: "err"; value: string };
   tags?: string[];
+  metadata?: Record<string, string>;
+  capabilities: UserCapability;
+  syncState: { tag: "ok"; value: string } | { tag: "err"; value: string };
+  notificationTarget: NotificationTarget;
+  address?: PostalAddress;
 }
 
 export const UserProfile = {};
 
 export interface PostalAddress {
-  city: string;
-  coordinates?: [number, number];
-  country: string;
   street: string;
+  city: string;
+  country: string;
+  coordinates?: [number, number];
 }
 
 export const PostalAddress = {};
 
 export interface DeactivateRequest {
-  reason?: string;
   userId: string;
+  reason?: string;
 }
 
 export const DeactivateRequest = {};
@@ -132,15 +132,15 @@ export class User {
   ) {}
 
   public async updateEmail(email: string): Promise<User> {
-    return await updateEmail({ email: email, userId: this.userId });
+    return await updateEmail({ userId: this.userId, email: email });
   }
 
   public async rename(displayName: string): Promise<User> {
-    return await rename({ displayName: displayName, userId: this.userId });
+    return await rename({ userId: this.userId, displayName: displayName });
   }
 
   public async deactivate(reason?: string): Promise<void> {
-    const handle = await deactivate({ reason: reason, userId: this.userId });
+    const handle = await deactivate({ userId: this.userId, reason: reason });
     await handle.result();
   }
 }

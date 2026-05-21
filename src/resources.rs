@@ -592,7 +592,8 @@ fn build_wit_record_field_info(
         .unwrap_or_else(|| field_name.to_kebab_case());
     let required = generated_model
         .field_wit_type(field_name)
-        .is_some_and(|field_type| !matches!(field_type, AuthoredFieldTypeSpec::Option(_)));
+        .is_some_and(|field_type| !matches!(field_type, AuthoredFieldTypeSpec::Option(_)))
+        && generated_model.field_default(field_name).is_none();
     let hidden = generated_model.field_source(field_name).is_some();
     let message_name = generated_model
         .field_wit_type(field_name)
@@ -699,6 +700,18 @@ mod tests {
         DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap()
     }
 
+    fn parse(language: Language, wit: &str) -> ApiSpec {
+        let temporal_types_input =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/inputs/deps");
+        ApiSpec::parse_for_language_with_inputs(
+            language,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[temporal_types_input],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn prefers_exact_operation_name_for_ambiguous_resource_method() {
         let wit = r#"
@@ -738,8 +751,7 @@ interface workflow-service {
   restart-workflow: func(request: start-workflow-request) -> start-workflow-result;
 }
 "#;
-        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
-            .unwrap();
+        let spec = parse(Language::Python, wit);
         let service = &spec.services[0];
         let resolved = resolve_service_resources(&spec, service, &descriptors()).unwrap();
         let method = &resolved.resources[0].methods[0];
@@ -805,8 +817,7 @@ interface workflow-service {
   restart-workflow: func(request: start-workflow-request) -> start-workflow-response;
 }
 "#;
-        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
-            .unwrap();
+        let spec = parse(Language::Python, wit);
         let service = &spec.services[0];
         let error = resolve_service_resources(&spec, service, &descriptors()).unwrap_err();
 

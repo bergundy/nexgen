@@ -22,6 +22,13 @@ pub(crate) struct ParsedWitPackage {
     _workspace: TempDir,
 }
 
+fn split_input_paths(input_paths: &[PathBuf]) -> Result<(&PathBuf, &[PathBuf])> {
+    input_paths.split_first().ok_or_else(|| Error::InvalidWit {
+        path: PathBuf::from("<input>"),
+        reason: "at least one WIT input path is required".to_string(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiSpec {
     pub version: String,
@@ -35,14 +42,14 @@ pub struct ApiSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuiltinTypeMetadata {
+pub struct LinkedTypeMetadata {
     pub wit_name: String,
     pub use_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuiltinWitMetadata {
-    pub proto_types: BTreeMap<String, BuiltinTypeMetadata>,
+pub struct LinkedWitMetadata {
+    pub proto_types: BTreeMap<String, LinkedTypeMetadata>,
     pub type_compatibility: BTreeMap<String, BTreeSet<String>>,
     pub type_covered_fields: BTreeMap<String, BTreeSet<String>>,
     pub type_use_paths: BTreeMap<String, String>,
@@ -57,12 +64,42 @@ impl ApiSpec {
         Self::parse_for_language(language, &input, path.to_path_buf())
     }
 
+    pub fn load_for_language_with_inputs(
+        language: Language,
+        input_paths: &[PathBuf],
+    ) -> Result<Self> {
+        let (path, linked_input_paths) = split_input_paths(input_paths)?;
+        let input = fs::read_to_string(path).map_err(|source| Error::ReadFile {
+            path: path.clone(),
+            source,
+        })?;
+        Self::parse_for_language_with_inputs(language, &input, path.clone(), linked_input_paths)
+    }
+
     pub fn parse_for_language(language: Language, input: &str, path: PathBuf) -> Result<Self> {
-        Self::parse(input, path, language)
+        Self::parse_for_language_with_inputs(language, input, path, &[])
+    }
+
+    pub fn parse_for_language_with_inputs(
+        language: Language,
+        input: &str,
+        path: PathBuf,
+        linked_input_paths: &[PathBuf],
+    ) -> Result<Self> {
+        Self::parse_with_inputs(input, path, language, linked_input_paths)
     }
 
     pub fn parse(input: &str, path: PathBuf, language: Language) -> Result<Self> {
-        let parsed = parse_wit_with_builtins(input, &path)?;
+        Self::parse_with_inputs(input, path, language, &[])
+    }
+
+    pub fn parse_with_inputs(
+        input: &str,
+        path: PathBuf,
+        language: Language,
+        linked_input_paths: &[PathBuf],
+    ) -> Result<Self> {
+        let parsed = parse_wit_with_inputs(input, &path, linked_input_paths)?;
         Self::from_wit(
             &parsed.resolve,
             parsed.package_id,
@@ -137,24 +174,36 @@ impl ApiSpec {
     }
 }
 
-pub fn write_prepared_wit_directory(input_path: &Path, output_path: &Path) -> Result<()> {
+pub fn write_prepared_wit_directory(input_paths: &[PathBuf], output_path: &Path) -> Result<()> {
     if output_path.exists() {
         return Err(Error::OutputPathExists {
             path: output_path.to_path_buf(),
         });
     }
 
+    let (input_path, linked_input_paths) = split_input_paths(input_paths)?;
     let input = fs::read_to_string(input_path).map_err(|source| Error::ReadFile {
-        path: input_path.to_path_buf(),
+        path: input_path.clone(),
         source,
     })?;
-    let workspace = prepare_wit_workspace(&input, input_path)?;
+    let workspace = prepare_wit_workspace(&input, input_path, linked_input_paths)?;
     copy_directory_tree(&workspace.package_root, output_path)?;
     Ok(())
 }
 
-pub(crate) fn parse_wit_with_builtins(input: &str, path: &Path) -> Result<ParsedWitPackage> {
-    let workspace = prepare_wit_workspace(input, path)?;
+pub(crate) fn parse_wit_with_inputs(
+    input: &str,
+    path: &Path,
+    linked_input_paths: &[PathBuf],
+) -> Result<ParsedWitPackage> {
+    let workspace = prepare_wit_workspace(input, path, linked_input_paths)?;
+    parse_prepared_wit_workspace(workspace, path)
+}
+
+fn parse_prepared_wit_workspace(
+    workspace: PreparedWitWorkspace,
+    path: &Path,
+) -> Result<ParsedWitPackage> {
     let mut resolve = Resolve::default();
     let (package_id, source_map) =
         resolve
@@ -176,15 +225,18 @@ fn format_error_chain(error: &impl std::fmt::Display) -> String {
     format!("{error:#}")
 }
 
-pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
-    let workspace = prepare_builtin_metadata_workspace()?;
+pub fn load_linked_wit_metadata_from_inputs(input_paths: &[PathBuf]) -> Result<LinkedWitMetadata> {
+    let workspace = prepare_linked_metadata_workspace(input_paths)?;
     let mut resolve = Resolve::default();
     let (main_package_id, source_map) =
         resolve
             .push_dir(&workspace.package_root)
             .map_err(|error| Error::InvalidWit {
-                path: repo_builtins_root(),
-                reason: format!("failed to parse bundled built-in WIT: {error}"),
+                path: input_paths
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| PathBuf::from("<input>")),
+                reason: format!("failed to parse Temporal type WIT input: {error}"),
             })?;
     let package_origins = collect_package_origins(&resolve, &source_map)?;
 
@@ -209,7 +261,8 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
         let origin_path = package_origins
             .get(&package_id)
             .cloned()
-            .unwrap_or_else(|| repo_builtins_root());
+            .or_else(|| input_paths.first().cloned())
+            .unwrap_or_else(|| PathBuf::from("<input>"));
 
         for interface_id in package.interfaces.values() {
             let interface = &resolve.interfaces[*interface_id];
@@ -234,7 +287,7 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
                     continue;
                 };
                 let context =
-                    format!("built-in type `{package_name}.{interface_name}.{type_name}`");
+                    format!("linked WIT type `{package_name}.{interface_name}.{type_name}`");
                 let directives =
                     parse_directives(type_def.docs.contents.as_deref(), &origin_path, &context)?;
 
@@ -267,15 +320,13 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
                     let covered_field = directive
                         .value("args-field")
                         .map(str::to_string)
-                        .unwrap_or(
-                            resolve_function_signature_args_name(
-                                &resolve,
-                                type_def,
-                                signature_name,
-                                &origin_path,
-                                &context,
-                            )?,
-                        )
+                        .unwrap_or(resolve_function_signature_args_name(
+                            &resolve,
+                            type_def,
+                            signature_name,
+                            &origin_path,
+                            &context,
+                        )?)
                         .replace('-', "_");
                     type_covered_fields
                         .entry(type_name.to_string())
@@ -290,7 +341,7 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
                         return Err(Error::InvalidWit {
                             path: origin_path.join("model.wit"),
                             reason: format!(
-                                "built-in type `{type_name}` is declared under multiple use paths"
+                                "linked WIT type `{type_name}` is declared under multiple use paths"
                             ),
                         });
                     }
@@ -304,7 +355,7 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
 
                 if let Some(existing) = proto_types.insert(
                     proto_name.clone(),
-                    BuiltinTypeMetadata {
+                    LinkedTypeMetadata {
                         wit_name: type_name.to_string(),
                         use_path: use_path.clone(),
                     },
@@ -312,7 +363,7 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
                     return Err(Error::InvalidWit {
                         path: origin_path.join("model.wit"),
                         reason: format!(
-                            "duplicate built-in `@nexus.proto` mapping for `{proto_name}` (`{}` and `{}`)",
+                            "duplicate linked `@nexus.proto` mapping for `{proto_name}` (`{}` and `{}`)",
                             existing.wit_name, type_name
                         ),
                     });
@@ -321,7 +372,7 @@ pub fn load_builtin_wit_metadata() -> Result<BuiltinWitMetadata> {
         }
     }
 
-    Ok(BuiltinWitMetadata {
+    Ok(LinkedWitMetadata {
         proto_types,
         type_compatibility,
         type_covered_fields,
@@ -452,6 +503,7 @@ pub struct WitEnumSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitEnumValueSpec {
+    pub wit_name: String,
     pub name: String,
     pub number: i32,
 }
@@ -618,7 +670,11 @@ struct PreparedWitWorkspace {
     package_root: PathBuf,
 }
 
-fn prepare_wit_workspace(input: &str, path: &Path) -> Result<PreparedWitWorkspace> {
+fn prepare_wit_workspace(
+    input: &str,
+    path: &Path,
+    linked_input_paths: &[PathBuf],
+) -> Result<PreparedWitWorkspace> {
     let temp_dir = tempfile::tempdir().map_err(|source| Error::WriteFile {
         path: PathBuf::from("<tempdir>"),
         source,
@@ -648,7 +704,7 @@ fn prepare_wit_workspace(input: &str, path: &Path) -> Result<PreparedWitWorkspac
         source,
     })?;
 
-    copy_provided_builtins(&package_root)?;
+    copy_linked_inputs(&package_root, linked_input_paths)?;
 
     Ok(PreparedWitWorkspace {
         temp_dir,
@@ -656,7 +712,7 @@ fn prepare_wit_workspace(input: &str, path: &Path) -> Result<PreparedWitWorkspac
     })
 }
 
-fn prepare_builtin_metadata_workspace() -> Result<PreparedWitWorkspace> {
+fn prepare_linked_metadata_workspace(input_paths: &[PathBuf]) -> Result<PreparedWitWorkspace> {
     let temp_dir = tempfile::tempdir().map_err(|source| Error::WriteFile {
         path: PathBuf::from("<tempdir>"),
         source,
@@ -675,7 +731,7 @@ fn prepare_builtin_metadata_workspace() -> Result<PreparedWitWorkspace> {
         path: stub_path,
         source,
     })?;
-    copy_provided_builtins(&package_root)?;
+    copy_linked_inputs(&package_root, input_paths)?;
     Ok(PreparedWitWorkspace {
         temp_dir,
         package_root,
@@ -741,9 +797,6 @@ fn copy_package_source_dir(
             source,
         })?;
         if file_type.is_dir() {
-            if entry.file_name() == "deps" {
-                continue;
-            }
             copy_package_source_dir(&source_path, &destination_path, input_path)?;
             continue;
         }
@@ -817,16 +870,122 @@ fn copy_standalone_input_support_dir(
     Ok(())
 }
 
-fn copy_provided_builtins(package_root: &Path) -> Result<()> {
-    let builtins_root = repo_builtins_root();
-    if !builtins_root.exists() {
-        return Ok(());
+fn copy_linked_inputs(package_root: &Path, linked_input_paths: &[PathBuf]) -> Result<()> {
+    for linked_input_path in linked_input_paths {
+        copy_linked_input(package_root, linked_input_path)?;
     }
-    copy_directory_tree(&builtins_root, &package_root.join("deps"))
+    Ok(())
 }
 
-fn repo_builtins_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("builtins")
+fn copy_linked_input(package_root: &Path, linked_input_path: &Path) -> Result<()> {
+    let metadata = fs::metadata(linked_input_path).map_err(|source| Error::ReadFile {
+        path: linked_input_path.to_path_buf(),
+        source,
+    })?;
+    if metadata.is_file() {
+        return copy_linked_input_file(package_root, linked_input_path);
+    }
+    if linked_input_path_is_package_dir(linked_input_path)? {
+        return copy_linked_input_package_dir(package_root, linked_input_path);
+    }
+    copy_linked_input_collection_dir(package_root, linked_input_path)
+}
+
+fn copy_linked_input_file(package_root: &Path, linked_input_path: &Path) -> Result<()> {
+    let package_name = linked_input_package_dir_name(linked_input_path)?;
+    let destination_path = package_root
+        .join("deps")
+        .join(package_name)
+        .join(input_target_name(linked_input_path));
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| Error::WriteFile {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::copy(linked_input_path, &destination_path).map_err(|source| Error::WriteFile {
+        path: destination_path,
+        source,
+    })?;
+    Ok(())
+}
+
+fn copy_linked_input_package_dir(package_root: &Path, linked_input_path: &Path) -> Result<()> {
+    let package_name = linked_input_package_dir_name(linked_input_path)?;
+    let destination_path = package_root.join("deps").join(package_name);
+    copy_directory_tree(linked_input_path, &destination_path)
+}
+
+fn copy_linked_input_collection_dir(package_root: &Path, linked_input_path: &Path) -> Result<()> {
+    for entry in fs::read_dir(linked_input_path).map_err(|source| Error::ReadFile {
+        path: linked_input_path.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::ReadFile {
+            path: linked_input_path.to_path_buf(),
+            source,
+        })?;
+        let source_path = entry.path();
+        let file_type = entry.file_type().map_err(|source| Error::ReadFile {
+            path: source_path.clone(),
+            source,
+        })?;
+        if file_type.is_dir() {
+            if linked_input_path_is_package_dir(&source_path)? {
+                copy_linked_input_package_dir(package_root, &source_path)?;
+            } else {
+                copy_linked_input_collection_dir(package_root, &source_path)?;
+            }
+        } else if source_path
+            .extension()
+            .is_some_and(|extension| extension == "wit")
+        {
+            copy_linked_input_file(package_root, &source_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn linked_input_path_is_package_dir(linked_input_path: &Path) -> Result<bool> {
+    for entry in fs::read_dir(linked_input_path).map_err(|source| Error::ReadFile {
+        path: linked_input_path.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::ReadFile {
+            path: linked_input_path.to_path_buf(),
+            source,
+        })?;
+        let source_path = entry.path();
+        if source_path
+            .extension()
+            .is_some_and(|extension| extension == "wit")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn linked_input_package_dir_name(linked_input_path: &Path) -> Result<OsString> {
+    let file_name = linked_input_path
+        .file_name()
+        .ok_or_else(|| Error::InvalidWit {
+            path: linked_input_path.to_path_buf(),
+            reason: "linked WIT input path must name a package directory".to_string(),
+        })?;
+    if linked_input_path
+        .extension()
+        .is_some_and(|extension| extension == "wit")
+    {
+        return linked_input_path
+            .file_stem()
+            .map(|stem| stem.to_os_string())
+            .ok_or_else(|| Error::InvalidWit {
+                path: linked_input_path.to_path_buf(),
+                reason: "linked WIT input file must have a stem".to_string(),
+            });
+    }
+    Ok(file_name.to_os_string())
 }
 
 fn copy_directory_tree(source_dir: &Path, destination_dir: &Path) -> Result<()> {
@@ -984,11 +1143,12 @@ pub struct TypeReplacementSpec {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeneratedModelSpec {
-    pub declared_fields: BTreeSet<String>,
+    pub declared_fields: Vec<String>,
     pub field_names: BTreeMap<String, String>,
     pub field_annotations: BTreeMap<String, LanguageStringSpec>,
     pub field_flattened_annotations: BTreeMap<String, LanguageStringSpec>,
     pub field_wit_types: BTreeMap<String, AuthoredFieldTypeSpec>,
+    pub field_defaults: BTreeMap<String, FieldDefaultSpec>,
     pub field_sources: BTreeMap<String, String>,
     pub functions: BTreeMap<String, FunctionFieldSpec>,
     pub with_arguments: BTreeMap<String, WithArgumentsFieldSpec>,
@@ -1001,6 +1161,7 @@ impl GeneratedModelSpec {
             && self.field_annotations.is_empty()
             && self.field_flattened_annotations.is_empty()
             && self.field_wit_types.is_empty()
+            && self.field_defaults.is_empty()
             && self.field_sources.is_empty()
             && self.functions.is_empty()
             && self.with_arguments.is_empty()
@@ -1020,6 +1181,10 @@ impl GeneratedModelSpec {
 
     pub fn field_wit_type(&self, field_name: &str) -> Option<&AuthoredFieldTypeSpec> {
         self.field_wit_types.get(field_name)
+    }
+
+    pub fn field_default(&self, field_name: &str) -> Option<&FieldDefaultSpec> {
+        self.field_defaults.get(field_name)
     }
 
     pub fn field_source(&self, field_name: &str) -> Option<&str> {
@@ -1048,6 +1213,12 @@ impl GeneratedModelSpec {
             .values()
             .find(|with_arguments| with_arguments.args_field == field_name)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldDefaultSpec {
+    pub enum_case: String,
+    pub enum_value: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1268,6 +1439,7 @@ fn build_wit_enum_spec(
             .iter()
             .enumerate()
             .map(|(index, value)| WitEnumValueSpec {
+                wit_name: value.name.clone(),
                 name: value.name.to_upper_camel_case(),
                 number: i32::try_from(index).expect("WIT enum case index should fit in i32"),
             })
@@ -1454,11 +1626,12 @@ fn build_generated_model_from_record(
     let mut required_fields = BTreeSet::new();
     let mut omitted_fields = BTreeSet::new();
     let mut authored_proto_fields = BTreeSet::new();
-    let mut declared_fields = BTreeSet::new();
+    let mut declared_fields = Vec::new();
     let mut field_names = BTreeMap::new();
     let mut field_annotations = BTreeMap::new();
     let mut field_flattened_annotations = BTreeMap::new();
     let mut field_wit_types = BTreeMap::new();
+    let mut field_defaults = BTreeMap::new();
     let mut field_sources = BTreeMap::new();
     let mut functions = BTreeMap::new();
     let mut with_arguments = BTreeMap::new();
@@ -1479,6 +1652,17 @@ fn build_generated_model_from_record(
             directive_value(&directives, "proto-field", path, &field_context, "value")?
                 .unwrap_or_else(|| field.name.to_snake_case());
         let function_directive = directive(&directives, "function", path, &field_context)?;
+        let default_directive = directive(&directives, "default", path, &field_context)?;
+        if default_directive.is_some()
+            && directive(&directives, "source", path, &field_context)?.is_some()
+        {
+            return Err(Error::InvalidWitDirective {
+                path: path.to_path_buf(),
+                context: field_context,
+                directive: "@nexus.default".to_string(),
+                reason: "cannot be combined with `@nexus.source`".to_string(),
+            });
+        }
         let typescript_with_arguments_directive = directive(
             &directives,
             "typescript-with-arguments",
@@ -1518,6 +1702,7 @@ fn build_generated_model_from_record(
                 "type",
                 "flattened-type",
                 "function",
+                "default",
                 "typescript-with-arguments",
             ] {
                 if directive(&directives, conflicting_directive, path, &field_context)?.is_some() {
@@ -1543,20 +1728,25 @@ fn build_generated_model_from_record(
             continue;
         }
 
-        declared_fields.insert(proto_field_name.clone());
+        declared_fields.push(proto_field_name.clone());
 
         field_names.insert(proto_field_name.clone(), field.name.clone());
-        field_wit_types.insert(
-            proto_field_name.clone(),
-            resolve_authored_field_type_spec(resolve, &field.ty, path, &field_context)?,
-        );
+        let field_wit_type =
+            resolve_authored_field_type_spec(resolve, &field.ty, path, &field_context)?;
+        let field_default =
+            build_field_default(resolve, &field.ty, default_directive, path, &field_context)?;
+        field_wit_types.insert(proto_field_name.clone(), field_wit_type);
 
-        if !is_optional_type(resolve, &field.ty) {
+        if !is_optional_type(resolve, &field.ty) && field_default.is_none() {
             required_fields.insert(proto_field_name.clone());
         }
 
         if let Some(source) = build_source_call(&directives, path, &field_context, language)? {
             field_sources.insert(proto_field_name.clone(), source);
+        }
+
+        if let Some(field_default) = field_default {
+            field_defaults.insert(proto_field_name.clone(), field_default);
         }
 
         if let Some(type_directive) = directive(&directives, "type", path, &field_context)? {
@@ -1606,7 +1796,7 @@ fn build_generated_model_from_record(
                     ),
                 });
             }
-            declared_fields.insert(args_proto_field_name.clone());
+            declared_fields.push(args_proto_field_name.clone());
             field_names.insert(
                 args_proto_field_name.clone(),
                 flattened_function_type.args_name.clone(),
@@ -1629,6 +1819,7 @@ fn build_generated_model_from_record(
             field_annotations,
             field_flattened_annotations,
             field_wit_types,
+            field_defaults,
             field_sources,
             functions,
             with_arguments,
@@ -1922,6 +2113,105 @@ pub(crate) fn find_proto_name_for_type_def(
 ) -> Result<Option<String>> {
     let directives = parse_directives(type_def.docs.contents.as_deref(), path, context)?;
     directive_value(&directives, "proto", path, context, "value")
+}
+
+fn build_field_default(
+    resolve: &Resolve,
+    ty: &Type,
+    directive: Option<&Directive>,
+    path: &Path,
+    context: &str,
+) -> Result<Option<FieldDefaultSpec>> {
+    let Some(directive) = directive else {
+        return Ok(None);
+    };
+    let Some(case_name) = directive.value("value") else {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.default".to_string(),
+            reason: "missing required default enum case".to_string(),
+        });
+    };
+    if case_name.is_empty() {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.default".to_string(),
+            reason: "default enum case cannot be empty".to_string(),
+        });
+    }
+    let enum_value = resolve_default_enum_value(resolve, ty, case_name, path, context)?;
+    Ok(Some(FieldDefaultSpec {
+        enum_case: case_name.to_string(),
+        enum_value,
+    }))
+}
+
+fn resolve_default_enum_value(
+    resolve: &Resolve,
+    ty: &Type,
+    case_name: &str,
+    path: &Path,
+    context: &str,
+) -> Result<i32> {
+    match ty {
+        Type::Id(id) => resolve_default_enum_value_for_type_def(
+            resolve,
+            *id,
+            &resolve.types[*id],
+            case_name,
+            path,
+            context,
+        ),
+        _ => Err(default_on_non_enum_error(path, context)),
+    }
+}
+
+fn resolve_default_enum_value_for_type_def(
+    resolve: &Resolve,
+    type_id: TypeId,
+    type_def: &TypeDef,
+    case_name: &str,
+    path: &Path,
+    context: &str,
+) -> Result<i32> {
+    match &type_def.kind {
+        TypeDefKind::Enum(enumeration) => {
+            for (index, case) in enumeration.cases.iter().enumerate() {
+                if case.name == case_name {
+                    return i32::try_from(index).map_err(|_| Error::InvalidWitDirective {
+                        path: path.to_path_buf(),
+                        context: context.to_string(),
+                        directive: "@nexus.default".to_string(),
+                        reason: "enum case index does not fit in i32".to_string(),
+                    });
+                }
+            }
+            Err(Error::InvalidWitDirective {
+                path: path.to_path_buf(),
+                context: context.to_string(),
+                directive: "@nexus.default".to_string(),
+                reason: format!(
+                    "unknown enum case `{case_name}` for `{}`",
+                    wit_type_full_name(resolve, type_id)
+                ),
+            })
+        }
+        TypeDefKind::Option(inner) | TypeDefKind::Type(inner) => {
+            resolve_default_enum_value(resolve, inner, case_name, path, context)
+        }
+        _ => Err(default_on_non_enum_error(path, context)),
+    }
+}
+
+fn default_on_non_enum_error(path: &Path, context: &str) -> Error {
+    Error::InvalidWitDirective {
+        path: path.to_path_buf(),
+        context: context.to_string(),
+        directive: "@nexus.default".to_string(),
+        reason: "only enum field defaults are supported".to_string(),
+    }
 }
 
 fn build_source_call(
@@ -3033,7 +3323,7 @@ mod tests {
     use crate::error::Error;
     use crate::language::Language;
 
-    use super::{ApiSpec, directive, load_builtin_wit_metadata, parse_directives};
+    use super::{ApiSpec, directive, load_linked_wit_metadata_from_inputs, parse_directives};
 
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -3043,8 +3333,18 @@ mod tests {
         DescriptorIndex::load(&root().join("examples/descriptors/temporal_api.bin")).unwrap()
     }
 
+    fn linked_inputs_path() -> PathBuf {
+        root().join("examples/inputs/deps")
+    }
+
     fn parse(language: Language, wit: &str) -> ApiSpec {
-        ApiSpec::parse_for_language(language, wit, PathBuf::from("inline.wit")).unwrap()
+        ApiSpec::parse_for_language_with_inputs(
+            language,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path()],
+        )
+        .unwrap()
     }
 
     fn validate(language: Language, wit: &str) -> Result<(), Error> {
@@ -3059,6 +3359,146 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("nexus-api-gen-{label}-{unique}"))
+    }
+
+    #[test]
+    fn parses_enum_field_defaults() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{workflow-id-reuse-policy};
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.proto-field "workflow_id_reuse_policy"
+    /// @nexus.default "allow-duplicate"
+    id-reuse-policy: workflow-id-reuse-policy,
+  }
+}
+"#;
+
+        let spec = parse(Language::Python, wit);
+        let request = spec
+            .types
+            .get("temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest")
+            .unwrap();
+        assert!(!request.is_field_required("workflow_id_reuse_policy"));
+        assert_eq!(
+            request
+                .generated_model
+                .field_default("workflow_id_reuse_policy")
+                .map(|default| default.enum_value),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_enum_field_default() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{workflow-id-reuse-policy};
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.proto-field "workflow_id_reuse_policy"
+    /// @nexus.default "missing-case"
+    id-reuse-policy: workflow-id-reuse-policy,
+  }
+}
+"#;
+
+        let error = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path()],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unknown enum case `missing-case`")
+        );
+    }
+
+    #[test]
+    fn rejects_non_enum_field_default() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.proto-field "request_id"
+    /// @nexus.default "request-id"
+    request-id: string,
+  }
+}
+"#;
+
+        let error = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path()],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("only enum field defaults are supported")
+        );
+    }
+
+    #[test]
+    fn rejects_enum_field_default_with_source() {
+        let wit = r#"
+package temporal:nexus@1.0.0;
+
+world system {
+  export workflow-service;
+}
+
+interface workflow-service {
+  use nexus:temporal-types/model@1.0.0.{workflow-id-reuse-policy};
+
+  /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+  record request {
+    /// @nexus.proto-field "workflow_id_reuse_policy"
+    /// @nexus.default "allow-duplicate"
+    /// @nexus.source "workflow_id_reuse_policy"
+    id-reuse-policy: workflow-id-reuse-policy,
+  }
+}
+"#;
+
+        let error = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path()],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot be combined with `@nexus.source`")
+        );
     }
 
     #[test]
@@ -3402,7 +3842,7 @@ interface workflow-service {
     }
 
     #[test]
-    fn accumulates_builtin_and_input_support_fragments() {
+    fn accumulates_linked_and_root_input_support_fragments() {
         let temp_dir = unique_temp_dir("support-fragments");
         fs::create_dir_all(&temp_dir).unwrap();
         let input_path = temp_dir.join("input.wit");
@@ -3428,7 +3868,13 @@ interface workflow-service {
 }
 "#;
 
-        let spec = ApiSpec::parse_for_language(Language::Python, wit, input_path).unwrap();
+        let spec = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            input_path,
+            &[linked_inputs_path()],
+        )
+        .unwrap();
         let python_support = spec.support.fragments_for_language(Language::Python);
         assert_eq!(python_support.len(), 2);
         assert!(
@@ -3485,7 +3931,13 @@ interface workflow-service {
 }
 "#;
 
-        let spec = ApiSpec::parse_for_language(Language::Python, wit, input_path).unwrap();
+        let spec = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            input_path,
+            &[linked_inputs_path()],
+        )
+        .unwrap();
         assert_eq!(
             spec.services[0].operations[0].input_proto(),
             Some("acme.foo.v1.LocalRetryPolicy")
@@ -3528,7 +3980,13 @@ interface workflow-service {
 }
 "#;
 
-        let spec = ApiSpec::parse_for_language(Language::Python, wit, input_path).unwrap();
+        let spec = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            input_path,
+            &[linked_inputs_path()],
+        )
+        .unwrap();
         assert_eq!(
             spec.services[0].operations[0].input_proto(),
             Some("temporal.api.common.v1.RetryPolicy")
@@ -3538,17 +3996,17 @@ interface workflow-service {
     }
 
     #[test]
-    fn loads_builtin_wit_metadata_from_bundled_wit() {
-        let builtins = load_builtin_wit_metadata().unwrap();
+    fn loads_linked_wit_metadata_from_temporal_type_input() {
+        let linked_types = load_linked_wit_metadata_from_inputs(&[linked_inputs_path()]).unwrap();
 
-        let payload = builtins
+        let payload = linked_types
             .proto_types
             .get("temporal.api.common.v1.Payload")
             .unwrap();
         assert_eq!(payload.wit_name, "payload");
         assert_eq!(payload.use_path, "nexus:temporal-types/model@1.0.0");
 
-        let task_queue = builtins
+        let task_queue = linked_types
             .proto_types
             .get("temporal.api.taskqueue.v1.TaskQueue")
             .unwrap();
@@ -3556,14 +4014,14 @@ interface workflow-service {
         assert_eq!(task_queue.use_path, "nexus:temporal-types/model@1.0.0");
 
         assert_eq!(
-            builtins
+            linked_types
                 .type_use_paths
                 .get("workflow-function")
                 .map(String::as_str),
             Some("nexus:temporal-types/model@1.0.0")
         );
         assert_eq!(
-            builtins
+            linked_types
                 .type_use_paths
                 .get("signal-function")
                 .map(String::as_str),
@@ -3739,8 +4197,13 @@ interface workflow-service {
 }
 "#;
 
-        let error = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
-            .unwrap_err();
+        let error = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path()],
+        )
+        .unwrap_err();
         assert!(
             error
                 .to_string()

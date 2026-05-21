@@ -33,8 +33,8 @@ enum Commands {
 struct GenerateArgs {
     #[arg(long, value_enum)]
     lang: CliLanguage,
-    #[arg(long)]
-    input: PathBuf,
+    #[arg(long = "input", required = true)]
+    inputs: Vec<PathBuf>,
     #[arg(long)]
     descriptors: Vec<PathBuf>,
     #[arg(long)]
@@ -57,16 +57,16 @@ struct AddRpcArgs {
     descriptors: Vec<PathBuf>,
     #[arg(long)]
     rpc: String,
-    #[arg(long)]
-    input: Option<PathBuf>,
+    #[arg(long = "input")]
+    inputs: Vec<PathBuf>,
     #[arg(long)]
     output: Option<PathBuf>,
 }
 
 #[derive(Args)]
 struct DebugWitDirArgs {
-    #[arg(long)]
-    input: PathBuf,
+    #[arg(long = "input", required = true)]
+    inputs: Vec<PathBuf>,
     #[arg(long)]
     output: PathBuf,
 }
@@ -107,7 +107,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Commands::Generate(args) => generate_to_file(&GenerateRequest {
             language: args.lang.into(),
-            input_path: args.input,
+            input_paths: args.inputs,
             descriptor_paths: args.descriptors,
             output_path: args.output,
             format: args.format,
@@ -119,11 +119,11 @@ fn main() -> ExitCode {
         Commands::AddRpc(args) => add_rpc_to_file(&AddRpcRequest {
             descriptor_paths: args.descriptors,
             rpc_name: args.rpc,
-            input_path: args.input,
+            input_paths: args.inputs,
             output_path: args.output,
         }),
         Commands::DebugWitDir(args) => debug_wit_dir_to_file(&DebugWitDirRequest {
-            input_path: args.input,
+            input_paths: args.inputs,
             output_path: args.output,
         }),
     };

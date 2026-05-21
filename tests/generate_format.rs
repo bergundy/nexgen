@@ -19,6 +19,10 @@ mod tests {
         root.join("examples/descriptors/temporal_api.bin")
     }
 
+    fn linked_inputs_path(root: &Path) -> PathBuf {
+        root.join("examples/inputs/deps")
+    }
+
     fn unique_temp_dir(name: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -60,6 +64,8 @@ mod tests {
                 "python",
                 "--input",
                 sample_input_path(&root).to_str().unwrap(),
+                "--input",
+                linked_inputs_path(&root).to_str().unwrap(),
                 "--descriptors",
                 descriptor_path(&root).to_str().unwrap(),
                 "--output",
@@ -93,6 +99,8 @@ mod tests {
                 "typescript",
                 "--input",
                 sample_input_path(&root).to_str().unwrap(),
+                "--input",
+                linked_inputs_path(&root).to_str().unwrap(),
                 "--descriptors",
                 descriptor_path(&root).to_str().unwrap(),
                 "--output",

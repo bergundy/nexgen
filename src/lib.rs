@@ -31,7 +31,7 @@ pub struct SupportFiles {
 
 pub struct GenerateRequest {
     pub language: Language,
-    pub input_path: PathBuf,
+    pub input_paths: Vec<PathBuf>,
     pub descriptor_paths: Vec<PathBuf>,
     pub output_path: PathBuf,
     pub format: bool,
@@ -40,12 +40,12 @@ pub struct GenerateRequest {
 pub struct AddRpcRequest {
     pub descriptor_paths: Vec<PathBuf>,
     pub rpc_name: String,
-    pub input_path: Option<PathBuf>,
+    pub input_paths: Vec<PathBuf>,
     pub output_path: Option<PathBuf>,
 }
 
 pub struct DebugWitDirRequest {
-    pub input_path: PathBuf,
+    pub input_paths: Vec<PathBuf>,
     pub output_path: PathBuf,
 }
 
@@ -59,8 +59,20 @@ pub fn generate_to_string(
     input_path: impl AsRef<Path>,
     descriptor_paths: &[PathBuf],
 ) -> Result<String> {
-    let input_path = input_path.as_ref();
-    let spec = ApiSpec::load_for_language(language, input_path)?;
+    generate_to_string_with_inputs(
+        language,
+        &[input_path.as_ref().to_path_buf()],
+        descriptor_paths,
+    )
+}
+
+pub fn generate_to_string_with_inputs(
+    language: Language,
+    input_paths: &[PathBuf],
+    descriptor_paths: &[PathBuf],
+) -> Result<String> {
+    let input_path = primary_input_path(input_paths)?;
+    let spec = ApiSpec::load_for_language_with_inputs(language, input_paths)?;
     let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
     let support = load_support_files(language, &spec, input_path)?;
     let generated = generate_files(language, &spec, &descriptors, &support)?;
@@ -75,9 +87,10 @@ pub fn generate_to_string(
 }
 
 pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
-    let spec = ApiSpec::load_for_language(request.language, &request.input_path)?;
+    let input_path = primary_input_path(&request.input_paths)?;
+    let spec = ApiSpec::load_for_language_with_inputs(request.language, &request.input_paths)?;
     let descriptors = DescriptorIndex::load_many(&request.descriptor_paths)?;
-    let support = load_support_files(request.language, &spec, &request.input_path)?;
+    let support = load_support_files(request.language, &spec, input_path)?;
     let generated = generate_files(request.language, &spec, &descriptors, &support)?;
     print_warnings(&generated);
 
@@ -93,17 +106,24 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
 pub fn add_rpc_to_string(
     descriptor_paths: &[PathBuf],
     rpc_name: &str,
-    input_path: Option<&Path>,
+    input_paths: &[PathBuf],
 ) -> Result<String> {
     let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
+    let (input_path, linked_input_paths) = add_rpc_input_parts(input_paths);
     if let Some(input_path) = input_path {
         let input = fs::read_to_string(input_path).map_err(|source| error::Error::ReadFile {
             path: input_path.to_path_buf(),
             source,
         })?;
-        add_rpc::generate_add_rpc_wit_with_input(&descriptors, rpc_name, input_path, &input)
+        add_rpc::generate_add_rpc_wit_with_input(
+            &descriptors,
+            rpc_name,
+            input_path,
+            &input,
+            linked_input_paths,
+        )
     } else {
-        generate_add_rpc_wit(&descriptors, rpc_name)
+        generate_add_rpc_wit(&descriptors, rpc_name, input_paths)
     }
 }
 
@@ -111,7 +131,7 @@ pub fn add_rpc_to_file(request: &AddRpcRequest) -> Result<()> {
     let output = add_rpc_to_string(
         &request.descriptor_paths,
         &request.rpc_name,
-        request.input_path.as_deref(),
+        &request.input_paths,
     )?;
     if let Some(path) = &request.output_path {
         fs::write(path, output).map_err(|source| error::Error::WriteFile {
@@ -124,8 +144,21 @@ pub fn add_rpc_to_file(request: &AddRpcRequest) -> Result<()> {
     Ok(())
 }
 
+fn add_rpc_input_parts(input_paths: &[PathBuf]) -> (Option<&Path>, &[PathBuf]) {
+    if let Some((first, rest)) = input_paths.split_first() {
+        if first.is_file()
+            || first
+                .extension()
+                .is_some_and(|extension| extension == "wit")
+        {
+            return (Some(first.as_path()), rest);
+        }
+    }
+    (None, input_paths)
+}
+
 pub fn debug_wit_dir_to_file(request: &DebugWitDirRequest) -> Result<()> {
-    write_prepared_wit_directory(&request.input_path, &request.output_path)
+    write_prepared_wit_directory(&request.input_paths, &request.output_path)
 }
 
 pub fn build_examples(request: &BuildExamplesRequest) -> Result<()> {
@@ -159,6 +192,16 @@ pub fn build_examples(request: &BuildExamplesRequest) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn primary_input_path(input_paths: &[PathBuf]) -> Result<&Path> {
+    input_paths
+        .first()
+        .map(PathBuf::as_path)
+        .ok_or_else(|| error::Error::InvalidWit {
+            path: PathBuf::from("<input>"),
+            reason: "at least one WIT input path is required".to_string(),
+        })
 }
 
 fn format_generated_file(language: Language, output_path: &Path) -> Result<()> {
@@ -401,11 +444,13 @@ fn ensure_typescript_dependencies(repo_root: &Path) -> Result<()> {
 fn build_example(repo_root: &Path, language: Language, example_id: &str) -> Result<()> {
     let descriptor_path = repo_root.join("examples/descriptors/temporal_api.bin");
     let input_path = example_input_path(repo_root, example_id);
+    let mut input_paths = vec![input_path];
+    input_paths.extend(example_linked_input_paths(repo_root));
     let output_path = example_output_path(repo_root, language, example_id);
 
     generate_to_file(&GenerateRequest {
         language,
-        input_path,
+        input_paths,
         descriptor_paths: vec![descriptor_path],
         output_path: output_path.clone(),
         format: false,
@@ -435,6 +480,15 @@ fn example_input_path(repo_root: &Path, example_id: &str) -> PathBuf {
             .join("examples/inputs")
             .join(example_id)
             .join("main.wit")
+    }
+}
+
+fn example_linked_input_paths(repo_root: &Path) -> Vec<PathBuf> {
+    let linked_inputs = repo_root.join("examples/inputs/deps");
+    if linked_inputs.is_dir() {
+        vec![linked_inputs]
+    } else {
+        Vec::new()
     }
 }
 

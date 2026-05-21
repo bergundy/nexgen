@@ -117,18 +117,18 @@ export const StartWorkflowRequest = {
       return undefined;
     }
     return {
+      workflowType: workflowTypeToProto(
+        requiredField(model.workflow, "StartWorkflowRequest", "workflow"),
+      ),
+      input: _RequestArgsToPayloads(model.args),
       workflowId: requiredField(
         model.workflowId,
         "StartWorkflowRequest",
         "workflowId",
       ),
-      workflowType: workflowTypeToProto(
-        requiredField(model.workflow, "StartWorkflowRequest", "workflow"),
-      ),
       taskQueue: taskQueueToProto(
         requiredField(model.taskQueue, "StartWorkflowRequest", "taskQueue"),
       ),
-      input: _RequestArgsToPayloads(model.args),
       workflowStartDelay:
         model.workflowStartDelay == null
           ? undefined

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use heck::{ToSnakeCase, ToUpperCamelCase};
+use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use indexmap::IndexMap;
 
 use crate::api_plan::{
@@ -221,12 +221,13 @@ struct RenderedSourcedField {
     to_proto_lines: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PythonFieldDefaultKind {
     Required,
     None,
     EmptyList,
     EmptyDict,
+    Expression(String),
 }
 
 #[derive(Debug)]
@@ -273,6 +274,7 @@ struct RenderedFunctionField {
     callable_field_name: String,
     args_field_name: String,
     args: RenderedFunctionArgs,
+    primary: bool,
     result_annotation: String,
 }
 
@@ -671,7 +673,7 @@ fn build_unpacked_input(
                 parameters.push(RenderedUnpackedInputField {
                     attr_name: child.value_expr.clone(),
                     annotation: child.annotation.clone(),
-                    default_kind: child.default_kind,
+                    default_kind: child.default_kind.clone(),
                 });
             }
             flattened_messages.push(flattened);
@@ -687,12 +689,12 @@ fn build_unpacked_input(
         parameters.push(RenderedUnpackedInputField {
             attr_name: rendered_field.attr_name.clone(),
             annotation: rendered_field.annotation.clone(),
-            default_kind: rendered_field.default_kind,
+            default_kind: rendered_field.default_kind.clone(),
         });
         request_fields.push(RenderedUnpackedRequestField {
             attr_name: rendered_field.attr_name.clone(),
             value_expr: rendered_field.attr_name.clone(),
-            default_kind: rendered_field.default_kind,
+            default_kind: rendered_field.default_kind.clone(),
         });
     }
 
@@ -721,6 +723,7 @@ fn build_unpacked_input(
                 } else {
                     RenderedFunctionArgs::Bounded
                 },
+                primary: function.primary,
                 result_annotation: python_function_result_annotation(&function.result),
             })
             .collect(),
@@ -787,7 +790,7 @@ fn build_flattened_message(
                     default_kind: if nested_planned_field.required {
                         PythonFieldDefaultKind::Required
                     } else {
-                        nested_rendered_field.default_kind
+                        nested_rendered_field.default_kind.clone()
                     },
                 },
             )
@@ -1063,6 +1066,25 @@ fn build_field(
             from_proto_setup_lines: Vec::new(),
             from_proto_expr: repeated_from_proto_expr(&resolved_type, &field.proto_name),
             to_proto_lines: repeated_to_proto_lines(&resolved_type, &attr_name, &field.proto_name),
+            imports: resolved_type.imports,
+        };
+    }
+
+    if let Some(default_value) = &field.default_value {
+        let default_expr = enum_default_expr(&resolved_type, &default_value.enum_case);
+        return RenderedField {
+            attr_name: attr_name.clone(),
+            annotation: python_field_annotation(field, resolved_type.annotation.clone(), false),
+            default_kind: PythonFieldDefaultKind::Expression(default_expr.clone()),
+            default_expr: Some(default_expr),
+            from_proto_setup_lines: Vec::new(),
+            from_proto_expr: defaulted_enum_from_proto_expr(
+                &resolved_type,
+                &field.proto_name,
+                field,
+                &default_value.enum_case,
+            ),
+            to_proto_lines: required_to_proto_lines(&attr_name, &field.proto_name, &resolved_type),
             imports: resolved_type.imports,
         };
     }
@@ -1669,6 +1691,21 @@ fn optional_from_proto_expr(
     }
 }
 
+fn defaulted_enum_from_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    proto_name: &str,
+    field: &PlannedField,
+    enum_case: &str,
+) -> String {
+    let default_expr = enum_default_expr(resolved_type, enum_case);
+    let from_proto = enum_from_proto_expr(resolved_type, &format!("proto.{proto_name}"));
+    if field.has_presence {
+        format!("{from_proto} if proto.HasField(\"{proto_name}\") else {default_expr}")
+    } else {
+        from_proto
+    }
+}
+
 fn optional_to_proto_lines(
     resolved_type: &ResolvedFieldType,
     attr_name: &str,
@@ -1807,6 +1844,15 @@ fn enum_from_proto_expr(resolved_type: &ResolvedFieldType, expr: &str) -> String
     } else {
         format!("{}({expr})", resolved_type.annotation)
     }
+}
+
+fn enum_default_expr(resolved_type: &ResolvedFieldType, enum_case: &str) -> String {
+    let value_name = if resolved_type.enum_conversion.is_some() {
+        enum_case.to_shouty_snake_case()
+    } else {
+        enum_case.to_upper_camel_case()
+    };
+    format!("{}.{}", resolved_type.annotation, value_name)
 }
 
 fn enum_to_proto_expr(resolved_type: &ResolvedFieldType, expr: &str) -> String {
@@ -2664,13 +2710,15 @@ fn render_operations_package_init() -> String {
 
 fn render_function_args_normalizer(output: &mut String) {
     output.push_str("def _nexus_normalize_function_args(\n");
-    output.push_str("    value: object | tuple[object, ...] | None,\n");
+    output.push_str("    value: object | tuple[object, ...] | list[typing.Any] | None,\n");
     output.push_str(") -> tuple[object, ...] | None:\n");
     output.push_str("    if value is None:\n");
     output.push_str("        return None\n");
-    output.push_str("    if isinstance(value, tuple):\n");
-    output.push_str("        return typing.cast(tuple[object, ...], value)\n");
+    output.push_str("    if isinstance(value, (tuple, list)):\n");
+    output.push_str("        return tuple(typing.cast(collections.abc.Iterable[object], value))\n");
     output.push_str("    return (value,)\n");
+    output.push('\n');
+    output.push_str("\n_nexus_arg_unset = object()\n");
 }
 
 fn function_type_parameters(functions: &[RenderedFunctionField]) -> Vec<PythonTypeParameter> {
@@ -2889,7 +2937,11 @@ fn render_variant(output: &mut String, variant: &RenderedVariant) {
 }
 
 fn render_model(output: &mut String, model: &RenderedModel) {
-    output.push_str("@dataclasses.dataclass(slots=True)\n");
+    if model_needs_keyword_only_dataclass(model) {
+        output.push_str("@dataclasses.dataclass(slots=True, kw_only=True)\n");
+    } else {
+        output.push_str("@dataclasses.dataclass(slots=True)\n");
+    }
     output.push_str("class ");
     output.push_str(&model.name);
     output.push_str(":\n");
@@ -2942,24 +2994,13 @@ fn render_model(output: &mut String, model: &RenderedModel) {
         return;
     }
 
-    let required_fields = model
-        .fields
-        .iter()
-        .filter(|field| field.default_expr.is_none())
-        .collect::<Vec<_>>();
-    let defaulted_fields = model
-        .fields
-        .iter()
-        .filter(|field| field.default_expr.is_some())
-        .collect::<Vec<_>>();
-
-    for field in required_fields.iter().chain(defaulted_fields.iter()) {
+    for field in &model.fields {
         output.push_str("    ");
         output.push_str(&field.attr_name);
         output.push_str(": ");
         output.push_str(&python_parameter_annotation(
             &field.annotation,
-            field.default_kind,
+            &field.default_kind,
         ));
         if let Some(default_expr) = &field.default_expr {
             output.push_str(" = ");
@@ -3035,6 +3076,18 @@ fn render_model(output: &mut String, model: &RenderedModel) {
         }
         output.push_str("        return message\n");
     }
+}
+
+fn model_needs_keyword_only_dataclass(model: &RenderedModel) -> bool {
+    let mut saw_defaulted_field = false;
+    for field in &model.fields {
+        if field.default_expr.is_some() {
+            saw_defaulted_field = true;
+        } else if saw_defaulted_field {
+            return true;
+        }
+    }
+    false
 }
 
 fn render_resource(
@@ -3320,9 +3373,17 @@ struct RenderedFunctionOverloadCase {
     callable_field_name: String,
     args_field_name: String,
     callable_annotation: String,
+    positional_arg: Option<RenderedFunctionOverloadPositionalArg>,
     args_annotation: Option<String>,
     args_optional: bool,
     type_parameters: Vec<PythonTypeParameter>,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedFunctionOverloadPositionalArg {
+    name: String,
+    annotation: String,
+    optional: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -3393,7 +3454,14 @@ fn function_overload_cases(function: &RenderedFunctionField) -> Vec<RenderedFunc
             callable_field_name: function.callable_field_name.clone(),
             args_field_name: function.args_field_name.clone(),
             callable_annotation: "str".to_string(),
-            args_annotation: Some("tuple[typing.Any, ...] | None".to_string()),
+            positional_arg: function
+                .primary
+                .then(|| RenderedFunctionOverloadPositionalArg {
+                    name: "arg".to_string(),
+                    annotation: "object".to_string(),
+                    optional: true,
+                }),
+            args_annotation: Some("tuple[typing.Any, ...] | list[typing.Any] | None".to_string()),
             args_optional: true,
             type_parameters: Vec::new(),
         },
@@ -3404,6 +3472,7 @@ fn function_overload_cases(function: &RenderedFunctionField) -> Vec<RenderedFunc
                 "collections.abc.Callable[[typing.Any], {}]",
                 function.result_annotation
             ),
+            positional_arg: None,
             args_annotation: None,
             args_optional: false,
             type_parameters: Vec::new(),
@@ -3414,15 +3483,31 @@ fn function_overload_cases(function: &RenderedFunctionField) -> Vec<RenderedFunc
         RenderedFunctionArgs::Unbounded => {
             let prefix = function_overload_parameter_prefix(function);
             let first_arg = format!("First{prefix}Arg");
+            let second_arg = format!("Second{prefix}Arg");
             let remaining_args = format!("Remaining{prefix}Args");
+            let one_arg_callable_annotation = format!(
+                "collections.abc.Callable[[typing.Any, {first_arg}], {}]",
+                function.result_annotation
+            );
             cases.push(RenderedFunctionOverloadCase {
                 callable_field_name: function.callable_field_name.clone(),
                 args_field_name: function.args_field_name.clone(),
-                callable_annotation: format!(
-                    "collections.abc.Callable[[typing.Any, {first_arg}], {}]",
-                    function.result_annotation
-                ),
-                args_annotation: Some(first_arg.clone()),
+                callable_annotation: one_arg_callable_annotation.clone(),
+                positional_arg: Some(RenderedFunctionOverloadPositionalArg {
+                    name: "arg".to_string(),
+                    annotation: first_arg.clone(),
+                    optional: false,
+                }),
+                args_annotation: None,
+                args_optional: false,
+                type_parameters: vec![PythonTypeParameter::TypeVar(first_arg.clone())],
+            });
+            cases.push(RenderedFunctionOverloadCase {
+                callable_field_name: function.callable_field_name.clone(),
+                args_field_name: function.args_field_name.clone(),
+                callable_annotation: one_arg_callable_annotation,
+                positional_arg: None,
+                args_annotation: Some(format!("tuple[{first_arg}]")),
                 args_optional: false,
                 type_parameters: vec![PythonTypeParameter::TypeVar(first_arg.clone())],
             });
@@ -3430,15 +3515,17 @@ fn function_overload_cases(function: &RenderedFunctionField) -> Vec<RenderedFunc
                 callable_field_name: function.callable_field_name.clone(),
                 args_field_name: function.args_field_name.clone(),
                 callable_annotation: format!(
-                    "collections.abc.Callable[[typing.Any, {first_arg}, typing_extensions.Unpack[{remaining_args}]], {}]",
+                    "collections.abc.Callable[[typing.Any, {first_arg}, {second_arg}, typing_extensions.Unpack[{remaining_args}]], {}]",
                     function.result_annotation
                 ),
+                positional_arg: None,
                 args_annotation: Some(format!(
-                    "tuple[{first_arg}, typing_extensions.Unpack[{remaining_args}]]"
+                    "tuple[{first_arg}, {second_arg}, typing_extensions.Unpack[{remaining_args}]]"
                 )),
                 args_optional: false,
                 type_parameters: vec![
                     PythonTypeParameter::TypeVar(first_arg),
+                    PythonTypeParameter::TypeVar(second_arg),
                     PythonTypeParameter::TypeVarTuple(remaining_args),
                 ],
             });
@@ -3461,6 +3548,7 @@ fn function_overload_cases(function: &RenderedFunctionField) -> Vec<RenderedFunc
                             callable_parameters.join(", "),
                             function.result_annotation
                         ),
+                        positional_arg: None,
                         args_annotation: Some(type_parameters[0].clone()),
                         args_optional: false,
                         type_parameters: type_parameters
@@ -3478,6 +3566,7 @@ fn function_overload_cases(function: &RenderedFunctionField) -> Vec<RenderedFunc
                         callable_parameters.join(", "),
                         function.result_annotation
                     ),
+                    positional_arg: None,
                     args_annotation: Some(format!("tuple[{}]", type_parameters.join(", "))),
                     args_optional: false,
                     type_parameters: type_parameters
@@ -3496,6 +3585,19 @@ fn function_overload_parameter_prefix(function: &RenderedFunctionField) -> Strin
     function.callable_field_name.to_upper_camel_case()
 }
 
+fn primary_function(functions: &[RenderedFunctionField]) -> Option<&RenderedFunctionField> {
+    functions.iter().find(|function| function.primary)
+}
+
+fn overload_case_for_callable<'a>(
+    overload_cases: &'a [RenderedFunctionOverloadCase],
+    callable_field_name: &str,
+) -> Option<&'a RenderedFunctionOverloadCase> {
+    overload_cases
+        .iter()
+        .find(|function_case| function_case.callable_field_name == callable_field_name)
+}
+
 fn render_function_unpacked_overload(
     output: &mut String,
     operation: &RenderedOperation<'_>,
@@ -3506,9 +3608,52 @@ fn render_function_unpacked_overload(
     output.push_str("async def ");
     output.push_str(&operation.attr_name);
     output.push_str("(\n");
+
+    let primary_function = primary_function(&unpacked_input.functions);
+    let primary_case = primary_function.and_then(|function| {
+        overload_case_for_callable(overload_cases, &function.callable_field_name)
+    });
+    if let (Some(function), Some(function_case)) = (primary_function, primary_case) {
+        output.push_str("    ");
+        output.push_str(&function.callable_field_name);
+        output.push_str(": ");
+        output.push_str(&function_case.callable_annotation);
+        output.push_str(",\n");
+        if let Some(positional_arg) = &function_case.positional_arg {
+            output.push_str("    ");
+            output.push_str(&positional_arg.name);
+            output.push_str(": ");
+            output.push_str(&positional_arg.annotation);
+            if positional_arg.optional {
+                output.push_str(" = ...");
+            }
+            output.push_str(",\n");
+        }
+    }
+
     output.push_str("    *,\n");
 
     for field in &unpacked_input.parameters {
+        if primary_function.is_some_and(|function| function.callable_field_name == field.attr_name)
+        {
+            continue;
+        }
+        if primary_function.is_some_and(|function| function.args_field_name == field.attr_name) {
+            if let Some(function_case) = primary_case {
+                if let Some(args_annotation) = &function_case.args_annotation {
+                    output.push_str("    ");
+                    output.push_str(&field.attr_name);
+                    output.push_str(": ");
+                    output.push_str(args_annotation);
+                    if function_case.args_optional {
+                        output.push_str(" = ...");
+                    }
+                    output.push_str(",\n");
+                }
+            }
+            continue;
+        }
+
         if let Some(function_case) = overload_cases
             .iter()
             .find(|function_case| function_case.callable_field_name == field.attr_name)
@@ -3546,7 +3691,7 @@ fn render_function_unpacked_overload(
         output.push_str(": ");
         output.push_str(&python_parameter_annotation(
             &field.annotation,
-            field.default_kind,
+            &field.default_kind,
         ));
         if field.default_kind != PythonFieldDefaultKind::Required {
             output.push_str(" = ...");
@@ -3700,11 +3845,11 @@ fn render_unpacked_operation_function(
         output.push_str(": ");
         output.push_str(&python_parameter_annotation(
             &field.annotation,
-            field.default_kind,
+            &field.default_kind,
         ));
-        if let Some(default_expr) = python_parameter_default_expr(field.default_kind) {
+        if let Some(default_expr) = python_parameter_default_expr(&field.default_kind) {
             output.push_str(" = ");
-            output.push_str(default_expr);
+            output.push_str(&default_expr);
         }
         output.push_str(",\n");
     }
@@ -3749,9 +3894,24 @@ fn render_function_unpacked_implementation(
     output.push_str("async def ");
     output.push_str(&operation.attr_name);
     output.push_str("(\n");
+
+    let primary_function = primary_function(&unpacked_input.functions);
+    if let Some(function) = primary_function {
+        output.push_str("    ");
+        output.push_str(&function.callable_field_name);
+        output.push_str(": str | collections.abc.Callable[..., ");
+        output.push_str(&function.result_annotation);
+        output.push_str("],\n");
+        output.push_str("    arg: object = _nexus_arg_unset,\n");
+    }
+
     output.push_str("    *,\n");
 
     for field in &unpacked_input.parameters {
+        if primary_function.is_some_and(|function| function.callable_field_name == field.attr_name)
+        {
+            continue;
+        }
         output.push_str("    ");
         output.push_str(&field.attr_name);
         output.push_str(": ");
@@ -3768,16 +3928,16 @@ fn render_function_unpacked_implementation(
             .iter()
             .any(|function| function.args_field_name == field.attr_name)
         {
-            output.push_str("object | tuple[object, ...] | None");
+            output.push_str("object | tuple[object, ...] | list[typing.Any] | None");
         } else {
             output.push_str(&python_parameter_annotation(
                 &field.annotation,
-                field.default_kind,
+                &field.default_kind,
             ));
         }
-        if let Some(default_expr) = python_parameter_default_expr(field.default_kind) {
+        if let Some(default_expr) = python_parameter_default_expr(&field.default_kind) {
             output.push_str(" = ");
-            output.push_str(default_expr);
+            output.push_str(&default_expr);
         }
         output.push_str(",\n");
     }
@@ -3799,11 +3959,29 @@ fn render_function_unpacked_implementation(
 
     for function in &unpacked_input.functions {
         let normalized_args_name = format!("normalized_{}", function.args_field_name);
-        output.push_str("    ");
-        output.push_str(&normalized_args_name);
-        output.push_str(" = _nexus_normalize_function_args(");
-        output.push_str(&function.args_field_name);
-        output.push_str(")\n");
+        if function.primary {
+            output.push_str("    if arg is not _nexus_arg_unset and ");
+            output.push_str(&function.args_field_name);
+            output.push_str(" is not None:\n");
+            output.push_str("        raise TypeError(\"cannot specify both arg and ");
+            output.push_str(&function.args_field_name);
+            output.push_str("\")\n");
+            output.push_str("    ");
+            output.push_str(&normalized_args_name);
+            output.push_str(" = (\n");
+            output.push_str("        (arg,)\n");
+            output.push_str("        if arg is not _nexus_arg_unset\n");
+            output.push_str("        else _nexus_normalize_function_args(");
+            output.push_str(&function.args_field_name);
+            output.push_str(")\n");
+            output.push_str("    )\n");
+        } else {
+            output.push_str("    ");
+            output.push_str(&normalized_args_name);
+            output.push_str(" = _nexus_normalize_function_args(");
+            output.push_str(&function.args_field_name);
+            output.push_str(")\n");
+        }
     }
     for flattened_message in &unpacked_input.flattened_messages {
         render_flattened_message_setup(output, flattened_message);
@@ -3898,15 +4076,18 @@ fn render_inline_nexus_client(output: &mut String, service: &RenderedService<'_>
     output.push_str(")\n");
 }
 
-fn python_parameter_default_expr(default_kind: PythonFieldDefaultKind) -> Option<&'static str> {
+fn python_parameter_default_expr(default_kind: &PythonFieldDefaultKind) -> Option<String> {
     match default_kind {
         PythonFieldDefaultKind::Required => None,
-        PythonFieldDefaultKind::None => Some("None"),
-        PythonFieldDefaultKind::EmptyList | PythonFieldDefaultKind::EmptyDict => Some("None"),
+        PythonFieldDefaultKind::None => Some("None".to_string()),
+        PythonFieldDefaultKind::EmptyList | PythonFieldDefaultKind::EmptyDict => {
+            Some("None".to_string())
+        }
+        PythonFieldDefaultKind::Expression(expr) => Some(expr.clone()),
     }
 }
 
-fn python_parameter_annotation(annotation: &str, default_kind: PythonFieldDefaultKind) -> String {
+fn python_parameter_annotation(annotation: &str, default_kind: &PythonFieldDefaultKind) -> String {
     if matches!(
         default_kind,
         PythonFieldDefaultKind::EmptyList | PythonFieldDefaultKind::EmptyDict
@@ -3919,10 +4100,12 @@ fn python_parameter_annotation(annotation: &str, default_kind: PythonFieldDefaul
 }
 
 fn unpacked_request_field_value_expr(field: &RenderedUnpackedRequestField) -> String {
-    match field.default_kind {
+    match &field.default_kind {
         PythonFieldDefaultKind::EmptyList => format!("{} or []", field.value_expr),
         PythonFieldDefaultKind::EmptyDict => format!("{} or {{}}", field.value_expr),
-        PythonFieldDefaultKind::Required | PythonFieldDefaultKind::None => field.value_expr.clone(),
+        PythonFieldDefaultKind::Required
+        | PythonFieldDefaultKind::None
+        | PythonFieldDefaultKind::Expression(_) => field.value_expr.clone(),
     }
 }
 
@@ -4015,6 +4198,14 @@ mod tests {
         root.join("examples/inputs/type-roundtrip.wit")
     }
 
+    fn linked_inputs_path(root: &std::path::Path) -> PathBuf {
+        root.join("examples/inputs/deps")
+    }
+
+    fn example_input_paths(root: &std::path::Path, input_path: PathBuf) -> Vec<PathBuf> {
+        vec![input_path, linked_inputs_path(root)]
+    }
+
     fn sample_python_output_path(root: &std::path::Path) -> PathBuf {
         root.join("examples/python/workflow_service")
     }
@@ -4089,7 +4280,11 @@ mod tests {
     #[test]
     fn renders_sample_output() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let spec = ApiSpec::load_for_language(Language::Python, &sample_input_path(&root)).unwrap();
+        let spec = ApiSpec::load_for_language_with_inputs(
+            Language::Python,
+            &example_input_paths(&root, sample_input_path(&root)),
+        )
+        .unwrap();
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let generated = generate_files(
@@ -4109,7 +4304,11 @@ mod tests {
     #[test]
     fn renders_required_fields_and_custom_message_types() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let spec = ApiSpec::load_for_language(Language::Python, &sample_input_path(&root)).unwrap();
+        let spec = ApiSpec::load_for_language_with_inputs(
+            Language::Python,
+            &example_input_paths(&root, sample_input_path(&root)),
+        )
+        .unwrap();
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let output = generate_source(
@@ -4126,7 +4325,7 @@ mod tests {
         assert!(output.contains(
             "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]"
         ));
-        assert!(output.contains("workflow_id: str"));
+        assert!(output.contains("id: str"));
         assert!(output.contains("task_queue: str"));
         assert!(output.contains(
             "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]"
@@ -4137,15 +4336,12 @@ mod tests {
         assert!(output.contains("message.namespace = workflow_namespace()"));
         assert!(output.contains("result = await handle"));
         assert!(output.contains(
-            "return workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
+            "return workflow.get_external_workflow_handle(request.id, run_id=result.run_id)"
         ));
         assert!(output.contains("signal_args: tuple[typing.Any, ...] | None = None"));
-        assert!(output.contains(
-            "workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = None"
-        ));
-        assert!(output.contains(
-            "workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = None"
-        ));
+        assert!(output.contains("temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE"));
+        assert!(output.contains("temporalio.common.WorkflowIDConflictPolicy.FAIL"));
+        assert!(!output.contains("identity: str | None"));
         assert!(output.contains("memo: collections.abc.Mapping[str, typing.Any] | None = None"));
         assert!(output.contains("user_metadata: UserMetadata | None = None"));
         assert!(output.contains("static_summary: typing.Any | None = None"));
@@ -4160,13 +4356,8 @@ mod tests {
                 "versioning_override: temporalio.common.VersioningOverride | None = None"
             )
         );
-        assert!(
-            output.contains("workflow_id_reuse_policy_to_proto(self.workflow_id_reuse_policy)")
-        );
-        assert!(
-            output
-                .contains("workflow_id_conflict_policy_to_proto(self.workflow_id_conflict_policy)")
-        );
+        assert!(output.contains("workflow_id_reuse_policy_to_proto(self.id_reuse_policy)"));
+        assert!(output.contains("workflow_id_conflict_policy_to_proto(self.id_conflict_policy)"));
         assert!(output.contains("message.input.CopyFrom(payloads_to_proto(self.args))"));
         assert!(!output.contains("header:"));
         assert!(!output.contains("header_to_proto("));
@@ -4177,21 +4368,24 @@ mod tests {
         assert!(output.contains(") -> workflow.ExternalWorkflowHandle[typing.Any]:"));
         assert!(!output.contains("(typing.TypedDict, total=False):"));
         assert!(!output.contains("typing.Unpack["));
-        assert!(output.contains("args: object | tuple[object, ...] | None"));
+        assert!(output.contains("args: object | tuple[object, ...] | list[typing.Any] | None"));
         assert!(output.contains("@typing.overload"));
         assert!(output.contains("workflow: str,"));
-        assert!(output.contains("args: tuple[typing.Any, ...] | None = ...,"));
+        assert!(output.contains("arg: object = ...,"));
+        assert!(output.contains("args: tuple[typing.Any, ...] | list[typing.Any] | None = ...,"));
         assert!(output.contains(
             "workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],"
         ));
         assert!(output.contains("FirstWorkflowArg = typing.TypeVar(\"FirstWorkflowArg\")"));
+        assert!(output.contains("SecondWorkflowArg = typing.TypeVar(\"SecondWorkflowArg\")"));
         assert!(output.contains(
             "RemainingWorkflowArgs = typing_extensions.TypeVarTuple(\"RemainingWorkflowArgs\")"
         ));
         assert!(output.contains("async def signal_with_start_workflow("));
-        assert!(output.contains("args: FirstWorkflowArg,"));
+        assert!(output.contains("arg: FirstWorkflowArg,"));
+        assert!(output.contains("args: tuple[FirstWorkflowArg],"));
         assert!(output.contains(
-            "args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
+            "args: tuple[FirstWorkflowArg, SecondWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],"
         ));
         assert!(output.contains(
             "signal: collections.abc.Callable[[typing.Any, SignalArg1], None | collections.abc.Awaitable[None]],"
@@ -4199,24 +4393,31 @@ mod tests {
         assert!(output.contains("signal_args: SignalArg1,"));
         assert!(output.contains("signal_args: tuple[SignalArg1],"));
         assert!(output.contains("async def signal_with_start_workflow("));
-        assert!(output.contains("    *,"));
         assert!(output.contains(
-            "workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],"
+            "async def signal_with_start_workflow(\n    workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],\n    arg: object = _nexus_arg_unset,\n    *,"
         ));
         assert!(output.contains(
             "signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]],"
         ));
-        assert!(output.contains("args: object | tuple[object, ...] | None = None,"));
+        assert!(
+            output.contains("args: object | tuple[object, ...] | list[typing.Any] | None = None,")
+        );
+        assert!(output.contains(
+            "signal_args: object | tuple[object, ...] | list[typing.Any] | None = None,"
+        ));
         assert!(output.contains("static_summary: str | None = None,"));
         assert!(output.contains("static_details: str | None = None,"));
         assert!(!output.contains("user_metadata_static_summary:"));
         assert!(!output.contains("user_metadata_static_details:"));
         assert!(output.contains("def _nexus_normalize_function_args("));
+        assert!(output.contains("_nexus_arg_unset = object()"));
         assert!(
-            output
-                .contains("normalized_signal_args = _nexus_normalize_function_args(signal_args)")
+            output.contains("normalized_signal_args = _nexus_normalize_function_args(signal_args)")
         );
-        assert!(output.contains("normalized_args = _nexus_normalize_function_args(args)"));
+        assert!(output.contains("if arg is not _nexus_arg_unset and args is not None:"));
+        assert!(output.contains("raise TypeError(\"cannot specify both arg and args\")"));
+        assert!(output.contains("if arg is not _nexus_arg_unset"));
+        assert!(output.contains("else _nexus_normalize_function_args(args)"));
         assert!(output.contains("user_metadata = ("));
         assert!(output.contains("if static_summary is None and static_details is None"));
         assert!(output.contains("static_summary=static_summary,"));
@@ -4252,9 +4453,11 @@ mod tests {
         assert!(!output.contains("build_signal_with_start_workflow_request"));
         assert!(!output.contains("from model_overrides import"));
 
-        let type_roundtrip_spec =
-            ApiSpec::load_for_language(Language::Python, &type_roundtrip_input_path(&root))
-                .unwrap();
+        let type_roundtrip_spec = ApiSpec::load_for_language_with_inputs(
+            Language::Python,
+            &example_input_paths(&root, type_roundtrip_input_path(&root)),
+        )
+        .unwrap();
         let type_roundtrip_output = generate_source(
             Language::Python,
             &type_roundtrip_spec,
@@ -4283,8 +4486,11 @@ mod tests {
     #[test]
     fn renders_resource_bound_operations_inside_resource_modules() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let spec = ApiSpec::load_for_language(Language::Python, &start_workflow_input_path(&root))
-            .unwrap();
+        let spec = ApiSpec::load_for_language_with_inputs(
+            Language::Python,
+            &example_input_paths(&root, start_workflow_input_path(&root)),
+        )
+        .unwrap();
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let output = generate_source(
@@ -4392,7 +4598,11 @@ interface workflow-service {
         fs::write(&input_path, wit).unwrap();
 
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let spec = ApiSpec::load_for_language(Language::Python, &input_path).unwrap();
+        let spec = ApiSpec::load_for_language_with_inputs(
+            Language::Python,
+            &example_input_paths(&root, input_path.clone()),
+        )
+        .unwrap();
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let error = generate_source(
@@ -4432,8 +4642,15 @@ interface example-service {
   example-operation: func(request: retry-policy) -> retry-policy;
 }
 "#;
-        let spec = ApiSpec::parse_for_language(Language::Python, wit, PathBuf::from("inline.wit"))
-            .unwrap();
+        let spec = ApiSpec::parse_for_language_with_inputs(
+            Language::Python,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path(&PathBuf::from(env!(
+                "CARGO_MANIFEST_DIR"
+            )))],
+        )
+        .unwrap();
         let descriptors = DescriptorIndex::load(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples/descriptors/temporal_api.bin"),

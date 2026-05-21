@@ -57,8 +57,8 @@ export interface GetUserRequest {
 export const GetUserRequest = {};
 
 export interface UpdateEmailRequest {
-  email: string;
   userId: string;
+  email: string;
 }
 
 export const UpdateEmailRequest = {};
@@ -70,7 +70,7 @@ export class User {
   ) {}
 
   public async updateEmail(email: string): Promise<User> {
-    return await updateEmail({ email: email, userId: this.userId });
+    return await updateEmail({ userId: this.userId, email: email });
   }
 }
 

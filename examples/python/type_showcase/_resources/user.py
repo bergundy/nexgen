@@ -29,8 +29,8 @@ class User:
         email: str,
     ) -> User:
         request = UpdateEmailRequest(
-            email=email,
             user_id=self.user_id,
+            email=email,
         )
         return await _update_email(request)
 
@@ -39,8 +39,8 @@ class User:
         display_name: str,
     ) -> User:
         request = RenameRequest(
-            display_name=display_name,
             user_id=self.user_id,
+            display_name=display_name,
         )
         return await _rename(request)
 
@@ -49,8 +49,8 @@ class User:
         reason: str | None = None,
     ) -> None:
         request = DeactivateRequest(
-            reason=reason,
             user_id=self.user_id,
+            reason=reason,
         )
         handle = await _deactivate(request)
         await handle
@@ -73,12 +73,12 @@ async def _update_email(
 
 async def update_email(
     *,
-    email: str,
     user_id: str,
+    email: str,
 ) -> User:
     request = UpdateEmailRequest(
-        email=email,
         user_id=user_id,
+        email=email,
     )
     return await _update_email(request)
 
@@ -100,12 +100,12 @@ async def _rename(
 
 async def rename(
     *,
-    display_name: str,
     user_id: str,
+    display_name: str,
 ) -> User:
     request = RenameRequest(
-        display_name=display_name,
         user_id=user_id,
+        display_name=display_name,
     )
     return await _rename(request)
 
@@ -125,12 +125,12 @@ async def _deactivate(
 
 async def deactivate(
     *,
-    reason: str | None = None,
     user_id: str,
+    reason: str | None = None,
 ) -> workflow.NexusOperationHandle[None,]:
     request = DeactivateRequest(
-        reason=reason,
         user_id=user_id,
+        reason=reason,
     )
     return await _deactivate(request)
 

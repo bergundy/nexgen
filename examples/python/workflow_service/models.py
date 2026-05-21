@@ -30,23 +30,24 @@ from ._support import (
 )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, kw_only=True)
 class SignalWithStartWorkflowRequest:
-    workflow_id: str
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
+    args: tuple[typing.Any, ...] | None = None
+    id: str
     task_queue: str
     signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]
-    args: tuple[typing.Any, ...] | None = None
-    workflow_execution_timeout: timedelta | None = None
-    workflow_run_timeout: timedelta | None = None
-    workflow_task_timeout: timedelta | None = None
-    identity: str | None = None
-    request_id: str | None = None
-    workflow_id_reuse_policy: temporalio.common.WorkflowIDReusePolicy | None = None
-    workflow_id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy | None = (
-        None
-    )
     signal_args: tuple[typing.Any, ...] | None = None
+    execution_timeout: timedelta | None = None
+    run_timeout: timedelta | None = None
+    task_timeout: timedelta | None = None
+    request_id: str | None = None
+    id_reuse_policy: temporalio.common.WorkflowIDReusePolicy = (
+        temporalio.common.WorkflowIDReusePolicy.ALLOW_DUPLICATE
+    )
+    id_conflict_policy: temporalio.common.WorkflowIDConflictPolicy = (
+        temporalio.common.WorkflowIDConflictPolicy.FAIL
+    )
     retry_policy: temporalio.common.RetryPolicy | None = None
     cron_schedule: str | None = None
     memo: collections.abc.Mapping[str, typing.Any] | None = None
@@ -55,47 +56,39 @@ class SignalWithStartWorkflowRequest:
         | temporalio.common.SearchAttributes
         | None
     ) = None
-    workflow_start_delay: timedelta | None = None
-    user_metadata: UserMetadata | None = None
-    versioning_override: temporalio.common.VersioningOverride | None = None
     priority: temporalio.common.Priority | None = None
+    versioning_override: temporalio.common.VersioningOverride | None = None
+    start_delay: timedelta | None = None
+    user_metadata: UserMetadata | None = None
 
     def to_proto(
         self,
     ) -> temporalio.api.workflowservice.v1.request_response_pb2.SignalWithStartWorkflowExecutionRequest:
         message = temporalio.api.workflowservice.v1.request_response_pb2.SignalWithStartWorkflowExecutionRequest()
-        message.workflow_id = self.workflow_id
         message.workflow_type.CopyFrom(workflow_type_to_proto(self.workflow))
-        message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
         if self.args is not None:
             message.input.CopyFrom(payloads_to_proto(self.args))
-        if self.workflow_execution_timeout is not None:
-            message.workflow_execution_timeout.CopyFrom(
-                duration_to_proto(self.workflow_execution_timeout)
-            )
-        if self.workflow_run_timeout is not None:
-            message.workflow_run_timeout.CopyFrom(
-                duration_to_proto(self.workflow_run_timeout)
-            )
-        if self.workflow_task_timeout is not None:
-            message.workflow_task_timeout.CopyFrom(
-                duration_to_proto(self.workflow_task_timeout)
-            )
-        if self.identity is not None:
-            message.identity = self.identity
-        if self.request_id is not None:
-            message.request_id = self.request_id
-        if self.workflow_id_reuse_policy is not None:
-            message.workflow_id_reuse_policy = workflow_id_reuse_policy_to_proto(
-                self.workflow_id_reuse_policy
-            )
-        if self.workflow_id_conflict_policy is not None:
-            message.workflow_id_conflict_policy = workflow_id_conflict_policy_to_proto(
-                self.workflow_id_conflict_policy
-            )
+        message.workflow_id = self.id
+        message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
         message.signal_name = signal_function_to_proto(self.signal)
         if self.signal_args is not None:
             message.signal_input.CopyFrom(payloads_to_proto(self.signal_args))
+        if self.execution_timeout is not None:
+            message.workflow_execution_timeout.CopyFrom(
+                duration_to_proto(self.execution_timeout)
+            )
+        if self.run_timeout is not None:
+            message.workflow_run_timeout.CopyFrom(duration_to_proto(self.run_timeout))
+        if self.task_timeout is not None:
+            message.workflow_task_timeout.CopyFrom(duration_to_proto(self.task_timeout))
+        if self.request_id is not None:
+            message.request_id = self.request_id
+        message.workflow_id_reuse_policy = workflow_id_reuse_policy_to_proto(
+            self.id_reuse_policy
+        )
+        message.workflow_id_conflict_policy = workflow_id_conflict_policy_to_proto(
+            self.id_conflict_policy
+        )
         if self.retry_policy is not None:
             message.retry_policy.CopyFrom(retry_policy_to_proto(self.retry_policy))
         if self.cron_schedule is not None:
@@ -106,18 +99,16 @@ class SignalWithStartWorkflowRequest:
             message.search_attributes.CopyFrom(
                 search_attributes_to_proto(self.search_attributes)
             )
-        if self.workflow_start_delay is not None:
-            message.workflow_start_delay.CopyFrom(
-                duration_to_proto(self.workflow_start_delay)
-            )
-        if self.user_metadata is not None:
-            message.user_metadata.CopyFrom(self.user_metadata.to_proto())
+        if self.priority is not None:
+            message.priority.CopyFrom(priority_to_proto(self.priority))
         if self.versioning_override is not None:
             message.versioning_override.CopyFrom(
                 versioning_override_to_proto(self.versioning_override)
             )
-        if self.priority is not None:
-            message.priority.CopyFrom(priority_to_proto(self.priority))
+        if self.start_delay is not None:
+            message.workflow_start_delay.CopyFrom(duration_to_proto(self.start_delay))
+        if self.user_metadata is not None:
+            message.user_metadata.CopyFrom(self.user_metadata.to_proto())
         message.namespace = workflow_namespace()
         return message
 

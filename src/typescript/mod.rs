@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
-use heck::{ToLowerCamelCase, ToUpperCamelCase};
+use heck::{ToLowerCamelCase, ToShoutySnakeCase, ToUpperCamelCase};
 use indexmap::IndexMap;
 use prost_types::FieldDescriptorProto;
 
@@ -1037,6 +1037,26 @@ fn build_field(
         };
     }
 
+    if let Some(default_value) = &field.default_value {
+        return RenderedField {
+            name: generated_field_name.clone(),
+            proto_name: proto_field_name.clone(),
+            annotation: typescript_field_annotation(field, resolved_type.annotation.clone()),
+            optional: true,
+            from_proto_expr: defaulted_enum_from_proto_expr(
+                &resolved_type,
+                &proto_field_name,
+                &default_value.enum_case,
+            ),
+            to_proto_expr: defaulted_enum_to_proto_expr(
+                &resolved_type,
+                &generated_field_name,
+                &default_value.enum_case,
+            ),
+            requirements: resolved_type.requirements,
+        };
+    }
+
     if field.required {
         return RenderedField {
             name: generated_field_name.clone(),
@@ -1518,6 +1538,18 @@ fn optional_from_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str)
     }
 }
 
+fn defaulted_enum_from_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    field_name: &str,
+    enum_case: &str,
+) -> String {
+    let default_expr = enum_default_expr(resolved_type, enum_case);
+    format!(
+        "proto.{field_name} == null ? {default_expr} : {}",
+        enum_from_proto_expr(resolved_type, &format!("proto.{field_name}"))
+    )
+}
+
 fn optional_to_proto_expr(resolved_type: &ResolvedFieldType, field_name: &str) -> String {
     optional_to_proto_expr_from_expr(resolved_type, &format!("model.{field_name}"))
 }
@@ -1538,6 +1570,19 @@ fn optional_to_proto_expr_from_expr(resolved_type: &ResolvedFieldType, value_exp
         ),
         _ => value_expr.to_string(),
     }
+}
+
+fn defaulted_enum_to_proto_expr(
+    resolved_type: &ResolvedFieldType,
+    field_name: &str,
+    enum_case: &str,
+) -> String {
+    let value_expr = format!("model.{field_name}");
+    let default_expr = enum_default_expr(resolved_type, enum_case);
+    enum_to_proto_expr(
+        resolved_type,
+        &format!("({value_expr} == null ? {default_expr} : {value_expr})"),
+    )
 }
 
 fn required_function_to_proto_expr(owner_name: &str, field_name: &str, converter: &str) -> String {
@@ -1623,6 +1668,15 @@ fn enum_from_proto_expr(resolved_type: &ResolvedFieldType, expr: &str) -> String
     } else {
         format!("{expr} as {}", resolved_type.annotation)
     }
+}
+
+fn enum_default_expr(resolved_type: &ResolvedFieldType, enum_case: &str) -> String {
+    let value_name = if resolved_type.enum_conversion.is_some() {
+        enum_case.to_shouty_snake_case()
+    } else {
+        enum_case.to_upper_camel_case()
+    };
+    format!("{}.{}", resolved_type.annotation, value_name)
 }
 
 fn enum_to_proto_expr(resolved_type: &ResolvedFieldType, expr: &str) -> String {
@@ -2962,6 +3016,14 @@ mod tests {
         root.join("examples/inputs/type-roundtrip.wit")
     }
 
+    fn linked_inputs_path(root: &std::path::Path) -> PathBuf {
+        root.join("examples/inputs/deps")
+    }
+
+    fn example_input_paths(root: &std::path::Path, input_path: PathBuf) -> Vec<PathBuf> {
+        vec![input_path, linked_inputs_path(root)]
+    }
+
     fn sample_typescript_output_path(root: &std::path::Path) -> PathBuf {
         root.join("examples/typescript/workflow-service")
     }
@@ -2969,9 +3031,9 @@ mod tests {
     fn sample_support_files(root: &std::path::Path) -> SupportFiles {
         SupportFiles {
             typescript: Some(
-                fs::read_to_string(
-                    root.join("builtins/nexus-temporal-types/typescript/model_overrides.ts"),
-                )
+                fs::read_to_string(root.join(
+                    "examples/inputs/deps/nexus-temporal-types/typescript/model_overrides.ts",
+                ))
                 .unwrap(),
             ),
             ..SupportFiles::default()
@@ -3019,8 +3081,11 @@ mod tests {
     #[test]
     fn renders_sample_output() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let spec =
-            ApiSpec::load_for_language(Language::TypeScript, &sample_input_path(&root)).unwrap();
+        let spec = ApiSpec::load_for_language_with_inputs(
+            Language::TypeScript,
+            &example_input_paths(&root, sample_input_path(&root)),
+        )
+        .unwrap();
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let support = sample_support_files(&root);
@@ -3066,8 +3131,11 @@ mod tests {
     #[test]
     fn renders_required_fields_and_custom_message_types() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let spec =
-            ApiSpec::load_for_language(Language::TypeScript, &sample_input_path(&root)).unwrap();
+        let spec = ApiSpec::load_for_language_with_inputs(
+            Language::TypeScript,
+            &example_input_paths(&root, sample_input_path(&root)),
+        )
+        .unwrap();
         let descriptors =
             DescriptorIndex::load(&root.join("examples/descriptors/temporal_api.bin")).unwrap();
         let support = sample_support_files(&root);
@@ -3094,11 +3162,14 @@ mod tests {
         assert!(output.contains(
             "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowRequestBase, \"workflow\", \"args\">"
         ));
-        assert!(output.contains("workflowId: string;"));
+        assert!(output.contains("id: string;"));
         assert!(output.contains("taskQueue: string;"));
-        assert!(output.contains("workflowRunTimeout?: common.Duration;"));
-        assert!(output.contains("workflowIdReusePolicy?: common.WorkflowIdReusePolicy;"));
-        assert!(output.contains("workflowIdConflictPolicy?: common.WorkflowIdConflictPolicy;"));
+        assert!(output.contains("runTimeout?: common.Duration;"));
+        assert!(output.contains("idReusePolicy?: common.WorkflowIdReusePolicy;"));
+        assert!(output.contains("common.WorkflowIdReusePolicy.ALLOW_DUPLICATE"));
+        assert!(output.contains("idConflictPolicy?: common.WorkflowIdConflictPolicy;"));
+        assert!(output.contains("common.WorkflowIdConflictPolicy.FAIL"));
+        assert!(!output.contains("identity?: string;"));
         assert!(output.contains("memo?: Record<string, unknown>;"));
         assert!(output.contains(
             "searchAttributes?: common.TypedSearchAttributes | common.SearchAttributes;"
@@ -3117,7 +3188,7 @@ mod tests {
         assert!(output.contains("workflowType: workflowTypeToProto("));
         assert!(output.contains("taskQueue: taskQueueToProto("));
         assert!(output.contains(
-            "workflowRunTimeout: model.workflowRunTimeout == null ? undefined : durationToProto(model.workflowRunTimeout),"
+            "workflowRunTimeout: model.runTimeout == null ? undefined : durationToProto(model.runTimeout),"
         ));
         assert!(output.contains("memo: model.memo == null ? undefined : memoToProto(model.memo),"));
         assert!(output.contains(
@@ -3151,17 +3222,19 @@ mod tests {
         assert!(!output.contains("export enum WorkflowIdConflictPolicy"));
         assert!(!output.contains("signalWithStartWorkflowExecution("));
         assert!(output.contains("export async function signalWithStartWorkflow<"));
-        assert!(output.contains(
-            "request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,"
-        ));
+        assert!(
+            output.contains("request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,")
+        );
         assert!(output.contains("const client = workflow.createNexusServiceClient({"));
         assert!(!output.contains("export class WorkflowServiceClient"));
         assert!(!output.contains("from './model_overrides.ts'"));
         assert!(!output.contains("// Included from support.$typescript"));
 
-        let type_roundtrip_spec =
-            ApiSpec::load_for_language(Language::TypeScript, &type_roundtrip_input_path(&root))
-                .unwrap();
+        let type_roundtrip_spec = ApiSpec::load_for_language_with_inputs(
+            Language::TypeScript,
+            &example_input_paths(&root, type_roundtrip_input_path(&root)),
+        )
+        .unwrap();
         let type_roundtrip_output = generate_source(
             Language::TypeScript,
             &type_roundtrip_spec,
@@ -3254,9 +3327,15 @@ interface workflow-service {
   ) -> signal-with-start-workflow-response;
 }
 "#;
-        let spec =
-            ApiSpec::parse_for_language(Language::TypeScript, wit, PathBuf::from("inline.wit"))
-                .unwrap();
+        let spec = ApiSpec::parse_for_language_with_inputs(
+            Language::TypeScript,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path(&PathBuf::from(env!(
+                "CARGO_MANIFEST_DIR"
+            )))],
+        )
+        .unwrap();
         let descriptors = DescriptorIndex::load(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples/descriptors/temporal_api.bin"),
@@ -3292,9 +3371,15 @@ interface example-service {
   example-operation: func(request: retry-policy) -> retry-policy;
 }
 "#;
-        let spec =
-            ApiSpec::parse_for_language(Language::TypeScript, wit, PathBuf::from("inline.wit"))
-                .unwrap();
+        let spec = ApiSpec::parse_for_language_with_inputs(
+            Language::TypeScript,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path(&PathBuf::from(env!(
+                "CARGO_MANIFEST_DIR"
+            )))],
+        )
+        .unwrap();
         let descriptors = DescriptorIndex::load(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples/descriptors/temporal_api.bin"),

@@ -14,8 +14,8 @@ class GetUserRequest:
 
 @dataclasses.dataclass(slots=True)
 class UpdateEmailRequest:
-    email: str
     user_id: str
+    email: str
 
 
 nexus_api_gen_runtime.register_nexus_type(

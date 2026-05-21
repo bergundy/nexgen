@@ -29,11 +29,11 @@ async def _set_profile(
 
 async def set_profile(
     *,
-    profile: UserProfile,
     user_id: str,
+    profile: UserProfile,
 ) -> User:
     request = SetProfileRequest(
-        profile=profile,
         user_id=user_id,
+        profile=profile,
     )
     return await _set_profile(request)

@@ -35,6 +35,7 @@ checked in for Python and TypeScript, with one test file per language example.
 
 Supporting example files:
 
+- [`inputs/deps/`](inputs/deps/): reusable Temporal semantic/common type WIT inputs linked into proto-backed example generation.
 - [`descriptors/temporal_api.bin`](descriptors/temporal_api.bin): Temporal API descriptor set used by proto-backed examples.
 - [`python/README.md`](python/README.md): Python example suite workflow.
 - [`typescript/README.md`](typescript/README.md): TypeScript example suite workflow.

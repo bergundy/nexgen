@@ -27,24 +27,34 @@ interface workflow-service {
   record signal-with-start-workflow-request {
     /// @nexus.proto-field "workflow_type"
     workflow: workflow-function,
-    workflow-id: string,
+    /// @nexus.proto-field "workflow_id"
+    id: string,
     task-queue: task-queue,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    workflow-execution-timeout: option<duration>,
-    workflow-run-timeout: option<duration>,
-    workflow-task-timeout: option<duration>,
-    identity: option<string>,
+    /// @nexus.proto-field "workflow_execution_timeout"
+    execution-timeout: option<duration>,
+    /// @nexus.proto-field "workflow_run_timeout"
+    run-timeout: option<duration>,
+    /// @nexus.proto-field "workflow_task_timeout"
+    task-timeout: option<duration>,
+    /// @nexus.omit
+    identity: placeholder,
     request-id: option<string>,
-    workflow-id-reuse-policy: option<workflow-id-reuse-policy>,
-    workflow-id-conflict-policy: option<workflow-id-conflict-policy>,
+    /// @nexus.proto-field "workflow_id_reuse_policy"
+    /// @nexus.default "allow-duplicate"
+    id-reuse-policy: workflow-id-reuse-policy,
+    /// @nexus.proto-field "workflow_id_conflict_policy"
+    /// @nexus.default "fail"
+    id-conflict-policy: workflow-id-conflict-policy,
     retry-policy: option<retry-policy>,
     cron-schedule: option<string>,
     memo: option<memo>,
     search-attributes: option<search-attributes>,
     priority: option<priority>,
     versioning-override: option<versioning-override>,
-    workflow-start-delay: option<duration>,
+    /// @nexus.proto-field "workflow_start_delay"
+    start-delay: option<duration>,
     user-metadata: option<user-metadata>,
     /// @nexus.source python="workflow_namespace" typescript="workflowNamespace"
     namespace: string,
@@ -68,9 +78,9 @@ interface workflow-service {
 
   /// @nexus.output-transform
   ///   python-type="workflow.ExternalWorkflowHandle[typing.Any]"
-  ///   python="workflow.get_external_workflow_handle(request.workflow_id, run_id=result.run_id)"
+  ///   python="workflow.get_external_workflow_handle(request.id, run_id=result.run_id)"
   ///   typescript-type="workflow.ExternalWorkflowHandle"
-  ///   typescript="workflow.getExternalWorkflowHandle(request.workflowId, result.runId ?? undefined)"
+  ///   typescript="workflow.getExternalWorkflowHandle(request.id, result.runId ?? undefined)"
   /// @nexus.operation name="SignalWithStartWorkflowExecution"
   signal-with-start-workflow: func(
     request: signal-with-start-workflow-request,

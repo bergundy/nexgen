@@ -225,6 +225,7 @@ pub(crate) struct PlannedField {
     pub(crate) proto_name: String,
     pub(crate) authored_name: String,
     pub(crate) annotation_override: Option<crate::spec::LanguageStringSpec>,
+    pub(crate) default_value: Option<PlannedFieldDefault>,
     pub(crate) required: bool,
     pub(crate) has_presence: bool,
     pub(crate) role: PlannedFieldRole,
@@ -233,6 +234,11 @@ pub(crate) struct PlannedField {
     pub(crate) with_arguments: Option<WithArgumentsFieldSpec>,
     pub(crate) with_arguments_args: bool,
     pub(crate) kind: PlannedFieldKind,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlannedFieldDefault {
+    pub(crate) enum_case: String,
 }
 
 #[derive(Debug, Clone)]
@@ -914,10 +920,8 @@ fn ensure_model_plan(
         },
     );
 
-    let fields = message
-        .descriptor
-        .field
-        .iter()
+    let fields = planned_message_fields(message, &generated_model)
+        .into_iter()
         .filter(|field| {
             let proto_name = field
                 .name
@@ -930,10 +934,8 @@ fn ensure_model_plan(
         .map(|field| plan_field(message, field, spec, descriptors, plan))
         .collect();
 
-    let sourced_fields = message
-        .descriptor
-        .field
-        .iter()
+    let sourced_fields = planned_message_fields(message, &generated_model)
+        .into_iter()
         .filter_map(|field| {
             let proto_name = field
                 .name
@@ -953,6 +955,33 @@ fn ensure_model_plan(
         .expect("model should be inserted before recursive field planning");
     model.fields = fields;
     model.sourced_fields = sourced_fields;
+}
+
+fn planned_message_fields<'a>(
+    message: &'a MessageMetadata,
+    generated_model: &GeneratedModelSpec,
+) -> Vec<&'a FieldDescriptorProto> {
+    if generated_model.declared_fields.is_empty() {
+        return message.descriptor.field.iter().collect();
+    }
+
+    generated_model
+        .declared_fields
+        .iter()
+        .map(|field_name| descriptor_field_by_name(message, field_name))
+        .collect()
+}
+
+fn descriptor_field_by_name<'a>(
+    message: &'a MessageMetadata,
+    field_name: &str,
+) -> &'a FieldDescriptorProto {
+    message
+        .descriptor
+        .field
+        .iter()
+        .find(|field| field.name.as_deref() == Some(field_name))
+        .expect("declared generated model field should exist in descriptor")
 }
 
 fn ensure_enum_plan(enumeration: &EnumMetadata, plan: &mut ApiPlan) {
@@ -1065,6 +1094,11 @@ fn plan_field(
         annotation_override: generated_model
             .and_then(|generated_model| generated_model.field_annotation(&proto_name))
             .cloned(),
+        default_value: generated_model
+            .and_then(|generated_model| generated_model.field_default(&proto_name))
+            .map(|field_default| PlannedFieldDefault {
+                enum_case: field_default.enum_case.clone(),
+            }),
         required: spec
             .type_override(&message.full_name)
             .is_some_and(|type_override| type_override.is_field_required(&proto_name)),
@@ -1107,6 +1141,12 @@ fn plan_wit_field(
             .unwrap_or(field_name)
             .to_string(),
         annotation_override: record.generated_model.field_annotation(field_name).cloned(),
+        default_value: record
+            .generated_model
+            .field_default(field_name)
+            .map(|field_default| PlannedFieldDefault {
+                enum_case: field_default.enum_case.clone(),
+            }),
         required: record.required_fields.contains(field_name),
         has_presence: !record.required_fields.contains(field_name),
         role: planned_field_role(Some(&record.generated_model), field_name),

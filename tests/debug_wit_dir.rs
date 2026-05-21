@@ -12,6 +12,10 @@ fn sample_input_path(root: &Path) -> PathBuf {
     root.join("examples/inputs/workflow-service.wit")
 }
 
+fn linked_inputs_path(root: &Path) -> PathBuf {
+    root.join("examples/inputs/deps")
+}
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -30,6 +34,8 @@ fn cli_debug_wit_dir_writes_prepared_workspace() {
             "debug-wit-dir",
             "--input",
             sample_input_path(&root).to_str().unwrap(),
+            "--input",
+            linked_inputs_path(&root).to_str().unwrap(),
             "--output",
             output_dir.to_str().unwrap(),
         ])
@@ -57,9 +63,33 @@ fn cli_debug_wit_dir_writes_prepared_workspace() {
     let input = fs::read_to_string(output_dir.join("workflow-service.wit")).unwrap();
     assert!(input.contains("package temporal:nexus@1.0.0;"));
 
-    let builtin =
+    let linked_type =
         fs::read_to_string(output_dir.join("deps/nexus-temporal-types/model.wit")).unwrap();
-    assert!(builtin.contains("package nexus:temporal-types@1.0.0;"));
+    assert!(linked_type.contains("package nexus:temporal-types@1.0.0;"));
+
+    let _ = fs::remove_dir_all(output_dir);
+}
+
+#[test]
+fn cli_debug_wit_dir_uses_only_the_given_inputs() {
+    let root = project_root();
+    let output_dir = unique_temp_dir("debug-wit-dir-no-defaults");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_nexus-api-gen"))
+        .args([
+            "debug-wit-dir",
+            "--input",
+            root.join("examples/inputs/user-service.wit")
+                .to_str()
+                .unwrap(),
+            "--output",
+            output_dir.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+
+    assert!(status.success());
+    assert!(!output_dir.join("deps/nexus-temporal-types").exists());
 
     let _ = fs::remove_dir_all(output_dir);
 }

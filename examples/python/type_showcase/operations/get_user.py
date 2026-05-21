@@ -26,11 +26,11 @@ async def _get_user(
 
 async def get_user(
     *,
-    consistency_token: str | None = None,
     user_id: str,
+    consistency_token: str | None = None,
 ) -> User:
     request = GetUserRequest(
-        consistency_token=consistency_token,
         user_id=user_id,
+        consistency_token=consistency_token,
     )
     return await _get_user(request)

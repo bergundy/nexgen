@@ -20,8 +20,8 @@ class User:
         email: str,
     ) -> User:
         request = UpdateEmailRequest(
-            email=email,
             user_id=self.user_id,
+            email=email,
         )
         return await _update_email(request)
 
@@ -43,12 +43,12 @@ async def _update_email(
 
 async def update_email(
     *,
-    email: str,
     user_id: str,
+    email: str,
 ) -> User:
     request = UpdateEmailRequest(
-        email=email,
         user_id=user_id,
+        email=email,
     )
     return await _update_email(request)
 

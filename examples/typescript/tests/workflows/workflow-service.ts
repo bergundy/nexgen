@@ -18,14 +18,13 @@ export async function workflowServiceCaller(): Promise<{
   const handle = await signalWithStartWorkflow({
     workflow: exampleWorkflow,
     args: [3, "nexus"],
-    workflowId: "workflow-id",
+    id: "workflow-id",
     taskQueue: "demo-task-queue",
-    identity: "example-worker",
     requestId: "example-request",
     signal: wakeUpSignal,
     signalArgs: [7, "hello"],
     cronSchedule: "",
-    workflowRunTimeout: "5 minutes",
+    runTimeout: "5 minutes",
   });
   return {
     runId: handle.runId,

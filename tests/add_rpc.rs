@@ -17,6 +17,18 @@ fn descriptor_path(root: &std::path::Path) -> PathBuf {
     root.join("examples/descriptors/temporal_api.bin")
 }
 
+fn linked_inputs_path(root: &std::path::Path) -> PathBuf {
+    root.join("examples/inputs/deps")
+}
+
+fn linked_inputs(root: &std::path::Path) -> Vec<PathBuf> {
+    vec![linked_inputs_path(root)]
+}
+
+fn merge_inputs(root: &std::path::Path, input_path: PathBuf) -> Vec<PathBuf> {
+    vec![input_path, linked_inputs_path(root)]
+}
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -34,7 +46,14 @@ fn write_temp_wit(name: &str, contents: &str) -> PathBuf {
 }
 
 fn parse(language: Language, wit: &str, path: &str) -> ApiSpec {
-    ApiSpec::parse_for_language(language, wit, PathBuf::from(path)).unwrap()
+    let root = project_root();
+    ApiSpec::parse_for_language_with_inputs(
+        language,
+        wit,
+        PathBuf::from(path),
+        &[linked_inputs_path(&root)],
+    )
+    .unwrap()
 }
 
 #[test]
@@ -47,6 +66,8 @@ fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
             descriptor_path(&root).to_str().unwrap(),
             "--rpc",
             "SignalWithStartExecution",
+            "--input",
+            linked_inputs_path(&root).to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -73,14 +94,25 @@ fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
 fn add_rpc_matches_signal_with_start_proto_shape_but_not_handwritten_refinements() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
-    let generated = add_rpc_to_string(&[descriptors], "SignalWithStartExecution", None).unwrap();
+    let generated = add_rpc_to_string(
+        &[descriptors],
+        "SignalWithStartExecution",
+        &linked_inputs(&root),
+    )
+    .unwrap();
 
     let generated_python = parse(Language::Python, &generated, "generated-add-rpc.wit");
-    let handwritten_python =
-        ApiSpec::load_for_language(Language::Python, &root.join(PRIMARY_EXAMPLE_PATH)).unwrap();
+    let handwritten_python = ApiSpec::load_for_language_with_inputs(
+        Language::Python,
+        &[root.join(PRIMARY_EXAMPLE_PATH), linked_inputs_path(&root)],
+    )
+    .unwrap();
     let generated_typescript = parse(Language::TypeScript, &generated, "generated-add-rpc.wit");
-    let handwritten_typescript =
-        ApiSpec::load_for_language(Language::TypeScript, &root.join(PRIMARY_EXAMPLE_PATH)).unwrap();
+    let handwritten_typescript = ApiSpec::load_for_language_with_inputs(
+        Language::TypeScript,
+        &[root.join(PRIMARY_EXAMPLE_PATH), linked_inputs_path(&root)],
+    )
+    .unwrap();
 
     let generated_python_service = &generated_python.services[0];
     let handwritten_python_service = &handwritten_python.services[0];
@@ -216,8 +248,12 @@ fn add_rpc_can_extend_an_existing_wit_file() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
     let input = root.join(PRIMARY_EXAMPLE_PATH);
-    let generated =
-        add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input)).unwrap();
+    let generated = add_rpc_to_string(
+        &[descriptors],
+        "SignalWorkflowExecution",
+        &merge_inputs(&root, input),
+    )
+    .unwrap();
 
     assert!(generated.contains("signal-with-start-workflow: func("));
     assert!(generated.contains("signal-workflow-execution: func("));
@@ -232,11 +268,7 @@ fn add_rpc_can_extend_an_existing_wit_file() {
 
     let parsed = parse(Language::Python, &generated, "extended-input.wit");
     let service = &parsed.services[0];
-    assert!(
-        service
-            .operation("SignalWithStartWorkflow")
-            .is_some()
-    );
+    assert!(service.operation("SignalWithStartWorkflow").is_some());
     assert!(service.operation("SignalWorkflowExecution").is_some());
 }
 
@@ -245,12 +277,18 @@ fn add_rpc_can_update_existing_signal_with_start_operation() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
     let input = root.join(PRIMARY_EXAMPLE_PATH);
-    let generated =
-        add_rpc_to_string(&[descriptors], "SignalWithStartExecution", Some(&input)).unwrap();
+    let generated = add_rpc_to_string(
+        &[descriptors],
+        "SignalWithStartExecution",
+        &merge_inputs(&root, input),
+    )
+    .unwrap();
 
     assert!(generated.contains("signal-with-start-workflow: func("));
     assert_eq!(
-        generated.matches("signal-with-start-workflow: func(").count(),
+        generated
+            .matches("signal-with-start-workflow: func(")
+            .count(),
         1
     );
     assert!(generated.contains("workflow: workflow-function,"));
@@ -278,15 +316,19 @@ fn add_rpc_can_update_existing_signal_with_start_operation() {
 fn add_rpc_adds_missing_field_to_existing_operation_request() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
-    let complete =
-        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let complete = add_rpc_to_string(
+        &[descriptors.clone()],
+        "SignalWorkflowExecution",
+        &linked_inputs(&root),
+    )
+    .unwrap();
     let input = complete.replace("    input: option<payloads>,\n", "");
     let input_path = write_temp_wit("add-rpc-existing-partial", &input);
 
     let generated = add_rpc_to_string(
         &[descriptors.clone()],
         "SignalWorkflowExecution",
-        Some(&input_path),
+        &merge_inputs(&root, input_path.clone()),
     )
     .unwrap();
 
@@ -309,13 +351,21 @@ fn add_rpc_adds_missing_field_to_existing_operation_request() {
 fn add_rpc_allows_existing_required_field_when_descriptor_field_is_optional() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
-    let complete =
-        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let complete = add_rpc_to_string(
+        &[descriptors.clone()],
+        "SignalWorkflowExecution",
+        &linked_inputs(&root),
+    )
+    .unwrap();
     let input = complete.replace("    input: option<payloads>,\n", "    input: payloads,\n");
     let input_path = write_temp_wit("add-rpc-existing-required-tightening", &input);
 
-    let generated =
-        add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path)).unwrap();
+    let generated = add_rpc_to_string(
+        &[descriptors],
+        "SignalWorkflowExecution",
+        &merge_inputs(&root, input_path.clone()),
+    )
+    .unwrap();
 
     assert!(generated.contains("input: payloads,"));
     assert!(!generated.contains("input: option<payloads>,"));
@@ -335,13 +385,21 @@ fn add_rpc_allows_existing_required_field_when_descriptor_field_is_optional() {
 fn add_rpc_allows_existing_optional_field_when_descriptor_field_is_required() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
-    let complete =
-        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let complete = add_rpc_to_string(
+        &[descriptors.clone()],
+        "SignalWorkflowExecution",
+        &linked_inputs(&root),
+    )
+    .unwrap();
     let input = complete.replace("    identity: string,\n", "    identity: option<string>,\n");
     let input_path = write_temp_wit("add-rpc-existing-optional-relaxation", &input);
 
-    let generated =
-        add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path)).unwrap();
+    let generated = add_rpc_to_string(
+        &[descriptors],
+        "SignalWorkflowExecution",
+        &merge_inputs(&root, input_path.clone()),
+    )
+    .unwrap();
 
     assert!(generated.contains("identity: option<string>,"));
     assert!(!generated.contains("identity: string,"));
@@ -361,13 +419,21 @@ fn add_rpc_allows_existing_optional_field_when_descriptor_field_is_required() {
 fn add_rpc_fails_when_existing_operation_request_conflicts_with_descriptor() {
     let root = project_root();
     let descriptors = descriptor_path(&root);
-    let complete =
-        add_rpc_to_string(&[descriptors.clone()], "SignalWorkflowExecution", None).unwrap();
+    let complete = add_rpc_to_string(
+        &[descriptors.clone()],
+        "SignalWorkflowExecution",
+        &linked_inputs(&root),
+    )
+    .unwrap();
     let input = complete.replace("    signal-name: string,\n", "    signal-name: bool,\n");
     let input_path = write_temp_wit("add-rpc-existing-conflict", &input);
 
-    let error = add_rpc_to_string(&[descriptors], "SignalWorkflowExecution", Some(&input_path))
-        .unwrap_err();
+    let error = add_rpc_to_string(
+        &[descriptors],
+        "SignalWorkflowExecution",
+        &merge_inputs(&root, input_path.clone()),
+    )
+    .unwrap_err();
 
     let message = error.to_string();
     assert!(message.contains("existing WIT field is `signal-name: bool`"));

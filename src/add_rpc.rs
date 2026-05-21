@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use heck::{ToKebabCase, ToUpperCamelCase};
 use prost_types::FieldDescriptorProto;
@@ -11,8 +11,8 @@ use wit_parser::{
 use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata, RpcMetadata};
 use crate::error::{Error, Result};
 use crate::spec::{
-    BuiltinWitMetadata, find_proto_name_for_type, find_proto_name_for_type_def,
-    load_builtin_wit_metadata, parse_wit_with_builtins, select_world,
+    LinkedWitMetadata, find_proto_name_for_type, find_proto_name_for_type_def,
+    load_linked_wit_metadata_from_inputs, parse_wit_with_inputs, select_world,
     wire_operation_name_from_docs,
 };
 
@@ -20,10 +20,14 @@ const DEFAULT_PACKAGE_NAME: &str = "temporal:nexus@1.0.0";
 const DEFAULT_WORLD_NAME: &str = "system";
 const DEFAULT_ENDPOINT_PLACEHOLDER: &str = "__REPLACE_ME__";
 
-pub fn generate_add_rpc_wit(descriptors: &DescriptorIndex, rpc_name: &str) -> Result<String> {
+pub fn generate_add_rpc_wit(
+    descriptors: &DescriptorIndex,
+    rpc_name: &str,
+    input_paths: &[PathBuf],
+) -> Result<String> {
     let rpc = descriptors.resolve_rpc(rpc_name)?;
-    let builtin_wit = load_builtin_wit_metadata()?;
-    AddRpcBuilder::new(descriptors, rpc, builtin_wit)
+    let linked_wit = load_linked_wit_metadata_from_inputs(input_paths)?;
+    AddRpcBuilder::new(descriptors, rpc, linked_wit)
         .build()
         .map(|rendered| rendered.render_standalone())
 }
@@ -33,36 +37,37 @@ pub fn generate_add_rpc_wit_with_input(
     rpc_name: &str,
     input_path: &Path,
     input: &str,
+    linked_input_paths: &[PathBuf],
 ) -> Result<String> {
     let rpc = descriptors.resolve_rpc(rpc_name)?;
-    let builtin_wit = load_builtin_wit_metadata()?;
-    let existing = ExistingWitDocument::load(input_path, input)?;
+    let linked_wit = load_linked_wit_metadata_from_inputs(linked_input_paths)?;
+    let existing = ExistingWitDocument::load(input_path, input, linked_input_paths)?;
     let interface_name = rpc.service_name.to_kebab_case();
     let operation_name = rpc.name.to_kebab_case();
 
     if let Some(interface) = existing.interfaces.get(&interface_name) {
         if interface.function_names.contains(&operation_name) {
-            let update = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
+            let update = AddRpcBuilder::new(descriptors, rpc, linked_wit)
                 .with_existing_interface(interface)
                 .build_existing_operation_update(interface, &operation_name)?;
             return update.apply(input, &interface_name);
         }
         if let Some(existing_operation_name) = interface.function_names_by_wire_name.get(&rpc.name)
         {
-            let update = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
+            let update = AddRpcBuilder::new(descriptors, rpc, linked_wit)
                 .with_existing_interface(interface)
                 .build_existing_operation_update(interface, existing_operation_name)?;
             return update.apply(input, &interface_name);
         }
 
-        let rendered = AddRpcBuilder::new(descriptors, rpc, builtin_wit)
+        let rendered = AddRpcBuilder::new(descriptors, rpc, linked_wit)
             .with_existing_interface(interface)
             .build()?;
         let snippet = rendered.render_interface_items();
         return insert_into_named_block(input, "interface", &interface_name, &snippet);
     }
 
-    let rendered = AddRpcBuilder::new(descriptors, rpc, builtin_wit).build()?;
+    let rendered = AddRpcBuilder::new(descriptors, rpc, linked_wit).build()?;
     let source = insert_world_export(input, &existing.world_name, &interface_name)?;
     let interface_block = rendered.render_new_interface_block();
     insert_after_named_block(&source, "world", &existing.world_name, &interface_block)
@@ -75,8 +80,8 @@ struct ExistingWitDocument {
 }
 
 impl ExistingWitDocument {
-    fn load(path: &Path, input: &str) -> Result<Self> {
-        let parsed = parse_wit_with_builtins(input, path)?;
+    fn load(path: &Path, input: &str, linked_input_paths: &[PathBuf]) -> Result<Self> {
+        let parsed = parse_wit_with_inputs(input, path, linked_input_paths)?;
         let world_id = select_world(&parsed.resolve, parsed.package_id, path)?;
         let world = &parsed.resolve.worlds[world_id];
 
@@ -135,14 +140,9 @@ impl ExistingInterface {
 
         for (function_name, function) in &interface.functions {
             let context = format!("interface `{export_name}` function `{function_name}`");
-            let function =
-                ExistingFunction::from_resolve(resolve, function, path, &context)?;
-            function_names_by_wire_name
-                .insert(function.wire_name.clone(), function_name.clone());
-            functions.insert(
-                function_name.clone(),
-                function,
-            );
+            let function = ExistingFunction::from_resolve(resolve, function, path, &context)?;
+            function_names_by_wire_name.insert(function.wire_name.clone(), function_name.clone());
+            functions.insert(function_name.clone(), function);
         }
 
         for (type_name, type_id) in &interface.types {
@@ -281,8 +281,8 @@ struct ExistingField {
 struct AddRpcBuilder<'a> {
     descriptors: &'a DescriptorIndex,
     rpc: &'a RpcMetadata,
-    builtin_wit: BuiltinWitMetadata,
-    builtin_uses: BTreeMap<String, BTreeSet<String>>,
+    linked_wit: LinkedWitMetadata,
+    linked_uses: BTreeMap<String, BTreeSet<String>>,
     available_type_names: BTreeMap<String, String>,
     reserved_type_names: BTreeSet<String>,
     rendered_types: BTreeSet<String>,
@@ -293,13 +293,13 @@ impl<'a> AddRpcBuilder<'a> {
     fn new(
         descriptors: &'a DescriptorIndex,
         rpc: &'a RpcMetadata,
-        builtin_wit: BuiltinWitMetadata,
+        linked_wit: LinkedWitMetadata,
     ) -> Self {
         Self {
             descriptors,
             rpc,
-            builtin_wit,
-            builtin_uses: BTreeMap::new(),
+            linked_wit,
+            linked_uses: BTreeMap::new(),
             available_type_names: BTreeMap::new(),
             reserved_type_names: BTreeSet::new(),
             rendered_types: BTreeSet::new(),
@@ -320,7 +320,7 @@ impl<'a> AddRpcBuilder<'a> {
         Ok(RenderedAddRpcWit {
             rpc_full_name: self.rpc.full_name.clone(),
             interface_name: self.rpc.service_name.to_kebab_case(),
-            builtin_uses: self.builtin_uses,
+            linked_uses: self.linked_uses,
             rendered_definitions: self.rendered_definitions,
             operation: format!(
                 "  {}: func(\n    request: {},\n  ) -> {};\n",
@@ -370,7 +370,7 @@ impl<'a> AddRpcBuilder<'a> {
         }
 
         Ok(ExistingOperationUpdate {
-            builtin_uses: self.builtin_uses,
+            linked_uses: self.linked_uses,
             rendered_definitions: self.rendered_definitions,
             record_updates,
         })
@@ -527,7 +527,7 @@ impl<'a> AddRpcBuilder<'a> {
             if !visited.insert(current.to_string()) {
                 continue;
             }
-            if let Some(targets) = self.builtin_wit.type_compatibility.get(current) {
+            if let Some(targets) = self.linked_wit.type_compatibility.get(current) {
                 pending.extend(targets.iter().map(String::as_str));
             }
         }
@@ -536,7 +536,7 @@ impl<'a> AddRpcBuilder<'a> {
 
     fn record_has_field_covering_proto(&self, record: &ExistingRecord, proto_name: &str) -> bool {
         record.fields.values().any(|field| {
-            self.builtin_wit
+            self.linked_wit
                 .type_covered_fields
                 .get(base_type_expr(&field.type_expr))
                 .is_some_and(|covered_fields| covered_fields.contains(proto_name))
@@ -549,9 +549,9 @@ impl<'a> AddRpcBuilder<'a> {
             return Ok(existing_name.clone());
         }
 
-        if let Some(builtin) = self.builtin_wit.proto_types.get(proto_name).cloned() {
-            self.use_builtin_type(proto_name, &builtin.wit_name)?;
-            return Ok(builtin.wit_name);
+        if let Some(linked_type) = self.linked_wit.proto_types.get(proto_name).cloned() {
+            self.use_linked_type(proto_name, &linked_type.wit_name)?;
+            return Ok(linked_type.wit_name);
         }
 
         if let Some(message) = self.descriptors.message(proto_name) {
@@ -623,7 +623,7 @@ impl<'a> AddRpcBuilder<'a> {
         message: &MessageMetadata,
         field: &FieldDescriptorProto,
     ) -> Result<RenderedFieldSpec> {
-        let builtin_uses = self.builtin_uses.clone();
+        let linked_uses = self.linked_uses.clone();
         let available_type_names = self.available_type_names.clone();
         let reserved_type_names = self.reserved_type_names.clone();
         let rendered_types = self.rendered_types.clone();
@@ -631,7 +631,7 @@ impl<'a> AddRpcBuilder<'a> {
 
         let rendered = self.render_message_field(message, field);
 
-        self.builtin_uses = builtin_uses;
+        self.linked_uses = linked_uses;
         self.available_type_names = available_type_names;
         self.reserved_type_names = reserved_type_names;
         self.rendered_types = rendered_types;
@@ -736,11 +736,11 @@ impl<'a> AddRpcBuilder<'a> {
         Ok(wit_name)
     }
 
-    fn use_builtin_type(&mut self, proto_name: &str, wit_name: &str) -> Result<()> {
-        let Some(use_path) = self.builtin_wit.type_use_paths.get(wit_name) else {
+    fn use_linked_type(&mut self, proto_name: &str, wit_name: &str) -> Result<()> {
+        let Some(use_path) = self.linked_wit.type_use_paths.get(wit_name) else {
             return Err(Error::UnsupportedAddRpc {
                 context: self.rpc.full_name.clone(),
-                reason: format!("built-in WIT type `{wit_name}` was not found in bundled metadata"),
+                reason: format!("linked WIT type `{wit_name}` was not found in linked metadata"),
             });
         };
 
@@ -749,7 +749,7 @@ impl<'a> AddRpcBuilder<'a> {
             .insert(proto_name.to_string(), wit_name.to_string());
         self.reserved_type_names.insert(wit_name.to_string());
         if !already_in_scope {
-            self.builtin_uses
+            self.linked_uses
                 .entry(use_path.clone())
                 .or_default()
                 .insert(wit_name.to_string());
@@ -779,7 +779,7 @@ struct RenderedFieldSpec {
 }
 
 struct ExistingOperationUpdate {
-    builtin_uses: BTreeMap<String, BTreeSet<String>>,
+    linked_uses: BTreeMap<String, BTreeSet<String>>,
     rendered_definitions: Vec<String>,
     record_updates: Vec<RecordFieldUpdate>,
 }
@@ -788,7 +788,7 @@ impl ExistingOperationUpdate {
     fn apply(&self, input: &str, interface_name: &str) -> Result<String> {
         let mut source = input.to_string();
         let interface_additions =
-            render_interface_additions(&self.builtin_uses, &self.rendered_definitions);
+            render_interface_additions(&self.linked_uses, &self.rendered_definitions);
         if !interface_additions.is_empty() {
             source = insert_into_named_block(
                 &source,
@@ -817,7 +817,7 @@ struct RecordFieldUpdate {
 struct RenderedAddRpcWit {
     rpc_full_name: String,
     interface_name: String,
-    builtin_uses: BTreeMap<String, BTreeSet<String>>,
+    linked_uses: BTreeMap<String, BTreeSet<String>>,
     rendered_definitions: Vec<String>,
     operation: String,
 }
@@ -853,7 +853,7 @@ impl RenderedAddRpcWit {
 
     fn render_interface_items(&self) -> String {
         let mut rendered =
-            render_interface_additions(&self.builtin_uses, &self.rendered_definitions);
+            render_interface_additions(&self.linked_uses, &self.rendered_definitions);
         if !rendered.is_empty() {
             rendered.push('\n');
         }
@@ -863,13 +863,13 @@ impl RenderedAddRpcWit {
 }
 
 fn render_interface_additions(
-    builtin_uses: &BTreeMap<String, BTreeSet<String>>,
+    linked_uses: &BTreeMap<String, BTreeSet<String>>,
     rendered_definitions: &[String],
 ) -> String {
     let mut rendered = String::new();
 
-    if !builtin_uses.is_empty() {
-        rendered.push_str(&render_builtin_use_block(builtin_uses));
+    if !linked_uses.is_empty() {
+        rendered.push_str(&render_use_block(linked_uses));
     }
 
     if !rendered_definitions.is_empty() {
@@ -887,12 +887,12 @@ fn render_interface_additions(
     rendered
 }
 
-fn render_builtin_use_block(builtin_uses: &BTreeMap<String, BTreeSet<String>>) -> String {
+fn render_use_block(linked_uses: &BTreeMap<String, BTreeSet<String>>) -> String {
     let mut rendered = String::new();
-    for (use_path, builtins) in builtin_uses {
+    for (use_path, linked_types) in linked_uses {
         rendered.push_str(&format!("  use {use_path}.{{\n"));
-        for builtin in builtins {
-            rendered.push_str(&format!("    {builtin},\n"));
+        for linked_type in linked_types {
+            rendered.push_str(&format!("    {linked_type},\n"));
         }
         rendered.push_str("  };\n");
     }

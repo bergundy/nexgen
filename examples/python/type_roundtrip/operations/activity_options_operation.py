@@ -30,16 +30,16 @@ async def _activity_options_operation(
 async def activity_options_operation(
     *,
     task_queue: str | None = None,
-    schedule_to_close_timeout: timedelta | None = None,
     retry_policy: temporalio.common.RetryPolicy,
+    schedule_to_close_timeout: timedelta | None = None,
     priority: temporalio.common.Priority | None = None,
 ) -> workflow.NexusOperationHandle[
     temporalio.api.activity.v1.message_pb2.ActivityOptions,
 ]:
     request = ActivityOptions(
         task_queue=task_queue,
-        schedule_to_close_timeout=schedule_to_close_timeout,
         retry_policy=retry_policy,
+        schedule_to_close_timeout=schedule_to_close_timeout,
         priority=priority,
     )
     return await _activity_options_operation(request)

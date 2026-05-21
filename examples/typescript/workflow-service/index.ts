@@ -83,23 +83,22 @@ function _RequestArgsToPayloads(
 }
 
 type SignalWithStartWorkflowRequestBase = {
-  workflowId: string;
+  id: string;
   taskQueue: string;
-  workflowExecutionTimeout?: common.Duration;
-  workflowRunTimeout?: common.Duration;
-  workflowTaskTimeout?: common.Duration;
-  identity?: string;
+  executionTimeout?: common.Duration;
+  runTimeout?: common.Duration;
+  taskTimeout?: common.Duration;
   requestId?: string;
-  workflowIdReusePolicy?: common.WorkflowIdReusePolicy;
-  workflowIdConflictPolicy?: common.WorkflowIdConflictPolicy;
+  idReusePolicy?: common.WorkflowIdReusePolicy;
+  idConflictPolicy?: common.WorkflowIdConflictPolicy;
   retryPolicy?: common.RetryPolicy;
   cronSchedule?: string;
   memo?: Record<string, unknown>;
   searchAttributes?: common.TypedSearchAttributes | common.SearchAttributes;
-  workflowStartDelay?: common.Duration;
-  userMetadata?: UserMetadata;
-  versioningOverride?: common.VersioningOverride;
   priority?: common.Priority;
+  versioningOverride?: common.VersioningOverride;
+  startDelay?: common.Duration;
+  userMetadata?: UserMetadata;
 };
 
 export type SignalWithStartWorkflowRequest<
@@ -140,17 +139,18 @@ export const SignalWithStartWorkflowRequest = {
       return undefined;
     }
     return {
-      workflowId: requiredField(
-        model.workflowId,
-        "SignalWithStartWorkflowRequest",
-        "workflowId",
-      ),
       workflowType: workflowTypeToProto(
         requiredField(
           model.workflow,
           "SignalWithStartWorkflowRequest",
           "workflow",
         ),
+      ),
+      input: _RequestArgsToPayloads(model.args),
+      workflowId: requiredField(
+        model.id,
+        "SignalWithStartWorkflowRequest",
+        "id",
       ),
       taskQueue: taskQueueToProto(
         requiredField(
@@ -159,33 +159,33 @@ export const SignalWithStartWorkflowRequest = {
           "taskQueue",
         ),
       ),
-      input: _RequestArgsToPayloads(model.args),
-      workflowExecutionTimeout:
-        model.workflowExecutionTimeout == null
-          ? undefined
-          : durationToProto(model.workflowExecutionTimeout),
-      workflowRunTimeout:
-        model.workflowRunTimeout == null
-          ? undefined
-          : durationToProto(model.workflowRunTimeout),
-      workflowTaskTimeout:
-        model.workflowTaskTimeout == null
-          ? undefined
-          : durationToProto(model.workflowTaskTimeout),
-      identity: model.identity,
-      requestId: model.requestId,
-      workflowIdReusePolicy:
-        model.workflowIdReusePolicy == null
-          ? undefined
-          : workflowIdReusePolicyToProto(model.workflowIdReusePolicy),
-      workflowIdConflictPolicy:
-        model.workflowIdConflictPolicy == null
-          ? undefined
-          : workflowIdConflictPolicyToProto(model.workflowIdConflictPolicy),
       signalName: ((value) => (typeof value === "string" ? value : value.name))(
         requiredField(model.signal, "SignalWithStartWorkflowRequest", "signal"),
       ),
       signalInput: _RequestArgsToPayloads(model.signalArgs),
+      workflowExecutionTimeout:
+        model.executionTimeout == null
+          ? undefined
+          : durationToProto(model.executionTimeout),
+      workflowRunTimeout:
+        model.runTimeout == null
+          ? undefined
+          : durationToProto(model.runTimeout),
+      workflowTaskTimeout:
+        model.taskTimeout == null
+          ? undefined
+          : durationToProto(model.taskTimeout),
+      requestId: model.requestId,
+      workflowIdReusePolicy: workflowIdReusePolicyToProto(
+        model.idReusePolicy == null
+          ? common.WorkflowIdReusePolicy.ALLOW_DUPLICATE
+          : model.idReusePolicy,
+      ),
+      workflowIdConflictPolicy: workflowIdConflictPolicyToProto(
+        model.idConflictPolicy == null
+          ? common.WorkflowIdConflictPolicy.FAIL
+          : model.idConflictPolicy,
+      ),
       retryPolicy:
         model.retryPolicy == null
           ? undefined
@@ -196,20 +196,20 @@ export const SignalWithStartWorkflowRequest = {
         model.searchAttributes == null
           ? undefined
           : searchAttributesToProto(model.searchAttributes),
-      workflowStartDelay:
-        model.workflowStartDelay == null
-          ? undefined
-          : durationToProto(model.workflowStartDelay),
-      userMetadata:
-        model.userMetadata == null
-          ? undefined
-          : (UserMetadata.toProto(model.userMetadata) ?? {}),
+      priority:
+        model.priority == null ? undefined : priorityToProto(model.priority),
       versioningOverride:
         model.versioningOverride == null
           ? undefined
           : versioningOverrideToProto(model.versioningOverride),
-      priority:
-        model.priority == null ? undefined : priorityToProto(model.priority),
+      workflowStartDelay:
+        model.startDelay == null
+          ? undefined
+          : durationToProto(model.startDelay),
+      userMetadata:
+        model.userMetadata == null
+          ? undefined
+          : (UserMetadata.toProto(model.userMetadata) ?? {}),
       namespace: workflowNamespace(),
     };
   },
@@ -281,7 +281,7 @@ export async function signalWithStartWorkflow<
   );
   const result = await handle.result();
   return workflow.getExternalWorkflowHandle(
-    request.workflowId,
+    request.id,
     result.runId ?? undefined,
   );
 }

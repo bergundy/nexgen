@@ -50,7 +50,7 @@ cargo build-examples user-service
 cargo build-examples --lang typescript user-service
 ```
 
-Write the prepared WIT workspace the loader actually parses, including repo-provided builtins under `deps/`:
+Write the prepared WIT workspace the loader actually parses:
 
 ```bash
 cargo run -- debug-wit-dir \
@@ -141,7 +141,7 @@ The examples include small language runtimes that are not generated from WIT:
 
 These runtimes provide shared serialization helpers for WIT-direct values, including the `json/nexus` payload encoding used by the example tests to round-trip generated records and resources through real Temporal Nexus clients. The TypeScript examples also include `nexus-api-gen-payload-converter.cjs` so the Temporal TypeScript SDK can load the same payload converter through its `payloadConverterPath` data-converter hook.
 
-These files are intentionally example/runtime shims. They should eventually be removed once the corresponding Temporal SDKs provide built-in serialization support for Nexus API generator values and resources.
+These files are intentionally example/runtime shims. They should eventually be removed once the corresponding Temporal SDKs provide native serialization support for Nexus API generator values and resources.
 
 ## Proto Backing
 
@@ -201,24 +201,32 @@ Generate a proto-backed example:
 cargo run -- generate \
   --lang python \
   --input examples/inputs/workflow-service.wit \
+  --input examples/inputs/deps \
   --descriptors examples/descriptors/temporal_api.bin \
   --output /tmp/workflow_service
 ```
 
 `--descriptors` can be passed more than once when a proto-backed API depends on multiple descriptor files. Duplicate files or duplicate symbols are rejected.
 
-The tool also ships a bundled WIT package of reusable Temporal semantic/common types:
+The examples include a reusable Temporal semantic/common type WIT input:
 
 - `nexus:temporal-types/model@1.0.0`
 
-That bundled package contributes its own support snippets and proto mappings for common Temporal SDK types.
+Pass it as an additional `--input` when generating an API that uses
+`nexus:temporal-types/model@1.0.0`. For `generate`, the first `--input` is the
+API generation root and later inputs are linked into the parser workspace. For
+`add-rpc`, pass any WIT inputs needed to resolve shared types; when extending an
+existing WIT file, put that file first. A linked input can be a single WIT file,
+a WIT package directory, or a directory containing WIT package directories, so
+`examples/inputs/deps` links every package under it.
 
 Generate WIT for a proto RPC from a descriptor set:
 
 ```bash
 cargo run -- add-rpc \
   --descriptors examples/descriptors/temporal_api.bin \
-  --rpc SignalWithStartExecution
+  --rpc SignalWithStartExecution \
+  --input examples/inputs/deps
 ```
 
 Write the standalone WIT scaffold to a file instead of stdout:
@@ -227,6 +235,7 @@ Write the standalone WIT scaffold to a file instead of stdout:
 cargo run -- add-rpc \
   --descriptors examples/descriptors/temporal_api.bin \
   --rpc temporal.api.workflowservice.v1.WorkflowService.SignalWithStartWorkflowExecution \
+  --input examples/inputs/deps \
   --output /tmp/add-rpc.wit
 ```
 
@@ -236,7 +245,8 @@ Extend an existing WIT file with a new RPC:
 cargo run -- add-rpc \
   --descriptors examples/descriptors/temporal_api.bin \
   --rpc SignalWorkflowExecution \
-  --input examples/inputs/workflow-service.wit
+  --input examples/inputs/workflow-service.wit \
+  --input examples/inputs/deps
 ```
 
 Rewrite the existing WIT file in place by pointing `--output` at the same path:
@@ -246,6 +256,7 @@ cargo run -- add-rpc \
   --descriptors examples/descriptors/temporal_api.bin \
   --rpc SignalWorkflowExecution \
   --input examples/inputs/workflow-service.wit \
+  --input examples/inputs/deps \
   --output examples/inputs/workflow-service.wit
 ```
 

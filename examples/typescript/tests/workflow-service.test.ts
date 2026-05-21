@@ -62,7 +62,6 @@ describe("workflow-service generated output", () => {
       expect(request?.workflowType?.name).toBe("exampleWorkflow");
       expect(request?.workflowId).toBe("workflow-id");
       expect(request?.taskQueue?.name).toBe("demo-task-queue");
-      expect(request?.identity).toBe("example-worker");
       expect(request?.requestId).toBe("example-request");
       expect(request?.signalName).toBe("wake-up");
       expect(request?.cronSchedule).toBe("");
@@ -83,7 +82,6 @@ if (false) {
   }
 
   const taskQueue = "demo-task-queue";
-  const identity = "example-worker";
   const requestId = "example-request";
   const cronSchedule = "";
   const wakeUpSignal = workflow.defineSignal<[number, string]>("wake-up");
@@ -94,9 +92,8 @@ if (false) {
   > = {
     workflow: exampleWorkflow,
     args: [3, "nexus"],
-    workflowId: "workflow-id",
+    id: "workflow-id",
     taskQueue,
-    identity,
     requestId,
     signal: wakeUpSignal,
     signalArgs: [7, "hello"],
@@ -109,9 +106,8 @@ if (false) {
   // @ts-expect-error missing workflow args for a callable workflow
   signalWithStartWorkflow({
     workflow: exampleWorkflow,
-    workflowId: "missing-workflow-input",
+    id: "missing-workflow-input",
     taskQueue,
-    identity,
     requestId,
     signal: "wake-up",
     cronSchedule,
@@ -121,9 +117,8 @@ if (false) {
   signalWithStartWorkflow({
     workflow: exampleWorkflow,
     args: [3, 4],
-    workflowId: "bad-workflow-input",
+    id: "bad-workflow-input",
     taskQueue,
-    identity,
     requestId,
     signal: "wake-up",
     cronSchedule,
@@ -132,9 +127,8 @@ if (false) {
   // @ts-expect-error missing signal args for a signal definition
   signalWithStartWorkflow({
     workflow: "ExampleWorkflow",
-    workflowId: "missing-signal-input",
+    id: "missing-signal-input",
     taskQueue,
-    identity,
     requestId,
     signal: wakeUpSignal,
     cronSchedule,
@@ -143,9 +137,8 @@ if (false) {
   // @ts-expect-error signal args must match the signal definition
   signalWithStartWorkflow({
     workflow: "ExampleWorkflow",
-    workflowId: "bad-signal-input",
+    id: "bad-signal-input",
     taskQueue,
-    identity,
     requestId,
     signal: wakeUpSignal,
     signalArgs: ["wrong", 7],

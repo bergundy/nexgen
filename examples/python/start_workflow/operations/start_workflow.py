@@ -15,16 +15,20 @@ from .._resources import StartedWorkflow
 
 
 def _nexus_normalize_function_args(
-    value: object | tuple[object, ...] | None,
+    value: object | tuple[object, ...] | list[typing.Any] | None,
 ) -> tuple[object, ...] | None:
     if value is None:
         return None
-    if isinstance(value, tuple):
-        return typing.cast(tuple[object, ...], value)
+    if isinstance(value, (tuple, list)):
+        return tuple(typing.cast(collections.abc.Iterable[object], value))
     return (value,)
 
 
+_nexus_arg_unset = object()
+
+
 FirstWorkflowArg = typing.TypeVar("FirstWorkflowArg")
+SecondWorkflowArg = typing.TypeVar("SecondWorkflowArg")
 RemainingWorkflowArgs = typing_extensions.TypeVarTuple("RemainingWorkflowArgs")
 
 
@@ -51,20 +55,21 @@ async def _start_workflow(
 
 @typing.overload
 async def start_workflow(
-    *,
-    workflow_id: str,
     workflow: str,
+    arg: object = ...,
+    *,
+    args: tuple[typing.Any, ...] | list[typing.Any] | None = ...,
+    workflow_id: str,
     task_queue: str,
-    args: tuple[typing.Any, ...] | None = ...,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
 @typing.overload
 async def start_workflow(
-    *,
-    workflow_id: str,
     workflow: collections.abc.Callable[[typing.Any], collections.abc.Awaitable[object]],
+    *,
+    workflow_id: str,
     task_queue: str,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
@@ -72,45 +77,72 @@ async def start_workflow(
 
 @typing.overload
 async def start_workflow(
-    *,
-    workflow_id: str,
     workflow: collections.abc.Callable[
         [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
     ],
+    arg: FirstWorkflowArg,
+    *,
+    workflow_id: str,
     task_queue: str,
-    args: FirstWorkflowArg,
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
 @typing.overload
 async def start_workflow(
-    *,
-    workflow_id: str,
     workflow: collections.abc.Callable[
-        [typing.Any, FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
+        [typing.Any, FirstWorkflowArg], collections.abc.Awaitable[object]
+    ],
+    *,
+    args: tuple[FirstWorkflowArg],
+    workflow_id: str,
+    task_queue: str,
+    workflow_start_delay: timedelta | None = ...,
+) -> StartedWorkflow: ...
+
+
+@typing.overload
+async def start_workflow(
+    workflow: collections.abc.Callable[
+        [
+            typing.Any,
+            FirstWorkflowArg,
+            SecondWorkflowArg,
+            typing_extensions.Unpack[RemainingWorkflowArgs],
+        ],
         collections.abc.Awaitable[object],
     ],
+    *,
+    args: tuple[
+        FirstWorkflowArg,
+        SecondWorkflowArg,
+        typing_extensions.Unpack[RemainingWorkflowArgs],
+    ],
+    workflow_id: str,
     task_queue: str,
-    args: tuple[FirstWorkflowArg, typing_extensions.Unpack[RemainingWorkflowArgs]],
     workflow_start_delay: timedelta | None = ...,
 ) -> StartedWorkflow: ...
 
 
 async def start_workflow(
-    *,
-    workflow_id: str,
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]],
+    arg: object = _nexus_arg_unset,
+    *,
+    args: object | tuple[object, ...] | list[typing.Any] | None = None,
+    workflow_id: str,
     task_queue: str,
-    args: object | tuple[object, ...] | None = None,
     workflow_start_delay: timedelta | None = None,
 ) -> StartedWorkflow:
-    normalized_args = _nexus_normalize_function_args(args)
+    if arg is not _nexus_arg_unset and args is not None:
+        raise TypeError("cannot specify both arg and args")
+    normalized_args = (
+        (arg,) if arg is not _nexus_arg_unset else _nexus_normalize_function_args(args)
+    )
     request = StartWorkflowRequest(
-        workflow_id=workflow_id,
         workflow=workflow,
-        task_queue=task_queue,
         args=normalized_args,
+        workflow_id=workflow_id,
+        task_queue=task_queue,
         workflow_start_delay=workflow_start_delay,
     )
     return await _start_workflow(request)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import typing
 import uuid
 
 from nexusrpc import Operation
@@ -96,8 +97,8 @@ class StartWorkflowCallerWorkflow:
     @workflow.run
     async def run(self) -> tuple[str, str, str | None, str | None]:
         handle = await start_workflow.start_workflow(
-            workflow=ExampleWorkflow.run,
-            args="customer-123",
+            ExampleWorkflow.run,
+            "customer-123",
             workflow_id="workflow-id",
             task_queue=TASK_QUEUE,
         )
@@ -199,4 +200,42 @@ async def test_start_workflow_returns_wrapper_handle(
     assert (
         result_error.value.args[0]
         == "started-workflow.get_result is not yet implemented"
+    )
+
+
+if typing.TYPE_CHECKING:
+    _ = start_workflow.start_workflow(
+        ExampleWorkflow.run,
+        "customer-123",
+        workflow_id="typed-positional-workflow-input",
+        task_queue=TASK_QUEUE,
+    )
+
+    _ = start_workflow.start_workflow(
+        workflow=ExampleWorkflow.run,
+        args=("customer-123",),
+        workflow_id="typed-tuple-workflow-input",
+        task_queue=TASK_QUEUE,
+    )
+
+    _ = start_workflow.start_workflow(
+        ExampleWorkflow.run,  # pyright: ignore[reportArgumentType]
+        "customer-123",
+        args=("customer-456",),
+        workflow_id="conflicting-typed-workflow-input",
+        task_queue=TASK_QUEUE,
+    )
+
+    start_workflow.start_workflow(  # pyright: ignore[reportCallIssue]
+        workflow=ExampleWorkflow.run,
+        args=["customer-123"],  # pyright: ignore[reportArgumentType]
+        workflow_id="typed-list-workflow-input",
+        task_queue=TASK_QUEUE,
+    )
+
+    start_workflow.start_workflow(  # pyright: ignore[reportCallIssue]
+        workflow=ExampleWorkflow.run,
+        args="customer-123",  # pyright: ignore[reportArgumentType]
+        workflow_id="typed-scalar-keyword-workflow-input",
+        task_queue=TASK_QUEUE,
     )

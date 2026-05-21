@@ -29,37 +29,37 @@ class GetUserRequest:
 
 @dataclasses.dataclass(slots=True)
 class UpdateEmailRequest:
-    email: str
     user_id: str
+    email: str
 
 
 @dataclasses.dataclass(slots=True)
 class RenameRequest:
-    display_name: str
     user_id: str
+    display_name: str
 
 
 @dataclasses.dataclass(slots=True)
 class SetProfileRequest:
-    profile: UserProfile
     user_id: str
+    profile: UserProfile
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, kw_only=True)
 class UserProfile:
-    capabilities: UserCapability
-    notification_target: NotificationTarget
-    sync_state: tuple[typing.Literal["ok"], str] | tuple[typing.Literal["err"], str]
-    address: PostalAddress | None = None
-    metadata: dict[str, str] | None = dataclasses.field(default_factory=dict)
     tags: list[str] | None = dataclasses.field(default_factory=list)
+    metadata: dict[str, str] | None = dataclasses.field(default_factory=dict)
+    capabilities: UserCapability
+    sync_state: tuple[typing.Literal["ok"], str] | tuple[typing.Literal["err"], str]
+    notification_target: NotificationTarget
+    address: PostalAddress | None = None
 
 
 @dataclasses.dataclass(slots=True)
 class PostalAddress:
+    street: str
     city: str
     country: str
-    street: str
     coordinates: tuple[float, float] | None = None
 
 

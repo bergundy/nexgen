@@ -47,8 +47,8 @@ function requiredField<T>(
 
 export interface ActivityOptions {
   taskQueue?: string;
-  scheduleToCloseTimeout?: common.Duration;
   retryPolicy: common.RetryPolicy;
+  scheduleToCloseTimeout?: common.Duration;
   priority?: common.Priority;
 }
 
@@ -64,10 +64,6 @@ export const ActivityOptions = {
         proto.taskQueue == null
           ? undefined
           : taskQueueFromProto(proto.taskQueue),
-      scheduleToCloseTimeout:
-        proto.scheduleToCloseTimeout == null
-          ? undefined
-          : durationFromProto(proto.scheduleToCloseTimeout),
       retryPolicy: requiredField(
         retryPolicyFromProto(
           requiredField(proto.retryPolicy, "ActivityOptions", "retryPolicy"),
@@ -75,6 +71,10 @@ export const ActivityOptions = {
         "ActivityOptions",
         "retryPolicy",
       ),
+      scheduleToCloseTimeout:
+        proto.scheduleToCloseTimeout == null
+          ? undefined
+          : durationFromProto(proto.scheduleToCloseTimeout),
       priority:
         proto.priority == null ? undefined : priorityFromProto(proto.priority),
     };
@@ -89,13 +89,13 @@ export const ActivityOptions = {
     return {
       taskQueue:
         model.taskQueue == null ? undefined : taskQueueToProto(model.taskQueue),
+      retryPolicy: retryPolicyToProto(
+        requiredField(model.retryPolicy, "ActivityOptions", "retryPolicy"),
+      ),
       scheduleToCloseTimeout:
         model.scheduleToCloseTimeout == null
           ? undefined
           : durationToProto(model.scheduleToCloseTimeout),
-      retryPolicy: retryPolicyToProto(
-        requiredField(model.retryPolicy, "ActivityOptions", "retryPolicy"),
-      ),
       priority:
         model.priority == null ? undefined : priorityToProto(model.priority),
     };

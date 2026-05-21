@@ -19,23 +19,23 @@ from ._support import (
 )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, kw_only=True)
 class StartWorkflowRequest:
-    workflow_id: str
     workflow: str | collections.abc.Callable[..., collections.abc.Awaitable[object]]
-    task_queue: str
     args: tuple[typing.Any, ...] | None = None
+    workflow_id: str
+    task_queue: str
     workflow_start_delay: timedelta | None = None
 
     def to_proto(
         self,
     ) -> temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionRequest:
         message = temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionRequest()
-        message.workflow_id = self.workflow_id
         message.workflow_type.CopyFrom(workflow_type_to_proto(self.workflow))
-        message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
         if self.args is not None:
             message.input.CopyFrom(payloads_to_proto(self.args))
+        message.workflow_id = self.workflow_id
+        message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
         if self.workflow_start_delay is not None:
             message.workflow_start_delay.CopyFrom(
                 duration_to_proto(self.workflow_start_delay)

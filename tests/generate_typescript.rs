@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nexus_api_gen::generate_to_string;
+use nexus_api_gen::generate_to_string_with_inputs;
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
 const TYPE_ROUNDTRIP_EXAMPLE_ID: &str = "type-roundtrip";
@@ -15,6 +15,14 @@ fn project_root() -> PathBuf {
 
 fn descriptor_path(root: &Path) -> PathBuf {
     root.join("examples/descriptors/temporal_api.bin")
+}
+
+fn linked_inputs_path(root: &Path) -> PathBuf {
+    root.join("examples/inputs/deps")
+}
+
+fn example_input_paths(root: &Path, example_id: &str) -> Vec<PathBuf> {
+    vec![input_path(root, example_id), linked_inputs_path(root)]
 }
 
 fn typescript_root(root: &Path) -> PathBuf {
@@ -111,6 +119,8 @@ fn generate_formatted_typescript_output(root: &Path, example_id: &str, output_pa
             "typescript",
             "--input",
             input_path(root, example_id).to_str().unwrap(),
+            "--input",
+            linked_inputs_path(root).to_str().unwrap(),
             "--descriptors",
             descriptor_path(root).to_str().unwrap(),
             "--output",
@@ -179,9 +189,9 @@ fn typescript_example_suite_typechecks_and_tests() {
 #[test]
 fn typescript_renders_required_fields_and_custom_message_types() {
     let root = project_root();
-    let rendered = generate_to_string(
+    let rendered = generate_to_string_with_inputs(
         nexus_api_gen::language::Language::TypeScript,
-        input_path(&root, PRIMARY_EXAMPLE_ID),
+        &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
     .unwrap();
@@ -205,11 +215,15 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains(
         "_RequestWithFunctionField<WorkflowFn, SignalWithStartWorkflowRequestBase, \"workflow\", \"args\">"
     ));
-    assert!(rendered.contains("workflowId: string;"));
+    assert!(rendered.contains(
+        "type SignalWithStartWorkflowRequestBase = {\n  id: string;\n  taskQueue: string;\n  executionTimeout?: common.Duration;\n  runTimeout?: common.Duration;\n  taskTimeout?: common.Duration;\n  requestId?: string;\n  idReusePolicy?: common.WorkflowIdReusePolicy;\n  idConflictPolicy?: common.WorkflowIdConflictPolicy;"
+    ));
+    assert!(rendered.contains("id: string;"));
     assert!(rendered.contains("taskQueue: string;"));
-    assert!(rendered.contains("workflowRunTimeout?: common.Duration;"));
-    assert!(rendered.contains("workflowIdReusePolicy?: common.WorkflowIdReusePolicy;"));
-    assert!(rendered.contains("workflowIdConflictPolicy?: common.WorkflowIdConflictPolicy;"));
+    assert!(rendered.contains("runTimeout?: common.Duration;"));
+    assert!(rendered.contains("idReusePolicy?: common.WorkflowIdReusePolicy;"));
+    assert!(rendered.contains("idConflictPolicy?: common.WorkflowIdConflictPolicy;"));
+    assert!(!rendered.contains("identity?: string;"));
     assert!(rendered.contains("memo?: Record<string, unknown>;"));
     assert!(
         rendered
@@ -226,6 +240,33 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("workflow_function_name("));
     assert!(rendered.contains("input: _RequestArgsToPayloads(model.args),"));
     assert!(rendered.contains("signalInput: _RequestArgsToPayloads(model.signalArgs),"));
+    let signal_request_to_proto = rendered
+        .split("export const SignalWithStartWorkflowRequest = {")
+        .nth(1)
+        .and_then(|body| {
+            body.split("export async function signalWithStartWorkflow")
+                .next()
+        })
+        .expect("signal-with-start request renderer should be present");
+    let workflow_type_index = signal_request_to_proto
+        .find("workflowType: workflowTypeToProto(")
+        .expect("workflow type should be serialized");
+    let input_index = signal_request_to_proto
+        .find("input: _RequestArgsToPayloads(model.args),")
+        .expect("workflow args should be serialized");
+    let workflow_id_index = signal_request_to_proto
+        .find("workflowId: requiredField(")
+        .expect("workflow id should be serialized");
+    let task_queue_index = signal_request_to_proto
+        .find("taskQueue: taskQueueToProto(")
+        .expect("task queue should be serialized");
+    let signal_name_index = signal_request_to_proto
+        .find("signalName:")
+        .expect("signal name should be serialized");
+    assert!(workflow_type_index < input_index);
+    assert!(input_index < workflow_id_index);
+    assert!(workflow_id_index < task_queue_index);
+    assert!(task_queue_index < signal_name_index);
     assert!(
         rendered
             .contains("signalName: ((value) => typeof value === 'string' ? value : (value.name))(")
@@ -233,8 +274,14 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(rendered.contains("workflowType: workflowTypeToProto("));
     assert!(rendered.contains("taskQueue: taskQueueToProto("));
     assert!(rendered.contains(
-        "workflowRunTimeout: model.workflowRunTimeout == null ? undefined : durationToProto(model.workflowRunTimeout),"
+        "workflowRunTimeout: model.runTimeout == null ? undefined : durationToProto(model.runTimeout),"
     ));
+    assert!(rendered.contains("common.WorkflowIdReusePolicy.ALLOW_DUPLICATE"));
+    assert!(rendered.contains("workflowIdReusePolicy: workflowIdReusePolicyToProto("));
+    assert!(!rendered.contains("workflowIdReusePolicyToProto(0"));
+    assert!(rendered.contains("common.WorkflowIdConflictPolicy.FAIL"));
+    assert!(rendered.contains("workflowIdConflictPolicy: workflowIdConflictPolicyToProto("));
+    assert!(!rendered.contains("workflowIdConflictPolicyToProto(0"));
     assert!(rendered.contains("memo: model.memo == null ? undefined : memoToProto(model.memo),"));
     assert!(rendered.contains(
         "searchAttributes: model.searchAttributes == null ? undefined : searchAttributesToProto(model.searchAttributes),"
@@ -252,13 +299,10 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     ));
     assert!(rendered.contains("const result = await handle.result();"));
     assert!(rendered.contains("return workflow.getExternalWorkflowHandle("));
-    assert!(rendered.contains("request.workflowId"));
+    assert!(rendered.contains("request.id"));
     assert!(rendered.contains("result.runId ?? undefined"));
     assert!(rendered.contains("export async function signalWithStartWorkflow<"));
-    assert!(
-        rendered
-            .contains("request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,")
-    );
+    assert!(rendered.contains("request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,"));
     assert!(rendered.contains("const client = workflow.createNexusServiceClient({"));
     assert!(!rendered.contains("export class WorkflowServiceClient"));
     assert!(rendered.contains("): Promise<workflow.ExternalWorkflowHandle> {"));
@@ -277,9 +321,9 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!rendered.contains("signalWithStartWorkflowExecution("));
     assert!(!rendered.contains("from './model_overrides.ts'"));
 
-    let type_roundtrip_rendered = generate_to_string(
+    let type_roundtrip_rendered = generate_to_string_with_inputs(
         nexus_api_gen::language::Language::TypeScript,
-        input_path(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
+        &example_input_paths(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
     .unwrap();
