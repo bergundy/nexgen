@@ -1,5 +1,9 @@
 # nexus-api-gen
 
+> [!WARNING]
+> This repository is experimental. Generated APIs, input formats, and CLI behavior
+> may change without compatibility guarantees.
+
 Rust CLI for generating language-specific Nexus operation bindings from WIT.
 
 The WIT definition is the source of truth for the public API. Protobuf descriptor sets are optional and are only needed when the WIT opts into proto-backed models or when using `add-rpc` to scaffold WIT from an existing proto RPC.

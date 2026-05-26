@@ -412,11 +412,14 @@ async def signal_with_start_workflow(
         positional_args: Positional arguments for workflow. Cannot be set if args is
             set.
         args: List-form arguments for workflow. Cannot be set if positional_args are
-            set.
+            set. For typed workflow callables, list contents are not statically
+            typechecked; pass workflow arguments positionally for precise typechecking.
         id: Unique identifier for the workflow execution.
         task_queue: Task queue to run the workflow on.
         signal: Signal name or callable to send with the start request.
-        signal_args: Argument value, or list of argument values, for signal.
+        signal_args: Argument value, or list of argument values, for signal. For typed
+            single-argument signals, scalar signal_args values are statically
+            typechecked. List-form signal_args values are not precisely typechecked.
         execution_timeout: Total workflow execution timeout, including retries and
             continue-as-new.
         run_timeout: Timeout of a single workflow run.

@@ -159,7 +159,8 @@ async def restart_workflow(
         positional_args: Positional arguments for workflow. Cannot be set if args is
             set.
         args: List-form arguments for workflow. Cannot be set if positional_args are
-            set.
+            set. For typed workflow callables, list contents are not statically
+            typechecked; pass workflow arguments positionally for precise typechecking.
     """
     if positional_args and args is not None:
         raise TypeError("cannot specify both positional arguments and args")
