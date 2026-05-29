@@ -1,3 +1,8 @@
+import * as common from "@temporalio/common";
+import type { google, temporal } from "@temporalio/proto";
+import * as workflow from "@temporalio/workflow";
+import type Long from "long";
+
 function int64ToNumber(value: Long | number | string | object | null | undefined): number {
   if (value == null) {
     return 0;
@@ -55,16 +60,16 @@ export function workflowTypeFromProto(
 export function workflowTypeToProto(
   workflowType: string | common.Workflow,
 ): temporal.api.common.v1.IWorkflowType {
-  return { name: workflow_function_name(workflowType) };
+  return { name: workflowFunctionName(workflowType) };
 }
 
-export function workflow_function_name(
+export function workflowFunctionName(
   value: string | common.Workflow,
 ): string {
   return typeof value === "string" ? value : common.extractWorkflowType(value);
 }
 
-export function signal_function_to_proto(
+export function signalFunctionToProto(
   value: string | workflow.SignalDefinition<any[]>,
 ): string {
   return typeof value === "string" ? value : value.name;
@@ -98,12 +103,26 @@ export function payloadToProto(
   return payload;
 }
 
+function configuredPayloadConverter(): common.PayloadConverter {
+  const activator = (
+    globalThis as typeof globalThis & {
+      __TEMPORAL_ACTIVATOR__?: {
+        payloadConverter?: common.PayloadConverter;
+      };
+    }
+  ).__TEMPORAL_ACTIVATOR__;
+  if (activator?.payloadConverter == null) {
+    throw new Error("payload converter is unavailable outside workflow context");
+  }
+  return activator.payloadConverter;
+}
+
 export function memoFromProto(
   proto: temporal.api.common.v1.IMemo,
 ): Record<string, unknown> {
   return (
     common.mapFromPayloads(
-      common.defaultPayloadConverter,
+      configuredPayloadConverter(),
       proto.fields ?? undefined,
     ) ?? {}
   );
@@ -113,7 +132,7 @@ export function memoToProto(
   memo: Record<string, unknown>,
 ): temporal.api.common.v1.IMemo {
   return {
-    fields: common.mapToPayloads(common.defaultPayloadConverter, memo),
+    fields: common.mapToPayloads(configuredPayloadConverter(), memo),
   };
 }
 
@@ -133,7 +152,7 @@ function typedSearchAttributePayload(
   value: unknown,
   type: common.SearchAttributeType,
 ): common.Payload {
-  const payload = common.defaultPayloadConverter.toPayload(value);
+  const payload = configuredPayloadConverter().toPayload(value);
   payload.metadata ??= {};
   payload.metadata.type = common.u8(
     common.TypedSearchAttributes.toMetadataType(type),
@@ -181,7 +200,7 @@ function typedSearchAttributePairFromPayload(
   if (type == null) {
     return undefined;
   }
-  let value: unknown = common.defaultPayloadConverter.fromPayload(payload);
+  let value: unknown = configuredPayloadConverter().fromPayload(payload);
   if (
     type !== common.SearchAttributeType.KEYWORD_LIST &&
     Array.isArray(value)
