@@ -54,6 +54,7 @@ pub(crate) fn generate(
 
             Ok(RenderedService {
                 name: &service.name,
+                wire_name: &service.wire_name,
                 endpoint: service.endpoint.clone(),
                 operations,
                 resources: service.resources.clone(),
@@ -129,6 +130,7 @@ pub(crate) fn python_field_name(name: &str) -> String {
 #[derive(Debug)]
 struct RenderedService<'a> {
     name: &'a str,
+    wire_name: &'a str,
     endpoint: String,
     operations: Vec<RenderedOperation<'a>>,
     resources: Vec<PlannedResource>,
@@ -2991,7 +2993,7 @@ fn render_function_type_parameter_definitions(
 
 fn render_package_init(
     services: &[RenderedService<'_>],
-    resource_names: &[String],
+    _resource_names: &[String],
     resource_operation_owners: &BTreeMap<String, String>,
 ) -> String {
     let operation_function_names = services
@@ -3005,18 +3007,12 @@ fn render_package_init(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let public_names = std::iter::once("models".to_string())
-        .chain(resource_names.iter().cloned())
-        .chain(operation_function_names.iter().cloned())
-        .collect::<Vec<_>>();
     let mut output = String::new();
     render_generated_file_header(&mut output);
     output.push('\n');
     if !services.is_empty() {
         output.push_str("from . import service as _service\n");
     }
-    output.push_str("from . import models\n");
-    render_named_python_import(&mut output, "._resources", resource_names);
     if !services.is_empty() {
         for service in services {
             for operation in &service.operations {
@@ -3033,12 +3029,11 @@ fn render_package_init(
         }
     }
     output.push_str("\n__all__ = [\n");
-    for name in &public_names {
+    for name in &operation_function_names {
         output.push_str("    ");
         output.push_str(&python_string_literal(name));
         output.push_str(",\n");
     }
-    output.push_str("    \"__nexus_operation_registry__\",\n");
     output.push_str("]\n");
     output.push_str("\n\n__nexus_operation_registry__ = {\n");
     for service in services {
@@ -3063,7 +3058,13 @@ fn render_package_init(
 }
 
 fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    output.push_str("@service\n");
+    if service.wire_name == service.name {
+        output.push_str("@service\n");
+    } else {
+        output.push_str("@service(name=");
+        output.push_str(&python_string_literal(service.wire_name));
+        output.push_str(")\n");
+    }
     output.push_str("class ");
     output.push_str(service.name);
     output.push_str(":\n");
@@ -4933,7 +4934,7 @@ fn render_inline_nexus_client(output: &mut String, service: &RenderedService<'_>
     output.push_str("nexus_client = temporalio.workflow.create_nexus_client(\n");
     output.push_str(indent);
     output.push_str("    service=");
-    output.push_str(&python_string_literal(service.name));
+    output.push_str(&python_string_literal(service.wire_name));
     output.push_str(",\n");
     output.push_str(indent);
     output.push_str("    endpoint=");
