@@ -77,7 +77,7 @@ export type SignalWithStartWorkflowRequest<
 > = ReplaceSignalWithStartWorkflowRequest<
   {
     /**
-     * Workflow type name or callable identifying the workflow to start.
+     * Workflow type name or workflow function identifying the workflow to start.
      */
     workflow: string | WorkflowFn;
     /**
@@ -93,9 +93,9 @@ export type SignalWithStartWorkflowRequest<
      */
     taskQueue: string;
     /**
-     * Signal name or callable to send with the start request.
+     * Signal name or signal definition to send with the start request.
      */
-    signal: SignalValue;
+    signal: string | SignalValue;
     /**
      * Arguments for signal.
      */
@@ -172,7 +172,7 @@ export type SignalWithStartWorkflowRequest<
   (
     | {
         /**
-         * Workflow type name or callable identifying the workflow to start.
+         * Workflow type name or workflow function identifying the workflow to start.
          */
         workflow: string;
         /**
@@ -182,7 +182,7 @@ export type SignalWithStartWorkflowRequest<
       }
     | ({
         /**
-         * Workflow type name or callable identifying the workflow to start.
+         * Workflow type name or workflow function identifying the workflow to start.
          */
         workflow: WorkflowFn;
       } & (Parameters<WorkflowFn> extends [any, ...any[]]
@@ -202,7 +202,7 @@ export type SignalWithStartWorkflowRequest<
     (
       | {
           /**
-           * Signal name or callable to send with the start request.
+           * Signal name or signal definition to send with the start request.
            */
           signal: string;
           /**
@@ -212,7 +212,7 @@ export type SignalWithStartWorkflowRequest<
         }
       | ({
           /**
-           * Signal name or callable to send with the start request.
+           * Signal name or signal definition to send with the start request.
            */
           signal: SignalValue;
         } & (SignalArgs extends [any, ...any[]]
