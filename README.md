@@ -142,6 +142,7 @@ The WIT file defines the public surface. `@nexus` directives carry the parts WIT
 - output transforms
 - explicit resource method operation bindings
 - experimental service, operation, and record warnings
+- `@nexus.delay-load-temporalio-workflow` on Python services that must not import `temporalio.workflow` until an operation executes
 
 Resource methods bind to operations only when the method and operation have the same generated operation name. When they intentionally differ, mark the method with `@nexus.operation`, for example `/// @nexus.operation "cancel-workflow"` on `cancel: func(...)` to bind it to `cancel-workflow: func(...)`.
 
