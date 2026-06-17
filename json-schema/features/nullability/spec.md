@@ -19,15 +19,18 @@ conventions are stubbed below pending the nullability-design decision.
 
 ### Java
 
-Primitive type for required fields; boxed type for optional.
+Primitive type for required fields; boxed type for optional. Emitted as
+a POJO (Java 8 floor — **not** a record; see PRINCIPLES Java §1), so the
+fields below are private with generated getters/constructor:
 
 ```java
-public record User(
-    long   id,         // required: integer
-    Long   nickname,   // optional: integer — null if absent
-    String name,       // required: string (still reference, validator enforces non-null)
-    String email       // optional: string
-) {}
+public final class User {
+    private final long   id;        // required: integer
+    private final Long   nickname;  // optional: integer — null if absent
+    private final String name;      // required: string (reference; validator enforces non-null)
+    private final String email;     // optional: string
+    // generated constructor, getters, equals/hashCode/toString
+}
 ```
 
 | `type` token | required | optional |

@@ -71,7 +71,7 @@ field; Python uses `Optional[T]`).
 | `"integer"` | `int64`             | `number`             | `int`             | `long` |
 | `"number"`  | `float64`           | `number`             | `float`           | `double` |
 | `"boolean"` | `bool`              | `boolean`            | `bool`            | `boolean` |
-| `"object"`  | struct from [[properties]] | interface from [[properties]] (**not classes**) | Pydantic model | class/record |
+| `"object"`  | struct from [[properties]] | interface from [[properties]] (**not classes**) | Pydantic model | POJO class (Java 8; **not records** — see PRINCIPLES Java §1) |
 | `"array"`   | `[]T` (T from [[items]])   | `T[]`                | `list[T]`         | `List<T>` |
 | `"null"`    | only inside [[nullability]] pattern | only inside [[nullability]] pattern | only inside [[nullability]] pattern | only inside [[nullability]] pattern |
 
@@ -93,7 +93,7 @@ errors aggregate into the language-native primitive.
 | `type` token | Go | TypeScript | Python | Java |
 |---|---|---|---|---|
 | `"string"`  | typed `Unmarshal` into `string` | `typeof v === 'string'` | Pydantic `str` strict | Jackson typed binding |
-| `"integer"` | shadow `*json.Number` → runtime `parseSpecInteger` → `int64` (accepts `1.0`, rejects `1.5`) | `typeof v === 'number' && Number.isInteger(v)` (accepts `1.0` natively) | `SpecInt = Annotated[int, BeforeValidator(_parse_spec_integer)]` in runtime | `@JsonDeserialize(using = SpecLongDeserializer.class)` from runtime |
+| `"integer"` | shadow `*json.Number` → runtime `parseSpecInteger` → `int64` (accepts `1.0`, rejects `1.5`, caps ±(2^53−1)) | `typeof v === 'number' && Number.isSafeInteger(v)` (accepts `1.0` natively; caps ±(2^53−1)) | `SpecInt = Annotated[int, BeforeValidator(_parse_spec_integer)]` in runtime | `@JsonDeserialize(using = SpecLongDeserializer.class)` from runtime |
 | `"number"`  | `float64` unmarshal | `typeof v === 'number'` | Pydantic `float` strict | `Double` binding |
 | `"boolean"` | `bool` unmarshal | `typeof v === 'boolean'` | Pydantic `bool` strict (rejects `1`/`0`) | `Boolean` binding |
 | `"object"`  | typed struct unmarshal | `typeof v === 'object' && v !== null && !Array.isArray(v)` | Pydantic model | typed class binding |
@@ -105,34 +105,41 @@ Strategy per language:
   into a shadow struct of `*json.Number` / `*T` pointers (absence
   observable per P12), dispatches per field, builds
   `ValidationError{Path, Reason}` and aggregates with `errors.Join`.
-  Integer fields go through a runtime helper:
+  Integer fields go through a runtime helper that also enforces the
+  cross-language integer cap (`±(2^53−1)`, see Open question 1 —
+  **resolved**):
   ```go
+  // IntegerCap = 1<<53 - 1 = 9007199254740991 (== JS Number.MAX_SAFE_INTEGER)
   func parseSpecInteger(n json.Number) (int64, error) {
-      if i, err := n.Int64(); err == nil { return i, nil }     // "1", "9007199254740993"
       f, err := n.Float64()
       if err != nil { return 0, err }
       if f != math.Trunc(f) { return 0, ErrFractional }         // "1.5" → reject
-      if f < math.MinInt64 || f > math.MaxInt64 { return 0, ErrRange }
-      return int64(f), nil                                       // "1.0", "1e2"
+      if f < -IntegerCap || f > IntegerCap { return 0, ErrRange } // > ±(2^53-1) → reject
+      i, err := n.Int64()
+      if err != nil { return 0, err }                            // belt-and-suspenders
+      return i, nil                                              // "1", "1.0", "1e2"
   }
   ```
-  User-facing field stays plain `int64`.
+  User-facing field stays plain `int64`. The Go primitive holds ±2^63,
+  but the validator rejects anything past the ±(2^53−1) cap so all four
+  languages agree on the accepted range.
 - **TypeScript**: Hand-emit `typeof`/`Array.isArray` checks per field; no
   runtime schema library (P4). `Number.isInteger(v)` is spec-compliant
   for type-classification (`1.0 === 1` in JS, so
   `Number.isInteger(1.0) === true`) — verified empirically across all
   10 type-classification fixtures. Push `ValidationError { path, reason }`
   into an array, throw `AggregateError` at the end.
-  **Precision caveat (P10 violation by default):** `JSON.parse`
-  silently rounds integers past ±2^53 to the nearest double, and
-  `Number.isInteger` still returns `true` for the rounded result —
-  e.g. wire `9007199254740993` becomes runtime `9007199254740992` with
-  no error. Catching this requires inspecting the JSON *source text*
-  (the already-parsed `number` has lost the information). Resolution
-  pending Open question 1; the leading options are (a) require a
-  text-level pre-scan that rejects numeric tokens whose magnitude
-  exceeds the cap, or (b) integrate `lossless-json`-style parsing in
-  the generated runtime.
+  **Precision — resolved by the ±(2^53−1) cap (Open question 1):**
+  `JSON.parse` silently rounds integers past 2^53 to the nearest
+  double, but with the cap fixed at `Number.MAX_SAFE_INTEGER`
+  (`2^53−1`), a plain post-parse `Number.isSafeInteger(v)` is a
+  **complete and sound** check — no text pre-scan, no `lossless-json`,
+  no P4 tension. Empirically verified (`/tmp/ts_cap_probe.mjs`): every
+  integer literal `>` `MAX_SAFE_INTEGER` rounds to a double that fails
+  `Number.isSafeInteger` (e.g. `9007199254740993` → `9007199254740992`,
+  which is `> MAX_SAFE_INTEGER` → rejected); swept `[2^53, 2^53+10^5)`
+  with zero leaks. Integer fields therefore emit
+  `typeof v === 'number' && Number.isSafeInteger(v)`.
 - **Python**: Pydantic v2 models in strict mode. `pydantic.ValidationError`
   already aggregates via `.errors()`. Integer fields are typed as
   `SpecInt = Annotated[int, BeforeValidator(_parse_spec_integer)]` from
@@ -143,22 +150,23 @@ Strategy per language:
   rejects `1.0` and `1e2` (spec-valid integers); lax mode alone accepts
   `True`, `"1"`, `"1.0"` (spec-invalid). The `BeforeValidator` is the
   only way to hit the spec exactly. Note: Python ints are unbounded, so
-  the runtime helper also enforces the cross-language cap (see
-  Open question 1).
-- **Java**: Jackson typed binding into POJOs/records. `Long` fields get
+  the runtime helper also enforces the cross-language cap `±(2^53−1)`
+  (Open question 1 — **resolved**): `abs(v) > 9007199254740991` → reject.
+- **Java**: Jackson typed binding into POJOs (Java 8 floor; not records,
+  see PRINCIPLES Java §1). `Long` fields get
   `@JsonDeserialize(using = SpecLongDeserializer.class)` from the
   generated runtime. The deserializer branches on `JsonToken`:
   ```java
-  // Sketch — see runtime for full impl.
+  // Sketch — see runtime for full impl. CAP = 9007199254740991L (2^53-1).
   JsonToken t = p.currentToken();
   if (t == VALUE_NUMBER_INT) {                  // "1", ">2^53"
       BigInteger bi = p.getBigIntegerValue();
-      if (out of int64 range) throw ...;
+      if (bi.abs() > CAP) throw ...;            // ±(2^53-1) cap
       return bi.longValueExact();
   }
   if (t == VALUE_NUMBER_FLOAT) {                // "1.0", "1.5", "1e2"
       double d = p.getDoubleValue();
-      if (NaN || inf || d != floor(d) || out of int64 range) throw ...;
+      if (NaN || inf || d != floor(d) || abs(d) > CAP) throw ...;
       return (long) d;
   }
   throw "expected number token, got " + t;      // rejects bool, string, null-as-value-here
@@ -168,8 +176,9 @@ Strategy per language:
   blocking shipping with defaults. `ACCEPT_FLOAT_AS_INT=false` fixes
   truncation but rejects spec-valid `1.0`/`1e2` and still coerces `"1"`.
   The custom deserializer is the only path that matches the spec.
-  `>2^63` is rejected by Jackson's own range check before our code
-  runs; we keep an explicit check for defense in depth.
+  The `±(2^53−1)` cap (Open question 1 — **resolved**) is enforced
+  explicitly above; `>2^63` would also trip Jackson's own range check,
+  but our cap is tighter so ours fires first.
   `MismatchedInputException` converts to our `ValidationError`.
   Aggregation primitive TBD with the Java section of PRINCIPLES.md.
 
@@ -206,8 +215,12 @@ For each accepted `type`, fuzz over:
   in all four languages. Go/TS/Java reject naturally (`true` is not a
   number token); Python relies on the explicit `isinstance(v, bool)`
   reject inside `_parse_spec_integer`.
-- **Large integers**: `9007199254740993` (>2^53) — pinned per Open
-  questions.
+- **Large integers (cap = ±(2^53−1), resolved)**: accept
+  `9007199254740991` (`2^53−1`, the boundary) and `-9007199254740991`;
+  reject `9007199254740992` (`2^53`), `9007199254740993` (`2^53+1`,
+  which TS silently rounds to `2^53` — must still reject), and
+  `18014398509481985` (`2^54+1`). Same accept/reject set in all four
+  languages.
 
 ## Interactions
 
@@ -248,33 +261,34 @@ For each accepted `type`, fuzz over:
 Pre-draft-4 union-of-schemas form (`type: [{...},{...}]`) is irrelevant —
 no current toolchain emits it.
 
+## Resolved questions
+
+1. **Large integers — RESOLVED: hard `±(2^53−1)` cap (uniform across
+   languages).** The cap is `Number.MAX_SAFE_INTEGER` =
+   `9007199254740991`. Rationale:
+   - It is the only cap TypeScript can defend **without** a third-party
+     parser. Empirically verified (`/tmp/ts_cap_probe.mjs`) that a plain
+     post-parse `Number.isSafeInteger(v)` is complete and sound: every
+     integer literal past the cap rounds to a double that fails
+     `isSafeInteger` (`9007199254740993` → `9007199254740992`, which is
+     `> MAX_SAFE_INTEGER` → rejected), with zero leaks swept across
+     `[2^53, 2^53+10^5)`. This keeps P4 (minimal TS runtime deps) intact.
+   - Go (`int64`) and Java (`long`) hold ±2^63 natively but their
+     validators reject past `±(2^53−1)`, so all four languages agree on
+     the accepted set.
+   - Python ints are unbounded; the runtime helper enforces the cap.
+
+   Spec-compliant `1.0`-as-integer was resolved earlier — see runtime
+   helpers per language.
+
 ## Open questions
 
-1. **Large integers.** Per-language precision ceilings differ:
-   - Go/Java: ±2^63 (`int64`/`Long`), clean range error past that.
-   - TypeScript: ±2^53 (IEEE-754 doubles). **Critically, `JSON.parse`
-     silently rounds beyond 2^53 — verified `9007199254740993` becomes
-     `9007199254740992` with no error**, and `Number.isInteger` still
-     returns `true`. The post-parse `number` cannot distinguish "user
-     wrote 2^53+1" from "user wrote 2^53". Detection requires
-     intercepting at the JSON *text* level.
-   - Python: unbounded ints, no precision loss at any boundary.
-
-   For cross-language parity we likely want a hard ±2^53 cap (lowest
-   common denominator) enforced by every runtime helper, since it's
-   the only cap TS can defend without a third-party parser. Decide:
-   ±2^53 cap (uniform across languages), ±2^63 cap (forces TS to ship
-   `lossless-json` or a hand-rolled pre-scan), or `bigint`/`BigInteger`/
-   `int` with strings-on-the-wire for TS.
-
-   Spec-compliant `1.0`-as-integer is **resolved** — see runtime
-   helpers per language.
-2. **Cross-language conformance suite for the integer runtime helpers.**
+1. **Cross-language conformance suite for the integer runtime helpers.**
    Each language's helper (`parseSpecInteger`, `_parse_spec_integer`,
-   `SpecLongDeserializer`, and TS's `Number.isInteger` use) must pass an
-   identical fixture set: accept `1`, `1.0`, `1e2`, `-0`, max ±2^63;
-   reject `1.5`, `true`/`false`, `"1"`, non-numeric strings, NaN,
-   ±Infinity, range overflow.
+   `SpecLongDeserializer`, and TS's `Number.isSafeInteger` use) must pass
+   an identical fixture set: accept `1`, `1.0`, `1e2`, `-0`, the cap
+   boundary `±(2^53−1)`; reject `1.5`, `true`/`false`, `"1"`, non-numeric
+   strings, NaN, ±Infinity, and any magnitude past `±(2^53−1)`.
 
 ## See also
 
