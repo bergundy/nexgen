@@ -117,6 +117,16 @@ example at `features/type/spec.md`:
 - **Integer parsing honors spec** — accept `1.0`/`1e2` as integers;
   reject `1.5`. Per-language runtime helpers (`parseSpecInteger`,
   `_parse_spec_integer`, `SpecLongDeserializer`).
+- **Java reference types carry JSpecify nullness annotations**
+  (PRINCIPLES Java §2). Emitted packages are `@NullMarked`; optional
+  reference fields are `@Nullable`, required ones non-null by default.
+  Restores for reference types the in-memory nullness signal that
+  `long`-vs-`Long` gives scalars (P1); complementary to the non-null
+  validator (P7), not a replacement. Tracks required-vs-optional
+  (in-memory nullness), not the wire nullable/non-nullable distinction.
+  CLASS retention → no runtime dependency (P4 intact); consumers without
+  JSpecify on the classpath still compile. JSpecify chosen over JSR-305
+  (abandoned + JPMS split-package).
 - **Java baseline = Java 8; POJOs, not records** (PRINCIPLES Java §1).
   Records require Java 16+ and would impose a stricter floor than the
   Temporal Java SDK itself (Java 8+) — emitted code must never be more

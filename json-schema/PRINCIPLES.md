@@ -117,6 +117,29 @@
    validator instead, since the type system can't express the
    constraint. See [[nullability]].
 
+   **JSpecify nullness annotations restore the scalar signal for
+   reference types.** Emitted Java packages are `@NullMarked`
+   (non-null by default); optional reference fields are annotated
+   `@Nullable`. This makes a reference field carry the same in-memory
+   nullness information that `long`-vs-`Long` already gives scalars,
+   closing a consistency gap (**P1**). The annotation tracks
+   **in-memory post-construction nullness** — i.e. required (never
+   null) vs optional (null when the key is absent) — **not** the
+   wire-level nullable/non-nullable distinction; the optional-non-
+   nullable "reject explicit `null`" rule stays a validator concern
+   (Java §3, [[nullability]]). It is complementary to, not a
+   replacement for, the runtime validator (**P7**): the validator
+   enforces at the boundary, the annotation propagates that guarantee
+   into the consumer's static null-analysis. JSpecify (`org.jspecify`)
+   is chosen over JSR-305 (`javax.annotation.Nonnull`, abandoned +
+   JPMS split-package) and is the cross-tool consensus (Google,
+   JetBrains, Spring, Micronaut, Kotlin, NullAway, Checker Framework).
+   Its annotations are `@Retention(CLASS)` / `@Target(TYPE_USE)`:
+   present in bytecode, never loaded at runtime, so **no runtime
+   dependency** (**P4** intact); a consumer compiling without JSpecify
+   on the classpath still compiles cleanly (javac ignores the missing
+   CLASS-retained type) and only forfeits the null-analysis benefit.
+
 3. **Paired strict / non-strict custom deserializers per primitive.**
    Each spec-sensitive primitive ships two deserializers in the
    runtime: a base one (e.g. `SpecLongDeserializer`) used for

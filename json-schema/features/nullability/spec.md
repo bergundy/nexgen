@@ -21,30 +21,41 @@ conventions are stubbed below pending the nullability-design decision.
 
 Primitive type for required fields; boxed type for optional. Emitted as
 a POJO (Java 8 floor — **not** a record; see PRINCIPLES Java §1), so the
-fields below are private with generated getters/constructor:
+fields below are private with generated getters/constructor. The
+package is `@NullMarked` (JSpecify; non-null by default), so optional
+reference fields carry `@Nullable` and required ones need no annotation
+(see PRINCIPLES Java §2):
 
 ```java
+@NullMarked
 public final class User {
-    private final long   id;        // required: integer
-    private final Long   nickname;  // optional: integer — null if absent
-    private final String name;      // required: string (reference; validator enforces non-null)
-    private final String email;     // optional: string
+    private final long      id;        // required: integer
+    private final @Nullable Long   nickname;  // optional: integer — null if absent
+    private final String    name;      // required: string (non-null by default; validator enforces)
+    private final @Nullable String email;     // optional: string
     // generated constructor, getters, equals/hashCode/toString
 }
 ```
 
 | `type` token | required | optional |
 |---|---|---|
-| `"integer"` | `long`    | `Long`    |
-| `"number"`  | `double`  | `Double`  |
-| `"boolean"` | `boolean` | `Boolean` |
-| `"string"`  | `String` *(non-null validator)* | `String` |
-| `"object"`  | `T` *(non-null validator)* | `T` |
-| `"array"`   | `List<T>` *(non-null validator)* | `List<T>` |
+| `"integer"` | `long`    | `@Nullable Long`    |
+| `"number"`  | `double`  | `@Nullable Double`  |
+| `"boolean"` | `boolean` | `@Nullable Boolean` |
+| `"string"`  | `String` *(non-null validator)* | `@Nullable String` |
+| `"object"`  | `T` *(non-null validator)* | `@Nullable T` |
+| `"array"`   | `List<T>` *(non-null validator)* | `@Nullable List<T>` |
 
-Required-field validators must check absence and `null` explicitly for
-reference types (`String`, `List<T>`, object types) — the type system
-can't carry that constraint by itself.
+Required-field validators must still check absence and `null` explicitly
+for reference types (`String`, `List<T>`, object types) — the type
+system can't carry that constraint by itself. The `@Nullable`/
+`@NullMarked` annotations are **complementary**: they track in-memory
+post-construction nullness (required → non-null; optional → may be
+null when the key is absent) and propagate it into the consumer's
+static null-analysis. They are compile-time only (CLASS retention →
+no runtime dependency, **P4**) and do **not** encode the wire-level
+nullable distinction — every optional reference field is `@Nullable`
+regardless of whether it is optional-non-nullable or optional+nullable.
 
 ### Go
 
@@ -204,12 +215,17 @@ null, or a value of T.
 
 | `type` token | Java | Go | TypeScript | Python |
 |---|---|---|---|---|
-| `"integer"` | `Long`    | `*int64`   | `x?: number \| null`  | `Optional[int]` |
-| `"number"`  | `Double`  | `*float64` | `x?: number \| null`  | `Optional[float]` |
-| `"boolean"` | `Boolean` | `*bool`    | `x?: boolean \| null` | `Optional[bool]` |
-| `"string"`  | `String`  | `*string`  | `x?: string \| null`  | `Optional[str]` |
-| `"object"`  | `T`       | `*T`       | `x?: T \| null`       | `Optional[T]` |
-| `"array"`   | `List<T>` | `[]T` (nil = absent or null) | `x?: T[] \| null` | `Optional[list[T]]` |
+| `"integer"` | `@Nullable Long`    | `*int64`   | `x?: number \| null`  | `Optional[int]` |
+| `"number"`  | `@Nullable Double`  | `*float64` | `x?: number \| null`  | `Optional[float]` |
+| `"boolean"` | `@Nullable Boolean` | `*bool`    | `x?: boolean \| null` | `Optional[bool]` |
+| `"string"`  | `@Nullable String`  | `*string`  | `x?: string \| null`  | `Optional[str]` |
+| `"object"`  | `@Nullable T`       | `*T`       | `x?: T \| null`       | `Optional[T]` |
+| `"array"`   | `@Nullable List<T>` | `[]T` (nil = absent or null) | `x?: T[] \| null` | `Optional[list[T]]` |
+
+(Java optional column is `@Nullable` for both the optional-non-nullable
+and optional+nullable cases — the annotation tracks in-memory nullness,
+not the wire distinction; see the optionality section above and
+PRINCIPLES Java §2.)
 
 **Collapse note (Java / Go / Python):** the in-memory representations
 of "absent" and "JSON null" are the same (`null`, `nil`, `None`). The
