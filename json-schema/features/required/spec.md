@@ -39,10 +39,13 @@ presence per **P7** and aggregates per **P8**.
 Rationale (citing [[PRINCIPLES.md]]):
 - **P7 (enforced, not advisory)**: presence is checked at the boundary,
   not just documented.
-- **P10.2 (optional ≠ nullable)**: **required + nullable is forbidden** —
-  a name in `required` whose schema is the [[nullability]] `oneOf`
-  pattern is rejected at load time. Collapse to optional if the 2-state
-  (`null` or T) space is wanted. (Already specified in [[nullability]].)
+- **P10.2 (optional ≠ nullable)**: presence and null-acceptance are
+  orthogonal, so `required` composes freely with the [[nullability]]
+  `oneOf` pattern. A required name whose schema is nullable is
+  **required+nullable** — must be present, value may be `null` — and is
+  **supported** (presence-check on, null-rejection off). (Specified in
+  [[nullability]]; this combination was previously rejected under an
+  earlier reading of P10.2.)
 - **P12 (distinguish absent from zero)**: Go/Java read a shadow pointer/
   boxed value to detect absence; a present zero value is not "absent."
 
@@ -56,14 +59,18 @@ Loader behavior:
   Diagnostic names the missing property. (This is the binding form of
   the rule sketched in [[properties]].)
 - A required name whose schema matches the [[nullability]] pattern →
-  reject per **P10.2**.
+  **accepted** as required+nullable (see [[nullability]]).
 - Empty `required: []` → accepted (vacuous no-op; equals omission).
 
 ## Type mapping
 
-`required` does not introduce a type; it **removes** the optional
-wrapper that [[nullability]] would otherwise apply. The table shows the
-required vs optional emitted form (mirrors [[nullability]]):
+`required` does not introduce a type; for a **non-nullable** member it
+**removes** the optional wrapper that [[nullability]] would otherwise
+apply. For a **nullable** member (the `oneOf` null pattern) it removes
+nothing — the type stays the nullable form and `required` only adds the
+presence check (this is the required+nullable state; see
+[[nullability]]). The table shows the required vs optional emitted form
+for the non-nullable case (mirrors [[nullability]]):
 
 | `type` token | Required (this keyword) | Optional (name absent from `required`) |
 |---|---|---|
@@ -92,9 +99,10 @@ Per **P7**/**P8**. The "Required, non-nullable" row of
 | Python | Pydantic field with no default → strict mode raises automatically; aggregated in `pydantic.ValidationError`. |
 | Java | non-primitive: explicit `field == null` reject; primitive: a present-but-typed binding plus a strict deserializer rejecting `null`. Aggregation primitive TBD (PRINCIPLES Java §5). |
 
-Required + explicit `null`: rejected (a required non-nullable member may
-not be `null`) — same machinery as the optional-non-nullable null
-rejection in [[nullability]].
+Required + explicit `null`: for a required **non-nullable** member,
+rejected (may not be `null`) — same machinery as the
+optional-non-nullable null rejection in [[nullability]]. For a required
+**nullable** member, `null` is accepted (only absence is rejected).
 
 ## Property-testing matrix
 
@@ -105,6 +113,7 @@ rejection in [[nullability]].
 | Some required | `{type:object, properties:{id:{type:integer}, name:{type:string}}, required:["id"]}` |
 | All required | `required:["id","name"]` |
 | Empty (no-op) | `required:[]` |
+| Required + nullable | `properties:{x:{oneOf:[{type:string},{type:null}]}}, required:["x"]` — must be present, may be `null` |
 
 ### Rejected at load time (negative)
 
@@ -114,13 +123,14 @@ rejection in [[nullability]].
 | Non-string element | `required:[1]`, `required:[true]` |
 | Duplicate element | `required:["id","id"]` |
 | Name not in `properties` (P10.1) | `properties:{id:{…}}, required:["name"]` |
-| Required + nullable (P10.2) | member is `oneOf:[{type:T},{type:null}]` and listed in `required` |
 
 ### Runtime fixtures (validator)
 
 - Required member present + valid → OK.
 - Required member absent → one `ValidationError{path:name, reason:"required"}`.
-- Required member present as `null` → rejected (non-nullable).
+- Required **non-nullable** member present as `null` → rejected.
+- Required **nullable** member present as `null` → OK; absent → still
+  one `ValidationError{…, reason:"required"}`.
 - Multiple required members absent → all reported in one shot (P8).
 - Optional member absent → no error (contrast control).
 
@@ -129,8 +139,10 @@ rejection in [[nullability]].
 - **[[properties]]**: orthogonal — `properties` types the member,
   `required` makes it mandatory. Required name must exist in
   `properties` (else reject).
-- **[[nullability]]**: required + nullable forbidden (P10.2). Optional
-  is the default (name absent from `required`).
+- **[[nullability]]**: orthogonal (P10.2). `required` controls presence;
+  the `oneOf` null pattern controls null-acceptance. All four
+  combinations are legal, including required+nullable. Optional is the
+  default (name absent from `required`).
 - **[[additionalProperties]]**: independent — a closed struct still
   honors `required`; closing only forbids *unknown* members.
 - **[[dependentRequired]]**: conditional requiredness layered on top —
@@ -154,7 +166,8 @@ obsolete; no current toolchain emits it.
 ## Open questions
 
 - None. (Presence-enforcement strategies are settled in
-  [[nullability]]; required+nullable rejection is settled in P10.2.)
+  [[nullability]]; required+nullable is supported per the orthogonality
+  reading of P10.2.)
 
 ## See also
 

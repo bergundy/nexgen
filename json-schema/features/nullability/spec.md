@@ -10,7 +10,7 @@ different concerns and we keep them distinct.
 | Concern | JSON Schema source | Wire shape | Type-level question |
 |---|---|---|---|
 | **Optional** | property name *not* in `required` array of the enclosing object | key may be absent | "How do we represent absent?" |
-| **Nullable** | (convention TBD; spec form is `["T","null"]` which we reject per [[type]] support decision) | value present, equal to JSON `null` | "How do we represent JSON null?" |
+| **Nullable** | the `oneOf:[{type:"T"},{type:"null"}]` pattern (see "Nullability convention" below); the array form `["T","null"]` is rejected per [[type]] support decision | value present, equal to JSON `null` | "How do we represent JSON null?" |
 
 This doc owns the optionality conventions per language. Nullability
 conventions are stubbed below pending the nullability-design decision.
@@ -193,39 +193,85 @@ The generator accepts a `oneOf` schema iff:
 Any other `oneOf` shape → reject at load time per **P5** with a
 diagnostic naming the recognized nullability form.
 
-### Required + nullable is forbidden
+### Required + nullable is supported
 
 A field listed in the enclosing object's `required` array whose schema
-matches the nullable pattern is **rejected at load time** per
-**P10.2**.
+matches the nullable `oneOf` pattern is **accepted**. It encodes "must
+be present, value may be `null`" — `{}` is rejected (absent), `{"x":
+null}` and `{"x": T}` are both accepted.
 
-Rationale: required+nullable encodes "must be present, may be `null`"
-— a 2-state space (`null` or T) operationally indistinguishable from
-optional+non-nullable (absent or T). Java/Go/Python collapse the
-distinction at the type level anyway (see below), so we force users
-to pick the simpler form. TypeScript could in principle express the
-distinction (`x: T \| null` vs `x?: T`), but we keep the rule uniform
-across languages.
+This was previously rejected per a since-revised reading of **P10.2**.
+The prohibition's stated rationale — that required+nullable is
+"operationally indistinguishable" from optional+non-nullable — was
+wrong: the two accept *disjoint* edge cases (`{"x":null}` vs `{}`), and
+none of the other three states expresses the `{null, T}` space. The
+construct is fully decidable (unlike the genuine **P10.1** ambiguities)
+and enforceable with the existing boundary machinery (presence-check
+**on**, null-rejection **off**). Per **P10.2** optional and nullable are
+orthogonal, so all four combinations are legal.
 
-### Per-language emitted type (optional + nullable)
+### Per-language emitted type (nullable states)
 
-Since required+nullable is forbidden, the only valid nullable shape
-is **optional+nullable**: a field where the JSON value may be absent,
-null, or a value of T.
+Two nullable states exist: **optional+nullable** (absent / `null` / T)
+and **required+nullable** (`null` / T; absent rejected). They share the
+same emitted *type* in every language; only the presence check differs,
+and TypeScript/Python also differ at the field-modifier level.
+
+**Optional + nullable** (absent OK, `null` OK, T OK):
 
 | `type` token | Java | Go | TypeScript | Python |
 |---|---|---|---|---|
-| `"integer"` | `@Nullable Long`    | `*int64`   | `x?: number \| null`  | `Optional[int]` |
-| `"number"`  | `@Nullable Double`  | `*float64` | `x?: number \| null`  | `Optional[float]` |
-| `"boolean"` | `@Nullable Boolean` | `*bool`    | `x?: boolean \| null` | `Optional[bool]` |
-| `"string"`  | `@Nullable String`  | `*string`  | `x?: string \| null`  | `Optional[str]` |
-| `"object"`  | `@Nullable T`       | `*T`       | `x?: T \| null`       | `Optional[T]` |
-| `"array"`   | `@Nullable List<T>` | `[]T` (nil = absent or null) | `x?: T[] \| null` | `Optional[list[T]]` |
+| `"integer"` | `@Nullable Long`    | `*int64`   | `x?: number \| null`  | `Optional[int] = None` |
+| `"number"`  | `@Nullable Double`  | `*float64` | `x?: number \| null`  | `Optional[float] = None` |
+| `"boolean"` | `@Nullable Boolean` | `*bool`    | `x?: boolean \| null` | `Optional[bool] = None` |
+| `"string"`  | `@Nullable String`  | `*string`  | `x?: string \| null`  | `Optional[str] = None` |
+| `"object"`  | `@Nullable T`       | `*T`       | `x?: T \| null`       | `Optional[T] = None` |
+| `"array"`   | `@Nullable List<T>` | `[]T` (nil = absent or null) | `x?: T[] \| null` | `Optional[list[T]] = None` |
 
-(Java optional column is `@Nullable` for both the optional-non-nullable
-and optional+nullable cases — the annotation tracks in-memory nullness,
-not the wire distinction; see the optionality section above and
-PRINCIPLES Java §2.)
+**Required + nullable** (`null` OK, T OK, absent rejected) — same type,
+presence enforced by the validator; TS drops the `?`, Python drops the
+`= None` default (Pydantic v2: `Optional[T]` with no default is
+required-and-nullable):
+
+| `type` token | Java | Go | TypeScript | Python |
+|---|---|---|---|---|
+| `"integer"` | `@Nullable Long`    | `*int64`   | `x: number \| null`  | `Optional[int]` |
+| `"number"`  | `@Nullable Double`  | `*float64` | `x: number \| null`  | `Optional[float]` |
+| `"boolean"` | `@Nullable Boolean` | `*bool`    | `x: boolean \| null` | `Optional[bool]` |
+| `"string"`  | `@Nullable String`  | `*string`  | `x: string \| null`  | `Optional[str]` |
+| `"object"`  | `@Nullable T`       | `*T`       | `x: T \| null`       | `Optional[T]` |
+| `"array"`   | `@Nullable List<T>` | `[]T` (nil = null) | `x: T[] \| null` | `Optional[list[T]]` |
+
+(Java is `@Nullable` across every nullable column — the annotation
+tracks in-memory nullness, not the wire distinction; see the optionality
+section above and PRINCIPLES Java §2. In Java/Go, required+nullable and
+optional+nullable share both type *and* annotation; the presence check
+is the only difference, exactly as required-non-nullable reference types
+already rely on a validator the type can't express.)
+
+### Round-trip behavior
+
+The single reason one might have kept the prohibition was to avoid
+absent-vs-`null` ambiguity when round-tripping through Go/Java (and
+Python). That ambiguity does **not** affect required+nullable:
+
+- **Required + nullable round-trips losslessly in all four languages.**
+  Presence is guaranteed, so an in-memory `null`/`nil`/`None`
+  unambiguously means "the wire sent `null`"; the serializer always
+  emits the key (never omits it), and `null` ⟷ `null`. There is no
+  absent state to confuse it with.
+- **The residual collapse is confined to optional+nullable** in
+  Java/Go/Python: absent and explicit `null` share one in-memory value,
+  so on the way *out* the generator cannot recover which the client
+  sent and emits a single canonical form: the key is **omitted** (an
+  unset optional serializes as absent — the conservative choice, since
+  emitting `null` would fabricate a value the client may never have
+  sent). A client that sent explicit `null` on an optional+nullable
+  field therefore reads it back as absent. This is the acceptable
+  runtime collapse already noted below; it is a property of
+  optional+nullable, **not** a reason to forbid required+nullable.
+- **TypeScript round-trips every state faithfully** — `undefined` vs
+  `null` are distinct in memory, so no collapse occurs.
 
 **Collapse note (Java / Go / Python):** the in-memory representations
 of "absent" and "JSON null" are the same (`null`, `nil`, `None`). The
@@ -248,19 +294,22 @@ Wire form → required generator output:
 |---|---|
 | `"type": ["T", "null"]` (array form) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
 | `{type:"T", "nullable": true}` (OAS 3.0) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
-| `oneOf` with `{type:"null"}` branch where field is in `required` | Reject (P10.2). Diagnostic suggests dropping from `required`. |
+| `oneOf` with `{type:"null"}` branch where field is in `required` | **Accept** — required+nullable (must be present, may be `null`). |
 | `oneOf` of 3+ branches with `{type:"null"}` among them | Reject (P5). Diagnostic distinguishes from the supported 2-branch form. |
 
 ## Validator implications
 
-Three schema states × four languages. Required+nullable is forbidden,
-so the matrix has nine cells.
+Four schema states × four languages → twelve cells. The two axes are
+orthogonal: **presence** (required = reject absent; optional = accept
+absent) and **null acceptance** (non-nullable = reject `null`; nullable
+= accept `null`).
 
 | State | Java | Go | TS | Python |
 |---|---|---|---|---|
 | **Required, non-nullable** — must be present, must be T | type is `long`/`String`/etc.; emit `field == null` reject + type binding | type is `int64`/`string`/etc.; shadow `*T` field, reject on `nil` | type is `x: T`; emit `parsed.x === undefined \|\| parsed.x === null` reject | Pydantic field with no default → strict mode raises automatically |
-| **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | strict-variant custom deserializer (see strategy below) | shadow `*json.RawMessage` with explicit `bytes.Equal(*raw, []byte("null"))` reject | `parsed.x === null` rejected; `=== undefined` OK | `model_validator(mode='before')` rejects keys present with `None` |
-| **Optional + nullable** — absent OK, `null` OK, T OK | type is `Long`/`String`/etc.; no extra check beyond type binding | type is `*int64`/`*string`/etc.; no extra check beyond type binding | type is `x?: T \| null`; both `undefined` and `null` accepted | `Optional[T] = None`; both forms accepted |
+| **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | strict-variant custom deserializer (see strategy below) | shadow `*json.RawMessage` with explicit `bytes.Equal(*raw, []byte("null"))` reject | `parsed.x === null` rejected; `=== undefined` OK | `model_validator(mode='wrap')` rejects keys present with `None` |
+| **Optional + nullable** — absent OK, `null` OK, T OK | type is `@Nullable Long`/`String`/etc.; no extra check beyond type binding | type is `*int64`/`*string`/etc.; no extra check beyond type binding | type is `x?: T \| null`; both `undefined` and `null` accepted | `Optional[T] = None`; both forms accepted |
+| **Required + nullable** — must be present, `null` OK, T OK, absent rejected | base (non-strict) deserializer accepts `null`; presence enforced (`field`-present check / required-field machinery) | shadow `*json.RawMessage`; reject on absent (`nil` shadow), accept `null` token | type is `x: T \| null`; emit `parsed.x === undefined` reject; `null` accepted | `Optional[T]` with **no** default → required, accepts `None` |
 
 ## Strict enforcement of optional-non-nullable
 

@@ -110,8 +110,18 @@ example at `features/type/spec.md`:
   (`/tmp/ts_cap_probe.mjs`). Resolves type/spec.md OQ1.
 - **Nullability via `oneOf: [{T}, {null}]`** — narrow exemption to
   P10's discriminator-less `oneOf` rejection, formalized as P10.3.
-- **Required + nullable forbidden** (P10.2) — users collapse to
-  optional if they want the 2-state space.
+- **Required + nullable supported** (P10.2 reread as orthogonality) —
+  presence and null-acceptance are independent axes, so all four
+  states are legal, including required+nullable ("must be present, may
+  be `null`"). The earlier prohibition rested on a flawed
+  "operationally indistinguishable" rationale; required+nullable is
+  decidable, enforceable (presence-check on, null-rejection off), and
+  round-trips losslessly in all four languages. The only residual
+  absent-vs-`null` collapse is *optional+nullable* in Java/Go/Python,
+  which serializes to a single canonical form (absent/omitted — the
+  conservative default); TS round-trips all states faithfully. Landed in
+  [[nullability]], [[required]], [[properties]] (self-ref termination
+  now also via `null`), PRINCIPLES P10/P10.2.
 - **Optional-non-nullable strictly rejects explicit `null`** —
   per-language enforcement strategies in `nullability/spec.md`.
 - **Integer parsing honors spec** — accept `1.0`/`1e2` as integers;

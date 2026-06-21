@@ -217,7 +217,7 @@ aggregates, arrays use [[items]], etc.
 | Invalid identifier in an emitted lang (no override) | `{properties:{class:{…}}}` when emitting Python/Java; `{properties:{"2fa":{…}}}` (leading digit); `{properties:{"":{…}}}` (empty) |
 | Override not a legal identifier | `x-py-name:"2fa"` / `x-py-name:"class"` (reserved) |
 | Override collides | two members whose `x-go-name` both resolve to `Foo` |
-| Unsatisfiable direct self-reference (pending [[ref]]) | direct `$ref:"#"` member that is **required and non-nullable** — the chain can never terminate, so no finite instance exists (akin to **P10.2**). Optionality or a collection wrapper is required to terminate. |
+| Unsatisfiable direct self-reference (pending [[ref]]) | direct `$ref:"#"` member that is **required and non-nullable** — the chain can never terminate, so no finite instance exists (a satisfiability constraint, not a nullability one). A terminating form is required: optional (absent ends it), required+nullable (`null` ends it), or a collection wrapper. |
 
 ### Runtime fixtures (validator)
 
@@ -252,8 +252,9 @@ aggregates, arrays use [[items]], etc.
 - **[[type]]**: `properties` is only meaningful under `type:"object"`;
   pairing with any other `type` is a generator-time error.
 - **[[nullability]]**: a member whose schema is the recognized
-  `oneOf` null pattern is an optional+nullable field (required+nullable
-  forbidden per **P10.2**).
+  `oneOf` null pattern is nullable; it is optional+nullable when absent
+  from `required` and required+nullable when listed (both supported —
+  presence and null-acceptance are orthogonal per **P10.2**).
 - **[[dependentRequired]] / [[dependentSchemas]] / [[propertyNames]] /
   [[minProperties]] / [[maxProperties]]**: layer additional object-level
   assertions over the same member set.
@@ -262,16 +263,17 @@ aggregates, arrays use [[items]], etc.
   mutual recursion). This is the only way to express recursive types;
   the matrix rows above are blocked on the `$ref` spec, which must define
   resolution scope and how recursive aggregates emit without infinite
-  expansion. Termination rule: a **direct** self-reference must be
-  optional (absent terminates the chain) — required+non-nullable direct
-  recursion has no finite instance and is rejected, and required+nullable
-  is already forbidden by **P10.2**, so direct self-refs land on optional
-  fields. A self-reference wrapped in a **collection** (array `items` /
-  map `additionalProperties`) may be **required**, since the empty
-  collection terminates. Representation note: Go must use indirection for
-  any recursive type (a struct can't contain itself by value — `*T` for
-  direct, slices/maps are already references); that nil-able pointer
-  coincides with the optionality the satisfiability rule already forces.
+  expansion. Termination rule: a **direct** self-reference must have a
+  terminating form — either **optional** (absent ends the chain) or
+  **required+nullable** (`null` ends the chain). Only
+  required+**non-nullable** direct recursion has no finite instance and
+  is rejected. A self-reference wrapped in a **collection** (array
+  `items` / map `additionalProperties`) may be **required** and
+  non-nullable, since the empty collection terminates. Representation
+  note: Go must use indirection for any recursive type (a struct can't
+  contain itself by value — `*T` for direct, slices/maps are already
+  references); that nil-able pointer coincides with the nullable/optional
+  slot the satisfiability rule already forces for direct recursion.
   Java/TS/Python use reference semantics and would accept a required
   non-null direct recursive field at the type level, but it is still
   semantically unsatisfiable, so we reject it uniformly.

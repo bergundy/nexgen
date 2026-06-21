@@ -255,7 +255,7 @@ For each accepted `type`, fuzz over:
 |---|---|
 | JSON Schema 2020-12 | Native. Reject only documented out-of-subset cases. |
 | OpenAPI 3.1         | Aligns with 2020-12. Native. |
-| OpenAPI 3.0         | `nullable: true` → reject (P10.2). User must rewrite. |
+| OpenAPI 3.0         | `nullable: true` → reject; only the canonical `oneOf:[{T},{null}]` form is accepted ([[nullability]]). User must rewrite. |
 | Swagger 2.0 / draft-4 | Same as OAS 3.0; no type arrays; nullable rewrite required. |
 
 Pre-draft-4 union-of-schemas form (`type: [{...},{...}]`) is irrelevant —
