@@ -110,8 +110,8 @@ This buys two things:
    (`/tmp/pyd_map_shape.py`): a `dict[str,T]` alias that becomes a
    `BaseModel` breaks `m["k"]` with `TypeError: not subscriptable`.
 2. **A clean separation of declared keys from extra keys.** Declared
-   members are renamed to canonical language identifiers (the key
-   case-mapping in [[properties]], not yet specced); extra keys are
+   members are renamed to canonical language identifiers (the
+   identifier case-mapping in [[properties]]); extra keys are
    arbitrary and must be preserved **verbatim**. Keeping extras in their
    own `additionalProperties` member (rather than mingled with declared
    members via a TS index signature or a flat map) keeps the two
