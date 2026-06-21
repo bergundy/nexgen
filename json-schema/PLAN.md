@@ -68,7 +68,13 @@ example at `features/type/spec.md`:
   question — Java closed-struct aggregation.
 - `features/required/spec.md`: complete. Zero open questions.
 - `features/maxProperties/spec.md`, `features/minProperties/spec.md`:
-  complete (runtime count assertions). Zero open questions.
+  complete (runtime count assertions). Count is over **distinct wire
+  member keys**, taken before default population (P11) — defaults never
+  count; counted as one number, never summed across declared/extras
+  buckets (avoids case-mapping mis-routing + Pydantic bucket overlap).
+  Interactions with `default` and `const` documented (object-level
+  `const` → static satisfiability check, deferred to the const spec).
+  Zero open questions.
 - `features/dependentRequired/spec.md`: complete (runtime cross-field
   presence; `dependentSchemas` split off as P5-reject). Zero open Qs.
 - `features/patternProperties/spec.md`: complete — **rejected per P5**
@@ -178,6 +184,12 @@ example at `features/type/spec.md`:
   - `/tmp/pyd_map_shape.py` — Python pure-map shape instability: a
     `dict[str,T]` alias that becomes a `BaseModel` breaks `m["k"]`
     (justifies always emitting pure maps as Pydantic models)
+  - `/tmp/pyd_minprops_probe.py` — property counting for
+    min/maxProperties: `len(model_fields_set)` is the exact wire-key
+    count (includes extras, excludes default-filled fields). Naive
+    `len(model_dump())` over-counts via defaults; `model_fields_set` +
+    `__pydantic_extra__` over-counts because extras appear in *both*.
+    Count wire keys as one number, never sum buckets.
   - `/tmp/ts_flatten.ts` — TS index-signature conformance: a *typed*
     `[k:string]:T` alongside `id:number` is TS2411 (illegal); this is why
     typed extras use a named `additionalProperties: Record<string,T>`
@@ -192,6 +204,10 @@ example at `features/type/spec.md`:
     if you want P8 aggregation across both error sources.
   - Jackson's default `Long` deserializer **silently truncates**
     `1.5` to `1`. Custom deserializer is mandatory, not optional.
+  - Pydantic's `model_fields_set` **includes extras and excludes
+    default-filled fields** — so it is the exact wire-key count for
+    min/maxProperties. Summing `model_fields_set` + `__pydantic_extra__`
+    double-counts extras (they live in both). Count wire keys once.
 
 ## Remaining work
 
