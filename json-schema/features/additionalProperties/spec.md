@@ -253,9 +253,9 @@ Empirical notes (Pydantic 2.13, verified):
 
 - **[[properties]] / [[patternProperties]]**: `additionalProperties`
   only sees members **not** in their matched-name annotations (spec
-  §10.3.2.3). [[patternProperties]] is **rejected per P5**, so in our
-  subset only [[properties]] matches are excluded — every other member
-  is "additional."
+  §10.3.2.3). [[patternProperties]] is **temporarily unsupported**
+  (rejected at load time in v1), so in our subset only [[properties]]
+  matches are excluded — every other member is "additional."
 - **[[unevaluatedProperties]]**: strictly more powerful (sees the
   transitive evaluated set across applicators). We **reject**
   `unevaluatedProperties` per **P5** (its annotation-dependent semantics
@@ -297,7 +297,7 @@ Empirical notes (Pydantic 2.13, verified):
 ## See also
 
 - [[properties]] — declares the matched members this keyword excludes.
-- [[patternProperties]] — rejected per **P5**; typed-map alternative.
+- [[patternProperties]] — temporarily unsupported; typed-map alternative.
 - [[unevaluatedProperties]] — rejected per **P5**; this is the subset.
 - [[type]] — requires an explicit open/closed choice for bare objects.
 - [[minProperties]], [[maxProperties]], [[propertyNames]] — other

@@ -77,9 +77,12 @@ example at `features/type/spec.md`:
   Zero open questions.
 - `features/dependentRequired/spec.md`: complete (runtime cross-field
   presence; `dependentSchemas` split off as P5-reject). Zero open Qs.
-- `features/patternProperties/spec.md`: complete — **rejected per P5**
-  (dynamic keys + regex-dialect + overlap ambiguity). 1 open question —
-  possible future single-pattern typed-map carve-out.
+- `features/patternProperties/spec.md`: complete — **temporarily
+  unsupported** (rejected at load time in v1, but *deferred* not
+  categorically excluded: the general form has dynamic-keys +
+  regex-dialect + overlap ambiguity, yet a single-pattern typed-map form
+  is plausibly lowerable). 1 open question — that single-pattern carve-out
+  is the path to "partial."
 - `features/propertyNames/spec.md`: complete — **partial** (map-shaped
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
@@ -239,7 +242,7 @@ decisions:
 **Object structure:**
 - ✅ `properties`, ✅ `additionalProperties` (open/closed landed)
 - ✅ `required`, ✅ `minProperties`, ✅ `maxProperties`,
-  ✅ `dependentRequired`, ✅ `patternProperties` (reject),
+  ✅ `dependentRequired`, ✅ `patternProperties` (temporarily unsupported),
   ✅ `propertyNames` (partial)
 - Remaining: `unevaluatedProperties` (expect P5-reject),
   `dependentSchemas` (expect P5-reject)

@@ -1,0 +1,145 @@
+# `patternProperties`
+
+Source: JSON Schema 2020-12, Core (Applicator vocabulary), §10.3.2.2
+"Keywords for Applying Subschemas to Objects → patternProperties".
+
+Applies subschemas to members whose **names match a regular
+expression**. **Temporarily unsupported** — rejected at load time for
+now, but not a categorical P5 exclusion: a narrow form is plausibly
+lowerable and is deferred to post-v1 (see Support decision + Open
+questions).
+
+## Spec summary
+
+Verbatim (2020-12 core, Applicator):
+
+> The value of "patternProperties" MUST be an object. Each property name
+> of this object SHOULD be a valid regular expression, according to the
+> ECMA-262 regular expression dialect. Each property value of this object
+> MUST be a valid JSON Schema.
+
+> Validation succeeds if, for each instance name that matches any regular
+> expressions that appear as a property name in this keyword's value, the
+> child instance for that name successfully validates against each schema
+> that corresponds to a matching regular expression.
+
+> The annotation result of this keyword is the set of instance property
+> names matched by this keyword. This annotation affects the behavior of
+> "additionalProperties" (in this vocabulary) and "unevaluatedProperties"
+> (in the Unevaluated vocabulary).
+
+> Omitting this keyword has the same assertion behavior as an empty
+> object.
+
+Distilled:
+- Regex-keyed subschemas: members whose name matches a pattern must
+  validate against the corresponding subschema.
+- A single name may match multiple patterns (must satisfy **all**).
+- Contributes to the matched-name annotation that [[additionalProperties]]
+  consumes.
+
+## Support decision
+
+**Support:** no — **temporarily unsupported.** Rejected at load time in
+v1, but explicitly *deferred*, not categorically excluded: the general
+form carries real lowering hazards (below), yet a narrow single-pattern
+form is plausibly representable and is tracked for a future release (see
+Open questions).
+
+Why deferred rather than landed in v1 (citing [[PRINCIPLES.md]]):
+- **P5 (strict subset)**: regex-keyed members produce a **dynamically
+  keyed** member set that cannot lower to named, statically-typed fields
+  in Go/TS/Java/Python. It is a map construct wearing object clothes.
+- **P10 / P10.1 (reject ambiguity loudly)**: overlapping patterns mean a
+  single member may be governed by several subschemas at once (validate
+  against *all* matching) — the emitted value type would be an
+  intersection with no coherent cross-language representation.
+- **Regex-dialect divergence** compounds it: the spec mandates ECMA-262,
+  but Go's `regexp` (RE2) rejects lookahead/backreferences that ECMA-262
+  and `java.util.regex` accept. A pattern accepted by the input could be
+  unrepresentable in one target's runtime. (The same hazard is confined
+  and managed for the value-level [[pattern]] keyword; here it multiplies
+  across the *key space*.)
+
+These hazards are why the *general* form stays out of v1. They do not all
+apply to the single-pattern, no-`properties`, RE2-safe form, which is the
+candidate carve-out — hence "temporarily unsupported" rather than a hard
+P5 reject like [[dependentSchemas]].
+
+Loader behavior (v1):
+- Any `patternProperties` present → reject with a located diagnostic.
+- The diagnostic must read as "not yet supported," not "forbidden," and
+  offer the two coherent alternatives available today:
+  1. A **typed map** — `{type:object, additionalProperties:{type:T}}` —
+     when the intent is "arbitrary keys, homogeneous values"
+     (see [[additionalProperties]]).
+  2. Enumerated **[[properties]]** — when the key set is actually finite
+     and known.
+
+## Type mapping
+
+None — rejected before any type is emitted.
+
+## Validator mapping
+
+None — rejected at load time.
+
+## Property-testing matrix
+
+### Rejected at load time (negative) — the whole surface
+
+| Reason | Example |
+|---|---|
+| Any pattern map (P5) | `{type:object, patternProperties:{"^x-":{type:string}}}` |
+| With `properties` | `{type:object, properties:{id:{type:integer}}, patternProperties:{"^meta_":{type:string}}}` |
+| Overlapping patterns | `{type:object, patternProperties:{"^a":{…}, "a$":{…}}}` |
+| RE2-incompatible pattern | `{type:object, patternProperties:{"(?=x)":{type:string}}}` |
+
+There are no accepted or runtime fixtures in v1: the keyword does not yet
+reach code generation. The single-pattern carve-out (Open questions),
+should it land, would add accepted + runtime rows.
+
+## Interactions
+
+- **[[additionalProperties]]**: per spec, `patternProperties` contributes
+  to the matched-name annotation `additionalProperties` consumes. Since
+  we reject `patternProperties` at load time in v1, that contribution
+  never arises in practice — `additionalProperties` only ever excludes
+  [[properties]] matches in our subset.
+- **[[unevaluatedProperties]]**: rejected per P5 (a hard exclusion, unlike
+  this keyword's temporary status); both belong to the
+  annotation-dependent object machinery we exclude.
+- **[[propertyNames]]**: the supported escape hatch for *constraining
+  key shape* without assigning per-pattern value schemas — partial
+  support, map-shaped objects only.
+- **[[pattern]]**: the value-level regex keyword; managed there with the
+  documented dialect caveats.
+
+## Ecosystem variance
+
+| Source dialect | Action |
+|---|---|
+| JSON Schema 2020-12 | Reject (P5). |
+| OpenAPI 3.1 | `patternProperties` present (3.1 adopts 2020-12) → reject. |
+| OpenAPI 3.0 | No `patternProperties` keyword — nothing to reject; users already lean on `additionalProperties`. |
+| Swagger 2.0 / draft-4 | `patternProperties` present → reject. |
+
+## Open questions
+
+- **The path off "temporarily unsupported":** a *single* `patternProperties`
+  entry on an object with **no** [[properties]] and an RE2-safe pattern
+  is morally a typed map with a key constraint. This is the concrete form
+  the temporary status is holding open: it could be lowered as
+  `map<string,T>` + a runtime key-pattern check (folding in
+  [[propertyNames]] semantics). Specifying this carve-out is what would
+  move the keyword from "temporarily unsupported" to "partial." Deferred —
+  not in the v1 subset.
+
+## See also
+
+- [[additionalProperties]] — typed-map alternative.
+- [[propertyNames]] — constrain key shape (partial support).
+- [[properties]] — enumerate a known key set.
+- [[pattern]] — value-level regex with dialect caveats.
+- [[unevaluatedProperties]] — hard-rejected (P5), unlike this keyword's
+  temporary status.

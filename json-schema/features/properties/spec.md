@@ -247,8 +247,9 @@ aggregates, arrays use [[items]], etc.
   **reject** that as a schema bug (required name with no declared
   shape) per **P10.1**.
 - **[[patternProperties]]**: per spec also contributes to the
-  matched-name annotation, but it is **rejected per P5** in our subset,
-  so [[properties]] is the only contributor in practice.
+  matched-name annotation, but it is **temporarily unsupported** (rejected
+  at load time in v1), so [[properties]] is the only contributor in
+  practice.
 - **[[type]]**: `properties` is only meaningful under `type:"object"`;
   pairing with any other `type` is a generator-time error.
 - **[[nullability]]**: a member whose schema is the recognized
