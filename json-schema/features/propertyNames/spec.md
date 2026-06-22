@@ -82,6 +82,16 @@ Reuses whatever the string-assertion specs ([[pattern]], [[minLength]],
 checks applied to keys instead of values, so it inherits their
 dialect/strategy decisions (notably [[pattern]]'s regex-dialect caveat).
 
+### Serialize-side (P17)
+
+The key check is part of the shared `Validate`, so it runs again before
+emit: every catch-all key about to be written is re-validated against the
+constraint, and a key inserted in memory that violates it (e.g. a map key
+not matching the `pattern`) fails serialization rather than emitting an
+out-of-contract object. Extra keys serialize **verbatim** (no
+case-mapping — see [[additionalProperties]]), so the in-memory key is
+exactly the wire key the check applies to, in both directions.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

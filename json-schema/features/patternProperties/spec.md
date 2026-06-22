@@ -82,7 +82,11 @@ None — rejected before any type is emitted.
 
 ## Validator mapping
 
-None — rejected at load time.
+None — rejected at load time, so there is no (de)serialize boundary and
+no serialize-side behavior (**P17**). If the single-pattern typed-map
+carve-out (Open questions) later lands, its key+value checks would join
+the shared `Validate` and run in both directions exactly like
+[[propertyNames]]'s key check.
 
 ## Property-testing matrix
 

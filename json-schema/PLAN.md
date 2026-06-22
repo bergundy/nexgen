@@ -34,7 +34,11 @@ example at `features/type/spec.md`:
 2. **Support decision** — support / partial / reject + rationale
    citing PRINCIPLES.md by P-number
 3. **Type mapping** — emitted bare type for Go / TS / Python / Java
-4. **Validator mapping** — runtime check per language + strategy
+4. **Validator mapping** — runtime check per language + strategy,
+   **including a `Serialize-side (P17)` subsection**: which checks the
+   shared `Validate` re-runs on emit vs. which are parse-adapter-only
+   (deserialize) or encode-adapter-only (serialize: omit/emit-`null`,
+   default omission, const auto-emit)
 5. **Property-testing matrix** — accepted / rejected-at-load / runtime
    fixtures
 6. **Interactions** — how this keyword changes meaning of others
@@ -46,13 +50,23 @@ example at `features/type/spec.md`:
 
 ### Cross-cutting
 
-- `PRINCIPLES.md`: P1–P16 with sub-principles. **All four language
-  sections complete** — Go (5), TypeScript (5), Python (5), Java (4).
-  P16 added: uniform `±(2^53−1)` integer cap. Java §4 (error
-  aggregation primitive) is documented but its mechanism is still TBD.
+- `PRINCIPLES.md`: P1–P17 with sub-principles. **All four language
+  sections complete** — Go (6), TypeScript (6), Python (6), Java (6).
+  P16: uniform `±(2^53−1)` integer cap. **P17 added: serialize-side
+  validation** — both directions share one `Validate(model)` over the
+  decoded model, flanked by a deserialize-only parse adapter and a
+  serialize-only encode adapter; no IR round-trip. **P11 amended**:
+  `default` is materialized on *read* (set-ness tracked, omit-unset on
+  serialize, no deep-equals), not stored on deserialize. Each language
+  section gained a §6 serialize note. Java §5 (error aggregation
+  primitive) is still TBD and **now gates the serialize direction too**.
 - `features/nullability/spec.md`: cross-cutting design note (not a
   keyword). Covers optionality + nullability for all 4 languages with
-  empirically-verified per-language enforcement strategies. Zero open
+  empirically-verified per-language enforcement strategies. **Now carries
+  the per-field serialize omit-vs-emit-`null` table (P17)** and the
+  **Python faithful-round-trip upgrade** for optional+nullable (via
+  `model_fields_set`/`exclude_unset`, same tier as TS) — closing the old
+  "wrapper type" open question. Go/Java stay conservative-omit. Zero open
   questions.
 
 ### Features
@@ -89,6 +103,37 @@ example at `features/type/spec.md`:
 
 ### Key decisions taken
 
+- **Serialize-side validation is first-class (P17).** Validation runs in
+  *both* directions over one shared `Validate(model)` (constraint
+  predicates over the decoded model), with mirror-image adapters: a
+  deserialize-only parse adapter (spec-number parse, explicit-`null`
+  reject, wire-absence→required, type-token classification) and a
+  serialize-only encode adapter (omit-vs-emit-`null`, default omission,
+  const auto-emit). **No IR round-trip** — sharing is at the predicate
+  layer, not by re-serializing to a generic value tree. Serialize fails
+  before emitting a byte; Python only re-validates to catch
+  `model_construct`/mutation bypasses. Empirically proven in Go +
+  Python (`/tmp/serialize_probe/`, `/tmp/oe/`, `/tmp/pyd_serialize_probe.py`,
+  `/tmp/pyd_null_serialize_probe.py`).
+- **`default` materialized on read, not stored (P11 amended).** Track
+  set-ness; serialize omits unset fields with **no deep-equals** against
+  the default; surface the default on read (accessor / native default).
+  Explicit-set pins. Mechanisms: Go `,omitempty`+pointer, Pydantic
+  `exclude_unset`, TS `undefined`, Java `@JsonInclude(NON_NULL)`.
+- **`const` auto-emits on serialize, never omit-unset.** `const` is a
+  contract assertion (often a discriminator that *must* be on the wire),
+  not a population directive — so it is auto-populated and always
+  emitted (optional+const is the only emit-if-set case). Lumping it into
+  omit-unset would drop a defaulted discriminator (proven in
+  `/tmp/pyd_serialize_probe.py`). Enforcement detail deferred to the
+  `const` spec.
+- **Optional+nullable round-trip is capability-tiered:** faithful in
+  TS *and Python* (`undefined` / `model_fields_set`+`exclude_unset`),
+  conservative-omit in Go/Java (`*T` nil / `null` collapse; faithful
+  would need a presence wrapper — rejected for v1 as P2 overhead).
+  Per-field omit-vs-emit-`null` is a static decision from the
+  optional/nullable/required declaration; the full table lives in
+  [[nullability]]. Proven `/tmp/pyd_null_serialize_probe.py`.
 - **`type` is single-string only** — array form rejected; missing
   `type` rejected; `type: "null"` standalone rejected (only allowed
   inside the nullability pattern).
@@ -137,7 +182,7 @@ example at `features/type/spec.md`:
   reject `1.5`. Per-language runtime helpers (`parseSpecInteger`,
   `_parse_spec_integer`, `SpecLongDeserializer`).
 - **Java reference types carry JSpecify nullness annotations**
-  (PRINCIPLES Java §2). Emitted packages are `@NullMarked`; optional
+  (PRINCIPLES Java §3). Emitted packages are `@NullMarked`; optional
   reference fields are `@Nullable`, required ones non-null by default.
   Restores for reference types the in-memory nullness signal that
   `long`-vs-`Long` gives scalars (P1); complementary to the non-null
@@ -197,9 +242,24 @@ example at `features/type/spec.md`:
     `[k:string]:T` alongside `id:number` is TS2411 (illegal); this is why
     typed extras use a named `additionalProperties: Record<string,T>`
     member instead of an inline index signature
+  - `/tmp/serialize_probe/` — Go shared `Validate()` called by BOTH
+    `MarshalJSON` and `UnmarshalJSON`; parse-layer (1.5 reject) stays
+    deserialize-only; default omit-unset + const auto-emit; round-trip
+    byte-identical (no default echo) — proves the P17 decomposition
+  - `/tmp/oe/` — Go `omitempty` quadrant: nil omits / ptr-to-`""` emits;
+    no-`omitempty` `*T` nil → `null`; type-alias `MarshalJSON` honors
+    tags without recursion (the declarative omit-vs-`null` encode layer)
+  - `/tmp/pyd_serialize_probe.py` — Pydantic `exclude_unset` omits while
+    the attr still reads the default (no deep-equals); explicit-set pins;
+    const+`exclude_unset` would wrongly drop a discriminator (→ const
+    must force-emit); `model_construct` bypass caught by re-validation
+  - `/tmp/pyd_null_serialize_probe.py` — per-field omit-vs-emit-`null`:
+    required+nullable emits `null`; `model_fields_set` distinguishes
+    wire-`null` from wire-absent (Python optional+nullable is faithful);
+    optional-non-nullable explicit `null` rejected in strict mode
 - **Decisions cite principles by P-number.** Every Support decision
   in a feature spec must reference the P-number(s) it's grounded in.
-- **Three surprises worth noting for future Python/Java work:**
+- **Surprises worth noting for future Python/Java/TS work:**
   - Pydantic's `_FIELD: ClassVar[T]` is required — bare `_FIELD`
     becomes a private model attr.
   - Pydantic's `model_validator(mode='before')` that raises
@@ -211,6 +271,15 @@ example at `features/type/spec.md`:
     default-filled fields** — so it is the exact wire-key count for
     min/maxProperties. Summing `model_fields_set` + `__pydantic_extra__`
     double-counts extras (they live in both). Count wire keys once.
+  - Pydantic `model_dump(exclude_unset=True)` omits unset fields **while
+    the attribute still reads the default** — gives P11 omit-unset and
+    faithful optional+nullable in one flag, no deep-equals. And
+    `model_fields_set` marks a field set when the wire carried explicit
+    `null`, so it distinguishes wire-`null` from wire-absent (Python is
+    in the faithful round-trip tier with TS).
+  - `JSON.stringify` **silently coerces `NaN`/`±Infinity` to `null`** —
+    the TS serializer must reject non-finite numbers before stringifying
+    (the one numeric check the TS type system doesn't already give).
 
 ## Remaining work
 
@@ -222,14 +291,14 @@ All three former high-priority items are **resolved** (2026-06-16):
    ±(2^53−1) uniform cap (P16). TS enforces via `Number.isSafeInteger`,
    no third-party parser needed (empirically verified).
 2. ~~Fill PRINCIPLES.md → TypeScript, Python, Java sections.~~ **DONE** —
-   all three sections written (Java §4 aggregation mechanism still TBD,
+   all three sections written (Java §5 aggregation mechanism still TBD,
    tracked as an open question).
 3. ~~Decide + land closed-vs-open default for typed structs.~~ **DONE** —
    open-by-default; landed in `properties/spec.md` +
    `additionalProperties/spec.md`.
 
 Next-highest leverage (newly surfaced TBDs that gate clusters of specs):
-- **Java error-aggregation primitive** (PRINCIPLES Java §4). Gates the
+- **Java error-aggregation primitive** (PRINCIPLES Java §5). Gates the
   closed-struct and multi-field-error story across every Java spec.
 - **`$ref`** — still the single highest-priority structural keyword
   (drives file-per-input + merge-on-cycle, P13–P14).
@@ -248,7 +317,10 @@ decisions:
   `dependentSchemas` (expect P5-reject)
 
 **Any-type assertions:**
-- `enum`, `const`
+- `enum`, `const` — `const` must specify the **serialize-side rule
+  (P17): auto-populate + always emit** the fixed value (it is a contract
+  assertion / discriminator, never omit-unset; optional+const is the
+  only emit-if-set case).
 
 **Numeric assertions** (gated by integer-cap decision):
 - `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`,
@@ -278,7 +350,10 @@ decisions:
   `time.Time` in Go).
 - `title`, `description`, `default`, `examples`, `deprecated`,
   `readOnly`, `writeOnly`, `contentEncoding`, `contentMediaType`,
-  `contentSchema` — lower priority; mostly pure metadata.
+  `contentSchema` — lower priority; mostly pure metadata. **Exception:
+  `default` is not pure metadata** — its spec must encode the amended
+  P11 (set-ness tracking, omit-unset on serialize, materialize-on-read,
+  no deep-equals).
 
 ## Open question inventory
 
@@ -307,8 +382,10 @@ Snapshot as of this checkpoint.
 - None.
 
 ### `PRINCIPLES.md`
-- Java §4 — **error-aggregation primitive mechanism still TBD** (the
-  one remaining language-section gap).
+- Java §5 — **error-aggregation primitive mechanism still TBD** (the
+  one remaining language-section gap). **Now gates the serialize
+  direction too (P17 / Java §6):** the same single-shot aggregation
+  problem applies mirror-image when validating before write.
 
 ## How to pick up the work in a new session
 

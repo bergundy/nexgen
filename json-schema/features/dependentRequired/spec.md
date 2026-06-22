@@ -80,6 +80,15 @@ dependent is also present.
 | Python | `model_validator(mode='wrap')` reading the raw dict: for each present trigger, raise `InitErrorDetails` for each absent dependent, merged into the aggregated `pydantic.ValidationError`. Dependency map stored as a `ClassVar` constant (per PRINCIPLES Python §5). |
 | Java | post-bind check over the bound object's present-field set; reject per the Java aggregation primitive (TBD, PRINCIPLES Java §5). |
 
+### Serialize-side (P17)
+
+The cross-field check runs again before emit, over the **to-be-emitted**
+member set (present = will be written, after default omission). If a
+trigger will be emitted but a dependent is unset/omitted, serialize fails
+with the same `ValidationError{path:dependent, reason}` — symmetric with
+deserialize, where "present" means "on the wire." A dependent satisfied
+only by an omitted default does **not** count as present.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

@@ -63,6 +63,19 @@ comparison:
 | Python | `model_validator`; `len(model_fields_set) < min` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into aggregated `ValidationError`. |
 | Java | count distinct JSON field names seen during bind (`< min`); **not** POJO fields + any-setter map summed post-bind. Reject per Java aggregation primitive (TBD). |
 
+### Serialize-side (P17)
+
+The count runs again before emit, over the keys that **will actually be
+written** — *after* default omission and the omit-vs-`null` decision (the
+serialize mirror of "before default population"). A field whose default
+is unset is omitted and does **not** count toward the floor, exactly as
+it didn't on the way in — so a model that reads as populated in memory
+(defaults visible) can legitimately fall **under** `minProperties` on the
+wire, and serialize fails (`MarshalJSON`/`serializeX`/`model_dump`) rather
+than emitting an under-floor object. `model_fields_set` is again the
+exact emitted-key count under `exclude_unset`. See [[maxProperties]]
+serialize note (symmetric).
+
 ## Property-testing matrix
 
 ### Accepted (positive)

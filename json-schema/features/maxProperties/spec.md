@@ -62,6 +62,21 @@ the two sets overlap — verified `/tmp/pyd_minprops_probe.py`).
 | Python | `model_validator`; `len(model_fields_set) > max` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into the aggregated `ValidationError`. |
 | Java | count distinct JSON field names seen during bind (`> max`); **not** populated POJO fields + `@JsonAnySetter` map summed post-bind. Reject per the Java aggregation primitive (TBD, PRINCIPLES Java §5). |
 
+### Serialize-side (P17)
+
+The count runs again before emit, over the keys that **will actually be
+written** — i.e. *after* default omission and the omit-vs-`null` decision
+(the serialize mirror of "before default population"). A field whose
+default is unset is omitted and does **not** count, exactly as it didn't
+on the way in. `model_fields_set` (Python) is again the exact emitted-key
+count under `exclude_unset`; Go/TS count the members the encoder will
+emit; an over-cap model fails `MarshalJSON`/`serializeX`/`model_dump`
+rather than emitting an out-of-bounds object. Because the in-memory model
+can *read* a default as present that *serializes* as absent, a model can
+legitimately fail `maxProperties`/`minProperties` on serialize that
+"looked" satisfiable in memory — correct, since the assertion is about
+the wire object.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

@@ -187,6 +187,18 @@ per-member dispatch; presence/absence is [[required]], extras are
 A member subschema validates recursively — nested objects become nested
 aggregates, arrays use [[items]], etc.
 
+### Serialize-side (P17)
+
+`properties` is symmetric across directions: serialize recurses the
+shared `Validate` into each present member (a nested aggregate's own
+`MarshalJSON`/`serializeX`/`model_dump` validates it), and the JSON-name
+binding (`json` tag / alias / `@JsonProperty`) re-emits each member under
+its **original wire name**, not the case-mapped identifier — so the
+contract is stable in both directions. Member omit-vs-emit-`null` is
+owned by [[required]] + [[nullability]]; the per-member value checks are
+the same predicates the deserializer runs. `path` on a serialize-side
+failure is the JSON member name, identical to deserialize.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

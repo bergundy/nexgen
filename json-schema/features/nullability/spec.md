@@ -24,7 +24,7 @@ a POJO (Java 8 floor — **not** a record; see PRINCIPLES Java §1), so the
 fields below are private with generated getters/constructor. The
 package is `@NullMarked` (JSpecify; non-null by default), so optional
 reference fields carry `@Nullable` and required ones need no annotation
-(see PRINCIPLES Java §2):
+(see PRINCIPLES Java §3):
 
 ```java
 @NullMarked
@@ -150,12 +150,16 @@ class User(BaseModel):
 |---|---|---|
 | any | `T` | `Optional[T]` (with `= None` default) |
 
-Pydantic strict mode + `Optional[T]` accepts `None` for the optional case;
-absence and explicit `null` collapse to the same Python value (`None`).
-**Implication:** in Python alone, the "absent vs `null`" distinction is
-lost at the model boundary — the user can't tell which one the client
-sent. If that distinction matters for a feature, we need a wrapper type
-(tracked as an open question).
+Pydantic strict mode + `Optional[T]` accepts `None` for the optional
+case. At the *value* level absence and explicit `null` both read as
+`None`, but Pydantic's `model_fields_set` records **which keys the wire
+actually carried**, so the distinction is *not* lost at the model level
+— it is recoverable for serialization. `model_dump(exclude_unset=True)`
+therefore round-trips optional+nullable **faithfully** (wire `null` →
+set → re-emitted as `null`; wire-absent → unset → omitted), putting
+Python in the same faithful tier as TypeScript (see "Round-trip
+behavior" and "Serialize-side behavior" below, and PRINCIPLES Python
+§6). No wrapper type is needed — this closes the earlier open question.
 
 ## Nullability convention
 
@@ -244,7 +248,7 @@ required-and-nullable):
 
 (Java is `@Nullable` across every nullable column — the annotation
 tracks in-memory nullness, not the wire distinction; see the optionality
-section above and PRINCIPLES Java §2. In Java/Go, required+nullable and
+section above and PRINCIPLES Java §3. In Java/Go, required+nullable and
 optional+nullable share both type *and* annotation; the presence check
 is the only difference, exactly as required-non-nullable reference types
 already rely on a validator the type can't express.)
@@ -252,39 +256,42 @@ already rely on a validator the type can't express.)
 ### Round-trip behavior
 
 The single reason one might have kept the prohibition was to avoid
-absent-vs-`null` ambiguity when round-tripping through Go/Java (and
-Python). That ambiguity does **not** affect required+nullable:
+absent-vs-`null` ambiguity when round-tripping. That ambiguity does
+**not** affect required+nullable, and affects optional+nullable only in
+Go and Java:
 
 - **Required + nullable round-trips losslessly in all four languages.**
   Presence is guaranteed, so an in-memory `null`/`nil`/`None`
   unambiguously means "the wire sent `null`"; the serializer always
   emits the key (never omits it), and `null` ⟷ `null`. There is no
   absent state to confuse it with.
-- **The residual collapse is confined to optional+nullable** in
-  Java/Go/Python: absent and explicit `null` share one in-memory value,
-  so on the way *out* the generator cannot recover which the client
-  sent and emits a single canonical form: the key is **omitted** (an
-  unset optional serializes as absent — the conservative choice, since
-  emitting `null` would fabricate a value the client may never have
-  sent). A client that sent explicit `null` on an optional+nullable
-  field therefore reads it back as absent. This is the acceptable
-  runtime collapse already noted below; it is a property of
-  optional+nullable, **not** a reason to forbid required+nullable.
-- **TypeScript round-trips every state faithfully** — `undefined` vs
-  `null` are distinct in memory, so no collapse occurs.
+- **Optional + nullable round-trips faithfully in TypeScript and
+  Python; collapses in Go and Java.** TS keeps `undefined` (absent) vs
+  `null` distinct in memory. Python reads both as `None` at the value
+  level but tracks `model_fields_set`, so `exclude_unset` re-emits a
+  wire `null` as `null` and omits a wire-absent key (empirically
+  verified, `/tmp/pyd_null_serialize_probe.py`). Go (`*T` `nil`) and
+  Java (`null`) genuinely cannot distinguish the two in memory, so they
+  emit a single canonical form — the key is **omitted** (the
+  conservative choice; emitting `null` would fabricate a value the
+  client may never have sent). A client that sent explicit `null` on an
+  optional+nullable field reads it back as absent **in Go/Java only**.
+- This collapse is a property of optional+nullable in Go/Java, **not** a
+  reason to forbid required+nullable.
 
-**Collapse note (Java / Go / Python):** the in-memory representations
-of "absent" and "JSON null" are the same (`null`, `nil`, `None`). The
-validator preserves the schema-level distinction at the *boundary*
-(rejection happens before the field is populated), but post-
-validation user code can't recover which one came through the wire.
-This matches **P10.2**'s framing — optional and nullable are distinct
-*schema* concerns; runtime collapse is acceptable when the language
-can't represent the difference.
+**Collapse note (Go / Java only):** the in-memory representations of
+"absent" and "JSON null" are the same (`nil`, `null`), and — unlike
+Python's `model_fields_set` and TS's `undefined` — there is no side
+channel recording which the wire carried, so post-validation user code
+can't recover it. This matches **P10.2**'s framing — optional and
+nullable are distinct *schema* concerns; runtime collapse is acceptable
+when the language can't represent the difference. Making Go/Java
+faithful would require a presence-tracking wrapper (`Null[T]` / shadow
+bit); **rejected for v1** as ergonomic overhead (P2) that the
+conservative omit avoids.
 
-TypeScript is the exception: `undefined` vs `null` gives natural
-three-state, so the validator can and does enforce the distinction at
-read time.
+TypeScript and Python enforce *and* preserve the distinction; Go and
+Java enforce it at the boundary but collapse it in memory.
 
 ### Diagnostics
 
@@ -310,6 +317,42 @@ absent) and **null acceptance** (non-nullable = reject `null`; nullable
 | **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | strict-variant custom deserializer (see strategy below) | shadow `*json.RawMessage` with explicit `bytes.Equal(*raw, []byte("null"))` reject | `parsed.x === null` rejected; `=== undefined` OK | `model_validator(mode='wrap')` rejects keys present with `None` |
 | **Optional + nullable** — absent OK, `null` OK, T OK | type is `@Nullable Long`/`String`/etc.; no extra check beyond type binding | type is `*int64`/`*string`/etc.; no extra check beyond type binding | type is `x?: T \| null`; both `undefined` and `null` accepted | `Optional[T] = None`; both forms accepted |
 | **Required + nullable** — must be present, `null` OK, T OK, absent rejected | base (non-strict) deserializer accepts `null`; presence enforced (`field`-present check / required-field machinery) | shadow `*json.RawMessage`; reject on absent (`nil` shadow), accept `null` token | type is `x: T \| null`; emit `parsed.x === undefined` reject; `null` accepted | `Optional[T]` with **no** default → required, accepts `None` |
+
+## Serialize-side behavior
+
+Per **P17** the encode adapter chooses, *per field from the
+optional/nullable/required declaration*, whether an empty in-memory
+value (`undefined`/`nil`/`None`/`null`) is omitted or emitted as
+`null`. The decision is **static** (baked into the generated
+serializer), never a function of the value alone: a blanket "omit all
+nulls" would drop a required+nullable `null` (violating `required`),
+and a blanket "emit all nulls" would fabricate an invalid `null` for
+optional-non-nullable.
+
+| required | nullable | empty-value serialize action |
+|---|---|---|
+| optional | non-nullable | **omit** the key (emitting `null` is invalid; `Validate` also rejects an explicit in-memory `null` where the language can hold one) |
+| optional | nullable | **omit** (conservative) in Go/Java; **faithful** in TS/Python — omit if unset, emit `null` if explicitly null |
+| required | non-nullable | cannot be empty — `Validate` rejects; always emit the value |
+| required | nullable | **emit `key: null`** — omitting violates `required` |
+
+Per-language mechanism (all are *encode-adapter* concerns; the shared
+`Validate` runs first and is identical to the deserialize side):
+
+- **Go** — struct tags. Optional → `*T` with `,omitempty` (nil
+  omitted); required+nullable → `*T` **without** `omitempty` (nil →
+  `null`); required-non-nullable → bare value type. The type-alias
+  `MarshalJSON` lets the tags do the work (PRINCIPLES Go §6; verified
+  `/tmp/oe/`).
+- **TypeScript** — `serializeX` omits `undefined`, emits `null`; the
+  three-state gives faithful optional+nullable for free.
+- **Python** — `model_dump(exclude_unset=True)` implements the whole
+  table in one flag; `model_fields_set` drives the faithful
+  optional+nullable behavior (PRINCIPLES Python §6).
+- **Java** — `@JsonInclude(NON_NULL)` on optional fields;
+  `@JsonInclude(ALWAYS)` forces the required+nullable `null`;
+  optional+nullable collapses to the conservative omit (PRINCIPLES
+  Java §6).
 
 ## Strict enforcement of optional-non-nullable
 

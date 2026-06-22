@@ -213,6 +213,27 @@ Empirical notes (Pydantic 2.13, verified):
   `additionalProperties:{type:string}` yields two `extra_type` entries
   (`a`, `b`) in one `ValidationError`, while `c` passes and round-trips.
 
+### Serialize-side (P17)
+
+The catch-all is re-emitted by spreading its members back to top-level
+JSON (Go `MarshalJSON` / TS reserializer / Java `@JsonAnyGetter` /
+Python `model_dump`). Symmetry per mode:
+
+- **Open, untyped** — extras pass through **verbatim**; Go's
+  `json.RawMessage` element type guarantees byte-faithful re-emit (no
+  `float64` precision loss / key reordering — the same hazard as on
+  decode, see "Why `json.RawMessage`, not `any`" above).
+- **Open, typed `{type:T}`** — each extra value is re-validated through
+  `T`'s shared checks before emit, so a catch-all mutated to an invalid
+  value fails serialization rather than emitting bad data.
+- **Closed (`false`)** — no catch-all exists in memory, so there is
+  nothing extra to emit; the closed shape is preserved by construction.
+
+Declared members serialize under their original wire names
+([[properties]] case-mapping is reversed on the way out); extras keep
+their verbatim keys — the named-catch-all split keeps the two namespaces
+unambiguous in both directions.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

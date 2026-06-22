@@ -85,7 +85,7 @@ Java the emitted package is `@NullMarked` (JSpecify), so a required
 reference type is non-null by default (no annotation) and an optional
 one is `@Nullable` — restoring at the type level the in-memory nullness
 signal that `long`-vs-`Long` gives scalars, complementary to the
-non-null validator. See [[nullability]] and PRINCIPLES Java §2.
+non-null validator. See [[nullability]] and PRINCIPLES Java §3.
 
 ## Validator mapping
 
@@ -103,6 +103,17 @@ Required + explicit `null`: for a required **non-nullable** member,
 rejected (may not be `null`) — same machinery as the
 optional-non-nullable null rejection in [[nullability]]. For a required
 **nullable** member, `null` is accepted (only absence is rejected).
+
+**Serialize side (P17).** The presence check runs again before emit, off
+the in-memory value: a required member that is empty in memory (Go `nil`
+pointer · TS `undefined` · Python unset · Java `null` reference) is a
+`ValidationError`, so `MarshalJSON`/`serializeX`/`model_dump` fails
+rather than emitting a malformed object. A required member is therefore
+**never omitted** on serialize — required-non-nullable always emits its
+value; required+nullable emits the value or `null`, never absent (see the
+[[nullability]] serialize table). This mirrors the deserialize
+wire-absence check; only the absence *signal* differs (in-memory empty
+vs the missing shadow pointer on the wire).
 
 ## Property-testing matrix
 

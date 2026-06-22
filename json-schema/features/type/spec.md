@@ -182,6 +182,30 @@ Strategy per language:
   `MismatchedInputException` converts to our `ValidationError`.
   Aggregation primitive TBD with the Java section of PRINCIPLES.md.
 
+### Serialize-side (P17)
+
+On the way out the value is already decoded, so the wire-classification
+work (the `1.0`-vs-`1.5` parse, token typing) does **not** re-run — it
+lives only in the parse adapter. What the shared `Validate` re-checks
+before emit:
+
+- **`integer` cap.** The in-memory `int64`/`long`/`int`/`number` is
+  re-checked against `±(2^53−1)`; a value constructed past the cap is a
+  `ValidationError`, not silently emitted. Go `int64` / Java `long` hold
+  magnitudes the cap forbids, and Python ints are unbounded, so this
+  check has real teeth on the out-path.
+- **TS `number` non-finiteness.** `JSON.stringify` silently turns `NaN`
+  and `±Infinity` into `null` (empirically verified — a P10 violation on
+  the *out* path). The serializer rejects non-finite numbers for
+  `integer`/`number` fields (`Number.isFinite`, plus
+  `Number.isSafeInteger` for `integer`) before stringifying. This is the
+  only language where the encoder must add a numeric check the type
+  system doesn't already give.
+
+`object`/`array`/`string`/`boolean` carry no extra serialize check
+beyond structural recursion into nested `Validate` and the
+omit/emit-`null` rules owned by [[nullability]].
+
 ## Property-testing matrix
 
 ### Accepted values (positive tests)

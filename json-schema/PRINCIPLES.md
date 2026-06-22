@@ -16,7 +16,20 @@
     1. **Reject ambiguity loudly at generator time.** Better to error than to guess. Unsupported features get explicit errors, not silent passthrough.
     2. **Distinguish optional from nullable.** Two orthogonal concerns: "key may be absent" (optional, owned by [[required]]) vs "value may be null" (nullable, owned by the [[nullability]] `oneOf` pattern). Because they are orthogonal, **all four combinations are legal** — including *required + nullable* ("must be present, value may be `null`"), which is a well-defined, unambiguous, enforceable contract (presence-check on, null-rejection off). We do **not** reject it: it round-trips losslessly in every language (presence is guaranteed, so in-memory `null`/`nil`/`None` maps unambiguously to wire `null`). The only residual wire-vs-memory collapse is *optional + nullable* in Java/Go/Python, where absent and `null` share one in-memory value; see [[nullability]] round-trip note.
     3. **Nullability is the only `oneOf` shape accepted without a discriminator.** The recognized pattern is `oneOf: [{type: "T"}, {type: "null"}]` — exactly 2 branches, exactly one being `{type: "null"}`, order-insensitive. Any other discriminator-less `oneOf` is rejected per the main P10 rule. See [[nullability]] for details.
-11. **Default off-the-wire, populated on-the-way-in.** `default` values are never sent back on serialize (server-defined); they are populated when missing on deserialize.
+11. **Default off-the-wire, materialized on read.** `default` values are
+    never emitted on serialize **and never stored into the field on
+    deserialize**. The generator tracks field *set-ness*: serialize omits
+    any unset field — with **no value comparison** (never a deep-equals
+    against the default) — and the default is surfaced lazily *on read*
+    via an accessor or the language-native default. Explicitly setting a
+    field, even to a value equal to the default, marks it set and pins it
+    on the wire. Mechanisms: Go `,omitempty` on the optional pointer;
+    Pydantic `model_dump(exclude_unset=True)`; TS `undefined`; Java
+    `@JsonInclude(NON_NULL)`. This supersedes the earlier "populate the
+    field on deserialize" rule, which required a deep-equals to strip on
+    the way out and destroyed the absent-vs-set distinction (P12).
+    Empirically verified (`/tmp/serialize_probe/`,
+    `/tmp/pyd_serialize_probe.py`). See [[default]] (when written).
 12. **Distinguish absent from zero value**. For example in Go, prefer `string` for representing optional strings.
 13. **One file per input by default; merge on cycle.** Cross-file ref cycles auto-merge into a single output. No circular-import gymnastics.
 14. **External refs are local-file-only.** YAML and JSON files relative to the input. HTTP refs rejected for reproducibility.
@@ -30,6 +43,36 @@
     validate down to the cap; Python's unbounded ints are capped by the
     helper. See [[type]] (resolved question 1) and gates every numeric
     keyword ([[minimum]], [[maximum]], [[multipleOf]], …).
+17. **Serialize-side validation; one shared validator, mirror-image
+    adapters.** Validation is enforced in *both* directions — P7's
+    "(de)serializer boundary" is literal. Every (de)serializer
+    decomposes into three layers, and crucially **no intermediate
+    representation is round-tripped** to achieve sharing:
+    1. **Parse adapter (deserialize-only).** Wire IR → decoded value.
+       Owns the checks that only exist on the wire: spec-number parsing
+       (`1.0` accepted, `1.5` rejected), explicit-`null` rejection,
+       wire-absence → required-presence, type-token classification,
+       unknown-key preservation. These cannot live in the shared layer
+       because the decoded value no longer carries the wire information
+       they inspect.
+    2. **Shared `Validate(model)` over the decoded model.** Every
+       constraint predicate — the `±(2^53−1)` cap, numeric ranges,
+       string `minLength`/`pattern`, `const`/`enum` value checks,
+       property counts, nested recursion. Pure functions over
+       already-decoded language values, so they are *identical in both
+       directions* and called by both. The single source of truth.
+    3. **Encode adapter (serialize-only).** Decoded value → wire. Owns
+       omit-vs-emit-`null` (per-field, driven by the
+       optional/nullable/required declaration — see [[nullability]]),
+       `default` omission (P11), and `const` auto-emit.
+    Serialize runs the shared `Validate` **before emitting a byte** and
+    fails with the same aggregated error primitive as deserialize (P8).
+    In statically-typed languages (Go/TS/Java) in-memory construction is
+    unchecked, so serialize-side validation has real teeth; in Python
+    strict construction already validates the happy path, so serialize
+    only re-validates to catch the `model_construct`/mutation bypasses.
+    Empirically verified in Go and Python (`/tmp/serialize_probe/`,
+    `/tmp/pyd_serialize_probe.py`, `/tmp/pyd_null_serialize_probe.py`).
 
 ## TypeScript
 
@@ -57,6 +100,15 @@
    (P8).** Collect every violation into an array, throw one
    `AggregateError` at the end. Structured `path`/`reason`, never
    stringly-typed.
+
+6. **`serialize(x)` free function: validate-then-stringify (P17).** A
+   free `serializeX(x: X): string` runs the same hand-emitted validators
+   the deserializer uses (collecting into `AggregateError`, P8) then
+   `JSON.stringify`s. Free function, not a method — consistent with
+   interfaces-not-classes (§4). Optional fields omit on `undefined`; the
+   natural three-state (`undefined` / `null` / `T`) lets TS round-trip
+   optional+nullable **faithfully** — omit `undefined`, emit `null`
+   (see [[nullability]]).
 
 ## Python
 
@@ -94,6 +146,20 @@
    annotation is **required** — a bare `_NAME` becomes a private model
    attribute Pydantic won't expose to the validator.
 
+6. **Serialize via `model_dump(exclude_unset=True)`; re-validate to
+   catch bypasses (P17).** Strict construction already validates the
+   happy path, so serialize-side validation only re-runs the model
+   validators (`model_validate(m.model_dump())`, or `validate_assignment`
+   for mutation) to defend against the `model_construct` /
+   post-construction-mutation escape hatches. `exclude_unset` implements
+   the entire per-field omit-vs-emit-`null` table in one flag: unset
+   optionals omit; an explicitly-set `None` (including required+nullable)
+   emits `null`. Because `model_fields_set` distinguishes a wire `null`
+   from a wire-absent key, Python round-trips optional+nullable
+   **faithfully** — the same tier as TS, not the Go/Java collapse.
+   Empirically verified (`/tmp/pyd_serialize_probe.py`,
+   `/tmp/pyd_null_serialize_probe.py`). See [[nullability]].
+
 ## Java
 
 1. **Java 8 baseline; POJOs, not records.** The generator targets
@@ -110,7 +176,7 @@
    (de)serialization. No reflection-based schema library beyond Jackson
    itself (P4).
 
-2. **Primitive for required, boxed for optional.** Required scalar
+3. **Primitive for required, boxed for optional.** Required scalar
    fields use primitives (`long`/`double`/`boolean`); optional ones box
    (`Long`/`Double`/`Boolean`) so absence is representable as `null`.
    Reference types (`String`, `List<T>`, object types) carry a non-null
@@ -127,7 +193,7 @@
    null) vs optional (null when the key is absent) — **not** the
    wire-level nullable/non-nullable distinction; the optional-non-
    nullable "reject explicit `null`" rule stays a validator concern
-   (Java §3, [[nullability]]). It is complementary to, not a
+   (Java §4, [[nullability]]). It is complementary to, not a
    replacement for, the runtime validator (**P7**): the validator
    enforces at the boundary, the annotation propagates that guarantee
    into the consumer's static null-analysis. JSpecify (`org.jspecify`)
@@ -140,7 +206,7 @@
    on the classpath still compiles cleanly (javac ignores the missing
    CLASS-retained type) and only forfeits the null-analysis benefit.
 
-3. **Paired strict / non-strict custom deserializers per primitive.**
+4. **Paired strict / non-strict custom deserializers per primitive.**
    Each spec-sensitive primitive ships two deserializers in the
    runtime: a base one (e.g. `SpecLongDeserializer`) used for
    nullable fields, and a `…StrictDeserializer` that overrides
@@ -151,11 +217,24 @@
    defaults silently truncate (`1.5`→`1`) — a P10 violation. They also
    enforce the P16 cap.
 
-4. **Error aggregation primitive — TBD.** Jackson fails fast on the
+5. **Error aggregation primitive — TBD.** Jackson fails fast on the
    first `MismatchedInputException` by default; achieving P8 single-shot
    aggregation needs a chosen mechanism (collecting deserializer, or a
    validation pass over a lenient first-stage bind). Open question;
-   tracked here and in [[nullability]] until resolved.
+   tracked here and in [[nullability]] until resolved. **Now gates the
+   serialize direction too** (§6) — the same single-shot aggregation
+   problem applies mirror-image when validating before write.
+
+6. **Serialize: validate-then-write; per-field `@JsonInclude` (P17).**
+   A validation pass runs the shared constraint checks before Jackson
+   writes the POJO. Per-field omit-vs-`null` mirrors Go via
+   `@JsonInclude`: optional fields `@JsonInclude(NON_NULL)` (`null` →
+   omitted); required+nullable forces inclusion
+   (`@JsonInclude(ALWAYS)`, `null` → `null`); required-non-nullable is
+   always emitted. Optional+nullable collapses (absent and `null` share
+   one in-memory `null`) → **conservative omit**, the same tier as Go
+   (not the faithful TS/Python round-trip). Serialize-side error
+   aggregation depends on the still-open primitive in §5.
 
 ## Go
 
@@ -186,4 +265,18 @@
    lives — e.g., `parseSpecInteger(json.Number) (int64, error)`
    accepts `1.0` per JSON Schema where the stdlib's `int64`
    unmarshal would reject it.
+
+6. **`MarshalJSON` mirrors `UnmarshalJSON`: validate-then-delegate
+   (P17).** Each struct's `MarshalJSON` runs the shared `Validate()`
+   (the constraint-predicate layer the decoder also calls), then
+   delegates to the stdlib encoder via a local `type alias` — this
+   avoids infinite recursion while still honoring the struct tags, so
+   the per-field omit-vs-`null` decision is **declarative**:
+   - optional fields: `*T` with `,omitempty` → `nil` omitted;
+   - required+nullable: `*T` **without** `omitempty` → `nil` emits `null`;
+   - required-non-nullable: bare value type → always emitted.
+   `omitempty` on a pointer omits only `nil`, so a pointer-to-zero-value
+   still serializes — pointer presence is the set-ness signal (P11/P12).
+   No hand-built map needed. Verified `/tmp/oe/`,
+   `/tmp/serialize_probe/`.
 
