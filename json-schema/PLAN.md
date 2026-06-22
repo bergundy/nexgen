@@ -100,6 +100,26 @@ example at `features/type/spec.md`:
 - `features/propertyNames/spec.md`: complete — **partial** (map-shaped
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
+- `features/const/spec.md`: complete — **supported (scalar)**. Emits the
+  underlying primitive (P9.1, not a literal type), runtime equality
+  check, and the **P17 auto-emit + always-emit** discriminator rule
+  (never omit-unset; const force-written by the encode adapter; the
+  Pydantic const is force-kept in the `@model_serializer` keep-set so the
+  default Temporal converter's `to_json` always emits the discriminator).
+  Mutually exclusive with `default` and `enum`. `const:null` rejected
+  (degenerate, like standalone `type:null`); composite (object/array)
+  const **temporarily unsupported** (deep-equals cost). 1 open question —
+  composite-const carve-out.
+- `features/default/spec.md`: complete — **supported** with the amended
+  P11 semantics: annotation (no validator, never fails validation);
+  off-the-wire; set-ness tracked; omit-unset with **no deep-equals**;
+  materialized on read. Strengthens the spec's "RECOMMENDED valid
+  default" to a load-time **MUST** (P10.1); rejects `default` on a
+  required member and `default`+`const`. Read-side surfacing is **native**
+  in Python (Pydantic field default) and Java (getter), **advisory** in
+  TS (`?? DEFAULT_X` constant). 1 open question — **Go read-side
+  surfacing (A advisory-constant vs C accessor); the decision to seal
+  next.**
 
 ### Key decisions taken
 
@@ -114,21 +134,34 @@ example at `features/type/spec.md`:
   before emitting a byte; Python only re-validates to catch
   `model_construct`/mutation bypasses. Empirically proven in Go +
   Python (`/tmp/serialize_probe/`, `/tmp/oe/`, `/tmp/pyd_serialize_probe.py`,
-  `/tmp/pyd_null_serialize_probe.py`).
+  `/tmp/pyd_null_serialize_probe.py`). **Python encode adapter is not a
+  call site we own** — the default Temporal `pydantic_data_converter`
+  serializes via plain `pydantic_core.to_json` — so the omit/const/guard
+  logic is baked into a generated `@model_serializer(mode='wrap')`, which
+  `to_json` honors (verified `/tmp/temporal_pydantic_probe.py`).
 - **`default` materialized on read, not stored (P11 amended).** Track
   set-ness; serialize omits unset fields with **no deep-equals** against
   the default; surface the default on read (accessor / native default).
-  Explicit-set pins. Mechanisms: Go `,omitempty`+pointer, Pydantic
-  `exclude_unset`, TS `undefined`, Java `@JsonInclude(NON_NULL)`.
+  Explicit-set pins. Mechanisms: Go `,omitempty`+pointer, Pydantic a
+  generated `@model_serializer` over `model_fields_set` (the default
+  Temporal converter owns `to_json`, so omission is baked into the model,
+  not a `model_dump` call we make), TS `undefined`, Java
+  `@JsonInclude(NON_NULL)`.
 - **`const` auto-emits on serialize, never omit-unset.** `const` is a
   contract assertion (often a discriminator that *must* be on the wire),
   not a population directive — so it is auto-populated and always
   emitted (optional+const is the only emit-if-set case). Lumping it into
   omit-unset would drop a defaulted discriminator (proven in
-  `/tmp/pyd_serialize_probe.py`). Enforcement detail deferred to the
-  `const` spec.
+  `/tmp/pyd_serialize_probe.py`). **Landed in [[const]]:** emits the
+  underlying primitive not a literal (P9.1); the encode adapter
+  force-writes the fixed value; Pydantic auto-injects it in a
+  `model_validator(mode='before')` and force-keeps it in the
+  `@model_serializer` keep-set (so the converter's `to_json` emits it);
+  mutually exclusive with `default`/`enum`; `const:null` and composite
+  consts rejected/deferred.
 - **Optional+nullable round-trip is capability-tiered:** faithful in
-  TS *and Python* (`undefined` / `model_fields_set`+`exclude_unset`),
+  TS *and Python* (`undefined` / `model_fields_set` via the generated
+  `@model_serializer`),
   conservative-omit in Go/Java (`*T` nil / `null` collapse; faithful
   would need a presence wrapper — rejected for v1 as P2 overhead).
   Per-field omit-vs-emit-`null` is a static decision from the
@@ -257,6 +290,19 @@ example at `features/type/spec.md`:
     required+nullable emits `null`; `model_fields_set` distinguishes
     wire-`null` from wire-absent (Python optional+nullable is faithful);
     optional-non-nullable explicit `null` rejected in strict mode
+  - `/tmp/temporal_pydantic_probe.py` — **compatibility with the default
+    Temporal `pydantic_data_converter`** (SDK 1.29, Pydantic 2.13). The
+    converter owns serialization via plain `pydantic_core.to_json`
+    (`exclude_unset=False`, no validation), so `model_dump(exclude_unset=
+    True)` is never ours to call. Proves `to_json` **honors a generated
+    `@model_serializer(mode='wrap')`**: keep-set `model_fields_set ∪
+    const_fields` reproduces omit-unset, const force-emit, explicit-set
+    pinning (no deep-equals), faithful optional+nullable, and nested
+    recursion; an in-serializer `validate_python` catches the
+    `model_construct`/mutation bypass without recursion; deserialize via
+    `TypeAdapter.validate_json` runs our validators. The
+    `ToJsonOptions(exclude_unset=True)` converter knob is the wrong lever
+    (non-default, global, and drops const discriminators).
 - **Decisions cite principles by P-number.** Every Support decision
   in a feature spec must reference the P-number(s) it's grounded in.
 - **Surprises worth noting for future Python/Java/TS work:**
@@ -280,6 +326,16 @@ example at `features/type/spec.md`:
   - `JSON.stringify` **silently coerces `NaN`/`±Infinity` to `null`** —
     the TS serializer must reject non-finite numbers before stringifying
     (the one numeric check the TS type system doesn't already give).
+  - The default Temporal `pydantic_data_converter` **owns the serialize
+    call** (plain `pydantic_core.to_json`, `exclude_unset=False`, no
+    validation) — so any serialize behavior we want (omit-unset, const
+    force-emit, the `model_construct`/mutation guard) must be **baked
+    into the model** via `@model_serializer(mode='wrap')`, which `to_json`
+    honors, NOT expressed as a `model_dump(...)` call we make. This is
+    strictly more robust: the contract travels with the model under any
+    caller. Caveat: the keep-set filter matches Python field names; JSON
+    aliases (future case-mapping) will need a name↔alias map. Verified
+    `/tmp/temporal_pydantic_probe.py`.
 
 ## Remaining work
 
@@ -317,10 +373,11 @@ decisions:
   `dependentSchemas` (expect P5-reject)
 
 **Any-type assertions:**
-- `enum`, `const` — `const` must specify the **serialize-side rule
-  (P17): auto-populate + always emit** the fixed value (it is a contract
-  assertion / discriminator, never omit-unset; optional+const is the
-  only emit-if-set case).
+- `enum` — remaining.
+- ✅ `const` — landed (scalar). Serialize-side rule (P17): auto-populate
+  + always emit the fixed value; emits the underlying primitive (P9.1),
+  not a literal type; mutually exclusive with `default`/`enum`;
+  `const:null` + composite consts rejected/deferred.
 
 **Numeric assertions** (gated by integer-cap decision):
 - `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`,
@@ -348,12 +405,13 @@ decisions:
 **Metadata / annotations:**
 - `format` — high priority, codegen-relevant (e.g. `date-time` →
   `time.Time` in Go).
-- `title`, `description`, `default`, `examples`, `deprecated`,
+- ✅ `default` — landed. Encodes the amended P11 (annotation, no
+  validator; set-ness tracking; omit-unset with no deep-equals;
+  materialize-on-read). Read-side native in Python/Java, advisory in TS;
+  **Go read-side surfacing is the open decision (A vs C) to seal next.**
+- `title`, `description`, `examples`, `deprecated`,
   `readOnly`, `writeOnly`, `contentEncoding`, `contentMediaType`,
-  `contentSchema` — lower priority; mostly pure metadata. **Exception:
-  `default` is not pure metadata** — its spec must encode the amended
-  P11 (set-ness tracking, omit-unset on serialize, materialize-on-read,
-  no deep-equals).
+  `contentSchema` — lower priority; mostly pure metadata.
 
 ## Open question inventory
 
@@ -366,6 +424,10 @@ Snapshot as of this checkpoint.
 ### `features/properties/spec.md`
 1. **Identifier case-mapping policy** — one shared JSON-name →
    idiomatic-identifier algorithm + collision/escape-hatch rules.
+   **Dependency:** the Python serialize `@model_serializer` keep-set
+   (PRINCIPLES Python §6) filters Python field names against serialized
+   keys; if this policy introduces JSON-name aliases, the keep-set must
+   map name↔alias.
 
 ### `features/additionalProperties/spec.md`
 1. **Java closed-struct aggregation** (depends on Java agg primitive).
@@ -377,6 +439,20 @@ Snapshot as of this checkpoint.
 ### `features/propertyNames/spec.md`
 1. Static enforcement of `propertyNames` alongside `properties`
    (currently rejected; deferred).
+
+### `features/const/spec.md`
+1. Composite (object/array) const — temporarily unsupported; would need
+   a deep structural-equality check + structural auto-emit. Deferred.
+
+### `features/default/spec.md`
+1. **Go read-side surfacing of the default — the decision to seal.**
+   Set-ness is settled (`*T` nil + `,omitempty`); the open half is how a
+   Go consumer *reads* the default with no accessors and no native
+   default. **Option A (recommended):** advisory — emit a `DefaultXxx`
+   constant, consumer nil-checks; amend P11's Go wording to match.
+   **Option C:** emit a `GetXxx()` accessor on default-bearing fields
+   only (matches P11 literally, mirrors Java). Sealing updates P11,
+   PRINCIPLES Go §6, and the default-spec Type-mapping row.
 
 ### `features/nullability/spec.md`
 - None.

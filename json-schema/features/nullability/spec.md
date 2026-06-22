@@ -154,12 +154,13 @@ Pydantic strict mode + `Optional[T]` accepts `None` for the optional
 case. At the *value* level absence and explicit `null` both read as
 `None`, but Pydantic's `model_fields_set` records **which keys the wire
 actually carried**, so the distinction is *not* lost at the model level
-— it is recoverable for serialization. `model_dump(exclude_unset=True)`
-therefore round-trips optional+nullable **faithfully** (wire `null` →
-set → re-emitted as `null`; wire-absent → unset → omitted), putting
-Python in the same faithful tier as TypeScript (see "Round-trip
-behavior" and "Serialize-side behavior" below, and PRINCIPLES Python
-§6). No wrapper type is needed — this closes the earlier open question.
+— it is recoverable for serialization. The generated
+`@model_serializer` (keyed on `model_fields_set`) therefore round-trips
+optional+nullable **faithfully** (wire `null` → set → re-emitted as
+`null`; wire-absent → unset → omitted), putting Python in the same
+faithful tier as TypeScript (see "Round-trip behavior" and
+"Serialize-side behavior" below, and PRINCIPLES Python §6). No wrapper
+type is needed — this closes the earlier open question.
 
 ## Nullability convention
 
@@ -268,9 +269,11 @@ Go and Java:
 - **Optional + nullable round-trips faithfully in TypeScript and
   Python; collapses in Go and Java.** TS keeps `undefined` (absent) vs
   `null` distinct in memory. Python reads both as `None` at the value
-  level but tracks `model_fields_set`, so `exclude_unset` re-emits a
-  wire `null` as `null` and omits a wire-absent key (empirically
-  verified, `/tmp/pyd_null_serialize_probe.py`). Go (`*T` `nil`) and
+  level but tracks `model_fields_set`, so the generated
+  `@model_serializer` re-emits a wire `null` as `null` and omits a
+  wire-absent key (empirically verified through the **default Temporal
+  converter**, `/tmp/temporal_pydantic_probe.py`, and
+  `/tmp/pyd_null_serialize_probe.py`). Go (`*T` `nil`) and
   Java (`null`) genuinely cannot distinguish the two in memory, so they
   emit a single canonical form — the key is **omitted** (the
   conservative choice; emitting `null` would fabricate a value the
@@ -346,9 +349,13 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
   `/tmp/oe/`).
 - **TypeScript** — `serializeX` omits `undefined`, emits `null`; the
   three-state gives faithful optional+nullable for free.
-- **Python** — `model_dump(exclude_unset=True)` implements the whole
-  table in one flag; `model_fields_set` drives the faithful
-  optional+nullable behavior (PRINCIPLES Python §6).
+- **Python** — a generated `@model_serializer(mode='wrap')` emits only
+  `model_fields_set` keys (plus const fields), implementing the whole
+  table; `model_fields_set` drives the faithful optional+nullable
+  behavior. Baked into the model because the default Temporal
+  `pydantic_data_converter` owns the `to_json` call — we don't pass
+  `exclude_unset` ourselves (PRINCIPLES Python §6; verified
+  `/tmp/temporal_pydantic_probe.py`).
 - **Java** — `@JsonInclude(NON_NULL)` on optional fields;
   `@JsonInclude(ALWAYS)` forces the required+nullable `null`;
   optional+nullable collapses to the conservative omit (PRINCIPLES

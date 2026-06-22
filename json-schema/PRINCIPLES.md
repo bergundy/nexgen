@@ -23,13 +23,16 @@
     against the default) — and the default is surfaced lazily *on read*
     via an accessor or the language-native default. Explicitly setting a
     field, even to a value equal to the default, marks it set and pins it
-    on the wire. Mechanisms: Go `,omitempty` on the optional pointer;
-    Pydantic `model_dump(exclude_unset=True)`; TS `undefined`; Java
-    `@JsonInclude(NON_NULL)`. This supersedes the earlier "populate the
-    field on deserialize" rule, which required a deep-equals to strip on
-    the way out and destroyed the absent-vs-set distinction (P12).
+    on the wire. This supersedes the earlier "populate the field on
+    deserialize" rule, which required a deep-equals to strip on the way
+    out and destroyed the absent-vs-set distinction (P12). Mechanisms: Go
+    `,omitempty`+pointer; Pydantic a generated `@model_serializer` over
+    `model_fields_set` (Python §6 — the default Temporal converter owns
+    `to_json`, so omission is baked into the model, not a `model_dump`
+    call we make); TS `undefined`; Java `@JsonInclude(NON_NULL)`.
     Empirically verified (`/tmp/serialize_probe/`,
-    `/tmp/pyd_serialize_probe.py`). See [[default]] (when written).
+    `/tmp/temporal_pydantic_probe.py`, `/tmp/pyd_serialize_probe.py`).
+    See [[default]].
 12. **Distinguish absent from zero value**. For example in Go, prefer `string` for representing optional strings.
 13. **One file per input by default; merge on cycle.** Cross-file ref cycles auto-merge into a single output. No circular-import gymnastics.
 14. **External refs are local-file-only.** YAML and JSON files relative to the input. HTTP refs rejected for reproducibility.
@@ -71,7 +74,13 @@
     unchecked, so serialize-side validation has real teeth; in Python
     strict construction already validates the happy path, so serialize
     only re-validates to catch the `model_construct`/mutation bypasses.
-    Empirically verified in Go and Python (`/tmp/serialize_probe/`,
+    In Python the encode adapter is **not a call site we own** — the
+    default Temporal `pydantic_data_converter` performs serialization via
+    plain `pydantic_core.to_json` (**P3**) — so the omit/const/guard
+    logic is baked into a generated `@model_serializer(mode='wrap')`,
+    which `to_json` honors (Python §6). Empirically verified in Go and
+    Python, including against the live default converter
+    (`/tmp/serialize_probe/`, `/tmp/temporal_pydantic_probe.py`,
     `/tmp/pyd_serialize_probe.py`, `/tmp/pyd_null_serialize_probe.py`).
 
 ## TypeScript
@@ -146,19 +155,33 @@
    annotation is **required** — a bare `_NAME` becomes a private model
    attribute Pydantic won't expose to the validator.
 
-6. **Serialize via `model_dump(exclude_unset=True)`; re-validate to
-   catch bypasses (P17).** Strict construction already validates the
-   happy path, so serialize-side validation only re-runs the model
-   validators (`model_validate(m.model_dump())`, or `validate_assignment`
-   for mutation) to defend against the `model_construct` /
-   post-construction-mutation escape hatches. `exclude_unset` implements
-   the entire per-field omit-vs-emit-`null` table in one flag: unset
-   optionals omit; an explicitly-set `None` (including required+nullable)
-   emits `null`. Because `model_fields_set` distinguishes a wire `null`
+6. **Serialize via a generated `@model_serializer(mode='wrap')` (P17).**
+   The default Temporal `pydantic_data_converter` **owns** the serialize
+   call — it does a plain `pydantic_core.to_json(value)`
+   (`exclude_unset=False`, no validation; verified
+   `/tmp/temporal_pydantic_probe.py`, SDK 1.29 / Pydantic 2.13). So we
+   **cannot** depend on calling `model_dump(exclude_unset=True)`
+   ourselves (P3 — work with the default converter) and instead bake the
+   behavior into the model, where `to_json` honors it. Every generated
+   model carries a `@model_serializer(mode='wrap')` whose keep-set is
+   `model_fields_set | <const fields>`: unset optionals omit (P11), an
+   explicitly-set `None` (incl. required+nullable) emits `null`, and
+   `const` discriminators are force-kept (never omit-unset, see
+   [[const]]). Because `model_fields_set` distinguishes a wire `null`
    from a wire-absent key, Python round-trips optional+nullable
-   **faithfully** — the same tier as TS, not the Go/Java collapse.
-   Empirically verified (`/tmp/pyd_serialize_probe.py`,
-   `/tmp/pyd_null_serialize_probe.py`). See [[nullability]].
+   **faithfully** — the same tier as TS, not the Go/Java collapse. The
+   same serializer re-validates the current field values
+   (`type(self).__pydantic_validator__.validate_python({...})` — returns
+   a throwaway instance, no serialize recursion) to catch the
+   `model_construct`/mutation bypasses strict construction can't see;
+   `validate_assignment` covers in-place mutation. On the read side the
+   converter's `TypeAdapter.validate_json` runs every model validator, so
+   deserialize-side validation needs no extra hook. Empirically verified
+   against the live default converter (`/tmp/temporal_pydantic_probe.py`,
+   `/tmp/pyd_serialize_probe.py`, `/tmp/pyd_null_serialize_probe.py`).
+   **Caveat:** the keep-set filters Python field names against serialized
+   keys; once JSON-name aliases land (the case-mapping question in
+   [[properties]]) the filter must map name↔alias. See [[nullability]].
 
 ## Java
 
