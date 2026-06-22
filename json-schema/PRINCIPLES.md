@@ -20,8 +20,12 @@
     never emitted on serialize **and never stored into the field on
     deserialize**. The generator tracks field *set-ness*: serialize omits
     any unset field — with **no value comparison** (never a deep-equals
-    against the default) — and the default is surfaced lazily *on read*
-    via an accessor or the language-native default. Explicitly setting a
+    against the default) — and the default is surfaced lazily *on read*:
+    via the language-native default (Pydantic field default, Java getter),
+    a generated `<Field>OrDefault()` accessor (Go, modeled on proto3's
+    `GetX()`), or the `?? DEFAULT_X` idiom + emitted constant (TS). The
+    bare field always retains set-ness; the default is never written back
+    into it. Explicitly setting a
     field, even to a value equal to the default, marks it set and pins it
     on the wire. This supersedes the earlier "populate the field on
     deserialize" rule, which required a deep-equals to strip on the way
@@ -302,4 +306,21 @@
    still serializes — pointer presence is the set-ness signal (P11/P12).
    No hand-built map needed. Verified `/tmp/oe/`,
    `/tmp/serialize_probe/`.
+
+7. **`<Field>OrDefault()` accessor for default-bearing fields (P11).**
+   Go has no language-native default and the structs are otherwise
+   plain-field, so a field carrying a schema `default` gets a single
+   generated read accessor:
+   ```go
+   func (u User) NicknameOrDefault() string {
+       if u.Nickname != nil { return *u.Nickname }
+       return "anon" // schema default
+   }
+   ```
+   The bare field stays `*T` (set-ness intact, omit-on-serialize stays
+   faithful — P11/P12); the accessor is the *materialize-on-read* path,
+   modeled on proto3's `GetX()`. Emitted **only** for default-bearing
+   fields, so the plain-struct feel (P1) holds everywhere else. Named
+   `<Field>OrDefault` (not `Get<Field>`) to read as "value or its
+   default" and to avoid implying a getter on every field. See [[default]].
 

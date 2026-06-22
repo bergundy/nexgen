@@ -117,9 +117,12 @@ example at `features/type/spec.md`:
   default" to a load-time **MUST** (P10.1); rejects `default` on a
   required member and `default`+`const`. Read-side surfacing is **native**
   in Python (Pydantic field default) and Java (getter), **advisory** in
-  TS (`?? DEFAULT_X` constant). 1 open question — **Go read-side
-  surfacing (A advisory-constant vs C accessor); the decision to seal
-  next.**
+  TS (`?? DEFAULT_X` constant), and a generated **`<Field>OrDefault()`
+  accessor** in Go (Option C, proto3 `GetX()`-style — sealed).
+  **Scalar-only in v1** (`string`/`number`/`integer`/`boolean`):
+  object/array defaults rejected as "not yet supported," `default:null`
+  rejected as degenerate — provisional, expected to relax. 1 open
+  question — composite-default materialization.
 
 ### Key decisions taken
 
@@ -141,12 +144,19 @@ example at `features/type/spec.md`:
   `to_json` honors (verified `/tmp/temporal_pydantic_probe.py`).
 - **`default` materialized on read, not stored (P11 amended).** Track
   set-ness; serialize omits unset fields with **no deep-equals** against
-  the default; surface the default on read (accessor / native default).
-  Explicit-set pins. Mechanisms: Go `,omitempty`+pointer, Pydantic a
+  the default; surface the default on read. **Why omit rather than
+  populate-on-deserialize:** preserving absent-vs-set (P12) protects
+  forward-compat (P9), live default evolution, and proxy/intermediary
+  fidelity — exactly proto3's omit-on-wire model (which re-added
+  `optional` after losing presence). Explicit-set pins.
+  *Serialize/omit mechanisms:* Go `,omitempty`+pointer, Pydantic a
   generated `@model_serializer` over `model_fields_set` (the default
   Temporal converter owns `to_json`, so omission is baked into the model,
   not a `model_dump` call we make), TS `undefined`, Java
-  `@JsonInclude(NON_NULL)`.
+  `@JsonInclude(NON_NULL)`. *Read-side materialize mechanisms:* Java
+  getter / Pydantic field default (native), Go generated
+  **`<Field>OrDefault()` accessor** (proto3 `GetX()`-style, Option C),
+  TS `?? DEFAULT_X` + emitted constant.
 - **`const` auto-emits on serialize, never omit-unset.** `const` is a
   contract assertion (often a discriminator that *must* be on the wire),
   not a population directive — so it is auto-populated and always
@@ -445,14 +455,21 @@ Snapshot as of this checkpoint.
    a deep structural-equality check + structural auto-emit. Deferred.
 
 ### `features/default/spec.md`
-1. **Go read-side surfacing of the default — the decision to seal.**
-   Set-ness is settled (`*T` nil + `,omitempty`); the open half is how a
-   Go consumer *reads* the default with no accessors and no native
-   default. **Option A (recommended):** advisory — emit a `DefaultXxx`
-   constant, consumer nil-checks; amend P11's Go wording to match.
-   **Option C:** emit a `GetXxx()` accessor on default-bearing fields
-   only (matches P11 literally, mirrors Java). Sealing updates P11,
-   PRINCIPLES Go §6, and the default-spec Type-mapping row.
+1. **Composite (object/array) defaults — deferred, expected to relax.**
+   v1 is scalar-only (object/array defaults rejected, `default:null`
+   rejected as degenerate). Lifting needs a spec for materializing a
+   literal object/array default into a constructed language value on read
+   + folding it into the omit-unset machinery. Tracks with [[const]]'s
+   composite-const carve-out (same materialization problem).
+
+   **Go read-side surfacing RESOLVED (Option C):** a generated
+  `<Field>OrDefault()` accessor (proto3 `GetX()`-style) materializes the
+  default on read while the bare `*T` field keeps set-ness and
+  omit-on-serialize stays faithful (P11/P12). Chose the accessor over the
+  advisory-constant route (A) because it gives Go the same frictionless
+  read as populate-on-deserialize *without* losing the absent-vs-set bit;
+  rejected populate-on-deserialize (B) for breaking P12 / live defaults /
+  proxy fidelity. Landed in PRINCIPLES P11 + Go §7 and the default spec.
 
 ### `features/nullability/spec.md`
 - None.
