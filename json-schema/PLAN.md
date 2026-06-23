@@ -101,14 +101,18 @@ example at `features/type/spec.md`:
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
 - `features/const/spec.md`: complete — **supported (scalar)**. Emits the
-  underlying primitive (P9.1, not a *closed* literal) via an open hinted
-  form per target — TS `'v' | (string & {})` + `readonly`, Go alias
-  `type X = string` + typed value const, Python `Literal['v'] | str` —
-  plus a runtime equality check. **No serialize-side special-casing (corrected):** const
+  underlying primitive (P9.1, not a *closed* literal) via an open form
+  per target, closed only at runtime — TS `'v' | (string & {})` +
+  `readonly`, Go alias `type X = string` + typed value const, Python
+  `Literal['v'] | str`, Java a generated **value class**
+  (`@JsonCreator`/`@JsonValue`, `isUnrecognized()`) shared with the
+  future [[enum]] feature (const = single-value specialization) — plus a
+  runtime equality check. **No serialize-side special-casing (corrected):** const
   is a pure single-value `enum` assertion validated in both directions;
   presence is owned by `required`, and the value reaches the wire because
-  it is *set in memory* — TS by type, Java by a `final` field (getter
-  only, no setter, no builders), Python by a `before`-validator inject
+  it is *set in memory* — TS by type, Java by a `final` field initialized
+  to the known constant (getter only, no setter, no builders), Python by
+  a `before`-validator inject
   (which lands it in `model_fields_set`, so the generic
   `@model_serializer` emits it with **no** `const_fields` keep-set —
   verified `/tmp/const_fields_set_probe.py`), Go by the consumer via a
@@ -178,10 +182,11 @@ example at `features/type/spec.md`:
   failing loudly. **Landed in [[const]]:** emits the underlying primitive
   not a *closed* literal (P9.1; TS adds the `'v' | (string & {})` hint +
   `readonly`, Go a named alias `type X = string` + typed value const,
-  Python the open union `Literal['v'] | str`);
+  Python the open union `Literal['v'] | str`, Java a generated value
+  class shared with [[enum]]);
   Go sets it via that value const (zero value fails `Validate` loudly);
-  Java uses a `final` field + getter, no setter,
-  no builders; Python injects it in a `model_validator(mode='before')`
+  Java uses a `final` field initialized to the known constant + getter,
+  no setter, no builders; Python injects it in a `model_validator(mode='before')`
   (which marks it set → `model_fields_set` → emitted by the generic
   `@model_serializer`, **no** `const_fields` keep-set —
   `/tmp/const_fields_set_probe.py`); mutually exclusive with
@@ -423,15 +428,21 @@ decisions:
   `dependentSchemas` (expect P5-reject)
 
 **Any-type assertions:**
-- `enum` — remaining.
+- `enum` — remaining. **Representation decided ahead of time** (with
+  const): per-language open form — TS `… | (string & {})`, Go alias,
+  Python `Literal[…] | str`, **Java a generated value class** (static
+  known constants + private ctor + `@JsonCreator fromString` that
+  gracefully captures unknowns + `@JsonValue` + `isUnrecognized()`).
+  const shares this and is its single-value specialization; enum
+  **preserves** unknown values (P9) where const rejects them.
 - ✅ `const` — landed (scalar). Pure assertion (single-value `enum`),
   validated both directions, **no serialize-side special-casing** —
   presence owned by `required`, value set in memory (not force-written).
-  Emits the underlying primitive via an open hinted form (P9.1; TS
+  Emits the underlying primitive via an open form (P9.1; TS
   `'v' | (string & {})` + `readonly`, Go named alias `type X = string` +
-  typed value const, Python `Literal['v'] | str`);
-  mutually exclusive with `default`/`enum`; `const:null` +
-  composite consts rejected/deferred.
+  typed value const, Python `Literal['v'] | str`, Java a value class
+  shared with `enum`); mutually exclusive with `default`/`enum`;
+  `const:null` + composite consts rejected/deferred.
 
 **Numeric assertions** (gated by integer-cap decision):
 - `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`,
