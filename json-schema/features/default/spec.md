@@ -122,6 +122,26 @@ which differ per language:
 | TypeScript | `undefined` (the `?` field) | **advisory** — interfaces have no methods (PRINCIPLES TS §4), so the consumer applies the default with the native `?? DEFAULT_X`; the generator emits `export const DEFAULT_X = "anon"`. No accessor needed; `??` is the idiom. |
 | Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()`. |
 
+### Naming and collisions (P18)
+
+The read-side surfacing synthesizes **one new identifier in two targets**
+— names absent from the schema, so they can collide:
+
+| Target | Synthesized identifier | Scope | Collision risk |
+|---|---|---|---|
+| Go | `<Field>OrDefault()` method | struct method-set | a **declared** member whose name maps to `<Field>OrDefault` (Go forbids a field and method of the same name — a **hard compile error**, verified `/tmp/collide_probe`); another `<Field>OrDefault` from a sibling field |
+| TypeScript | `DEFAULT_<FIELD>` const | module | another `DEFAULT_<FIELD>` from a field that case-maps the same, or a [[const]] `<FIELD>_CONST` |
+| Python | none (native Pydantic field `default=`) | — | — |
+| Java | none (default folds into the existing getter) | — | — |
+
+Per **P18** these participate in the single per-scope collision pass and
+**reject at load** on any coincidence — never auto-mangled (a
+`NicknameOrDefault2` would renumber under schema evolution, a P9 break).
+Python and Java add no name, so they carry no default-specific collision.
+The rename **escape hatch** is the [[properties]] case-mapping override
+(`x-go-name`, …) on the *declaring* field — re-mapping it moves the
+synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names with it.
+
 Python and Java materialize-on-read for free (attribute default / getter);
 Go does so via the generated `<Field>OrDefault()` accessor. TypeScript has
 no method (interfaces, PRINCIPLES TS §4), so it leans on the native `??` +
@@ -194,6 +214,7 @@ Three consequences that the count specs already encode:
 | `default: null` (degenerate) | `{oneOf:[{type:"string"},{type:"null"}], default:null}` |
 | With `const` | `{type:"string", const:"v1", default:"v1"}` |
 | Conflicting merged defaults | two applicable `default`s with different values |
+| Synthesized-name collision (P18) | a field `nickname` with a `default` **and** a sibling member mapping to `NicknameOrDefault` (Go field/method clash); two `DEFAULT_<FIELD>` consts that case-map the same (TS) |
 
 ### Runtime fixtures (validator / adapters)
 
@@ -306,4 +327,6 @@ with those features — P10.4, see Loader behavior.)
   overrides explicit `null`.
 - [[minProperties]] / [[maxProperties]] — default-filled keys never count.
 - [[type]] — the default value must be valid for the declared type.
-- [[properties]] — hosts the member subschema and the set-ness machinery.
+- [[properties]] — hosts the member subschema and the set-ness machinery,
+  and owns the case-mapping + collision/escape-hatch policy that governs
+  the synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names (P18).

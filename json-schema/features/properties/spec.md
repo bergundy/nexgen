@@ -159,6 +159,20 @@ override), the schema is **rejected** with a diagnostic naming both
 members — e.g. `user_id` + `userId` → Go `UserId`. Like Stage 3,
 collisions are evaluated only for languages being generated.
 
+**Widened to synthesized names (P18).** The collision check is not
+limited to declared members. The generator also synthesizes identifiers
+from member/type names — [[const]]'s type aliases and value consts, the
+Go `<Field>OrDefault()` accessor and TS `DEFAULT_<FIELD>` constant
+([[default]]), the future [[enum]]'s value class and members — and these
+enter the **same per-scope namespace** as the declared names and each
+other (package/module scope for package-level aliases/consts/types; the
+struct method-set for the Go accessor, where Go forbids a field/method
+clash outright). The single collision pass runs over that full union and
+rejects on any coincidence; the `x-*-name` override (Stage 4) on the
+declaring member is the escape hatch, and re-mapping the member moves
+every name synthesized from it. **Never auto-mangle** (P18) — a numeric
+suffix would be unstable under schema evolution (P9).
+
 ### Documented limitation
 
 Folding acronyms as ordinary words means Go yields `UserId` / `HttpServer`
@@ -316,6 +330,44 @@ failure is the JSON member name, identical to deserialize.
    - **Validity and collision checks are per emitted target only** — a
      name invalid in a language you aren't generating is not a concern
      and raises no diagnostic.
+
+2. **Synthesized *type* names (anonymous const/enum) — RESOLVED: nest
+   where the language supports it; Go falls back to flat composition.**
+   The Stage 1–4 algorithm maps *member* names; this rule covers how a
+   synthesized **named type** (the [[const]]/[[enum]] value class / alias
+   / union) is named when the const/enum is **anonymous** (inline on a
+   property, not a named `$defs`). Decisions:
+   - **Reuse the `$defs` name** when the const/enum is a named definition
+     (no synthesis).
+   - **When anonymous, nest the synthesized type inside its enclosing
+     model** so it leaves the package/module namespace and cannot collide
+     with a coincidentally-named top-level type:
+     - **Java** — `public static final class Kind` nested in `UserEvent`,
+       referenced `UserEvent.Kind`. Verified to deserialize/serialize via
+       Jackson **and coexist with an independent top-level `UserEventKind`**
+       (`/tmp/nestprobe/java`). This is the primary win — Java is the only
+       target that *cannot* inline a const/enum, so it is where the
+       collision bit hardest.
+     - **Python** — a `Kind: ClassVar = Union[Literal[…], str]` member on
+       the model, field typed `"UserEvent.Kind"`, resolved by
+       `model_rebuild()` (`/tmp/nestprobe/pynest.py`). The `ClassVar`
+       spelling is slightly unidiomatic but functional.
+     - **TypeScript** — a const has **no named type** (it is inline
+       `"v" | (string & {})`), so there is nothing to collide or nest; an
+       [[enum]] stays an alias (nest under a `namespace` only if needed).
+     - **Go** — has **no nested types** (a `type` decl inside a struct is
+       a syntax error, `/tmp/nestprobe/nest.go`), so it **falls back to
+       flat package-level composition** `<EnclosingType><Property>`
+       (`UserEventKind`) and relies on the **P18 collision backstop**
+       (load reject + `x-go-name`) for the residual coincidence.
+   - This deliberately trades **uniform cross-language shape** for
+     **collision-minimization + per-language idiom** — the one place the
+     project accepts shape divergence, because the alternative (flat
+     everywhere) needlessly inflicts Go's unavoidable limitation on Java,
+     the language that benefits most from nesting. **P18 remains the
+     backstop in every language** (nesting reduces, never eliminates, the
+     collision surface — Go especially). Surfaced by the `UserEvent.kind`
+     ⨯ top-level `UserEventKind` case.
 
 ## See also
 

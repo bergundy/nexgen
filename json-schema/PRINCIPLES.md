@@ -89,6 +89,34 @@
     Python, including against the live default converter
     (`/tmp/serialize_probe/`, `/tmp/temporal_pydantic_probe.py`,
     `/tmp/pyd_serialize_probe.py`, `/tmp/pyd_null_serialize_probe.py`).
+18. **One identifier namespace per scope; synthesized-name collisions
+    reject at load time — never silently mangled.** Beyond the declared
+    properties and types, the generator *synthesizes* identifiers:
+    [[const]]'s type aliases and value constants, the future [[enum]]'s
+    value class and its members, the Go `<Field>OrDefault()` accessor
+    (P11), and the TS `DEFAULT_<FIELD>` / `<FIELD>_CONST` constants. These
+    do **not** live in a private namespace — each enters the same
+    per-scope identifier set as the declared names and as each other:
+    package/module scope for package-level types/consts/aliases, the
+    struct method-set for the Go accessor (which Go **forbids** from
+    coinciding with a field — a hard compile error, verified
+    `/tmp/collide_probe`), the value-class body for enum/const members.
+    The generator runs **one collision pass** over that union (after the
+    identifier case-mapping is applied) and any two would-be identifiers
+    that coincide are a **load-time reject** with a fix-it diagnostic. We
+    **never auto-mangle** (numeric suffixes, etc.): a synthesized
+    `NicknameOrDefault2` would be unstable under schema evolution — adding
+    a field could renumber it, a P9 break — and is exactly the
+    "silently-incorrect output" the mission rejects (P10/P10.1). The
+    **escape hatch** — the per-language `x-go-name` / `x-ts-name` /
+    `x-py-name` / `x-java-name` override resolved in the [[properties]]
+    identifier case-mapping policy — re-maps the *declaring* property, and
+    every name synthesized from it moves with it. That policy's collision
+    pass, scoped to a single object's members today, **widens under P18**
+    to the full per-scope set (declared types/members **plus** synthesized
+    aliases/consts/accessors). One algorithm and one override set govern
+    declared and synthesized names alike. Surfaced in [[const]],
+    [[default]], and (future) [[enum]].
 
 ## TypeScript
 

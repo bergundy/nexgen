@@ -178,7 +178,9 @@ caveats, all verified in `/tmp/const_open_enum_probe.py`:
 **Java value class.** Java has no structural literal type, so the open
 form is a generated **value class** wrapping the string — the same shape
 the [[enum]] feature will emit, of which a const is the single-value
-specialization:
+specialization. (Shown standalone for clarity; when the const is
+**anonymous** on a property it is emitted **nested** as
+`UserEvent.Kind` — see Naming and collisions below.)
 
 ```java
 public final class UserEventKind {
@@ -212,6 +214,53 @@ consts use the value class; `integer`/`number`/`boolean` consts stay the
 plain primitive (a value class buys nothing there), matching the type
 table. This is heavier than a bare `String` field for a single-value
 const, accepted for cross-language and [[enum]] consistency.
+
+### Naming and collisions (P18)
+
+A scalar `const` synthesizes identifiers that do not exist in the input
+schema and so can collide with declared types or other synthesized names.
+**Type-name derivation follows the [[properties]] resolved policy:** reuse
+the `$defs` name when the const is a **named** definition; when it is
+**anonymous** (inline on a property), **nest the synthesized type inside
+its enclosing model where the language allows it**, so it leaves the
+package/module namespace. Per-target:
+
+| Target | Synthesized identifier(s) | Placement / scope |
+|---|---|---|
+| Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` (verified `/tmp/nestprobe/java`) |
+| Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model (`/tmp/nestprobe/pynest.py`) |
+| TypeScript | only the validator's `KIND_CONST` constant (the type is inline `"v" \| (string & {})`) | module |
+| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types — `/tmp/nestprobe/nest.go`); P18 backstop |
+
+Per **P18** every synthesized name still enters the **same per-scope
+namespace** as the declared names and as one another; the generator runs
+a single collision pass (after case-mapping) and **rejects at load** with
+a fix-it diagnostic on any coincidence. Nesting **shrinks** that surface
+(a nested `UserEvent.Kind` cannot clash with a top-level `UserEventKind`,
+verified) but does not remove the pass — **Go especially** still composes
+a flat package-level `UserEventKind` that can collide with a declared
+type, caught and rejected, resolvable via the [[properties]] `x-go-name`
+override on the declaring member. **No auto-mangling** — a synthesized
+`EventKind2` would be unstable across schema revisions (P9).
+
+**Java value class — two surfaces.** The shared value class (Type
+mapping above) collides on two levels, both under **P18**: its **name**
+(`UserEventKind`) is *package*-scoped (vs declared types / other value
+classes), and its **value constants** are *class-body*-scoped. A scalar
+const has exactly one member (`USER`), so it can never self-collide on
+the second surface — but [[enum]] synthesizes **many** members into one
+class and is the first feature to exercise it: two enum values that
+case-map to the same Java identifier (`"user"` + `"USER"` → both `USER`)
+are a **hard compile error** (verified `/tmp/javacollide` Case A) → load
+reject. The class-body pass only has to police **member-vs-member**: the
+fixed scaffolding (`value` field, `fromString`/`getValue`/
+`isUnrecognized` methods) does *not* constrain member names, because
+members are UPPER_SNAKE while the scaffolding is lowerCamel (Case B
+compiles) and Java permits a same-name field+method anyway (Case C,
+unlike Go's hard field/method clash). So the class-body collision pass is
+just the [[properties]] case-mapping collision policy applied within the
+value class. [[enum]] inherits all of this unchanged (a const is its
+single-value specialization).
 
 ## Validator mapping
 
@@ -278,6 +327,7 @@ so the check is effectively a deserialize-direction guard there.
 | With `enum` (redundant) | `{type:"string", enum:["a"], const:"a"}` |
 | `const: null` (degenerate) | `{type:"null", const:null}` |
 | Composite const (deferred) | `{type:"object", const:{a:1}}`, `{type:"array", const:[1]}` |
+| Synthesized-name collision (P18) | Go flat `UserEventKind` (anonymous const) ⨯ a declared top-level `UserEventKind`; a `$defs`-named const reusing an existing type name; two consts colliding on one value-const name. (Nesting removes the Java/Python anonymous case; Go stays flat → still caught.) |
 
 ### Runtime fixtures (validator)
 
@@ -363,6 +413,8 @@ so the check is effectively a deserialize-direction guard there.
 ## See also
 
 - [[enum]] — the multi-value sibling; `const` ≡ single-element enum.
+- [[properties]] — owns the identifier case-mapping + collision/escape-hatch
+  policy that governs const's synthesized type/value-const names (P18).
 - [[type]] — supplies the emitted primitive type; gates value
   compatibility.
 - [[required]] — owns presence; a required+const is the always-present

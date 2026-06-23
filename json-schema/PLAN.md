@@ -50,7 +50,10 @@ example at `features/type/spec.md`:
 
 ### Cross-cutting
 
-- `PRINCIPLES.md`: P1–P17 with sub-principles. **All four language
+- `PRINCIPLES.md`: P1–P18 with sub-principles. **P18 added:
+  synthesized-identifier collisions reject at load time (no mangling),
+  sharing one per-scope namespace with declared names — settles the
+  const/default naming-collision TODOs.** **All four language
   sections complete** — Go (6), TypeScript (6), Python (6), Java (6).
   P16: uniform `±(2^53−1)` integer cap. **P17 added: serialize-side
   validation** — both directions share one `Validate(model)` over the
@@ -191,6 +194,22 @@ example at `features/type/spec.md`:
   `@model_serializer`, **no** `const_fields` keep-set —
   `/tmp/const_fields_set_probe.py`); mutually exclusive with
   `default`/`enum`; `const:null` and composite consts rejected/deferred.
+- **Synthesized-identifier collisions reject at load time, never mangle
+  (P18).** The generator emits names that aren't in the schema — [[const]]
+  type aliases + value consts, the future [[enum]] value class/members,
+  the Go `<Field>OrDefault()` accessor and TS `DEFAULT_<FIELD>` / const
+  `<FIELD>_CONST` ([[default]]). These share **one per-scope namespace**
+  with declared types/members and with each other (package/module scope;
+  the Go accessor sits in the struct method-set, where a field/method
+  clash is a **hard compile error** — verified `/tmp/collide_probe`). A
+  single collision pass (after case-mapping) **rejects loudly** on any
+  coincidence; auto-mangling (`EventKind2`) is rejected as unstable under
+  schema evolution (P9) and exactly the silently-wrong output the mission
+  forbids (P10). The escape hatch is the existing [[properties]]
+  `x-*-name` override on the declaring member — re-mapping it moves every
+  synthesized name with it. Settles the two const/default naming-collision
+  TODOs. Landed in PRINCIPLES P18 + [[properties]] collision policy
+  (widened from single-object to per-scope) + [[const]]/[[default]] specs.
 - **Optional+nullable round-trip is capability-tiered:** faithful in
   TS *and Python* (`undefined` / `model_fields_set` via the generated
   `@model_serializer`),
@@ -338,6 +357,25 @@ example at `features/type/spec.md`:
     required+nullable emits `null`; `model_fields_set` distinguishes
     wire-`null` from wire-absent (Python optional+nullable is faithful);
     optional-non-nullable explicit `null` rejected in strict mode
+  - `/tmp/collide_probe/` — Go **field/method name collision** is a hard
+    compile error (`field and method with the same name NicknameOrDefault`),
+    proving the `<Field>OrDefault` accessor can't silently shadow a
+    declared member — grounds the P18 reject-at-load decision.
+  - `/tmp/javacollide/` — Java value-class (const/[[enum]]) collisions:
+    (A) two static members with the same name → compile error (the
+    enum-specific member-vs-member surface; const can't hit it with one
+    member); (B) UPPER_SNAKE member `VALUE` coexists with lowerCamel
+    scaffolding (`value`/`getValue`) — no collision; (C) a same-name
+    field+method is legal in Java (unlike Go). Conclusion: the value
+    class's class-body pass need only police member-vs-member, = the
+    [[properties]] case-mapping collision policy applied per value class.
+  - `/tmp/nestprobe/` — **nesting** synthesized const/enum types to shrink
+    the collision surface: Java `public static final class Kind` nested in
+    `UserEvent` round-trips via Jackson **and coexists with an independent
+    top-level `UserEventKind`** (the win); Python `Kind: ClassVar =
+    Union[…]` resolves via `model_rebuild()` and round-trips; Go nested
+    `type` decl is a **syntax error** (so Go stays flat package-level +
+    P18 backstop). Grounds the "nest where supported, Go flat" decision.
   - `/tmp/temporal_pydantic_probe.py` — **compatibility with the default
     Temporal `pydantic_data_converter`** (SDK 1.29, Pydantic 2.13). The
     converter owns serialization via plain `pydantic_core.to_json`
@@ -435,6 +473,14 @@ decisions:
   gracefully captures unknowns + `@JsonValue` + `isUnrecognized()`).
   const shares this and is its single-value specialization; enum
   **preserves** unknown values (P9) where const rejects them.
+  **Collision handling pre-settled (P18):** enum is the first feature to
+  synthesize *multiple* members into one Java value class / Go alias /
+  Python union, so it is the first to exercise the **member-vs-member**
+  surface (two values case-mapping to the same identifier → load reject;
+  Java verified `/tmp/javacollide` Case A). The value-class **name** is
+  package-scoped like const's; the class-body pass is the [[properties]]
+  collision policy applied per value class. Scaffolding members don't
+  constrain member names (Cases B/C). No new naming policy needed.
 - ✅ `const` — landed (scalar). Pure assertion (single-value `enum`),
   validated both directions, **no serialize-side special-casing** —
   presence owned by `required`, value set in memory (not force-written).
@@ -487,12 +533,30 @@ Snapshot as of this checkpoint.
 2. **Cross-language conformance suite** for integer runtime helpers.
 
 ### `features/properties/spec.md`
-1. **Identifier case-mapping policy** — one shared JSON-name →
-   idiomatic-identifier algorithm + collision/escape-hatch rules.
-   **Dependency:** the Python serialize `@model_serializer` keep-set
-   (PRINCIPLES Python §6) filters Python field names against serialized
-   keys; if this policy introduces JSON-name aliases, the keep-set must
-   map name↔alias.
+1. ~~**Identifier case-mapping policy.**~~ **RESOLVED** — one shared
+   4-stage JSON-name → idiomatic-identifier algorithm + `x-*-name`
+   escape hatch + collision policy (spec "Resolved questions"). The
+   collision pass **widened under P18** from a single object's members to
+   the full per-scope namespace, so it also catches synthesized
+   const/default/enum names.
+   **Remaining dependency:** the Python serialize `@model_serializer`
+   keep-set (PRINCIPLES Python §6) filters Python field names against
+   serialized keys; an `x-py-name`/case-mapped JSON alias means the
+   keep-set must map name↔alias.
+2. ~~Synthesized *type-name* derivation rule (anonymous const/enum).~~
+   **RESOLVED (2026-06-22):** reuse the `$defs` name when the const/enum
+   is a named definition; when anonymous, **nest the synthesized type in
+   its enclosing model where the language allows** — Java
+   `UserEvent.Kind` (the main beneficiary; only target that can't inline),
+   Python a `ClassVar` alias, TS inline (no named type), **Go falls back
+   to flat package-level `UserEventKind`** (no nested types) with the P18
+   collision pass as backstop. Deliberately trades uniform cross-language
+   shape for collision-minimization + idiom. All four verified
+   (`/tmp/nestprobe/`: Java nested value class coexists with a top-level
+   `UserEventKind`; Python `ClassVar` alias round-trips; Go nested-type
+   decl is a syntax error). Landed in [[properties]] Resolved Q2 +
+   [[const]] naming section. Surfaced by `UserEvent.kind` ⨯
+   top-level `UserEventKind`.
 
 ### `features/additionalProperties/spec.md`
 1. **Java closed-struct aggregation** (depends on Java agg primitive).
@@ -511,6 +575,10 @@ Snapshot as of this checkpoint.
 2. Validating the const value against *constraint* keywords (`pattern`,
    `minLength`, `minimum`, `multipleOf`, …) at load time — see the
    cross-cutting entry below (P10.4).
+3. ~~Synthesized type-alias / value-const name collisions.~~ **RESOLVED
+   (P18)** — share one per-scope namespace with declared + sibling
+   synthesized names; collision → load reject, no mangling; escape hatch
+   is the [[properties]] `x-*-name` override.
 
 ### `features/default/spec.md`
 1. **Composite (object/array) defaults — deferred, expected to relax.**
@@ -530,6 +598,11 @@ Snapshot as of this checkpoint.
   proxy fidelity. Landed in PRINCIPLES P11 + Go §7 and the default spec.
 2. Validating the default value against *constraint* keywords at load
    time — see the cross-cutting entry below (P10.4).
+3. ~~`<Field>OrDefault` / `DEFAULT_<FIELD>` name collisions.~~ **RESOLVED
+   (P18)** — Go accessor vs declared member is a hard compile error
+   (`/tmp/collide_probe`); both names join the per-scope collision pass
+   → load reject, no mangling; escape hatch is the [[properties]]
+   `x-*-name` override. Python/Java synthesize no new name.
 
 ### Cross-cutting
 1. **Literal-value-against-constraint validation at load time (P10.4) —
