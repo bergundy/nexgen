@@ -461,8 +461,8 @@ decisions:
   `time.Time` in Go).
 - ✅ `default` — landed. Encodes the amended P11 (annotation, no
   validator; set-ness tracking; omit-unset with no deep-equals;
-  materialize-on-read). Read-side native in Python/Java, advisory in TS;
-  **Go read-side surfacing is the open decision (A vs C) to seal next.**
+  materialize-on-read). Read-side native in Python/Java, advisory in TS,
+  and a generated `<Field>OrDefault()` accessor in Go (Option C, sealed).
 - `title`, `description`, `examples`, `deprecated`,
   `readOnly`, `writeOnly`, `contentEncoding`, `contentMediaType`,
   `contentSchema` — lower priority; mostly pure metadata.
@@ -497,6 +497,9 @@ Snapshot as of this checkpoint.
 ### `features/const/spec.md`
 1. Composite (object/array) const — temporarily unsupported; would need
    a deep structural-equality check + structural auto-emit. Deferred.
+2. Validating the const value against *constraint* keywords (`pattern`,
+   `minLength`, `minimum`, `multipleOf`, …) at load time — see the
+   cross-cutting entry below (P10.4).
 
 ### `features/default/spec.md`
 1. **Composite (object/array) defaults — deferred, expected to relax.**
@@ -514,6 +517,20 @@ Snapshot as of this checkpoint.
   read as populate-on-deserialize *without* losing the absent-vs-set bit;
   rejected populate-on-deserialize (B) for breaking P12 / live defaults /
   proxy fidelity. Landed in PRINCIPLES P11 + Go §7 and the default spec.
+2. Validating the default value against *constraint* keywords at load
+   time — see the cross-cutting entry below (P10.4).
+
+### Cross-cutting
+1. **Literal-value-against-constraint validation at load time (P10.4) —
+   called out, not yet fully specced.** A `const`, `default`, or `enum`
+   value baked into a schema must satisfy every sibling assertion on the
+   same node. `type`-compatibility (static satisfiability) is enforced
+   today; validating against the *constraint* keywords — `pattern`,
+   `minLength`/`maxLength`, `minimum`/`maximum`/`exclusive*`,
+   `multipleOf`, … — reuses each keyword's own validator over the literal
+   at generator time and is **deferred to land with those constraint
+   features** (none specced yet). Surfaced in [[const]], [[default]], and
+   (future) [[enum]]; recorded as PRINCIPLES P10.4.
 
 ### `features/nullability/spec.md`
 - None.

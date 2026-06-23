@@ -82,6 +82,14 @@ Loader behavior:
   a default that can never satisfy the field (`{type:"integer",
   minimum:5, default:0}`, `{type:"string", default:42}`) is a schema bug,
   not a runtime concern. Diagnostic names the violated constraint.
+  **Called out, not yet fully specced (P10.4):** the `type`-mismatch case
+  (`default:42` on a `string`) is enforceable today; validating the
+  default against *constraint* keywords — `pattern`, `minLength`/
+  `maxLength`, `minimum`/`maximum`, `multipleOf`, … (e.g. the
+  `minimum:5, default:0` example) — reuses those keywords' own validators
+  over the literal at load time, and is **deferred to land with those
+  constraint features** (none specced yet). Same cross-cutting obligation
+  as [[const]] and [[enum]].
 - `default` **and** [[const]] both present → reject (see [[const]]):
   `const` already fixes the value; opposite serialize behavior
   (always-emit vs omit-unset).
@@ -179,7 +187,8 @@ Three consequences that the count specs already encode:
 | Reason | Example |
 |---|---|
 | `default` on a required member | `required:["x"]` with `x:{type:"string", default:"a"}` |
-| Default invalid against schema | `{type:"integer", minimum:5, default:0}`, `{type:"string", default:42}` |
+| Default `type`-mismatch (enforced now, P10.1) | `{type:"string", default:42}` |
+| Default fails a *constraint* (deferred, P10.4) | `{type:"integer", minimum:5, default:0}` |
 | **Object default (deferred)** | `{type:"object", properties:{…}, default:{a:1}}` |
 | **Array default (deferred)** | `{type:"array", items:{type:"string"}, default:["a"]}` |
 | `default: null` (degenerate) | `{oneOf:[{type:"string"},{type:"null"}], default:null}` |
@@ -236,7 +245,9 @@ Three consequences that the count specs already encode:
 only divergence is *our* strengthening of "RECOMMENDED valid" to a
 load-time MUST (P10.1), which is stricter than every source dialect — a
 schema that ships an out-of-range default is accepted upstream but
-rejected here, with a fix-it diagnostic.
+rejected here, with a fix-it diagnostic. (The MUST is fully *defined*
+now; its enforcement against constraint keywords like `minimum` lands
+with those features — P10.4, see Loader behavior.)
 
 ## Resolved questions
 
