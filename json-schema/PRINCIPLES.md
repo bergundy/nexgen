@@ -11,7 +11,7 @@
 7. **Validation is enforced, not advisory.** Constraints (`minLength`, `pattern`, `minimum`, …), `const`, and discriminator strings are checked at the (de)serializer boundary. Schemas are not just documentation.
 8. **Aggregate validation errors.** Surface every violation in one shot using the language-native aggregation primitive: TS `AggregateError` of `ValidationError { path, reason }`; Python uses Pydantic's native `pydantic.ValidationError` which already aggregates via `.errors()` (each entry has `loc` + `msg` + `type`); Go `errors.Join` of `ValidationError { Path, Reason }`. Structured payloads; never stringly-typed messages. Error set as the cause of a Nexus RPC HandlerError with BAD_REQUEST error type.
 9. **Forward compatibility over strict types**. Accept and preserve unknown enum values and unknown fields as best as possible.
-    1. **Forward-compatible `const`.** Field type emitted as the underlying primitive (`string`, not `'v1'`); value validated at runtime. Bumping a const value never breaks the type signature.
+    1. **Forward-compatible `const`.** Field type emitted as the underlying primitive (`string`, not `'v1'`); value validated at runtime. Bumping a const value never breaks the type signature. `const` is a pure assertion — equivalent to a single-value `enum`, no serialize-side special-casing (presence is owned by `required`). TS, Go, and Python refine "emit the primitive" to "emit primitive **+ an open hinted form**" — closed only at runtime: TS `'v1' | (string & {})`, Go `type X = string` + typed value consts, Python `Literal['v1'] | str`. See [[const]].
 10. **Strict schema validation**. The *schema* is held to a strict shape: ambiguous constructs are rejected at generator time with clear errors (no `oneOf` discriminator → reject; `additionalProperties: {}` → reject; bare `{type:"object"}` → reject).
     1. **Reject ambiguity loudly at generator time.** Better to error than to guess. Unsupported features get explicit errors, not silent passthrough.
     2. **Distinguish optional from nullable.** Two orthogonal concerns: "key may be absent" (optional, owned by [[required]]) vs "value may be null" (nullable, owned by the [[nullability]] `oneOf` pattern). Because they are orthogonal, **all four combinations are legal** — including *required + nullable* ("must be present, value may be `null`"), which is a well-defined, unambiguous, enforceable contract (presence-check on, null-rejection off). We do **not** reject it: it round-trips losslessly in every language (presence is guaranteed, so in-memory `null`/`nil`/`None` maps unambiguously to wire `null`). The only residual wire-vs-memory collapse is *optional + nullable* in Java/Go/Python, where absent and `null` share one in-memory value; see [[nullability]] round-trip note.
@@ -70,8 +70,10 @@
        directions* and called by both. The single source of truth.
     3. **Encode adapter (serialize-only).** Decoded value → wire. Owns
        omit-vs-emit-`null` (per-field, driven by the
-       optional/nullable/required declaration — see [[nullability]]),
-       `default` omission (P11), and `const` auto-emit.
+       optional/nullable/required declaration — see [[nullability]]) and
+       `default` omission (P11). `const` adds **nothing** here — it is a
+       pure assertion in the shared `Validate`; the fixed value is set in
+       memory and emitted by the normal path (see [[const]]).
     Serialize runs the shared `Validate` **before emitting a byte** and
     fails with the same aggregated error primitive as deserialize (P8).
     In statically-typed languages (Go/TS/Java) in-memory construction is
@@ -168,10 +170,13 @@
    ourselves (P3 — work with the default converter) and instead bake the
    behavior into the model, where `to_json` honors it. Every generated
    model carries a `@model_serializer(mode='wrap')` whose keep-set is
-   `model_fields_set | <const fields>`: unset optionals omit (P11), an
-   explicitly-set `None` (incl. required+nullable) emits `null`, and
-   `const` discriminators are force-kept (never omit-unset, see
-   [[const]]). Because `model_fields_set` distinguishes a wire `null`
+   exactly `model_fields_set`: unset optionals omit (P11) and an
+   explicitly-set `None` (incl. required+nullable) emits `null`. `const`
+   needs **no** keep-set entry: its `model_validator(mode='before')`
+   injects the fixed value when absent, which lands it *in*
+   `model_fields_set` (verified `/tmp/const_fields_set_probe.py`), so the
+   discriminator emits via the normal path with no special-casing — see
+   [[const]]. Because `model_fields_set` distinguishes a wire `null`
    from a wire-absent key, Python round-trips optional+nullable
    **faithfully** — the same tier as TS, not the Go/Java collapse. The
    same serializer re-validates the current field values

@@ -101,15 +101,24 @@ example at `features/type/spec.md`:
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
 - `features/const/spec.md`: complete — **supported (scalar)**. Emits the
-  underlying primitive (P9.1, not a literal type), runtime equality
-  check, and the **P17 auto-emit + always-emit** discriminator rule
-  (never omit-unset; const force-written by the encode adapter; the
-  Pydantic const is force-kept in the `@model_serializer` keep-set so the
-  default Temporal converter's `to_json` always emits the discriminator).
-  Mutually exclusive with `default` and `enum`. `const:null` rejected
-  (degenerate, like standalone `type:null`); composite (object/array)
-  const **temporarily unsupported** (deep-equals cost). 1 open question —
-  composite-const carve-out.
+  underlying primitive (P9.1, not a *closed* literal) via an open hinted
+  form per target — TS `'v' | (string & {})` + `readonly`, Go alias
+  `type X = string` + typed value const, Python `Literal['v'] | str` —
+  plus a runtime equality check. **No serialize-side special-casing (corrected):** const
+  is a pure single-value `enum` assertion validated in both directions;
+  presence is owned by `required`, and the value reaches the wire because
+  it is *set in memory* — TS by type, Java by a `final` field (getter
+  only, no setter, no builders), Python by a `before`-validator inject
+  (which lands it in `model_fields_set`, so the generic
+  `@model_serializer` emits it with **no** `const_fields` keep-set —
+  verified `/tmp/const_fields_set_probe.py`), Go by the consumer via a
+  named alias `type X = string` + typed value const (`UserEventKind` /
+  `UserEventKindUser`). Dropping force-write also stops the serializer
+  silently rewriting a wrong in-memory value (now a loud `Validate`
+  failure). Mutually exclusive with `default` and `enum`. `const:null`
+  rejected (degenerate, like standalone `type:null`); composite
+  (object/array) const **temporarily unsupported** (deep-equals cost).
+  1 open question — composite-const carve-out.
 - `features/default/spec.md`: complete — **supported** with the amended
   P11 semantics: annotation (no validator, never fails validation);
   off-the-wire; set-ness tracked; omit-unset with **no deep-equals**;
@@ -157,18 +166,26 @@ example at `features/type/spec.md`:
   getter / Pydantic field default (native), Go generated
   **`<Field>OrDefault()` accessor** (proto3 `GetX()`-style, Option C),
   TS `?? DEFAULT_X` + emitted constant.
-- **`const` auto-emits on serialize, never omit-unset.** `const` is a
-  contract assertion (often a discriminator that *must* be on the wire),
-  not a population directive — so it is auto-populated and always
-  emitted (optional+const is the only emit-if-set case). Lumping it into
-  omit-unset would drop a defaulted discriminator (proven in
-  `/tmp/pyd_serialize_probe.py`). **Landed in [[const]]:** emits the
-  underlying primitive not a literal (P9.1); the encode adapter
-  force-writes the fixed value; Pydantic auto-injects it in a
-  `model_validator(mode='before')` and force-keeps it in the
-  `@model_serializer` keep-set (so the converter's `to_json` emits it);
-  mutually exclusive with `default`/`enum`; `const:null` and composite
-  consts rejected/deferred.
+- **`const` is a pure assertion — no serialize-side special-casing
+  (corrected from an earlier auto-emit design).** const is treated as a
+  single-value `enum`: validate `== value` in both directions; the
+  generator does **not** force-write. Presence is owned by `required`
+  (a required+const is always present because it is required, not because
+  const says so), and the fixed value reaches the wire because it is *set
+  in memory*. The earlier "auto-populate + always-emit" rule was solving
+  a presence problem `required` already owns, and force-write had the
+  downside of **silently rewriting** a wrong in-memory value instead of
+  failing loudly. **Landed in [[const]]:** emits the underlying primitive
+  not a *closed* literal (P9.1; TS adds the `'v' | (string & {})` hint +
+  `readonly`, Go a named alias `type X = string` + typed value const,
+  Python the open union `Literal['v'] | str`);
+  Go sets it via that value const (zero value fails `Validate` loudly);
+  Java uses a `final` field + getter, no setter,
+  no builders; Python injects it in a `model_validator(mode='before')`
+  (which marks it set → `model_fields_set` → emitted by the generic
+  `@model_serializer`, **no** `const_fields` keep-set —
+  `/tmp/const_fields_set_probe.py`); mutually exclusive with
+  `default`/`enum`; `const:null` and composite consts rejected/deferred.
 - **Optional+nullable round-trip is capability-tiered:** faithful in
   TS *and Python* (`undefined` / `model_fields_set` via the generated
   `@model_serializer`),
@@ -287,15 +304,31 @@ example at `features/type/spec.md`:
     member instead of an inline index signature
   - `/tmp/serialize_probe/` — Go shared `Validate()` called by BOTH
     `MarshalJSON` and `UnmarshalJSON`; parse-layer (1.5 reject) stays
-    deserialize-only; default omit-unset + const auto-emit; round-trip
+    deserialize-only; default omit-unset (const adds nothing); round-trip
     byte-identical (no default echo) — proves the P17 decomposition
   - `/tmp/oe/` — Go `omitempty` quadrant: nil omits / ptr-to-`""` emits;
     no-`omitempty` `*T` nil → `null`; type-alias `MarshalJSON` honors
     tags without recursion (the declarative omit-vs-`null` encode layer)
   - `/tmp/pyd_serialize_probe.py` — Pydantic `exclude_unset` omits while
     the attr still reads the default (no deep-equals); explicit-set pins;
-    const+`exclude_unset` would wrongly drop a discriminator (→ const
-    must force-emit); `model_construct` bypass caught by re-validation
+    const+`exclude_unset` would wrongly drop a *defaulted* discriminator;
+    `model_construct` bypass caught by re-validation. (The "const must
+    force-emit" conclusion is **superseded** — see
+    `/tmp/const_fields_set_probe.py`: a `before`-inject marks the field
+    set, so it emits with no force-keep and no Pydantic default.)
+  - `/tmp/const_fields_set_probe.py` — proves the **validate-only** const
+    design: a key injected by a `model_validator(mode='before')` lands in
+    `model_fields_set`, so const emits under the generic
+    `@model_serializer` (keep-set = `model_fields_set`, **no**
+    `const_fields`) and under plain `to_json` (the default Temporal path);
+    a wrong value is rejected; a genuinely-absent optional stays omitted.
+  - `/tmp/const_open_enum_probe.py` — the Python **open-enum hint** for
+    const: field typed `Union[Literal['user'], str]`. Pydantic preserves
+    the union, auto-fill+emit work, a wrong value is rejected *by our
+    validator*; crucially, without the validator Pydantic accepts an
+    arbitrary `'user_v2'` through the `str` arm — proving the type is open
+    (P9.1) and the runtime check is what closes it (the Python parallel to
+    TS `string & {}` / the Go alias).
   - `/tmp/pyd_null_serialize_probe.py` — per-field omit-vs-emit-`null`:
     required+nullable emits `null`; `model_fields_set` distinguishes
     wire-`null` from wire-absent (Python optional+nullable is faithful);
@@ -305,8 +338,10 @@ example at `features/type/spec.md`:
     converter owns serialization via plain `pydantic_core.to_json`
     (`exclude_unset=False`, no validation), so `model_dump(exclude_unset=
     True)` is never ours to call. Proves `to_json` **honors a generated
-    `@model_serializer(mode='wrap')`**: keep-set `model_fields_set ∪
-    const_fields` reproduces omit-unset, const force-emit, explicit-set
+    `@model_serializer(mode='wrap')`**: keep-set `model_fields_set`
+    (the `∪ const_fields` union was later **dropped** — const rides the
+    normal keep-set via a `before`-inject, see
+    `/tmp/const_fields_set_probe.py`) reproduces omit-unset, explicit-set
     pinning (no deep-equals), faithful optional+nullable, and nested
     recursion; an in-serializer `validate_python` catches the
     `model_construct`/mutation bypass without recursion; deserialize via
@@ -321,6 +356,11 @@ example at `features/type/spec.md`:
   - Pydantic's `model_validator(mode='before')` that raises
     short-circuits Pydantic's own field validation; use `mode='wrap'`
     if you want P8 aggregation across both error sources.
+  - A key **injected** into the input dict by a
+    `model_validator(mode='before')` lands in `model_fields_set` — Pydantic
+    treats it as provided. This is what lets `const` auto-fill *and* emit
+    through the generic omit-unset serializer with no special keep-set
+    (`/tmp/const_fields_set_probe.py`).
   - Jackson's default `Long` deserializer **silently truncates**
     `1.5` to `1`. Custom deserializer is mandatory, not optional.
   - Pydantic's `model_fields_set` **includes extras and excludes
@@ -384,10 +424,14 @@ decisions:
 
 **Any-type assertions:**
 - `enum` — remaining.
-- ✅ `const` — landed (scalar). Serialize-side rule (P17): auto-populate
-  + always emit the fixed value; emits the underlying primitive (P9.1),
-  not a literal type; mutually exclusive with `default`/`enum`;
-  `const:null` + composite consts rejected/deferred.
+- ✅ `const` — landed (scalar). Pure assertion (single-value `enum`),
+  validated both directions, **no serialize-side special-casing** —
+  presence owned by `required`, value set in memory (not force-written).
+  Emits the underlying primitive via an open hinted form (P9.1; TS
+  `'v' | (string & {})` + `readonly`, Go named alias `type X = string` +
+  typed value const, Python `Literal['v'] | str`);
+  mutually exclusive with `default`/`enum`; `const:null` +
+  composite consts rejected/deferred.
 
 **Numeric assertions** (gated by integer-cap decision):
 - `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`,
