@@ -78,7 +78,7 @@ dependent is also present.
 | Go | In `UnmarshalJSON`, after decoding the shadow, for each present trigger check each dependent's shadow `!= nil`; missing → `ValidationError{Path:dependent, Reason:"required when <trigger> present"}`, joined via `errors.Join`. |
 | TypeScript | For each present trigger key, assert each dependent `!== undefined`; push `ValidationError{path, reason}`, throw `AggregateError`. |
 | Python | `model_validator(mode='wrap')` reading the raw dict: for each present trigger, raise `InitErrorDetails` for each absent dependent, merged into the aggregated `pydantic.ValidationError`. Dependency map stored as a `ClassVar` constant (per PRINCIPLES Python §5). |
-| Java | post-bind check over the bound object's present-field set; reject per the Java aggregation primitive (TBD, PRINCIPLES Java §5). |
+| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): over the parsed tree's present-key set, for each present trigger push a `Violation{path:dependent, reason}` per missing dependent into the single `ValidationException`. |
 
 ### Serialize-side (P17)
 

@@ -61,8 +61,15 @@ example at `features/type/spec.md`:
   serialize-only encode adapter; no IR round-trip. **P11 amended**:
   `default` is materialized on *read* (set-ness tracked, omit-unset on
   serialize, no deep-equals), not stored on deserialize. Each language
-  section gained a §6 serialize note. Java §5 (error aggregation
-  primitive) is still TBD and **now gates the serialize direction too**.
+  section gained a §6 serialize note. **Java §5 (error-aggregation
+  primitive) RESOLVED (2026-06-23)** — a per-POJO class-level collecting
+  `@JsonDeserialize`/`@JsonSerialize` (two-stage lenient-tree-then-
+  validate, the Jackson analog of Go's shadow-layout `UnmarshalJSON`),
+  throwing one `ValidationException extends JsonMappingException` with
+  `List<Violation{path,reason}>`. Proven end-to-end through the *default*
+  Temporal data converter (`/tmp/javaagg/`). Closes the last
+  language-section gap **and** the serialize-direction dependency
+  (§6 rides the same primitive).
 - `features/nullability/spec.md`: cross-cutting design note (not a
   keyword). Covers optionality + nullability for all 4 languages with
   empirically-verified per-language enforcement strategies. **Now carries
@@ -81,8 +88,11 @@ example at `features/type/spec.md`:
 - `features/additionalProperties/spec.md`: complete. Lands the
   open-by-default decision + typed-extras support. **All four languages**
   wrap the catch-all in a dedicated named member (even pure maps) for
-  shape stability + clean declared/extra key separation. 1 open
-  question — Java closed-struct aggregation.
+  shape stability + clean declared/extra key separation. **OQ1 (Java
+  closed-struct aggregation) RESOLVED** — the per-POJO collecting
+  deserializer (Java §5) reads the tree first, so it flags each
+  undeclared key as a `Violation` in the same single-shot pass. 1 open
+  question — Go catch-all field naming/exposure.
 - `features/required/spec.md`: complete. Zero open questions.
 - `features/maxProperties/spec.md`, `features/minProperties/spec.md`:
   complete (runtime count assertions). Count is over **distinct wire
@@ -264,7 +274,7 @@ example at `features/type/spec.md`:
   per-language enforcement strategies in `nullability/spec.md`.
 - **Integer parsing honors spec** — accept `1.0`/`1e2` as integers;
   reject `1.5`. Per-language runtime helpers (`parseSpecInteger`,
-  `_parse_spec_integer`, `SpecLongDeserializer`).
+  `_parse_spec_integer`, Java node helper `SpecNumbers.specLong`).
 - **Java reference types carry JSpecify nullness annotations**
   (PRINCIPLES Java §3). Emitted packages are `@NullMarked`; optional
   reference fields are `@Nullable`, required ones non-null by default.
@@ -284,6 +294,39 @@ example at `features/type/spec.md`:
   `*T`; `new(expr)` for pointer-from-literal (Go 1.26+ preferred,
   not required); custom `UnmarshalJSON` on every struct with
   `*json.RawMessage` shadow + `errors.Join` aggregation.
+- **Java error aggregation is a per-POJO collecting (de)serializer
+  (Java §4–§6, RESOLVED 2026-06-23).** Each emitted POJO carries
+  class-level `@JsonDeserialize(using=<Pojo>.Deserializer.class)` +
+  `@JsonSerialize(using=<Pojo>.Serializer.class)` — the Jackson analog of
+  Go's shadow-layout `UnmarshalJSON`. **The two (de)serializers are
+  emitted as `public static final` nested classes on the model
+  (`User.Deserializer` / `User.Serializer`), not top-level
+  `UserDeserializer` types** — each model owns its pair, so the names
+  never collide across models, and they sit with the type they serve
+  (same nesting idiom as P18's const/enum value classes; verified
+  `/tmp/javaagg/`). The deserializer does a **two-stage
+  lenient-tree-then-validate** bind (`readValueAsTree()` defeats
+  Jackson's fail-fast `MismatchedInputException`, then every field runs
+  through shared spec-strict + constraint helpers, collecting
+  `Violation{path,reason}`) and throws one `ValidationException extends
+  JsonMappingException`. **The §4 spec-strict parse is a node helper
+  (`SpecNumbers.specLong(JsonNode,…)`) called by the collecting
+  deserializer — *not* a per-field `@JsonDeserialize` (fail-fast, can't
+  aggregate), and there is no `…StrictDeserializer` sibling: the
+  explicit-`null` decision is a per-field branch over `node.isNull()`,
+  the same three-way Go makes (Option A, chosen over driving a retained
+  `JsonDeserializer` through a sub-parser — `/tmp/javaagg/SpecCmp.java`).**
+  Crucially this works through the
+  **default** Temporal data converter (which owns a stock
+  `new ObjectMapper()` we can't configure — so a mapper-level
+  `DeserializationProblemHandler` is out): the hook is baked into the
+  POJO via annotations, the converter honors it, and the aggregated
+  `ValidationException` surfaces as the **cause** of `DataConverterException`
+  (handler walks the chain → `getViolations()` → one BAD_REQUEST). Exact
+  parallel of the Python `to_json`/`@model_serializer` finding. Serialize
+  side (§6) rides the same primitive. Empirically proven end-to-end in
+  `/tmp/javaagg/`. Also closes additionalProperties OQ1 (closed-struct
+  extra-key aggregation falls out of the tree stage).
 
 ### Methodology established
 
@@ -300,7 +343,40 @@ example at `features/type/spec.md`:
   - `/tmp/pyd_nullopt_probe.py` — `model_validator(mode='wrap')`
     aggregated error handling
   - `/tmp/jacktest/` — Jackson Maven project: default Long behavior,
-    `ACCEPT_FLOAT_AS_INT=false`, custom `SpecLongDeserializer`
+    `ACCEPT_FLOAT_AS_INT=false`, a custom token-based `SpecLongDeserializer`
+    (**superseded** — the strict parse is now a node helper
+    `SpecNumbers.specLong`, see `/tmp/javaagg/SpecCmp.java`)
+  - `/tmp/javaagg/` — **Java error-aggregation primitive** (Java §5/§6)
+    proven end-to-end through `DefaultDataConverter.STANDARD_INSTANCE`
+    (temporal-sdk 1.30.1): a per-POJO class-level `@JsonDeserialize`
+    collecting deserializer — emitted as a **nested `User.Deserializer`**
+    (and `User.Serializer`), referenced via
+    `@JsonDeserialize(using = User.Deserializer.class)`, which Jackson
+    resolves through the default converter; two models in the probe
+    (`User`, `OpenUser`) each own their pair with no collision —
+    (two-stage `readValueAsTree()` then
+    per-field shared validators, one `ValidationException extends
+    JsonMappingException` with `List<Violation{path,reason}>`) aggregates
+    3 independent errors in one shot; `1.0` accepted / `1.5` rejected;
+    the exception survives as the **cause** of `DataConverterException`
+    (recoverable via the cause chain). `@JsonSerialize` mirror does
+    validate-then-write (§6) and omits an optional `null`. Confirms the
+    mechanism rides the **default** converter's stock ObjectMapper with
+    no mapper config — the Jackson parallel to the Python `to_json`/
+    `@model_serializer` finding. Also proves the **open-struct extras**
+    path: the collecting (de)serializer routes undeclared tree keys into a
+    `Map<String,Object>` catch-all and round-trips them faithfully (nested
+    arrays/objects included) — **without** `@JsonAnySetter`/`@JsonAnyGetter`
+    (a class-level custom (de)serializer bypasses those), so [[additionalProperties]]
+    Java now rides the same primitive.
+  - `/tmp/javaagg/SpecCmp.java` — settles the spec-strict integer primitive
+    shape (type/spec.md OQ): a **node helper** over `JsonNode` (Option A,
+    chosen) vs a retained `JsonDeserializer<Long>` driven over
+    `node.traverse()` (Option B). Both make **identical** accept/reject
+    decisions (`1`/`1.0`/`1e2` ok; `1.5`/`>2^53`/`"1"`/`true` rejected);
+    Option A wins — no per-field throw/catch, zero sub-parser allocation,
+    full `{path,reason}` control, and it matches Go/Python helpers. Landed
+    in PRINCIPLES Java §4 + [[type]] + [[nullability]] Java.
   - `/tmp/ts_int_probe.mjs` — JSON.parse + Number.isInteger,
     including the silent >2^53 precision loss
   - `/tmp/ts_cap_probe.mjs` — proves `Number.isSafeInteger` is a
@@ -406,6 +482,28 @@ example at `features/type/spec.md`:
     (`/tmp/const_fields_set_probe.py`).
   - Jackson's default `Long` deserializer **silently truncates**
     `1.5` to `1`. Custom deserializer is mandatory, not optional.
+  - Jackson is **fail-fast**: the first field's `MismatchedInputException`
+    aborts the whole bind, so per-field `@JsonDeserialize` annotations
+    **cannot** aggregate (P8). Aggregation needs either a mapper-level
+    `DeserializationProblemHandler` (unavailable — the default Temporal
+    converter owns the `ObjectMapper`) or a **class-level collecting
+    deserializer that reads the whole object into a tree first**, then
+    validates field-by-field. The tree route is the only one that works
+    through the default converter (Java §5).
+  - A `JsonMappingException` (or subclass) thrown from inside a custom
+    `JsonDeserializer` **propagates verbatim** — Jackson does not re-wrap
+    it — and the Temporal `DefaultDataConverter` surfaces it as the
+    **cause** of a `DataConverterException`. So a custom
+    `ValidationException extends JsonMappingException` reaches the Nexus
+    handler intact via `getCause()`, carrying its `List<Violation>`.
+    Verified `/tmp/javaagg/`.
+  - The default Temporal Java converter
+    (`JacksonJsonPayloadConverter.newDefaultObjectMapper()`) is a stock
+    `new ObjectMapper()` + JavaTimeModule + Jdk8Module + field-visibility
+    ANY. We do **not** own it — so, exactly like the Python `to_json`
+    case, any (de)serialize behavior must be **baked into the POJO** via
+    class-level `@JsonDeserialize`/`@JsonSerialize`, never expressed as
+    mapper configuration we apply.
   - Pydantic's `model_fields_set` **includes extras and excludes
     default-filled fields** — so it is the exact wire-key count for
     min/maxProperties. Summing `model_fields_set` + `__pydantic_extra__`
@@ -440,16 +538,19 @@ All three former high-priority items are **resolved** (2026-06-16):
    ±(2^53−1) uniform cap (P16). TS enforces via `Number.isSafeInteger`,
    no third-party parser needed (empirically verified).
 2. ~~Fill PRINCIPLES.md → TypeScript, Python, Java sections.~~ **DONE** —
-   all three sections written (Java §5 aggregation mechanism still TBD,
-   tracked as an open question).
+   all three sections written; the last gap (Java §5 aggregation
+   mechanism) is now **RESOLVED (2026-06-23)** — see Java §4–§6.
 3. ~~Decide + land closed-vs-open default for typed structs.~~ **DONE** —
    open-by-default; landed in `properties/spec.md` +
    `additionalProperties/spec.md`.
 
 Next-highest leverage (newly surfaced TBDs that gate clusters of specs):
-- **Java error-aggregation primitive** (PRINCIPLES Java §5). Gates the
-  closed-struct and multi-field-error story across every Java spec.
-- **`$ref`** — still the single highest-priority structural keyword
+- ~~**Java error-aggregation primitive** (PRINCIPLES Java §5).~~
+  **RESOLVED (2026-06-23)** — per-POJO collecting `@JsonDeserialize`/
+  `@JsonSerialize`, two-stage lenient-tree-then-validate, proven through
+  the default Temporal data converter (`/tmp/javaagg/`). Unblocked the
+  closed-struct + multi-field-error story across every Java spec.
+- **`$ref`** — now the single highest-priority structural keyword
   (drives file-per-input + merge-on-cycle, P13–P14).
 
 ### Feature specs to write (≈50)
@@ -559,7 +660,11 @@ Snapshot as of this checkpoint.
    top-level `UserEventKind`.
 
 ### `features/additionalProperties/spec.md`
-1. **Java closed-struct aggregation** (depends on Java agg primitive).
+1. ~~**Java closed-struct aggregation** (depends on Java agg primitive).~~
+   **RESOLVED (2026-06-23)** — the per-POJO collecting deserializer
+   (Java §5) reads the tree first, so an `additionalProperties:false`
+   struct emits one `Violation` per undeclared key in the same
+   single-shot pass; no separate mechanism needed.
 2. **Go catch-all field naming/exposure** for open structs.
 
 ### `features/patternProperties/spec.md`
@@ -620,10 +725,16 @@ Snapshot as of this checkpoint.
 - None.
 
 ### `PRINCIPLES.md`
-- Java §5 — **error-aggregation primitive mechanism still TBD** (the
-  one remaining language-section gap). **Now gates the serialize
-  direction too (P17 / Java §6):** the same single-shot aggregation
-  problem applies mirror-image when validating before write.
+- ~~Java §5 — error-aggregation primitive mechanism TBD.~~ **RESOLVED
+  (2026-06-23)** — per-POJO class-level collecting `@JsonDeserialize`/
+  `@JsonSerialize`, two-stage lenient-tree-then-validate, one
+  `ValidationException extends JsonMappingException` with
+  `List<Violation{path,reason}>`. Works through the default Temporal data
+  converter (mechanism baked into the POJO, not the mapper — parallel to
+  the Python `to_json` finding); the exception surfaces as the cause of
+  `DataConverterException`. Serialize direction (§6) rides the same
+  primitive. Proven `/tmp/javaagg/`. **No open language-section gaps
+  remain.**
 
 ## How to pick up the work in a new session
 

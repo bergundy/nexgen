@@ -9,7 +9,7 @@
 5. **Strict JSON schema subset.** Generator rejects JSON schema features that cannot be coherently represented in all supported languages. (e.g., `anyOf`, `allOf`).
 6. **Use 2020-12 as the base spec version**. The strict subset is based on the latest draft.
 7. **Validation is enforced, not advisory.** Constraints (`minLength`, `pattern`, `minimum`, …), `const`, and discriminator strings are checked at the (de)serializer boundary. Schemas are not just documentation.
-8. **Aggregate validation errors.** Surface every violation in one shot using the language-native aggregation primitive: TS `AggregateError` of `ValidationError { path, reason }`; Python uses Pydantic's native `pydantic.ValidationError` which already aggregates via `.errors()` (each entry has `loc` + `msg` + `type`); Go `errors.Join` of `ValidationError { Path, Reason }`. Structured payloads; never stringly-typed messages. Error set as the cause of a Nexus RPC HandlerError with BAD_REQUEST error type.
+8. **Aggregate validation errors.** Surface every violation in one shot using the language-native aggregation primitive: TS `AggregateError` of `ValidationError { path, reason }`; Python uses Pydantic's native `pydantic.ValidationError` which already aggregates via `.errors()` (each entry has `loc` + `msg` + `type`); Go `errors.Join` of `ValidationError { Path, Reason }`; Java a per-POJO class-level collecting `JsonDeserializer`/`JsonSerializer` that throws one `ValidationException` (a `JsonMappingException`) carrying `List<Violation { path, reason }>` (Java §5). Structured payloads; never stringly-typed messages. Error set as the cause of a Nexus RPC HandlerError with BAD_REQUEST error type.
 9. **Forward compatibility over strict types**. Accept and preserve unknown enum values and unknown fields as best as possible.
     1. **Forward-compatible `const`.** Field type emitted as the underlying primitive (`string`, not `'v1'`); value validated at runtime. Bumping a const value never breaks the type signature. `const` is a pure assertion — equivalent to a single-value `enum`, no serialize-side special-casing (presence is owned by `required`). All four targets emit an **open form, closed only at runtime**, not a closed literal: TS `'v1' | (string & {})`, Go `type X = string` + typed value consts, Python `Literal['v1'] | str`, Java a generated value class (string-valued; `@JsonCreator`/`@JsonValue`, `isUnrecognized()`). `const` and `enum` share this representation — a const is the single-value specialization; they differ only in the validator (const rejects an unrecognized value, enum preserves it per P9). See [[const]].
 10. **Strict schema validation**. The *schema* is held to a strict shape: ambiguous constructs are rejected at generator time with clear errors (no `oneOf` discriminator → reject; `additionalProperties: {}` → reject; bare `{type:"object"}` → reject).
@@ -267,35 +267,97 @@
    on the classpath still compiles cleanly (javac ignores the missing
    CLASS-retained type) and only forfeits the null-analysis benefit.
 
-4. **Paired strict / non-strict custom deserializers per primitive.**
-   Each spec-sensitive primitive ships two deserializers in the
-   runtime: a base one (e.g. `SpecLongDeserializer`) used for
-   nullable fields, and a `…StrictDeserializer` that overrides
-   `getNullValue` to reject an explicit `null` token (used for
-   optional-non-nullable and required fields). The generator picks the
-   `@JsonDeserialize` annotation per field from its nullability
-   declaration. Custom deserializers are mandatory because Jackson's
-   defaults silently truncate (`1.5`→`1`) — a P10 violation. They also
-   enforce the P16 cap.
+4. **Spec-strict per-primitive parse logic as a node helper, invoked
+   from the collecting deserializer (§5), not as a per-field
+   `@JsonDeserialize`.** Each spec-sensitive primitive ships a
+   **strict-parse helper** in the runtime that operates over a `JsonNode`
+   — e.g. `SpecNumbers.specLong(JsonNode node, String path,
+   List<Violation> errs)`: it accepts `1.0`/`1e2`, rejects `1.5`,
+   enforces the P16 cap, and on a bad value **pushes a `Violation` and
+   returns `null` rather than throwing**. Custom logic is mandatory
+   because Jackson's defaults silently truncate (`1.5`→`1`) — a P10
+   violation. **It is *not* wired as a per-field `@JsonDeserialize`,
+   because per-field binders are fail-fast** — the first field's
+   `MismatchedInputException` aborts the whole bind and defeats P8
+   aggregation. The per-POJO collecting deserializer (§5) calls the
+   helper over each field's tree node and collects its violations. This
+   is the exact Go parallel: the spec-strict parse (`parseSpecInteger`)
+   is a helper called from the shadow-layout decoder (Go §5), not the
+   default binding path. **There is no `…StrictDeserializer` sibling and
+   no `getNullValue` override:** the explicit-`null` decision (reject for
+   optional-non-nullable/required, accept for nullable) is a per-field
+   branch in the collecting deserializer over the node's `isNull()`,
+   exactly the three-way Go makes in `UnmarshalJSON` (see
+   [[nullability]] Java). The node-helper-vs-retained-`JsonDeserializer`
+   choice was settled empirically (`/tmp/javaagg/SpecCmp.java`): both
+   make identical accept/reject decisions, but the node helper wins —
+   no per-field throw/catch, zero sub-parser allocation, and full
+   `{path, reason}` control.
 
-5. **Error aggregation primitive — TBD.** Jackson fails fast on the
-   first `MismatchedInputException` by default; achieving P8 single-shot
-   aggregation needs a chosen mechanism (collecting deserializer, or a
-   validation pass over a lenient first-stage bind). Open question;
-   tracked here and in [[nullability]] until resolved. **Now gates the
-   serialize direction too** (§6) — the same single-shot aggregation
-   problem applies mirror-image when validating before write.
+5. **Error aggregation primitive — one class-level collecting
+   (de)serializer per POJO (RESOLVED).** Each emitted POJO carries
+   class-level `@JsonDeserialize(using = <Pojo>.Deserializer.class)` (and
+   the mirror `@JsonSerialize(using = <Pojo>.Serializer.class)`, §6). The
+   two (de)serializers are emitted as **`public static final` nested
+   classes on the model** (`User.Deserializer` / `User.Serializer`), not
+   top-level `UserDeserializer` types: every model has its own pair, so
+   the names never collide across models (no need to involve them in the
+   P18 per-scope collision pass) and they sit visibly with the type they
+   serve (P1). This is the same nest-where-the-language-allows idiom P18
+   uses for synthesized const/enum value classes (`/tmp/nestprobe/`);
+   Jackson resolves `@JsonDeserialize(using = User.Deserializer.class)`
+   referencing a nested class on the enclosing type with no issue
+   (verified `/tmp/javaagg/`). The deserializer is the Jackson analog
+   of Go's shadow-layout `UnmarshalJSON` (Go §5): a **two-stage
+   lenient-then-validate** bind. Stage 1 reads the whole object into a
+   `JsonNode` tree (`p.readValueAsTree()`), which *cannot* throw
+   Jackson's fail-fast `MismatchedInputException` on field #1. Stage 2
+   walks every declared field through the shared spec-strict parse +
+   constraint helpers (P7; the §4 node helpers invoked
+   here), pushing a `Violation { path, reason }` per problem into one
+   list, and throws a single `ValidationException` carrying them all.
+   `ValidationException extends JsonMappingException` so it propagates
+   out of the deserializer **verbatim** (Jackson does not re-wrap it) and
+   the Temporal converter surfaces it as the **cause** of a
+   `DataConverterException`; the Nexus handler walks the cause chain,
+   pulls `getViolations()`, and emits one BAD_REQUEST `HandlerError`
+   (P8). The tree stage also gives closed structs their extra-key check
+   (`additionalProperties:false` → a violation per undeclared key) and
+   open structs natural unknown-key tolerance (P9).
+
+   **Compatible with the *default* Temporal Java data converter — the
+   binding constraint.** The mechanism is baked into the POJO via the
+   class-level annotation + runtime-shipped (de)serializer classes, which
+   the converter's stock `new ObjectMapper()` (JavaTimeModule + Jdk8Module
+   + field-visibility ANY; `JacksonJsonPayloadConverter.newDefaultObjectMapper()`)
+   honors. We do **not** own or configure that mapper — so a mapper-level
+   `DeserializationProblemHandler` (the other common Jackson recover-and-
+   continue lever) is unavailable, and the per-POJO collecting
+   deserializer is the only path that aggregates through the default
+   converter. This exactly parallels the Python finding that the
+   converter owns `to_json`, so behavior must live in the model
+   (`@model_serializer`), not a call we make. Empirically proven
+   end-to-end through `DefaultDataConverter.STANDARD_INSTANCE` in
+   `/tmp/javaagg/`: three independent deserialize errors aggregated in one
+   shot; `1.0` accepted / `1.5` rejected as integer; type mismatches
+   aggregated; the `ValidationException` recovered from the
+   `DataConverterException` cause chain with all violations intact.
 
 6. **Serialize: validate-then-write; per-field `@JsonInclude` (P17).**
-   A validation pass runs the shared constraint checks before Jackson
-   writes the POJO. Per-field omit-vs-`null` mirrors Go via
-   `@JsonInclude`: optional fields `@JsonInclude(NON_NULL)` (`null` →
-   omitted); required+nullable forces inclusion
-   (`@JsonInclude(ALWAYS)`, `null` → `null`); required-non-nullable is
-   always emitted. Optional+nullable collapses (absent and `null` share
-   one in-memory `null`) → **conservative omit**, the same tier as Go
-   (not the faithful TS/Python round-trip). Serialize-side error
-   aggregation depends on the still-open primitive in §5.
+   Class-level `@JsonSerialize(using = <Pojo>.Serializer.class)` (the
+   nested `Serializer` from §5) runs the shared
+   constraint predicates **first**, collecting into the same
+   `ValidationException`, and throws before writing a byte; otherwise it
+   writes fields honoring per-field omit-vs-`null` (the `@JsonInclude`
+   semantics, applied in code since the serializer is custom): optional
+   `NON_NULL` (`null` → omitted); required+nullable forces inclusion
+   (`null` → `null`); required-non-nullable always emitted. Optional+
+   nullable collapses (absent and `null` share one in-memory `null`) →
+   **conservative omit**, the same tier as Go (not the faithful TS/Python
+   round-trip). Serialize-side error aggregation is **resolved with §5**
+   (same `ValidationException` primitive) — proven in `/tmp/javaagg/`: an
+   invalid in-memory model fails loudly with every violation; a valid one
+   omits an optional `null`.
 
 ## Go
 

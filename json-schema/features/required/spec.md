@@ -97,7 +97,7 @@ Per **P7**/**P8**. The "Required, non-nullable" row of
 | Go | shadow `*json.RawMessage` per member; `nil` → `ValidationError{Path:name, Reason:"required"}`, joined via `errors.Join`. |
 | TypeScript | `parsed.x === undefined \|\| parsed.x === null` → push `ValidationError{path, reason}`, throw `AggregateError`. |
 | Python | Pydantic field with no default → strict mode raises automatically; aggregated in `pydantic.ValidationError`. |
-| Java | non-primitive: explicit `field == null` reject; primitive: a present-but-typed binding plus a strict deserializer rejecting `null`. Aggregation primitive TBD (PRINCIPLES Java §5). |
+| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): a missing or `null` tree node for a required member → `Violation{path:name, reason:"required"}`; the strict-vs-non-strict `null`-token logic (Java §4) runs as a helper here, not as a per-field binder. Collected into one `ValidationException`. |
 
 Required + explicit `null`: for a required **non-nullable** member,
 rejected (may not be `null`) — same machinery as the

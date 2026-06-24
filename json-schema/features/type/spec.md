@@ -93,7 +93,7 @@ errors aggregate into the language-native primitive.
 | `type` token | Go | TypeScript | Python | Java |
 |---|---|---|---|---|
 | `"string"`  | typed `Unmarshal` into `string` | `typeof v === 'string'` | Pydantic `str` strict | Jackson typed binding |
-| `"integer"` | shadow `*json.Number` → runtime `parseSpecInteger` → `int64` (accepts `1.0`, rejects `1.5`, caps ±(2^53−1)) | `typeof v === 'number' && Number.isSafeInteger(v)` (accepts `1.0` natively; caps ±(2^53−1)) | `SpecInt = Annotated[int, BeforeValidator(_parse_spec_integer)]` in runtime | `@JsonDeserialize(using = SpecLongDeserializer.class)` from runtime |
+| `"integer"` | shadow `*json.Number` → runtime `parseSpecInteger` → `int64` (accepts `1.0`, rejects `1.5`, caps ±(2^53−1)) | `typeof v === 'number' && Number.isSafeInteger(v)` (accepts `1.0` natively; caps ±(2^53−1)) | `SpecInt = Annotated[int, BeforeValidator(_parse_spec_integer)]` in runtime | node helper `SpecNumbers.specLong(node, path, errs)` called by the collecting deserializer (accepts `1.0`, rejects `1.5`, caps ±(2^53−1)) |
 | `"number"`  | `float64` unmarshal | `typeof v === 'number'` | Pydantic `float` strict | `Double` binding |
 | `"boolean"` | `bool` unmarshal | `typeof v === 'boolean'` | Pydantic `bool` strict (rejects `1`/`0`) | `Boolean` binding |
 | `"object"`  | typed struct unmarshal | `typeof v === 'object' && v !== null && !Array.isArray(v)` | Pydantic model | typed class binding |
@@ -152,35 +152,45 @@ Strategy per language:
   only way to hit the spec exactly. Note: Python ints are unbounded, so
   the runtime helper also enforces the cross-language cap `±(2^53−1)`
   (Open question 1 — **resolved**): `abs(v) > 9007199254740991` → reject.
-- **Java**: Jackson typed binding into POJOs (Java 8 floor; not records,
-  see PRINCIPLES Java §1). `Long` fields get
-  `@JsonDeserialize(using = SpecLongDeserializer.class)` from the
-  generated runtime. The deserializer branches on `JsonToken`:
+- **Java**: POJOs (Java 8 floor; not records, see PRINCIPLES Java §1)
+  bound by the per-POJO collecting deserializer (Java §5) — **no**
+  per-field `@JsonDeserialize`, no `Long` binding. It calls a node-based
+  runtime helper per integer field; the helper takes the field's
+  `JsonNode`, and on a bad value **pushes a `Violation` and returns
+  `null`** (it never throws, so aggregation stays a clean list-append):
   ```java
-  // Sketch — see runtime for full impl. CAP = 9007199254740991L (2^53-1).
-  JsonToken t = p.currentToken();
-  if (t == VALUE_NUMBER_INT) {                  // "1", ">2^53"
-      BigInteger bi = p.getBigIntegerValue();
-      if (bi.abs() > CAP) throw ...;            // ±(2^53-1) cap
-      return bi.longValueExact();
+  // SpecNumbers.specLong — CAP = 9007199254740991L (2^53-1).
+  static Long specLong(JsonNode n, String path, List<Violation> errs) {
+      if (!n.isNumber()) {                        // rejects "1", true, etc.
+          errs.add(new Violation(path, "expected integer"));  return null;
+      }
+      BigDecimal d = n.decimalValue();            // exact; no double rounding
+      if (d.stripTrailingZeros().scale() > 0) {   // "1.0"/"1e2" ok, "1.5" rejected
+          errs.add(new Violation(path, "not an integer"));    return null;
+      }
+      if (d.abs().compareTo(BigDecimal.valueOf(CAP)) > 0) {   // ±(2^53-1) cap
+          errs.add(new Violation(path, "exceeds cap"));       return null;
+      }
+      return d.longValueExact();
   }
-  if (t == VALUE_NUMBER_FLOAT) {                // "1.0", "1.5", "1e2"
-      double d = p.getDoubleValue();
-      if (NaN || inf || d != floor(d) || abs(d) > CAP) throw ...;
-      return (long) d;
-  }
-  throw "expected number token, got " + t;      // rejects bool, string, null-as-value-here
   ```
   Rationale (empirically verified, Jackson 2.18): Jackson's defaults
   *silently truncate* `1.5`→`1` for `Long` fields — a P10 violation
   blocking shipping with defaults. `ACCEPT_FLOAT_AS_INT=false` fixes
   truncation but rejects spec-valid `1.0`/`1e2` and still coerces `"1"`.
-  The custom deserializer is the only path that matches the spec.
+  The custom helper is the only path that matches the spec.
   The `±(2^53−1)` cap (Open question 1 — **resolved**) is enforced
   explicitly above; `>2^63` would also trip Jackson's own range check,
-  but our cap is tighter so ours fires first.
-  `MismatchedInputException` converts to our `ValidationError`.
-  Aggregation primitive TBD with the Java section of PRINCIPLES.md.
+  but our cap is tighter so ours fires first. **Reading from a `JsonNode`
+  (not a live parser) is what lets a spec-strict failure become a
+  `Violation{path,reason}` instead of a bind-aborting
+  `MismatchedInputException`** — the helper is called from the two-stage
+  collecting deserializer (PRINCIPLES Java §4/§5), the exact parallel of
+  Go's `parseSpecInteger` and Python's `_parse_spec_integer`. The
+  alternative — retaining a `JsonDeserializer<Long>` and driving it over
+  a sub-parser — makes identical decisions but re-introduces a per-field
+  throw/catch and a sub-parser allocation, so it was rejected (both
+  verified side-by-side, `/tmp/javaagg/SpecCmp.java`).
 
 ### Serialize-side (P17)
 
@@ -309,7 +319,7 @@ no current toolchain emits it.
 
 1. **Cross-language conformance suite for the integer runtime helpers.**
    Each language's helper (`parseSpecInteger`, `_parse_spec_integer`,
-   `SpecLongDeserializer`, and TS's `Number.isSafeInteger` use) must pass
+   `SpecNumbers.specLong`, and TS's `Number.isSafeInteger` use) must pass
    an identical fixture set: accept `1`, `1.0`, `1e2`, `-0`, the cap
    boundary `±(2^53−1)`; reject `1.5`, `true`/`false`, `"1"`, non-numeric
    strings, NaN, ±Infinity, and any magnitude past `±(2^53−1)`.

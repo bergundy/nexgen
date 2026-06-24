@@ -127,10 +127,13 @@ Record<string,T>` member has no such constraint and stays fully typed.
 
 The wire form is unchanged in all cases — extras are always top-level
 JSON members; the in-memory catch-all is bridged by the generated
-(de)serializer (Go custom `(Un)MarshalJSON`, Java
-`@JsonAnySetter`/`@JsonAnyGetter`, TS hand-emitted ser/deser that lifts
-top-level extras into `additionalProperties` and spreads them back out,
-Python `model_extra`).
+(de)serializer (Go custom `(Un)MarshalJSON`, Java the per-POJO collecting
+`@JsonDeserialize`/`@JsonSerialize` — which routes undeclared tree keys
+into the catch-all map and spreads them back on write, **not**
+`@JsonAnySetter`/`@JsonAnyGetter` (a class-level custom (de)serializer
+bypasses those); verified `/tmp/javaagg/`, TS hand-emitted ser/deser that
+lifts top-level extras into `additionalProperties` and spreads them back
+out, Python `model_extra`).
 
 ## Type mapping
 
@@ -142,12 +145,12 @@ generator guessing their shape (**P9**).
 
 | Case | Go | TypeScript | Python | Java |
 |---|---|---|---|---|
-| Open struct, untyped extras (default / `true`) | struct + `AdditionalProperties map[string]json.RawMessage` | `interface` + `additionalProperties: Record<string, unknown>` | model `extra='allow'` (extras in `model_extra`) | POJO + `Map<String,Object>` via `@JsonAnySetter`/`@JsonAnyGetter` |
-| **Typed extras + `properties` (`{type:T}`)** | struct + `AdditionalProperties map[string]T` | `interface` + `additionalProperties: Record<string, T>` | model `extra='allow'` + per-extra `T` validation (extras in `model_extra`) | POJO + `Map<String,T>` via `@JsonAnySetter`/`@JsonAnyGetter` |
-| Closed struct (`false`) | no catch-all field; unknown → error | exact `interface`, no `additionalProperties`; unknown → error | model `extra='forbid'` | `@JsonIgnoreProperties(ignoreUnknown=false)` |
+| Open struct, untyped extras (default / `true`) | struct + `AdditionalProperties map[string]json.RawMessage` | `interface` + `additionalProperties: Record<string, unknown>` | model `extra='allow'` (extras in `model_extra`) | POJO + `Map<String,Object>`, populated/emitted by the collecting (de)serializer (Java §5) |
+| **Typed extras + `properties` (`{type:T}`)** | struct + `AdditionalProperties map[string]T` | `interface` + `additionalProperties: Record<string, T>` | model `extra='allow'` + per-extra `T` validation (extras in `model_extra`) | POJO + `Map<String,T>`, populated/emitted by the collecting (de)serializer (Java §5) with per-extra `T` validation |
+| Closed struct (`false`) | no catch-all field; unknown → error | exact `interface`, no `additionalProperties`; unknown → error | model `extra='forbid'` | no catch-all field; the collecting deserializer (Java §5) flags each undeclared tree key as a `Violation` |
 | Open opaque map (`true`, no props) | struct + `AdditionalProperties map[string]json.RawMessage` (wrapper) | `interface` + `additionalProperties: Record<string, unknown>` (wrapper) | `BaseModel` `extra='allow'` (extras in `model_extra`) | class + `Map<String,Object> additionalProperties` (wrapper) |
 | Typed map (`{type:T}`, no props) | struct + `AdditionalProperties map[string]T` (wrapper) | `interface` + `additionalProperties: Record<string, T>` (wrapper) | `BaseModel` `extra='allow'` + per-extra `T` validation | class + `Map<String,T> additionalProperties` (wrapper) |
-| Closed empty object (`false`, no props) | empty `struct{}`; any member → error | empty `interface`; any member → error | `extra='forbid'`, no fields | empty POJO, `ignoreUnknown=false` |
+| Closed empty object (`false`, no props) | empty `struct{}`; any member → error | empty `interface`; any member → error | `extra='forbid'`, no fields | empty POJO; the collecting deserializer (Java §5) flags any tree key as a `Violation` |
 
 The TS `additionalProperties` member is always present when extras are
 allowed (an empty `{}` when none were received), so the surface is
@@ -202,7 +205,7 @@ violation aggregates.
 | Go | `UnmarshalJSON` routes unmatched keys into `AdditionalProperties`; `MarshalJSON` re-emits them | same routing, but each value goes through `T`'s runtime helper; failures → `ValidationError{Path:key}` | `UnmarshalJSON` emits `ValidationError{Path:key, Reason:"unknown field"}` per unmatched key, `errors.Join` |
 | TypeScript | deser lifts non-declared keys into the `additionalProperties` Record; reser spreads them back to top-level | same, but each value validated as `T` before going into `additionalProperties` (member stays fully typed `Record<string,T>`) | check parsed keys against the known set; push `ValidationError{path:key}` per extra, throw `AggregateError` |
 | Python | `extra='allow'` — extras land in `model_extra`, **round-trip via `model_dump_json`** (verified, `/tmp/pyd_extra_probe.py`) | `extra='allow'` + a post-init validator checks each `model_extra` value is `T`, aggregating per-key failures (verified, `/tmp/pyd_typed_extra.py`) | `extra='forbid'` — Pydantic raises `extra_forbidden` per extra key, aggregated (verified) |
-| Java | `@JsonAnySetter`-collected map, re-emitted via `@JsonAnyGetter` | typed `Map<String,T>` any-setter; `T`'s deserializer validates each value | `ignoreUnknown=false` → `UnrecognizedPropertyException` per the Java aggregation strategy (Java §5 TBD) |
+| Java | the per-POJO collecting deserializer (Java §5) routes parsed-tree keys not in the declared set into the `additionalProperties` map; the matching serializer spreads them back | same routing, but each extra value is validated as `T` (bad keys → `Violation{path:key}`) | the collecting deserializer pushes a `Violation{path:key, reason:"unknown field"}` per undeclared tree key into the single `ValidationException` — no fail-fast `ignoreUnknown=false`/`UnrecognizedPropertyException` |
 
 Empirical notes (Pydantic 2.13, verified):
 - `extra='allow'` + `strict=True` coexist: declared fields stay strict
@@ -216,8 +219,8 @@ Empirical notes (Pydantic 2.13, verified):
 ### Serialize-side (P17)
 
 The catch-all is re-emitted by spreading its members back to top-level
-JSON (Go `MarshalJSON` / TS reserializer / Java `@JsonAnyGetter` /
-Python `model_dump`). Symmetry per mode:
+JSON (Go `MarshalJSON` / TS reserializer / Java the per-POJO collecting
+serializer, Java §5 / Python `model_dump`). Symmetry per mode:
 
 - **Open, untyped** — extras pass through **verbatim**; Go's
   `json.RawMessage` element type guarantees byte-faithful re-emit (no
@@ -300,15 +303,19 @@ unambiguous in both directions.
 
 ## Open questions
 
-1. **Java closed-struct aggregation.** `ignoreUnknown=false` fails fast
-   on the first unknown member; single-shot aggregation (**P8**) of
-   multiple unknown keys depends on the Java error-aggregation primitive
-   still TBD (PRINCIPLES Java §5).
+1. ~~**Java closed-struct aggregation.**~~ **RESOLVED (2026-06-23).** The
+   per-POJO collecting deserializer (PRINCIPLES Java §5) reads the whole
+   object into a `JsonNode` tree first, so a closed struct flags **every**
+   undeclared key as a `Violation` in the same single-shot pass — no
+   fail-fast `ignoreUnknown=false`/`UnrecognizedPropertyException`.
+   Aggregated with declared-field errors (**P8**). Proven through the
+   default Temporal data converter in `/tmp/javaagg/`.
 2. **Catch-all representation — resolved.** All four languages wrap the
    catch-all in a dedicated named member, even for pure maps, so the
    emitted shape is stable when `properties` are added later: Go exported
-   `AdditionalProperties` map field; Java `additionalProperties` member
-   with `@JsonAnySetter`/`@JsonAnyGetter`; TS
+   `AdditionalProperties` map field; Java `additionalProperties` member,
+   populated/emitted by the per-POJO collecting (de)serializer (Java §5);
+   TS
    `additionalProperties: Record<string,T>` interface member; Python
    `BaseModel` with extras in `model_extra`. A declared property named
    `additionalProperties` collides with the generated member in

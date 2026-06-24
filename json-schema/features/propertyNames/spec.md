@@ -75,7 +75,7 @@ string against the (string) constraint.
 | Go | In `UnmarshalJSON`, iterate decoded keys; run the key-constraint check (e.g. compiled `regexp` for [[pattern]], length checks); failures → `ValidationError{Path:key, Reason:"propertyName"}`, `errors.Join`. |
 | TypeScript | `for (const k of Object.keys(parsed))` apply the check; push `ValidationError{path:k, reason}`, throw `AggregateError`. |
 | Python | a field/model validator over `__pydantic_extra__` / the dict keys, raising `InitErrorDetails` per bad key into the aggregated `pydantic.ValidationError`. |
-| Java | iterate the `@JsonAnySetter` map keys post-bind; reject per the Java aggregation primitive (TBD, PRINCIPLES Java §5). |
+| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5), iterate the parsed tree's keys, apply the key check, and push a `Violation{path:key, reason}` per bad key into the single `ValidationException`. |
 
 Reuses whatever the string-assertion specs ([[pattern]], [[minLength]],
 [[maxLength]], [[enum]], [[format]]) emit — `propertyNames` is just those

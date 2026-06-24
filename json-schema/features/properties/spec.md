@@ -196,7 +196,7 @@ per-member dispatch; presence/absence is [[required]], extras are
 | Go | Custom `UnmarshalJSON` decodes into a shadow of `*json.RawMessage` per member, dispatches each present member through its type helper, aggregates `ValidationError{Path, Reason}` with `errors.Join`. `Path` is the JSON member name. |
 | TypeScript | Hand-emitted per-member checks over the parsed object; push `ValidationError { path, reason }` into the array, throw `AggregateError`. |
 | Python | Pydantic model in strict mode; per-field validation is native and aggregates via `pydantic.ValidationError.errors()` (`loc` = member). |
-| Java | Jackson typed binding into the POJO; per-field custom deserializers (see [[type]]). Aggregation primitive TBD (Java §5 of PRINCIPLES). |
+| Java | per-POJO collecting `@JsonDeserialize` (PRINCIPLES Java §5): a two-stage bind that reads the object into a `JsonNode` tree, then dispatches each present member through its spec-strict/constraint helper (see [[type]]), collecting `Violation{path,reason}` into one `ValidationException`. The Go parallel. |
 
 A member subschema validates recursively — nested objects become nested
 aggregates, arrays use [[items]], etc.

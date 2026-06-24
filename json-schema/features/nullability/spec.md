@@ -371,18 +371,21 @@ non-`null` type, so a bare `{type: "string"}` doesn't admit `null`.
 
 ### Java
 
-The runtime ships two deserializer variants per primitive:
+The per-POJO collecting deserializer (PRINCIPLES Java §5) decides the
+three-way per field over the parsed tree node, mirroring Go:
 
-- `SpecLongDeserializer`         — accepts `null` → `null` (used for
-  optional+nullable fields)
-- `SpecLongStrictDeserializer`   — overrides `getNullValue(ctxt)` to
-  call `ctxt.reportInputMismatch(...)`, throwing when Jackson sees
-  `VALUE_NULL` (used for optional-non-nullable fields, and as a
-  redundant defense for required fields)
+1. node absent (`root.get(name) == null`) → key absent
+   (required → push `Violation`; optional → leave field null/unset)
+2. node `isNull()`                         → explicit `null`
+   (optional-non-nullable → push `Violation`; nullable → accept as `null`)
+3. otherwise                               → call the type-specific
+   strict-parse helper (e.g. `SpecNumbers.specLong(node, path, errs)`),
+   which pushes its own `Violation` on a spec violation
 
-The generator picks the annotation based on the field's nullability
-declaration. Absence-vs-present is already separated by Jackson —
-the deserializer only fires when a token exists.
+There is **no** `…StrictDeserializer` / `getNullValue` override and no
+per-field `@JsonDeserialize`: the null/absence decision lives in the
+collecting deserializer's branch, so the old two-subclass split
+collapses into the same three-way Go uses in `UnmarshalJSON`.
 
 ### Go
 

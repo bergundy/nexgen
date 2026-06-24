@@ -61,7 +61,7 @@ comparison:
 | Go | count decoded members in `UnmarshalJSON` (wire keys, pre-population); `< min` → `ValidationError{Reason:"minProperties"}`, `errors.Join`. |
 | TypeScript | `Object.keys(parsed).length < min` on the raw parsed wire object (before defaults applied) → push + `AggregateError`. |
 | Python | `model_validator`; `len(model_fields_set) < min` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into aggregated `ValidationError`. |
-| Java | count distinct JSON field names seen during bind (`< min`); **not** POJO fields + any-setter map summed post-bind. Reject per Java aggregation primitive (TBD). |
+| Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`< min`) — one number over the wire object, **not** POJO fields + catch-all map summed post-bind; a violation joins the single `ValidationException`. |
 
 ### Serialize-side (P17)
 
