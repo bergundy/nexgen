@@ -331,8 +331,18 @@
    the converter's stock `new ObjectMapper()` (JavaTimeModule + Jdk8Module
    + field-visibility ANY; `JacksonJsonPayloadConverter.newDefaultObjectMapper()`)
    honors. We do **not** own or configure that mapper — so a mapper-level
-   `DeserializationProblemHandler` (the other common Jackson recover-and-
-   continue lever) is unavailable, and the per-POJO collecting
+   `DeserializationProblemHandler` (`mapper.addHandler(...)`, the other
+   common Jackson recover-and-continue lever, available in Jackson 2) is
+   unavailable: it mutates a mapper instance we can't reach, and no
+   annotation binds it to a type so it can't travel with the POJO. And it
+   **wouldn't even suffice if we owned the mapper** — it intercepts only a
+   fixed set of Jackson-recoverable *binding* events and must return a
+   fabricated fallback to continue, so it never sees our spec/constraint
+   violations: verified (`/tmp/javaagg/HandlerProbe.java`) that 4 of 6 P8
+   cases fire **no** hook at all — `1.5` is silently truncated to `1`, the
+   `±(2^53−1)` cap is a valid `long`, and missing-required is a non-event
+   — while `"abc"`→`long` recovers by writing a fabricated `0`. It is also
+   mapper-global and deserialize-only. So the per-POJO collecting
    deserializer is the only path that aggregates through the default
    converter. This exactly parallels the Python finding that the
    converter owns `to_json`, so behavior must live in the model
@@ -342,6 +352,28 @@
    shot; `1.0` accepted / `1.5` rejected as integer; type mismatches
    aggregated; the `ValidationException` recovered from the
    `DataConverterException` cause chain with all violations intact.
+
+   **Considered alternative — Jackson 3.1's built-in problem collection
+   (`CollectingProblemHandler` / `ObjectReader.problemCollectingReader()`
+   / `readValueCollectingProblems()` → `DeferredBindingException`),
+   rejected.** Shipped in Jackson 3.1.0 (2026-02-23). Rejected for three
+   independent reasons. (1) **Doesn't engage under the default converter:**
+   it activates only when *the reader is configured* **and** the read is
+   invoked via `readValueCollectingProblems()`; the default
+   `JacksonJsonPayloadConverter` calls plain `mapper.readValue(...)` on a
+   mapper we don't own. `CollectingProblemHandler` *is* a
+   `DeserializationProblemHandler` — the same lever already noted
+   unavailable above, just newer packaging. (2) **Version floor (P3/P4):**
+   Jackson 3.1 vs the SDK's Jackson 2.x default — requiring it would
+   impose a stricter floor than the SDK ships. (3) **Solves only half:**
+   it collects Jackson's *structural/binding* problems (mismatched
+   property names, missing type ids), **not** our constraint validation
+   (P7) — notably it would miss `1.5`→`1` (Jackson's default `Long`
+   silently truncates, raising no problem), the P16 cap,
+   `minLength`/`pattern`/`const`/`minProperties`/`dependentRequired`, etc.
+   — and it is deserialize-only (no P17/§6 serialize analog). We would
+   still need the collecting (de)serializer, plus a second error model to
+   merge. No net gain.
 
 6. **Serialize: validate-then-write; per-field `@JsonInclude` (P17).**
    Class-level `@JsonSerialize(using = <Pojo>.Serializer.class)` (the

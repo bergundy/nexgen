@@ -485,11 +485,26 @@ example at `features/type/spec.md`:
   - Jackson is **fail-fast**: the first field's `MismatchedInputException`
     aborts the whole bind, so per-field `@JsonDeserialize` annotations
     **cannot** aggregate (P8). Aggregation needs either a mapper-level
-    `DeserializationProblemHandler` (unavailable — the default Temporal
-    converter owns the `ObjectMapper`) or a **class-level collecting
-    deserializer that reads the whole object into a tree first**, then
-    validates field-by-field. The tree route is the only one that works
-    through the default converter (Java §5).
+    `DeserializationProblemHandler` (`mapper.addHandler`, Jackson 2) or a
+    **class-level collecting deserializer that reads the whole object into
+    a tree first**, then validates field-by-field. The handler is out on
+    two counts: we can't reach the default converter's mapper to add it
+    (and no annotation binds it to a type), **and** it wouldn't suffice if
+    we could — it sees only Jackson's structural binding events and needs a
+    fabricated fallback to continue, so 4 of 6 P8 cases fire no hook
+    (`1.5`→`1` silent, cap is a valid `long`, missing-required is a
+    non-event), it's mapper-global, and deserialize-only. Verified
+    `/tmp/javaagg/HandlerProbe.java`. The tree route is the only one that
+    works through the default converter (Java §5).
+  - **Jackson 3.1's built-in problem collection**
+    (`CollectingProblemHandler` / `readValueCollectingProblems()` →
+    `DeferredBindingException`, shipped 2026-02-23) does **not** rescue us:
+    it's reader-configured + per-call (so it never fires under the default
+    converter — it's a `DeserializationProblemHandler`, the unavailable
+    lever), it floors at Jackson 3.1 (SDK default is Jackson 2.x; P3/P4),
+    and it collects only *structural* problems — not P7 constraints (misses
+    `1.5`→`1`, the cap, `minLength`/`const`/…) — and is deserialize-only.
+    Recorded as the rejected alternative in PRINCIPLES Java §5.
   - A `JsonMappingException` (or subclass) thrown from inside a custom
     `JsonDeserializer` **propagates verbatim** — Jackson does not re-wrap
     it — and the Temporal `DefaultDataConverter` surfaces it as the
