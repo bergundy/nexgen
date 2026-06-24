@@ -12,8 +12,9 @@ different concerns and we keep them distinct.
 | **Optional** | property name *not* in `required` array of the enclosing object | key may be absent | "How do we represent absent?" |
 | **Nullable** | the `oneOf:[{type:"T"},{type:"null"}]` pattern (see "Nullability convention" below); the array form `["T","null"]` is rejected per [[type]] support decision | value present, equal to JSON `null` | "How do we represent JSON null?" |
 
-This doc owns the optionality conventions per language. Nullability
-conventions are stubbed below pending the nullability-design decision.
+This doc owns the optionality conventions per language and the
+nullability convention (the recognized `oneOf:[{type:T},{type:null}]`
+pattern, defined under "Nullability convention" below).
 
 ## Optionality conventions per language
 
@@ -496,7 +497,8 @@ only the value, not "was the key present" — the absent-vs-explicit-
 - [[type]] — emitted bare type per `type` token; this doc wraps that.
 - [[required]] — owns *which* fields are optional (the JSON Schema
   side of the decision).
-- [[oneOf]] — currently rejected per **P5**; the nullability open
-  question may carve out a narrow exemption.
+- [[oneOf]] — rejected per **P5** in the general case; the nullability
+  `oneOf:[{T},{null}]` pattern is the accepted narrow exemption (defined
+  under "Nullability convention" above).
 - [[PRINCIPLES.md]] — **P10.2** (optional ≠ nullable), **P12**
   (distinguish absent from zero value), **P1** (hand-written feel).

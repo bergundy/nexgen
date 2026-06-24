@@ -33,8 +33,8 @@ Rationale (citing [[PRINCIPLES.md]]):
   structurally ambiguous (is `["T","null"]` an optional T, a nullable T, or
   a sum type?). Reject at load time with a fix-it message.
 - **P10.2 (optional ≠ nullable)**: The `["T","null"]` idiom collapses two
-  different concerns; model nullability through a dedicated convention
-  instead (TBD — see [[nullability]]).
+  different concerns; model nullability through the dedicated
+  `oneOf:[{type:T},{type:null}]` convention instead (see [[nullability]]).
 - Absent `type` makes field shape undecidable, violating **P10**.
 
 Loader behavior:
@@ -330,6 +330,7 @@ no current toolchain emits it.
 - [[multipleOf]], [[minimum]], [[maximum]], [[exclusiveMinimum]],
   [[exclusiveMaximum]] — numeric assertions gated by `type`.
 - [[format]] — string refinements layered on `type:"string"`.
-- [[oneOf]] — currently rejected per P5; revisit if [[nullability]]
-  requires it.
+- [[oneOf]] — rejected per P5 in the general case; the nullability
+  `oneOf:[{T},{null}]` pattern is the one accepted exemption (see
+  [[nullability]]).
 - [[required]], [[nullability]] — own optional/nullable wrapping.
