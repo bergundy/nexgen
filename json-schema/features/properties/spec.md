@@ -235,7 +235,7 @@ aggregates, arrays use [[items]], etc.
 
 `properties` is symmetric across directions: serialize recurses the
 shared `Validate` into each present member (a nested aggregate's own
-`MarshalJSON`/`serializeX`/`model_dump` validates it), and the JSON-name
+`MarshalJSON`/`toIntermediate`/`model_dump` validates it), and the JSON-name
 binding (`json` tag / alias / `@JsonProperty`) re-emits each member under
 its **original wire name**, not the case-mapped identifier — so the
 contract is stable in both directions. Member omit-vs-emit-`null` is
