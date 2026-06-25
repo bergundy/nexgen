@@ -83,16 +83,21 @@ example at `features/type/spec.md`:
 
 - `features/type/spec.md`: complete. OQ1 (integer cap) **resolved** —
   ±(2^53−1). 1 open question remains — cross-language conformance suite.
-- `features/properties/spec.md`: complete. 1 open question — identifier
-  case-mapping policy.
+- `features/properties/spec.md`: complete. Zero open questions —
+  identifier case-mapping policy **resolved** (shared 4-stage algorithm +
+  `x-*-name` escape hatch + P18 per-scope collision pass). One remaining
+  implementation dependency: the Python serialize keep-set must map field
+  name↔alias when a JSON name is case-mapped (PRINCIPLES Python §6).
 - `features/additionalProperties/spec.md`: complete. Lands the
   open-by-default decision + typed-extras support. **All four languages**
   wrap the catch-all in a dedicated named member (even pure maps) for
   shape stability + clean declared/extra key separation. **OQ1 (Java
   closed-struct aggregation) RESOLVED** — the per-POJO collecting
   deserializer (Java §5) reads the tree first, so it flags each
-  undeclared key as a `Violation` in the same single-shot pass. 1 open
-  question — Go catch-all field naming/exposure.
+  undeclared key as a `Violation` in the same single-shot pass. Zero
+  open questions — Go catch-all representation resolved (exported
+  `AdditionalProperties` map field; a declared `additionalProperties`
+  collides and is rejected at load time).
 - `features/required/spec.md`: complete. Zero open questions.
 - `features/maxProperties/spec.md`, `features/minProperties/spec.md`:
   complete (runtime count assertions). Count is over **distinct wire
@@ -565,8 +570,14 @@ Next-highest leverage (newly surfaced TBDs that gate clusters of specs):
   `@JsonSerialize`, two-stage lenient-tree-then-validate, proven through
   the default Temporal data converter (`/tmp/javaagg/`). Unblocked the
   closed-struct + multi-field-error story across every Java spec.
-- **`$ref`** — now the single highest-priority structural keyword
-  (drives file-per-input + merge-on-cycle, P13–P14).
+- ~~**`$ref`** — now the single highest-priority structural keyword
+  (drives file-per-input + merge-on-cycle, P13–P14).~~ **SPEC WRITTEN.**
+  `features/ref/spec.md` + cross-cutting `generated-file-layout.md`.
+  Named-targets-only, local-file-only, no siblings, no `$id`; single flat
+  package per language with a shared `definitions` file; P13 refined to
+  *hoist cyclic types* (Python `_recursive.py`) rather than merge files;
+  satisfiability check for unsatisfiable cycles; bare-`$ref`-root alias
+  (Java direct-to-target).
 
 ### Feature specs to write (≈50)
 
@@ -625,9 +636,12 @@ decisions:
   support for the discriminator form, but no convention spec'd yet).
 
 **Core / structural:**
-- `$schema`, `$id`, `$ref`, `$defs`, `$anchor`, `$dynamicRef`,
-  `$dynamicAnchor`, `$vocabulary`, `$comment`. `$ref` is highest
-  priority (drives file-per-input + merge-on-cycle per P13–P14).
+- ✅ `$ref`, ✅ `$defs` — landed (`features/ref/spec.md` +
+  `generated-file-layout.md`). Named-targets-only, local-file-only, no
+  siblings, no `$id`; single flat package per language; cycles hoist
+  (not merge) per the P13 refinement; unsatisfiable-cycle reject.
+- Remaining: `$schema`, `$id` (reject — folded into `$ref` spec),
+  `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$vocabulary`, `$comment`.
 
 **Metadata / annotations:**
 - `format` — high priority, codegen-relevant (e.g. `date-time` →
@@ -680,7 +694,10 @@ Snapshot as of this checkpoint.
    (Java §5) reads the tree first, so an `additionalProperties:false`
    struct emits one `Violation` per undeclared key in the same
    single-shot pass; no separate mechanism needed.
-2. **Go catch-all field naming/exposure** for open structs.
+2. ~~**Go catch-all field naming/exposure** for open structs.~~
+   **RESOLVED** — exported `AdditionalProperties map[string]T` field
+   (untyped extras use `json.RawMessage`, P9); a declared property named
+   `additionalProperties` collides and is rejected at load time.
 
 ### `features/patternProperties/spec.md`
 1. Possible future single-pattern typed-map carve-out (deferred).
@@ -723,6 +740,15 @@ Snapshot as of this checkpoint.
    (`/tmp/collide_probe`); both names join the per-scope collision pass
    → load reject, no mangling; escape hatch is the [[properties]]
    `x-*-name` override. Python/Java synthesize no new name.
+
+### `features/ref/spec.md`
+1. **Sibling annotation passthrough** — we reject *all* `$ref` siblings,
+   including pure annotations (`description`/`title`/`deprecated`). A
+   future relaxation could allow annotation-only siblings (still
+   rejecting constraint siblings as `allOf`). Deferred.
+2. **Pointer into a non-`$defs` subschema with name synthesis** —
+   currently rejected (must extract to `$defs`); could relax via the
+   anonymous-name-synthesis machinery. Deferred pending demand.
 
 ### Cross-cutting
 1. **Literal-value-against-constraint validation at load time (P10.4) —

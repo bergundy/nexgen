@@ -39,7 +39,7 @@
     `/tmp/temporal_pydantic_probe.py`, `/tmp/pyd_serialize_probe.py`).
     See [[default]].
 12. **Distinguish absent from zero value**. For example in Go, prefer `string` for representing optional strings.
-13. **One file per input by default; merge on cycle.** Cross-file ref cycles auto-merge into a single output. No circular-import gymnastics.
+13. **One file per input; merge recursion, not files.** Each input schema file maps to one generated module in a single flat output package per language (Go's one-directory-per-package rule forces the flatten; all languages flatten for an identical structure). Cross-file reference *cycles* do **not** merge whole files — only the cycle's strongly-connected types hoist into one shared module (Python `_recursive.py`; Go/Java/TS handle cycles natively). No circular-import gymnastics. See [[ref]], [[generated-file-layout]].
 14. **External refs are local-file-only.** YAML and JSON files relative to the input. HTTP refs rejected for reproducibility.
 15. **CLI and in-process API converge.** The CLI is a thin parser over API.
 16. **Uniform integer cap of `±(2^53−1)`.** Every language's `integer`

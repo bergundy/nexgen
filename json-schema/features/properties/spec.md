@@ -223,9 +223,9 @@ failure is the JSON member name, identical to deserialize.
 | Nested object member | member schema is itself `{type:object, properties:{...}}` |
 | Member with assertions | `{name:{type:string, minLength:1}}` |
 | Member using nullability | `{bio:{oneOf:[{type:string},{type:null}]}}` |
-| Direct self-reference, optional (recursive, pending [[ref]]) | linked list; `next` omitted from `required` so the chain can terminate: `{value:{type:string}, next:{$ref:"#"}}` with `required:[value]` |
-| Self-reference via array items, **required** OK (pending [[ref]]) | tree node; the empty array terminates, so `children` may be required: `{value:{type:string}, children:{type:array, items:{$ref:"#"}}}` |
-| Mutual / indirect self-reference (pending [[ref]]) | two `$defs` types referencing each other (cycle through `$ref`) |
+| Direct self-reference, optional (recursive, see [[ref]]) | linked list; `next` omitted from `required` so the chain can terminate: `{value:{type:string}, next:{$ref:"#"}}` with `required:[value]` |
+| Self-reference via array items, **required** OK (see [[ref]]) | tree node; the empty array terminates, so `children` may be required: `{value:{type:string}, children:{type:array, items:{$ref:"#"}}}` |
+| Mutual / indirect self-reference (see [[ref]]) | two `$defs` types referencing each other (cycle through `$ref`) |
 | Name needing recasing | `{properties:{user_id:{type:string}}}` → Go `UserId`, TS `userId`, Python `user_id` |
 | Acronym folded | `{properties:{userID:{…}, httpServer:{…}}}` → Go `UserId`, `HttpServer` |
 | Per-language override admits an otherwise-rejected name | `{properties:{class:{type:string, x-py-name:"klass", x-java-name:"klazz"}}}` |
@@ -243,7 +243,7 @@ failure is the JSON member name, identical to deserialize.
 | Invalid identifier in an emitted lang (no override) | `{properties:{class:{…}}}` when emitting Python/Java; `{properties:{"2fa":{…}}}` (leading digit); `{properties:{"":{…}}}` (empty) |
 | Override not a legal identifier | `x-py-name:"2fa"` / `x-py-name:"class"` (reserved) |
 | Override collides | two members whose `x-go-name` both resolve to `Foo` |
-| Unsatisfiable direct self-reference (pending [[ref]]) | direct `$ref:"#"` member that is **required and non-nullable** — the chain can never terminate, so no finite instance exists (a satisfiability constraint, not a nullability one). A terminating form is required: optional (absent ends it), required+nullable (`null` ends it), or a collection wrapper. |
+| Unsatisfiable direct self-reference (see [[ref]] satisfiability check) | direct `$ref:"#"` member that is **required and non-nullable** — the chain can never terminate, so no finite instance exists (a satisfiability constraint, not a nullability one). A terminating form is required: optional (absent ends it), required+nullable (`null` ends it), or a collection wrapper. |
 
 ### Runtime fixtures (validator)
 
@@ -253,7 +253,7 @@ failure is the JSON member name, identical to deserialize.
   [[additionalProperties]] (preserved when open, rejected when closed).
 - Nested member failure produces a dotted `path`
   (`address.zip`, `address.zip` reason).
-- Self-referential member (pending [[ref]]): a recursive instance of
+- Self-referential member (see [[ref]]): a recursive instance of
   bounded depth validates and round-trips; failure at depth N produces a
   path threading the recursion (`next.next.value`). The emitted aggregate
   must reference itself without infinite expansion (Go needs a pointer/
@@ -285,10 +285,10 @@ failure is the JSON member name, identical to deserialize.
 - **[[dependentRequired]] / [[dependentSchemas]] / [[propertyNames]] /
   [[minProperties]] / [[maxProperties]]**: layer additional object-level
   assertions over the same member set.
-- **[[ref]]** (pending): a member schema may be a `$ref`, including one
+- **[[ref]]**: a member schema may be a `$ref`, including one
   that resolves back to the containing object (direct, via-array, or
   mutual recursion). This is the only way to express recursive types;
-  the matrix rows above are blocked on the `$ref` spec, which must define
+  the matrix rows above are specified in [[ref]], which defines
   resolution scope and how recursive aggregates emit without infinite
   expansion. Termination rule: a **direct** self-reference must have a
   terminating form — either **optional** (absent ends the chain) or
