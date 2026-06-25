@@ -106,8 +106,7 @@ Strategy per language:
   observable per P12), dispatches per field, builds
   `ValidationError{Path, Reason}` and aggregates with `errors.Join`.
   Integer fields go through a runtime helper that also enforces the
-  cross-language integer cap (`±(2^53−1)`, see Open question 1 —
-  **resolved**):
+  cross-language integer cap (`±(2^53−1)`):
   ```go
   // IntegerCap = 1<<53 - 1 = 9007199254740991 (== JS Number.MAX_SAFE_INTEGER)
   func parseSpecInteger(n json.Number) (int64, error) {
@@ -129,17 +128,14 @@ Strategy per language:
   `Number.isInteger(1.0) === true`) — verified empirically across all
   10 type-classification fixtures. Push `ValidationError { path, reason }`
   into an array, throw `AggregateError` at the end.
-  **Precision — resolved by the ±(2^53−1) cap (Open question 1):**
   `JSON.parse` silently rounds integers past 2^53 to the nearest
-  double, but with the cap fixed at `Number.MAX_SAFE_INTEGER`
-  (`2^53−1`), a plain post-parse `Number.isSafeInteger(v)` is a
-  **complete and sound** check — no text pre-scan, no `lossless-json`,
-  no P4 tension. Empirically verified (`/tmp/ts_cap_probe.mjs`): every
-  integer literal `>` `MAX_SAFE_INTEGER` rounds to a double that fails
+  double, but with the cap at `Number.MAX_SAFE_INTEGER` (`2^53−1`),
+  a plain post-parse `Number.isSafeInteger(v)` is a complete and sound
+  check — no text pre-scan, no `lossless-json`, no P4 tension. Every
+  integer literal past the cap rounds to a double that fails
   `Number.isSafeInteger` (e.g. `9007199254740993` → `9007199254740992`,
-  which is `> MAX_SAFE_INTEGER` → rejected); swept `[2^53, 2^53+10^5)`
-  with zero leaks. Integer fields therefore emit
-  `typeof v === 'number' && Number.isSafeInteger(v)`.
+  which is `> MAX_SAFE_INTEGER` → rejected). Integer fields therefore
+  emit `typeof v === 'number' && Number.isSafeInteger(v)`.
 - **Python**: Pydantic v2 models in strict mode. `pydantic.ValidationError`
   already aggregates via `.errors()`. Integer fields are typed as
   `SpecInt = Annotated[int, BeforeValidator(_parse_spec_integer)]` from
@@ -149,9 +145,9 @@ Strategy per language:
   Rationale (empirically verified, Pydantic 2.13): strict mode alone
   rejects `1.0` and `1e2` (spec-valid integers); lax mode alone accepts
   `True`, `"1"`, `"1.0"` (spec-invalid). The `BeforeValidator` is the
-  only way to hit the spec exactly. Note: Python ints are unbounded, so
-  the runtime helper also enforces the cross-language cap `±(2^53−1)`
-  (Open question 1 — **resolved**): `abs(v) > 9007199254740991` → reject.
+  only way to hit the spec exactly. Python ints are unbounded, so the
+  runtime helper also enforces the cross-language cap `±(2^53−1)`:
+  `abs(v) > 9007199254740991` → reject.
 - **Java**: POJOs (Java 8 floor; not records, see PRINCIPLES Java §1)
   bound by the per-POJO collecting deserializer (Java §5) — **no**
   per-field `@JsonDeserialize`, no `Long` binding. It calls a node-based
@@ -179,7 +175,7 @@ Strategy per language:
   blocking shipping with defaults. `ACCEPT_FLOAT_AS_INT=false` fixes
   truncation but rejects spec-valid `1.0`/`1e2` and still coerces `"1"`.
   The custom helper is the only path that matches the spec.
-  The `±(2^53−1)` cap (Open question 1 — **resolved**) is enforced
+  The `±(2^53−1)` cap is enforced
   explicitly above; `>2^63` would also trip Jackson's own range check,
   but our cap is tighter so ours fires first. **Reading from a `JsonNode`
   (not a live parser) is what lets a spec-strict failure become a
@@ -189,8 +185,7 @@ Strategy per language:
   Go's `parseSpecInteger` and Python's `_parse_spec_integer`. The
   alternative — retaining a `JsonDeserializer<Long>` and driving it over
   a sub-parser — makes identical decisions but re-introduces a per-field
-  throw/catch and a sub-parser allocation, so it was rejected (both
-  verified side-by-side, `json-schema/research/javaagg/SpecCmp.java`).
+  throw/catch and a sub-parser allocation, so it was rejected.
 
 ### Serialize-side (P17)
 
@@ -249,12 +244,17 @@ For each accepted `type`, fuzz over:
   in all four languages. Go/TS/Java reject naturally (`true` is not a
   number token); Python relies on the explicit `isinstance(v, bool)`
   reject inside `_parse_spec_integer`.
-- **Large integers (cap = ±(2^53−1), resolved)**: accept
-  `9007199254740991` (`2^53−1`, the boundary) and `-9007199254740991`;
-  reject `9007199254740992` (`2^53`), `9007199254740993` (`2^53+1`,
-  which TS silently rounds to `2^53` — must still reject), and
-  `18014398509481985` (`2^54+1`). Same accept/reject set in all four
-  languages.
+- **Large integers (cap = ±(2^53−1))**: each language's helper
+  (`parseSpecInteger`, `_parse_spec_integer`, `SpecNumbers.specLong`,
+  and TS's `Number.isSafeInteger` use) must pass an identical fixture
+  set: accept `1`, `1.0`, `1e2`, `-0`, and the cap boundary
+  `±(2^53−1)`; reject `1.5`, `true`/`false`, `"1"`, non-numeric
+  strings, NaN, ±Infinity, and any magnitude past `±(2^53−1)`.
+  Specific boundary values: accept `9007199254740991` (`2^53−1`) and
+  `-9007199254740991`; reject `9007199254740992` (`2^53`),
+  `9007199254740993` (`2^53+1`, which TS silently rounds to `2^53` —
+  must still reject), and `18014398509481985` (`2^54+1`). Same
+  accept/reject set in all four languages.
 
 ## Interactions
 
@@ -294,35 +294,6 @@ For each accepted `type`, fuzz over:
 
 Pre-draft-4 union-of-schemas form (`type: [{...},{...}]`) is irrelevant —
 no current toolchain emits it.
-
-## Resolved questions
-
-1. **Large integers — RESOLVED: hard `±(2^53−1)` cap (uniform across
-   languages).** The cap is `Number.MAX_SAFE_INTEGER` =
-   `9007199254740991`. Rationale:
-   - It is the only cap TypeScript can defend **without** a third-party
-     parser. Empirically verified (`/tmp/ts_cap_probe.mjs`) that a plain
-     post-parse `Number.isSafeInteger(v)` is complete and sound: every
-     integer literal past the cap rounds to a double that fails
-     `isSafeInteger` (`9007199254740993` → `9007199254740992`, which is
-     `> MAX_SAFE_INTEGER` → rejected), with zero leaks swept across
-     `[2^53, 2^53+10^5)`. This keeps P4 (minimal TS runtime deps) intact.
-   - Go (`int64`) and Java (`long`) hold ±2^63 natively but their
-     validators reject past `±(2^53−1)`, so all four languages agree on
-     the accepted set.
-   - Python ints are unbounded; the runtime helper enforces the cap.
-
-   Spec-compliant `1.0`-as-integer was resolved earlier — see runtime
-   helpers per language.
-
-## Open questions
-
-1. **Cross-language conformance suite for the integer runtime helpers.**
-   Each language's helper (`parseSpecInteger`, `_parse_spec_integer`,
-   `SpecNumbers.specLong`, and TS's `Number.isSafeInteger` use) must pass
-   an identical fixture set: accept `1`, `1.0`, `1e2`, `-0`, the cap
-   boundary `±(2^53−1)`; reject `1.5`, `true`/`false`, `"1"`, non-numeric
-   strings, NaN, ±Infinity, and any magnitude past `±(2^53−1)`.
 
 ## See also
 

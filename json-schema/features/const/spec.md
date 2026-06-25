@@ -55,20 +55,18 @@ Rationale (citing [[PRINCIPLES.md]]):
   without closing the type (see Type mapping): TS with a
   `"v1" | (string & {})` hint, Go with a named alias `type X = string` +
   typed value consts — discoverable, still any-value-assignable.
-- **No auto-emit (the corrected decision).** `const` is treated exactly
-  as a single-value [[enum]]: validate that the value equals the keyword
-  on every model — whether constructed in-language or deserialized over
-  the wire. The generator does **not** force-write the fixed value on
-  serialize. The value lands on the wire because it is *set in memory*,
-  and **presence is governed by [[required]]**, like every other field —
-  a required+const is always present (so always emitted) for the same
-  reason any required field is. Dropping force-write deletes a special
-  case from every language's serializer and, more importantly, stops the
-  serializer from **silently rewriting** a wrong in-memory value: setting
-  `kind="admin"` on a type whose const is `"user"` now fails `Validate`
-  loudly instead of being masked. The earlier "always-emit" design (and
-  `json-schema/research/pyd_serialize_probe.py`'s omit-unset-drops-discriminator finding)
-  was solving a presence problem that [[required]] already owns.
+- **No auto-emit.** `const` is treated exactly as a single-value
+  [[enum]]: validate that the value equals the keyword on every model —
+  whether constructed in-language or deserialized over the wire. The
+  generator does **not** force-write the fixed value on serialize. The
+  value lands on the wire because it is *set in memory*, and **presence
+  is governed by [[required]]**, like every other field — a required+const
+  is always present (so always emitted) for the same reason any required
+  field is. Dropping force-write deletes a special case from every
+  language's serializer and stops the serializer from **silently
+  rewriting** a wrong in-memory value: setting `kind="admin"` on a type
+  whose const is `"user"` now fails `Validate` loudly instead of being
+  masked.
 
 Loader behavior:
 - `const` value type-incompatible with the declared [[type]] → reject
@@ -96,9 +94,11 @@ Loader behavior:
   pattern; if "absent", omit the field.
 - Composite const (`const` whose value is an **object or array**) →
   **temporarily unsupported**; reject at load with a "not yet supported"
-  diagnostic (not a categorical P5 exclusion — see Open questions). It
-  would require a deep structural-equality check on every (de)serialize;
-  deferred past v1.
+  diagnostic (not a categorical P5 exclusion — the deep structural-equality
+  check is correct in principle, just costly; deferred past v1 and
+  revisit on demand). Contrast [[default]], which explicitly avoids
+  deep-equals; for `const` the deep-equals would be a genuine assertion,
+  not an omission heuristic.
 
 ## Type mapping
 
@@ -160,8 +160,7 @@ EventKind     = Union[EventKindUser, str]  # the open field type
 
 The field is typed `EventKind`. Because `str` is in the union, **any**
 string stays assignable — including a future/unknown value (**P9.1**);
-the union is what an editor reads to suggest `"user"`. Three honest
-caveats, all verified in `json-schema/research/const_open_enum_probe.py`:
+the union is what an editor reads to suggest `"user"`. Three honest caveats:
 - It is **open, not closed** — to a static type checker the union is
   *semantically* just `str` (the `Literal` is absorbed), so it provides
   **no** compile-time closedness. That is exactly what we want for
@@ -227,10 +226,10 @@ package/module namespace. Per-target:
 
 | Target | Synthesized identifier(s) | Placement / scope |
 |---|---|---|
-| Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` (verified `json-schema/research/nestprobe/java`) |
-| Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model (`json-schema/research/nestprobe/pynest.py`) |
+| Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` |
+| Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model |
 | TypeScript | only the validator's `KIND_CONST` constant (the type is inline `"v" \| (string & {})`) | module |
-| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types — `json-schema/research/nestprobe/nest.go`); P18 backstop |
+| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types); P18 backstop |
 
 Per **P18** every synthesized name still enters the **same per-scope
 namespace** as the declared names and as one another; the generator runs
@@ -251,13 +250,12 @@ const has exactly one member (`USER`), so it can never self-collide on
 the second surface — but [[enum]] synthesizes **many** members into one
 class and is the first feature to exercise it: two enum values that
 case-map to the same Java identifier (`"user"` + `"USER"` → both `USER`)
-are a **hard compile error** (verified `json-schema/research/javacollide` Case A) → load
-reject. The class-body pass only has to police **member-vs-member**: the
-fixed scaffolding (`value` field, `fromString`/`getValue`/
-`isUnrecognized` methods) does *not* constrain member names, because
-members are UPPER_SNAKE while the scaffolding is lowerCamel (Case B
-compiles) and Java permits a same-name field+method anyway (Case C,
-unlike Go's hard field/method clash). So the class-body collision pass is
+are a **hard compile error** → load reject. The class-body pass only has
+to police **member-vs-member**: the fixed scaffolding (`value` field,
+`fromString`/`getValue`/`isUnrecognized` methods) does *not* constrain
+member names, because members are UPPER_SNAKE while the scaffolding is
+lowerCamel, and Java permits a same-name field+method (unlike Go's hard
+field/method clash). So the class-body collision pass is
 just the [[properties]] case-mapping collision policy applied within the
 value class. [[enum]] inherits all of this unchanged (a const is its
 single-value specialization).
@@ -272,7 +270,7 @@ value — the **shared `Validate`** layer of **P17**).
 |---|---|
 | Go | In `UnmarshalJSON`, after decoding, compare the field to the typed value constant (`if v != UserEventKindUser { … ValidationError{Path, Reason:"const"} }`), `errors.Join`. Emitted as `type UserEventKind = string` + `const UserEventKindUser = UserEventKind("user")` — the typed const is also the idiomatic way to set it (`UserEvent{Kind: UserEventKindUser}`). |
 | TypeScript | `if (v !== KIND_CONST) push(ValidationError{path, reason:"const"})`, throw `AggregateError`. Fixed value emitted as `const KIND_CONST = "user"`. |
-| Python | a field/`model_validator` checking `== <const>`, raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. Field typed as the **open** union `Literal["user"] \| str` (`EventKind = Union[EventKindUser, str]`), **not** a *closed* `Literal["user"]` — a closed `Literal` would make a const *bump* a type-level break, against **P9.1**; the open union keeps any str assignable and only hints the value (see Type mapping). |
+| Python | a field/`model_validator` checking `== <const>`, raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. Field typed as the **open** union `Literal["user"] \| str` (`EventKind = Union[EventKindUser, str]`) — a closed `Literal` would make a const bump a type-level break against **P9.1**; the open union keeps any str assignable and only hints the value (see Type mapping). |
 | Java | the field is the generated value class (`UserEventKind`), whose own `@JsonCreator fromString` converts the wire string. The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the node, builds the value, checks `UserEventKind.USER.equals(v)` (equivalently `!v.isUnrecognized()`), and pushes a `Violation` on mismatch into the single `ValidationException`. The known value is the `public static final UserEventKind USER` constant. (For `integer`/`number`/`boolean` consts the field is the plain primitive and the check is a bare `==`.) |
 
 ### Serialize-side (P17)
@@ -297,7 +295,7 @@ in:
 |---|---|
 | Go | Plain field typed as the alias (`Kind UserEventKind`), no force-write. The consumer sets it idiomatically via the typed value constant: `UserEvent{Kind: UserEventKindUser}` (`type UserEventKind = string`; `const UserEventKindUser = UserEventKind("user")`). A forgotten field is the zero value (`""`), which the shared `Validate` rejects **loudly** on serialize — consistent with how Go treats every required field (no compile enforcement; validation catches it). No `readonly` exists in Go, so `Validate` is the whole guard. optional+const uses `*UserEventKind`+`,omitempty`, validated when non-nil. |
 | TypeScript | `readonly kind: "user" \| (string & {})`. Required+const is always set by the type, emitted by the normal `serializeX`; the validator rejects a non-const value (and `readonly` blocks in-memory mutation at compile time). optional+const emits when not `undefined`. No unconditional literal write. |
-| Python | The generated `@model_serializer(mode='wrap')` keeps **only** `model_fields_set` — **no** `const_fields` union. A `model_validator(mode='before')` injects the value when absent (`data[field]=<const>`), which makes it *provided* → in `model_fields_set` → emitted by the normal keep-set; and enforces `==` when present. The field carries **no** Pydantic `default` (a default isn't in `model_fields_set` and would be dropped). Verified end-to-end in `json-schema/research/const_fields_set_probe.py`: before-inject lands in `model_fields_set`, the const emits under plain `to_json` (the **default Temporal converter** path), a wrong value is rejected, and a genuinely-absent optional field stays omitted. |
+| Python | The generated `@model_serializer(mode='wrap')` keeps **only** `model_fields_set` — **no** `const_fields` union. A `model_validator(mode='before')` injects the value when absent (`data[field]=<const>`), which makes it *provided* → in `model_fields_set` → emitted by the normal keep-set; and enforces `==` when present. The field carries **no** Pydantic `default` (a default isn't in `model_fields_set` and would be dropped). The before-inject lands in `model_fields_set` so the const emits under plain `to_json` (the **default Temporal converter** path), a wrong value is rejected, and a genuinely-absent optional field stays omitted. |
 | Java | `private final UserEventKind kind = UserEventKind.USER;` initialized to the known constant, getter only, **no setter**. The field is always `USER`, so Jackson's getter (via `@JsonValue`) emits `"user"` by the normal path — this is *not* force-write, the field simply cannot hold a wrong value. On the way in, the per-POJO collecting deserializer (PRINCIPLES Java §5) reads `kind`, checks `UserEventKind.USER.equals(v)`, and pushes a `Violation` on mismatch into the single `ValidationException`. The `final`-initializer is required+const only; optional+const is a normal nullable field, validated if non-null. **No builders** — they are a model-wide decision, deferred, and const does not justify them. |
 
 The serialize equality check has teeth only where a wrong value can be
@@ -380,8 +378,8 @@ so the check is effectively a deserialize-direction guard there.
   value be bumped without breaking branch types.
 - **[[minProperties]] / [[maxProperties]]**: an **object-level** const
   would pin the exact member set, making the count statically decidable
-  (noted in both specs) — but object-level const is deferred here (see
-  Open questions), so that interaction is dormant in v1. A
+  (noted in both specs) — but object-level const is deferred (see Loader
+  behavior above), so that interaction is dormant in v1. A
   **property-level** const only constrains a value if present; it affects
   the count only when paired with [[required]].
 - **[[nullability]]**: orthogonal. `const: null` is rejected (degenerate);
@@ -396,19 +394,6 @@ so the check is effectively a deserialize-direction guard there.
 | OpenAPI 3.1 | Adopts 2020-12 — `const` native. |
 | OpenAPI 3.0 | No `const` keyword; the idiom is `enum: [<value>]`. A single-element `enum` → accept as the equivalent const (single-value [[enum]] handling). |
 | Swagger 2.0 / draft-4 | No `const` (draft-6+); single-element `enum` → same as OAS 3.0. |
-
-## Open questions
-
-1. **Composite (object/array) const.** Currently rejected as
-   "temporarily unsupported." Lowering is mechanical — emit the
-   structural type and validate by **deep structural equality** against
-   the fixed value in the shared `Validate` (same validate-only model as
-   scalar const; no force-write) — but the deep-equals cost and the
-   rarity of composite discriminators put it past v1. Revisit on demand.
-   (Contrast
-   [[default]], which explicitly avoids deep-equals; for `const` the
-   deep-equals is a genuine assertion, not an omission heuristic, so it
-   would be correct, just costly.)
 
 ## See also
 

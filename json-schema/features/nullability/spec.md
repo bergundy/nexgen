@@ -160,8 +160,7 @@ actually carried**, so the distinction is *not* lost at the model level
 optional+nullable **faithfully** (wire `null` → set → re-emitted as
 `null`; wire-absent → unset → omitted), putting Python in the same
 faithful tier as TypeScript (see "Round-trip behavior" and
-"Serialize-side behavior" below, and PRINCIPLES Python §6). No wrapper
-type is needed — this closes the earlier open question.
+"Serialize-side behavior" below, and PRINCIPLES Python §6).
 
 ## Nullability convention
 
@@ -204,17 +203,12 @@ diagnostic naming the recognized nullability form.
 A field listed in the enclosing object's `required` array whose schema
 matches the nullable `oneOf` pattern is **accepted**. It encodes "must
 be present, value may be `null`" — `{}` is rejected (absent), `{"x":
-null}` and `{"x": T}` are both accepted.
-
-This was previously rejected per a since-revised reading of **P10.2**.
-The prohibition's stated rationale — that required+nullable is
-"operationally indistinguishable" from optional+non-nullable — was
-wrong: the two accept *disjoint* edge cases (`{"x":null}` vs `{}`), and
-none of the other three states expresses the `{null, T}` space. The
-construct is fully decidable (unlike the genuine **P10.1** ambiguities)
-and enforceable with the existing boundary machinery (presence-check
-**on**, null-rejection **off**). Per **P10.2** optional and nullable are
-orthogonal, so all four combinations are legal.
+null}` and `{"x": T}` are both accepted. The construct is fully
+decidable: required+nullable accepts `{"x":null}` and `{"x":T}`;
+optional+non-nullable accepts `{}` — disjoint edge cases, with none of
+the other three states expressing the `{null, T}` space. Per **P10.2**
+optional and nullable are orthogonal, so all four combinations are
+legal.
 
 ### Per-language emitted type (nullable states)
 
@@ -257,11 +251,6 @@ already rely on a validator the type can't express.)
 
 ### Round-trip behavior
 
-The single reason one might have kept the prohibition was to avoid
-absent-vs-`null` ambiguity when round-tripping. That ambiguity does
-**not** affect required+nullable, and affects optional+nullable only in
-Go and Java:
-
 - **Required + nullable round-trips losslessly in all four languages.**
   Presence is guaranteed, so an in-memory `null`/`nil`/`None`
   unambiguously means "the wire sent `null`"; the serializer always
@@ -272,16 +261,12 @@ Go and Java:
   `null` distinct in memory. Python reads both as `None` at the value
   level but tracks `model_fields_set`, so the generated
   `@model_serializer` re-emits a wire `null` as `null` and omits a
-  wire-absent key (empirically verified through the **default Temporal
-  converter**, `json-schema/research/temporal_pydantic_probe.py`, and
-  `json-schema/research/pyd_null_serialize_probe.py`). Go (`*T` `nil`) and
-  Java (`null`) genuinely cannot distinguish the two in memory, so they
-  emit a single canonical form — the key is **omitted** (the
-  conservative choice; emitting `null` would fabricate a value the
-  client may never have sent). A client that sent explicit `null` on an
-  optional+nullable field reads it back as absent **in Go/Java only**.
-- This collapse is a property of optional+nullable in Go/Java, **not** a
-  reason to forbid required+nullable.
+  wire-absent key. Go (`*T` `nil`) and Java (`null`) genuinely cannot
+  distinguish the two in memory, so they emit a single canonical form
+  — the key is **omitted** (the conservative choice; emitting `null`
+  would fabricate a value the client may never have sent). A client
+  that sent explicit `null` on an optional+nullable field reads it
+  back as absent **in Go/Java only**.
 
 **Collapse note (Go / Java only):** the in-memory representations of
 "absent" and "JSON null" are the same (`nil`, `null`), and — unlike
@@ -291,8 +276,8 @@ can't recover it. This matches **P10.2**'s framing — optional and
 nullable are distinct *schema* concerns; runtime collapse is acceptable
 when the language can't represent the difference. Making Go/Java
 faithful would require a presence-tracking wrapper (`Null[T]` / shadow
-bit); **rejected for v1** as ergonomic overhead (P2) that the
-conservative omit avoids.
+bit); this is rejected as ergonomic overhead (P2) that the conservative
+omit avoids.
 
 TypeScript and Python enforce *and* preserve the distinction; Go and
 Java enforce it at the boundary but collapse it in memory.
@@ -346,8 +331,7 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
 - **Go** — struct tags. Optional → `*T` with `,omitempty` (nil
   omitted); required+nullable → `*T` **without** `omitempty` (nil →
   `null`); required-non-nullable → bare value type. The type-alias
-  `MarshalJSON` lets the tags do the work (PRINCIPLES Go §6; verified
-  `json-schema/research/oe/`).
+  `MarshalJSON` lets the tags do the work (PRINCIPLES Go §6).
 - **TypeScript** — `serializeX` omits `undefined`, emits `null`; the
   three-state gives faithful optional+nullable for free.
 - **Python** — a generated `@model_serializer(mode='wrap')` emits only
@@ -355,8 +339,7 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
   table; `model_fields_set` drives the faithful optional+nullable
   behavior. Baked into the model because the default Temporal
   `pydantic_data_converter` owns the `to_json` call — we don't pass
-  `exclude_unset` ourselves (PRINCIPLES Python §6; verified
-  `json-schema/research/temporal_pydantic_probe.py`).
+  `exclude_unset` ourselves (PRINCIPLES Python §6).
 - **Java** — `@JsonInclude(NON_NULL)` on optional fields;
   `@JsonInclude(ALWAYS)` forces the required+nullable `null`;
   optional+nullable collapses to the conservative omit (PRINCIPLES
@@ -476,12 +459,6 @@ class User(BaseModel):
             )
         return instance
 ```
-
-Empirically verified (Pydantic 2.13) against `model_validate` (dict
-input) and `model_validate_json` (JSON input) with identical
-behavior; aggregation works across both pre-errors and Pydantic
-field errors (e.g. `{"nickname": null}` with missing `id` produces
-both error entries in one shot).
 
 Why `mode='wrap'` rather than `mode='before'`: a `mode='before'`
 validator that raises short-circuits Pydantic's own field validation,

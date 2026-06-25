@@ -4,10 +4,9 @@ Source: JSON Schema 2020-12, Core (Applicator vocabulary), §10.3.2.2
 "Keywords for Applying Subschemas to Objects → patternProperties".
 
 Applies subschemas to members whose **names match a regular
-expression**. **Temporarily unsupported** — rejected at load time for
-now, but not a categorical P5 exclusion: a narrow form is plausibly
-lowerable and is deferred to post-v1 (see Support decision + Open
-questions).
+expression**. **Temporarily unsupported** — rejected at load time in v1,
+but not a categorical P5 exclusion: a narrow single-pattern form is
+plausibly lowerable and is deferred to post-v1.
 
 ## Spec summary
 
@@ -43,8 +42,7 @@ Distilled:
 **Support:** no — **temporarily unsupported.** Rejected at load time in
 v1, but explicitly *deferred*, not categorically excluded: the general
 form carries real lowering hazards (below), yet a narrow single-pattern
-form is plausibly representable and is tracked for a future release (see
-Open questions).
+form is plausibly representable and is tracked for a future release.
 
 Why deferred rather than landed in v1 (citing [[PRINCIPLES.md]]):
 - **P5 (strict subset)**: regex-keyed members produce a **dynamically
@@ -61,10 +59,10 @@ Why deferred rather than landed in v1 (citing [[PRINCIPLES.md]]):
   and managed for the value-level [[pattern]] keyword; here it multiplies
   across the *key space*.)
 
-These hazards are why the *general* form stays out of v1. They do not all
-apply to the single-pattern, no-`properties`, RE2-safe form, which is the
-candidate carve-out — hence "temporarily unsupported" rather than a hard
-P5 reject like [[dependentSchemas]].
+These hazards apply to the general form only. A single-pattern,
+no-`properties`, RE2-safe schema is the candidate carve-out — it is why
+this keyword is "temporarily unsupported" rather than a hard P5 reject
+like [[dependentSchemas]].
 
 Loader behavior (v1):
 - Any `patternProperties` present → reject with a located diagnostic.
@@ -84,9 +82,9 @@ None — rejected before any type is emitted.
 
 None — rejected at load time, so there is no (de)serialize boundary and
 no serialize-side behavior (**P17**). If the single-pattern typed-map
-carve-out (Open questions) later lands, its key+value checks would join
-the shared `Validate` and run in both directions exactly like
-[[propertyNames]]'s key check.
+carve-out later lands, its key+value checks would join the shared
+`Validate` and run in both directions exactly like [[propertyNames]]'s
+key check.
 
 ## Property-testing matrix
 
@@ -100,8 +98,8 @@ the shared `Validate` and run in both directions exactly like
 | RE2-incompatible pattern | `{type:object, patternProperties:{"(?=x)":{type:string}}}` |
 
 There are no accepted or runtime fixtures in v1: the keyword does not yet
-reach code generation. The single-pattern carve-out (Open questions),
-should it land, would add accepted + runtime rows.
+reach code generation. The single-pattern carve-out, should it land,
+would add accepted + runtime rows.
 
 ## Interactions
 
@@ -127,17 +125,6 @@ should it land, would add accepted + runtime rows.
 | OpenAPI 3.1 | `patternProperties` present (3.1 adopts 2020-12) → reject. |
 | OpenAPI 3.0 | No `patternProperties` keyword — nothing to reject; users already lean on `additionalProperties`. |
 | Swagger 2.0 / draft-4 | `patternProperties` present → reject. |
-
-## Open questions
-
-- **The path off "temporarily unsupported":** a *single* `patternProperties`
-  entry on an object with **no** [[properties]] and an RE2-safe pattern
-  is morally a typed map with a key constraint. This is the concrete form
-  the temporary status is holding open: it could be lowered as
-  `map<string,T>` + a runtime key-pattern check (folding in
-  [[propertyNames]] semantics). Specifying this carve-out is what would
-  move the keyword from "temporarily unsupported" to "partial." Deferred —
-  not in the v1 subset.
 
 ## See also
 

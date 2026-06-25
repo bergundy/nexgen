@@ -43,7 +43,7 @@ Distilled:
 
 **Support:** partial.
 
-The binding decision (**resolves PLAN high-priority #3**):
+The binding decision:
 
 > **Typed structs are OPEN by default.** Per the JSON Schema spec
 > default (omitted `additionalProperties` = empty schema = allow
@@ -77,8 +77,7 @@ Rationale (citing [[PRINCIPLES.md]]):
   catch-all is a dedicated `additionalProperties` member, never an inline
   index signature, so the TS index-signature conformance problem
   (`[k:string]: T` forcing every declared property to be a subtype of
-  `T`) never arises. Per-language enforcement verified (see Validator
-  mapping; Python typed extras `/tmp/pyd_typed_extra.py`).
+  `T`) never arises.
 - The extras schema must be a **supported subschema** (`{type:T}` with a
   recognized shape). `additionalProperties:{type:object}` with no shape
   is rejected per **P10.1**, same as anywhere else.
@@ -131,9 +130,9 @@ JSON members; the in-memory catch-all is bridged by the generated
 `@JsonDeserialize`/`@JsonSerialize` — which routes undeclared tree keys
 into the catch-all map and spreads them back on write, **not**
 `@JsonAnySetter`/`@JsonAnyGetter` (a class-level custom (de)serializer
-bypasses those); verified `json-schema/research/javaagg/`, TS hand-emitted ser/deser that
-lifts top-level extras into `additionalProperties` and spreads them back
-out, Python `model_extra`).
+bypasses those), TS hand-emitted ser/deser that lifts top-level extras
+into `additionalProperties` and spreads them back out, Python
+`model_extra`).
 
 ## Type mapping
 
@@ -170,7 +169,7 @@ The Go untyped element type is `json.RawMessage` (verbatim bytes),
 **not** `any` (`map[string]interface{}`). This is load-bearing for
 **P9** — `any` corrupts the very data the catch-all exists to preserve,
 because `encoding/json` decodes **every JSON number to `float64`**.
-Empirically (`/tmp/gorawprobe`), the same opaque object round-trips as:
+Empirically, the same opaque object round-trips as:
 
 ```
 any : {"big":9007199254740992,"keep":{"a":1,"b":2},"price":1,"sci":100}
@@ -207,7 +206,7 @@ violation aggregates.
 | Python | `extra='allow'` — extras land in `model_extra`, **round-trip via `model_dump_json`** (verified, `/tmp/pyd_extra_probe.py`) | `extra='allow'` + a post-init validator checks each `model_extra` value is `T`, aggregating per-key failures (verified, `/tmp/pyd_typed_extra.py`) | `extra='forbid'` — Pydantic raises `extra_forbidden` per extra key, aggregated (verified) |
 | Java | the per-POJO collecting deserializer (Java §5) routes parsed-tree keys not in the declared set into the `additionalProperties` map; the matching serializer spreads them back | same routing, but each extra value is validated as `T` (bad keys → `Violation{path:key}`) | the collecting deserializer pushes a `Violation{path:key, reason:"unknown field"}` per undeclared tree key into the single `ValidationException` — no fail-fast `ignoreUnknown=false`/`UnrecognizedPropertyException` |
 
-Empirical notes (Pydantic 2.13, verified):
+Empirical notes (Pydantic 2.13):
 - `extra='allow'` + `strict=True` coexist: declared fields stay strict
   (`"1"` rejected for an `int`) while extras are preserved.
 - `extra='forbid'` aggregates: `{"id":1,"name":"x","a":1,"b":2}`
@@ -300,27 +299,6 @@ unambiguous in both directions.
 | OpenAPI 3.1 | Aligns with 2020-12. Native. |
 | OpenAPI 3.0 | `additionalProperties` identical (bool or schema); `{}` → reject as above. |
 | Swagger 2.0 / draft-4 | `additionalProperties` identical; same `{}` rejection. |
-
-## Open questions
-
-1. ~~**Java closed-struct aggregation.**~~ **RESOLVED (2026-06-23).** The
-   per-POJO collecting deserializer (PRINCIPLES Java §5) reads the whole
-   object into a `JsonNode` tree first, so a closed struct flags **every**
-   undeclared key as a `Violation` in the same single-shot pass — no
-   fail-fast `ignoreUnknown=false`/`UnrecognizedPropertyException`.
-   Aggregated with declared-field errors (**P8**). Proven through the
-   default Temporal data converter in `json-schema/research/javaagg/`.
-2. **Catch-all representation — resolved.** All four languages wrap the
-   catch-all in a dedicated named member, even for pure maps, so the
-   emitted shape is stable when `properties` are added later: Go exported
-   `AdditionalProperties` map field; Java `additionalProperties` member,
-   populated/emitted by the per-POJO collecting (de)serializer (Java §5);
-   TS
-   `additionalProperties: Record<string,T>` interface member; Python
-   `BaseModel` with extras in `model_extra`. A declared property named
-   `additionalProperties` collides with the generated member in
-   Go/Java/TS and is rejected at load time (Python exempt — `model_extra`
-   is not a declared field).
 
 ## See also
 

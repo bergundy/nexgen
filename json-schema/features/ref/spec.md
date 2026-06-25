@@ -276,20 +276,6 @@ helper is emitted — the named-type machinery already in place
 | `$id`-rebased refs (OpenAPI/JSON-Schema bundlers) | reject; the input must be a flat local-file tree resolvable by path + pointer |
 | `$anchor` / `$dynamicRef` | reject (P5); not in the subset |
 
-## Open questions
-
-1. **Sibling annotation passthrough.** We currently reject *all*
-   siblings, including pure annotations (`description`, `title`,
-   `deprecated`). A future relaxation could allow annotation-only
-   siblings (still rejecting constraint siblings as `allOf`), letting a
-   reference carry a site-specific description. Deferred — the strict
-   "ref is the only key" rule is simpler and the annotation can live on
-   the `$defs` target today.
-2. **Pointer into a non-`$defs` subschema with name synthesis.**
-   Currently rejected (must extract to `$defs`). Could be relaxed by
-   synthesizing a name for the anonymous target and deduping — same
-   machinery as anonymous const/enum naming. Deferred pending demand.
-
 ## See also
 
 - [[generated-file-layout]] — the output package structure this spec

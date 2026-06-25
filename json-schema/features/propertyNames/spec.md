@@ -49,7 +49,9 @@ Loader behavior:
 - Subschema not a string schema (or carrying non-string assertions) →
   reject; diagnostic explains keys are always strings.
 - `propertyNames` present **with** [[properties]] → reject; diagnostic
-  points at the map form.
+  points at the map form. A future relaxation could validate declared names
+  at generation time and apply the runtime check only to extras — deferred
+  pending demand.
 - `propertyNames` with no [[additionalProperties]] (so no map, no
   properties) → already rejected by [[type]] (`type:object` needs a
   shape); `propertyNames` alone is not a shape.
@@ -140,13 +142,6 @@ exactly the wire key the check applies to, in both directions.
 | OpenAPI 3.1 | Aligns with 2020-12. Partial. |
 | OpenAPI 3.0 | No `propertyNames` keyword — nothing to map. |
 | Swagger 2.0 / draft-4 | `propertyNames` (draft-6+) → same partial handling. |
-
-## Open questions
-
-1. **Static enforcement alongside `properties`.** We currently reject
-   the combination; a future relaxation could validate declared names
-   against `propertyNames` at generation time and apply the runtime
-   check only to extras. Deferred pending demand.
 
 ## See also
 

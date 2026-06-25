@@ -26,17 +26,12 @@
     a generated `<Field>OrDefault()` accessor (Go, modeled on proto3's
     `GetX()`), or the `?? DEFAULT_X` idiom + emitted constant (TS). The
     bare field always retains set-ness; the default is never written back
-    into it. Explicitly setting a
-    field, even to a value equal to the default, marks it set and pins it
-    on the wire. This supersedes the earlier "populate the field on
-    deserialize" rule, which required a deep-equals to strip on the way
-    out and destroyed the absent-vs-set distinction (P12). Mechanisms: Go
+    into it. Explicitly setting a field, even to a value equal to the
+    default, marks it set and pins it on the wire. Mechanisms: Go
     `,omitempty`+pointer; Pydantic a generated `@model_serializer` over
     `model_fields_set` (Python §6 — the default Temporal converter owns
     `to_json`, so omission is baked into the model, not a `model_dump`
     call we make); TS `undefined`; Java `@JsonInclude(NON_NULL)`.
-    Empirically verified (`json-schema/research/serialize_probe/`,
-    `json-schema/research/temporal_pydantic_probe.py`, `json-schema/research/pyd_serialize_probe.py`).
     See [[default]].
 12. **Distinguish absent from zero value**. For example in Go, prefer `string` for representing optional strings.
 13. **One file per input; merge recursion, not files.** Each input schema file maps to one generated module in a single flat output package per language (Go's one-directory-per-package rule forces the flatten; all languages flatten for an identical structure). Cross-file reference *cycles* do **not** merge whole files — only the cycle's strongly-connected types hoist into one shared module (Python `_recursive.py`; Go/Java/TS handle cycles natively). No circular-import gymnastics. See [[ref]], [[generated-file-layout]].
@@ -85,10 +80,7 @@
     default Temporal `pydantic_data_converter` performs serialization via
     plain `pydantic_core.to_json` (**P3**) — so the omit/const/guard
     logic is baked into a generated `@model_serializer(mode='wrap')`,
-    which `to_json` honors (Python §6). Empirically verified in Go and
-    Python, including against the live default converter
-    (`json-schema/research/serialize_probe/`, `json-schema/research/temporal_pydantic_probe.py`,
-    `json-schema/research/pyd_serialize_probe.py`, `json-schema/research/pyd_null_serialize_probe.py`).
+    which `to_json` honors (Python §6).
 18. **One identifier namespace per scope; synthesized-name collisions
     reject at load time — never silently mangled.** Beyond the declared
     properties and types, the generator *synthesizes* identifiers:
@@ -98,25 +90,23 @@
     do **not** live in a private namespace — each enters the same
     per-scope identifier set as the declared names and as each other:
     package/module scope for package-level types/consts/aliases, the
-    struct method-set for the Go accessor (which Go **forbids** from
-    coinciding with a field — a hard compile error, verified
-    `json-schema/research/collide_probe`), the value-class body for enum/const members.
-    The generator runs **one collision pass** over that union (after the
-    identifier case-mapping is applied) and any two would-be identifiers
-    that coincide are a **load-time reject** with a fix-it diagnostic. We
-    **never auto-mangle** (numeric suffixes, etc.): a synthesized
-    `NicknameOrDefault2` would be unstable under schema evolution — adding
-    a field could renumber it, a P9 break — and is exactly the
-    "silently-incorrect output" the mission rejects (P10/P10.1). The
-    **escape hatch** — the per-language `x-go-name` / `x-ts-name` /
-    `x-py-name` / `x-java-name` override resolved in the [[properties]]
-    identifier case-mapping policy — re-maps the *declaring* property, and
-    every name synthesized from it moves with it. That policy's collision
-    pass, scoped to a single object's members today, **widens under P18**
-    to the full per-scope set (declared types/members **plus** synthesized
-    aliases/consts/accessors). One algorithm and one override set govern
-    declared and synthesized names alike. Surfaced in [[const]],
-    [[default]], and (future) [[enum]].
+    struct method-set for the Go accessor (which Go forbids from
+    coinciding with a field — a hard compile error), the value-class body
+    for enum/const members. The generator runs **one collision pass** over
+    that union (after the identifier case-mapping is applied) and any two
+    would-be identifiers that coincide are a **load-time reject** with a
+    fix-it diagnostic. We **never auto-mangle** (numeric suffixes, etc.):
+    a synthesized `NicknameOrDefault2` would be unstable under schema
+    evolution — adding a field could renumber it, a P9 break — and is
+    exactly the "silently-incorrect output" the mission rejects
+    (P10/P10.1). The **escape hatch** — the per-language `x-go-name` /
+    `x-ts-name` / `x-py-name` / `x-java-name` override resolved in the
+    [[properties]] identifier case-mapping policy — re-maps the
+    *declaring* property, and every name synthesized from it moves with
+    it. The collision pass covers the full per-scope set: declared
+    types/members plus synthesized aliases/consts/accessors. One algorithm
+    and one override set govern declared and synthesized names alike. See
+    [[const]], [[default]], and (future) [[enum]].
 
 ## TypeScript
 
@@ -193,30 +183,26 @@
 6. **Serialize via a generated `@model_serializer(mode='wrap')` (P17).**
    The default Temporal `pydantic_data_converter` **owns** the serialize
    call — it does a plain `pydantic_core.to_json(value)`
-   (`exclude_unset=False`, no validation; verified
-   `json-schema/research/temporal_pydantic_probe.py`, SDK 1.29 / Pydantic 2.13). So we
-   **cannot** depend on calling `model_dump(exclude_unset=True)`
-   ourselves (P3 — work with the default converter) and instead bake the
-   behavior into the model, where `to_json` honors it. Every generated
-   model carries a `@model_serializer(mode='wrap')` whose keep-set is
-   exactly `model_fields_set`: unset optionals omit (P11) and an
+   (`exclude_unset=False`, no validation). We **cannot** depend on
+   calling `model_dump(exclude_unset=True)` ourselves (P3 — work with
+   the default converter) and instead bake the behavior into the model,
+   where `to_json` honors it. Every generated model carries a
+   `@model_serializer(mode='wrap')` whose keep-set is exactly
+   `model_fields_set`: unset optionals omit (P11) and an
    explicitly-set `None` (incl. required+nullable) emits `null`. `const`
    needs **no** keep-set entry: its `model_validator(mode='before')`
    injects the fixed value when absent, which lands it *in*
-   `model_fields_set` (verified `json-schema/research/const_fields_set_probe.py`), so the
-   discriminator emits via the normal path with no special-casing — see
-   [[const]]. Because `model_fields_set` distinguishes a wire `null`
-   from a wire-absent key, Python round-trips optional+nullable
-   **faithfully** — the same tier as TS, not the Go/Java collapse. The
-   same serializer re-validates the current field values
-   (`type(self).__pydantic_validator__.validate_python({...})` — returns
-   a throwaway instance, no serialize recursion) to catch the
+   `model_fields_set`, so the discriminator emits via the normal path
+   with no special-casing — see [[const]]. Because `model_fields_set`
+   distinguishes a wire `null` from a wire-absent key, Python round-trips
+   optional+nullable **faithfully** — the same tier as TS, not the
+   Go/Java collapse. The same serializer re-validates the current field
+   values (`type(self).__pydantic_validator__.validate_python({...})` —
+   returns a throwaway instance, no serialize recursion) to catch the
    `model_construct`/mutation bypasses strict construction can't see;
    `validate_assignment` covers in-place mutation. On the read side the
    converter's `TypeAdapter.validate_json` runs every model validator, so
-   deserialize-side validation needs no extra hook. Empirically verified
-   against the live default converter (`json-schema/research/temporal_pydantic_probe.py`,
-   `json-schema/research/pyd_serialize_probe.py`, `json-schema/research/pyd_null_serialize_probe.py`).
+   deserialize-side validation needs no extra hook.
    **Caveat:** the keep-set filters Python field names against serialized
    keys; once JSON-name aliases land (the case-mapping question in
    [[properties]]) the filter must map name↔alias. See [[nullability]].
@@ -281,41 +267,36 @@
    `MismatchedInputException` aborts the whole bind and defeats P8
    aggregation. The per-POJO collecting deserializer (§5) calls the
    helper over each field's tree node and collects its violations. This
-   is the exact Go parallel: the spec-strict parse (`parseSpecInteger`)
-   is a helper called from the shadow-layout decoder (Go §5), not the
-   default binding path. **There is no `…StrictDeserializer` sibling and
-   no `getNullValue` override:** the explicit-`null` decision (reject for
+   parallels Go: the spec-strict parse (`parseSpecInteger`) is a helper
+   called from the shadow-layout decoder (Go §5), not the default binding
+   path. **There is no `…StrictDeserializer` sibling and no `getNullValue`
+   override:** the explicit-`null` decision (reject for
    optional-non-nullable/required, accept for nullable) is a per-field
    branch in the collecting deserializer over the node's `isNull()`,
    exactly the three-way Go makes in `UnmarshalJSON` (see
-   [[nullability]] Java). The node-helper-vs-retained-`JsonDeserializer`
-   choice was settled empirically (`json-schema/research/javaagg/SpecCmp.java`): both
-   make identical accept/reject decisions, but the node helper wins —
-   no per-field throw/catch, zero sub-parser allocation, and full
-   `{path, reason}` control.
+   [[nullability]] Java). The node helper wins over a retained
+   `JsonDeserializer`: no per-field throw/catch, zero sub-parser
+   allocation, and full `{path, reason}` control.
 
 5. **Error aggregation primitive — one class-level collecting
-   (de)serializer per POJO (RESOLVED).** Each emitted POJO carries
-   class-level `@JsonDeserialize(using = <Pojo>.Deserializer.class)` (and
-   the mirror `@JsonSerialize(using = <Pojo>.Serializer.class)`, §6). The
-   two (de)serializers are emitted as **`public static final` nested
-   classes on the model** (`User.Deserializer` / `User.Serializer`), not
+   (de)serializer per POJO.** Each emitted POJO carries class-level
+   `@JsonDeserialize(using = <Pojo>.Deserializer.class)` (and the mirror
+   `@JsonSerialize(using = <Pojo>.Serializer.class)`, §6). The two
+   (de)serializers are emitted as **`public static final` nested classes
+   on the model** (`User.Deserializer` / `User.Serializer`), not
    top-level `UserDeserializer` types: every model has its own pair, so
    the names never collide across models (no need to involve them in the
    P18 per-scope collision pass) and they sit visibly with the type they
    serve (P1). This is the same nest-where-the-language-allows idiom P18
-   uses for synthesized const/enum value classes (`json-schema/research/nestprobe/`);
-   Jackson resolves `@JsonDeserialize(using = User.Deserializer.class)`
-   referencing a nested class on the enclosing type with no issue
-   (verified `json-schema/research/javaagg/`). The deserializer is the Jackson analog
-   of Go's shadow-layout `UnmarshalJSON` (Go §5): a **two-stage
-   lenient-then-validate** bind. Stage 1 reads the whole object into a
-   `JsonNode` tree (`p.readValueAsTree()`), which *cannot* throw
-   Jackson's fail-fast `MismatchedInputException` on field #1. Stage 2
-   walks every declared field through the shared spec-strict parse +
-   constraint helpers (P7; the §4 node helpers invoked
-   here), pushing a `Violation { path, reason }` per problem into one
-   list, and throws a single `ValidationException` carrying them all.
+   uses for synthesized const/enum value classes. The deserializer is the
+   Jackson analog of Go's shadow-layout `UnmarshalJSON` (Go §5): a
+   **two-stage lenient-then-validate** bind. Stage 1 reads the whole
+   object into a `JsonNode` tree (`p.readValueAsTree()`), which *cannot*
+   throw Jackson's fail-fast `MismatchedInputException` on field #1.
+   Stage 2 walks every declared field through the shared spec-strict
+   parse + constraint helpers (P7; the §4 node helpers), pushing a
+   `Violation { path, reason }` per problem into one list, and throws a
+   single `ValidationException` carrying them all.
    `ValidationException extends JsonMappingException` so it propagates
    out of the deserializer **verbatim** (Jackson does not re-wrap it) and
    the Temporal converter surfaces it as the **cause** of a
@@ -325,71 +306,57 @@
    (`additionalProperties:false` → a violation per undeclared key) and
    open structs natural unknown-key tolerance (P9).
 
-   **Compatible with the *default* Temporal Java data converter — the
-   binding constraint.** The mechanism is baked into the POJO via the
-   class-level annotation + runtime-shipped (de)serializer classes, which
-   the converter's stock `new ObjectMapper()` (JavaTimeModule + Jdk8Module
-   + field-visibility ANY; `JacksonJsonPayloadConverter.newDefaultObjectMapper()`)
-   honors. We do **not** own or configure that mapper — so a mapper-level
-   `DeserializationProblemHandler` (`mapper.addHandler(...)`, the other
-   common Jackson recover-and-continue lever, available in Jackson 2) is
+   **Compatible with the *default* Temporal Java data converter.** The
+   mechanism is baked into the POJO via the class-level annotation +
+   runtime-shipped (de)serializer classes, which the converter's stock
+   `new ObjectMapper()` (JavaTimeModule + Jdk8Module + field-visibility
+   ANY; `JacksonJsonPayloadConverter.newDefaultObjectMapper()`) honors.
+   We do **not** own or configure that mapper — so a mapper-level
+   `DeserializationProblemHandler` (`mapper.addHandler(...)`) is
    unavailable: it mutates a mapper instance we can't reach, and no
-   annotation binds it to a type so it can't travel with the POJO. And it
-   **wouldn't even suffice if we owned the mapper** — it intercepts only a
-   fixed set of Jackson-recoverable *binding* events and must return a
+   annotation binds it to a type so it can't travel with the POJO. It
+   **wouldn't suffice even if we owned the mapper** — it intercepts only
+   a fixed set of Jackson-recoverable *binding* events and must return a
    fabricated fallback to continue, so it never sees our spec/constraint
-   violations: verified (`json-schema/research/javaagg/HandlerProbe.java`) that 4 of 6 P8
-   cases fire **no** hook at all — `1.5` is silently truncated to `1`, the
-   `±(2^53−1)` cap is a valid `long`, and missing-required is a non-event
-   — while `"abc"`→`long` recovers by writing a fabricated `0`. It is also
-   mapper-global and deserialize-only. So the per-POJO collecting
-   deserializer is the only path that aggregates through the default
-   converter. This exactly parallels the Python finding that the
-   converter owns `to_json`, so behavior must live in the model
-   (`@model_serializer`), not a call we make. Empirically proven
-   end-to-end through `DefaultDataConverter.STANDARD_INSTANCE` in
-   `json-schema/research/javaagg/`: three independent deserialize errors aggregated in one
-   shot; `1.0` accepted / `1.5` rejected as integer; type mismatches
-   aggregated; the `ValidationException` recovered from the
-   `DataConverterException` cause chain with all violations intact.
+   violations: 4 of 6 P8 cases fire no hook at all (`1.5` is silently
+   truncated to `1`, the `±(2^53−1)` cap is a valid `long`, and
+   missing-required is a non-event), while `"abc"`→`long` recovers by
+   writing a fabricated `0`. It is also mapper-global and
+   deserialize-only. The per-POJO collecting deserializer is the only
+   path that aggregates through the default converter — the exact same
+   constraint that drives Python's `@model_serializer` approach.
 
-   **Considered alternative — Jackson 3.1's built-in problem collection
+   **Jackson 3.1's built-in problem collection
    (`CollectingProblemHandler` / `ObjectReader.problemCollectingReader()`
-   / `readValueCollectingProblems()` → `DeferredBindingException`),
-   rejected.** Shipped in Jackson 3.1.0 (2026-02-23). Rejected for three
-   independent reasons. (1) **Doesn't engage under the default converter:**
-   it activates only when *the reader is configured* **and** the read is
-   invoked via `readValueCollectingProblems()`; the default
+   / `readValueCollectingProblems()`) is rejected** for three reasons.
+   (1) **Doesn't engage under the default converter:** it activates only
+   when *the reader is configured* **and** the read is invoked via
+   `readValueCollectingProblems()`; the default
    `JacksonJsonPayloadConverter` calls plain `mapper.readValue(...)` on a
-   mapper we don't own. `CollectingProblemHandler` *is* a
-   `DeserializationProblemHandler` — the same lever already noted
-   unavailable above, just newer packaging. (2) **Version floor (P3/P4):**
-   Jackson 3.1 vs the SDK's Jackson 2.x default — requiring it would
-   impose a stricter floor than the SDK ships. (3) **Solves only half:**
-   it collects Jackson's *structural/binding* problems (mismatched
-   property names, missing type ids), **not** our constraint validation
-   (P7) — notably it would miss `1.5`→`1` (Jackson's default `Long`
-   silently truncates, raising no problem), the P16 cap,
+   mapper we don't own — `CollectingProblemHandler` is a
+   `DeserializationProblemHandler`, the same lever already unavailable.
+   (2) **Version floor (P3/P4):** Jackson 3.1 vs the SDK's Jackson 2.x
+   default would impose a stricter floor than the SDK ships. (3) **Solves
+   only half:** it collects Jackson's *structural/binding* problems, not
+   our constraint validation (P7) — notably it misses `1.5`→`1` (Jackson
+   silently truncates), the P16 cap,
    `minLength`/`pattern`/`const`/`minProperties`/`dependentRequired`, etc.
-   — and it is deserialize-only (no P17/§6 serialize analog). We would
-   still need the collecting (de)serializer, plus a second error model to
-   merge. No net gain.
+   — and is deserialize-only (no P17/§6 serialize analog). We would still
+   need the collecting (de)serializer plus a second error model to merge.
 
 6. **Serialize: validate-then-write; per-field `@JsonInclude` (P17).**
    Class-level `@JsonSerialize(using = <Pojo>.Serializer.class)` (the
-   nested `Serializer` from §5) runs the shared
-   constraint predicates **first**, collecting into the same
-   `ValidationException`, and throws before writing a byte; otherwise it
-   writes fields honoring per-field omit-vs-`null` (the `@JsonInclude`
-   semantics, applied in code since the serializer is custom): optional
-   `NON_NULL` (`null` → omitted); required+nullable forces inclusion
-   (`null` → `null`); required-non-nullable always emitted. Optional+
-   nullable collapses (absent and `null` share one in-memory `null`) →
-   **conservative omit**, the same tier as Go (not the faithful TS/Python
-   round-trip). Serialize-side error aggregation is **resolved with §5**
-   (same `ValidationException` primitive) — proven in `json-schema/research/javaagg/`: an
-   invalid in-memory model fails loudly with every violation; a valid one
-   omits an optional `null`.
+   nested `Serializer` from §5) runs the shared constraint predicates
+   **first**, collecting into the same `ValidationException`, and throws
+   before writing a byte; otherwise it writes fields honoring per-field
+   omit-vs-`null` (the `@JsonInclude` semantics, applied in code since
+   the serializer is custom): optional `NON_NULL` (`null` → omitted);
+   required+nullable forces inclusion (`null` → `null`);
+   required-non-nullable always emitted. Optional+nullable collapses
+   (absent and `null` share one in-memory `null`) → **conservative
+   omit**, the same tier as Go (not the faithful TS/Python round-trip).
+   Serialize-side error aggregation uses the same `ValidationException`
+   primitive as §5.
 
 ## Go
 
@@ -432,8 +399,7 @@
    - required-non-nullable: bare value type → always emitted.
    `omitempty` on a pointer omits only `nil`, so a pointer-to-zero-value
    still serializes — pointer presence is the set-ness signal (P11/P12).
-   No hand-built map needed. Verified `json-schema/research/oe/`,
-   `json-schema/research/serialize_probe/`.
+   No hand-built map needed.
 
 7. **`<Field>OrDefault()` accessor for default-bearing fields (P11).**
    Go has no language-native default and the structs are otherwise

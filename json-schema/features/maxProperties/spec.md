@@ -131,10 +131,6 @@ the wire object.
 | OpenAPI 3.1 / 3.0 | `maxProperties` identical. Native. |
 | Swagger 2.0 / draft-4 | `maxProperties` identical. Native. |
 
-## Open questions
-
-- None.
-
 ## See also
 
 - [[minProperties]] — lower bound on member count.

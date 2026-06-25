@@ -138,10 +138,6 @@ only by an omitted default does **not** count as present.
 | OpenAPI 3.0 / Swagger 2.0 | No `dependentRequired`; draft-4..7 used `dependencies` (array form ≡ this). A `dependencies` array form → accept as `dependentRequired`; the schema form → reject (maps to [[dependentSchemas]]). |
 | draft-4..7 | `dependencies` (merged keyword) — split: array form supported here, schema form rejected. |
 
-## Open questions
-
-- None.
-
 ## See also
 
 - [[required]] — unconditional presence.

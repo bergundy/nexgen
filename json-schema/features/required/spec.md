@@ -43,9 +43,8 @@ Rationale (citing [[PRINCIPLES.md]]):
   orthogonal, so `required` composes freely with the [[nullability]]
   `oneOf` pattern. A required name whose schema is nullable is
   **required+nullable** — must be present, value may be `null` — and is
-  **supported** (presence-check on, null-rejection off). (Specified in
-  [[nullability]]; this combination was previously rejected under an
-  earlier reading of P10.2.)
+  **supported** (presence-check on, null-rejection off). See
+  [[nullability]].
 - **P12 (distinguish absent from zero)**: Go/Java read a shadow pointer/
   boxed value to detect absence; a present zero value is not "absent."
 
@@ -173,12 +172,6 @@ vs the missing shadow pointer on the wire).
 
 draft-03's boolean `required` (on the property schema itself) is
 obsolete; no current toolchain emits it.
-
-## Open questions
-
-- None. (Presence-enforcement strategies are settled in
-  [[nullability]]; required+nullable is supported per the orthogonality
-  reading of P10.2.)
 
 ## See also
 

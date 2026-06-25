@@ -6,9 +6,9 @@ Source: JSON Schema 2020-12, Validation vocabulary, §9.2
 Supplies a fallback value for an absent member. In the spec it is a pure
 **annotation** — it never affects validation pass/fail. We give it the
 operational semantics of **amended P11**: off-the-wire, set-ness tracked,
-omit-unset on serialize (no deep-equals), materialized **on read**. The
-one residual design choice — *how* Go surfaces the value on read without
-accessors — is the open question this spec exists to seal.
+omit-unset on serialize (no deep-equals), materialized **on read** via a
+generated `<Field>OrDefault()` accessor in Go and native language
+mechanisms elsewhere.
 
 ## Spec summary
 
@@ -33,7 +33,7 @@ Distilled:
   absent, so its default never applies).
 - **v1 scope:** scalar values only (`string`/`number`/`integer`/
   `boolean`); object/array/`null` defaults are rejected for now — a
-  provisional limit (see Support decision + Open questions).
+  provisional limit (see Support decision).
 
 ## Support decision
 
@@ -66,7 +66,7 @@ The defining choices (citing [[PRINCIPLES.md]]):
   — a meaningfully harder problem than emitting a scalar literal in
   `<Field>OrDefault()` / `?? DEFAULT_X` / a Pydantic field default. **This
   scope limit is provisional and expected to relax** once composite-value
-  materialization is specified (see Open questions); it mirrors how
+  materialization is specified; it mirrors how
   [[const]] also defers composite values in v1.
 
 Because `default` is an annotation, it has **no runtime validation check
@@ -95,7 +95,7 @@ Loader behavior:
   (always-emit vs omit-unset).
 - `default` whose value is an **object or array** → **reject** (for now).
   Diagnostic reads "object/array defaults are not yet supported," not
-  "forbidden" — the limit is provisional (Open questions). The member's
+  "forbidden" — the limit is provisional (see Support decision). The member's
   *type* may still be an object/array; it just cannot carry a `default`.
 - `default: null` → **reject** as degenerate: on a non-nullable member it
   is invalid against the schema (caught by the validity check above); on a
@@ -117,10 +117,10 @@ which differ per language:
 
 | Language | Set-ness signal (omit-unset) | Read-side surfacing of the default |
 |---|---|---|
-| Python | `model_fields_set`, applied by a generated `@model_serializer` | **native** — the Pydantic field `default=<v>` makes the attribute *read* as the default; the generated `@model_serializer(mode='wrap')` omits it on the way out by emitting only `model_fields_set` keys. Omission is baked into the model (the default Temporal converter owns the `to_json` call, so we can't pass `exclude_unset` ourselves — verified `json-schema/research/temporal_pydantic_probe.py`). |
+| Python | `model_fields_set`, applied by a generated `@model_serializer` | **native** — the Pydantic field `default=<v>` makes the attribute *read* as the default; the generated `@model_serializer(mode='wrap')` omits it on the way out by emitting only `model_fields_set` keys. Omission is baked into the model (the default Temporal converter owns the `to_json` call, so we can't pass `exclude_unset` ourselves). |
 | Java | `null` field + `@JsonInclude(NON_NULL)` | **native** — the generated **getter** returns the default when the backing field is `null` (`return nickname != null ? nickname : "anon";`). Getters already exist in the POJO design (PRINCIPLES Java §1). |
 | TypeScript | `undefined` (the `?` field) | **advisory** — interfaces have no methods (PRINCIPLES TS §4), so the consumer applies the default with the native `?? DEFAULT_X`; the generator emits `export const DEFAULT_X = "anon"`. No accessor needed; `??` is the idiom. |
-| Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()`. |
+| Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()` — the same omit-default-on-wire + accessor-materializes-default pattern already familiar to Temporal users. Named `<Field>OrDefault` rather than `Get<Field>` to read as "the value, or its default" and to avoid implying a getter on every field. Alternative approaches considered: (a) advisory constant (`DEFAULT_X` + caller nil-checks) — pushes nil-checks to every call site; (b) populate on deserialize — destroys set-ness, forces deep-equals, breaks P12. |
 
 ### Naming and collisions (P18)
 
@@ -129,7 +129,7 @@ The read-side surfacing synthesizes **one new identifier in two targets**
 
 | Target | Synthesized identifier | Scope | Collision risk |
 |---|---|---|---|
-| Go | `<Field>OrDefault()` method | struct method-set | a **declared** member whose name maps to `<Field>OrDefault` (Go forbids a field and method of the same name — a **hard compile error**, verified `json-schema/research/collide_probe`); another `<Field>OrDefault` from a sibling field |
+| Go | `<Field>OrDefault()` method | struct method-set | a **declared** member whose name maps to `<Field>OrDefault` (Go forbids a field and method of the same name — a **hard compile error**); another `<Field>OrDefault` from a sibling field |
 | TypeScript | `DEFAULT_<FIELD>` const | module | another `DEFAULT_<FIELD>` from a field that case-maps the same, or a [[const]] `<FIELD>_CONST` |
 | Python | none (native Pydantic field `default=`) | — | — |
 | Java | none (default folds into the existing getter) | — | — |
@@ -177,9 +177,9 @@ default. Mechanisms (all empirically verified):
 
 | Language | Omit-unset mechanism |
 |---|---|
-| Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON` (PRINCIPLES Go §6). Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence (`json-schema/research/oe/`, `json-schema/research/serialize_probe/`). |
+| Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON` (PRINCIPLES Go §6). Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence. |
 | TypeScript | `serializeX` skips keys whose value is `undefined` before `JSON.stringify` (PRINCIPLES TS §6). |
-| Python | generated `@model_serializer(mode='wrap')` emits only `model_fields_set` keys — omits unset while the attribute still reads the default; explicit-set (incl. set-to-default) pins. No deep-equals. Baked into the model so the **default Temporal `pydantic_data_converter`** (which owns `to_json`, not us) honors it (`json-schema/research/temporal_pydantic_probe.py`, `json-schema/research/pyd_serialize_probe.py`). |
+| Python | generated `@model_serializer(mode='wrap')` emits only `model_fields_set` keys — omits unset while the attribute still reads the default; explicit-set (incl. set-to-default) pins. No deep-equals. Baked into the model so the **default Temporal `pydantic_data_converter`** (which owns `to_json`, not us) honors it. |
 | Java | `@JsonInclude(NON_NULL)` — `null` (unset) omitted; getter still returns the default to the consumer. |
 
 Three consequences that the count specs already encode:
@@ -248,8 +248,7 @@ Three consequences that the count specs already encode:
 - **[[type]]**: the default value must be valid for the declared type
   (enforced at load, P10.1). In v1 the default value must additionally be
   a **scalar** (`string`/`number`/`integer`/`boolean`) — a member typed
-  `object`/`array` may not carry a `default` yet (Support decision; Open
-  questions).
+  `object`/`array` may not carry a `default` yet (see Support decision).
 - **[[properties]]**: `default` lives on a member subschema; the
   per-member set-ness machinery is what [[properties]] emits.
 
@@ -269,53 +268,6 @@ schema that ships an out-of-range default is accepted upstream but
 rejected here, with a fix-it diagnostic. (The MUST is fully *defined*
 now; its enforcement against constraint keywords like `minimum` lands
 with those features — P10.4, see Loader behavior.)
-
-## Resolved questions
-
-1. **Go read-side surfacing of the default — RESOLVED: generated
-   `<Field>OrDefault()` accessor (Option C).** Set-ness tracking was
-   never the hard part (`*T` nil + `,omitempty` does it); the question was
-   how a Go consumer *reads* the default without populating the field. We
-   considered an advisory route (Option A — leave the field `nil`, emit a
-   `DefaultXxx` constant, consumer nil-checks) but chose the accessor: for
-   each default-bearing field the generator emits
-   `func (u User) NicknameOrDefault() T` returning the dereferenced value
-   when set and the default literal when `nil`. Rationale:
-
-   - It gives Go the **same frictionless read** a "populate on
-     deserialize" scheme would (the consumer never nil-checks), **without**
-     paying that scheme's cost — the bare field stays `*T`, so set-ness is
-     intact and omit-on-serialize stays faithful (P11/P12).
-   - It is exactly **proto3's `GetX()`** model — omit-default-on-wire +
-     accessor-materializes-default — which is the battle-tested norm for
-     versioned RPC and already familiar to Temporal users. (proto3 *lost*
-     scalar presence early, hit these bugs, and re-added `optional` to get
-     the absent-vs-set bit back; we keep it from the start.)
-   - The accessor surface is **contained** — emitted only for fields that
-     carry a `default`, not every field — so the plain-struct feel (P1)
-     holds for everything else.
-
-   Naming: `<Field>OrDefault` (e.g. `NicknameOrDefault`), chosen over
-   proto's `Get<Field>` to read as "the value, or its default" and to
-   avoid implying a getter on every field. Rejected alternatives: Option A
-   (advisory constant — pushes the nil-check onto every call site) and
-   Option B (populate on deserialize — destroys set-ness, forces a
-   deep-equals, breaks P12; see the "Why omit?" reasoning above).
-
-## Open questions
-
-1. **Composite (object/array) defaults — deferred, expected to relax.**
-   v1 restricts `default` to scalar values (Support decision). Lifting
-   this needs a spec for **materializing a literal object/array default
-   into a constructed language value on read** — a populated
-   struct/`record`/`BaseModel` or a typed slice/`List` — and folding it
-   into the per-field omit-unset machinery (the bare field stays the
-   set-ness signal; `<Field>OrDefault()` would return a freshly
-   constructed value, with care taken not to share a mutable instance
-   across reads). The scalar case ships first because emitting a scalar
-   literal is trivial in every target; the composite case is a
-   when-not-if. Tracks alongside [[const]]'s composite-const carve-out
-   (same materialization problem, assertion vs annotation aside).
 
 ## See also
 
