@@ -119,7 +119,7 @@ which differ per language:
 |---|---|---|
 | Python | `model_fields_set`, applied by a generated `@model_serializer` | **native** — the Pydantic field `default=<v>` makes the attribute *read* as the default; the generated `@model_serializer(mode='wrap')` omits it on the way out by emitting only `model_fields_set` keys. Omission is baked into the model (the default Temporal converter owns the `to_json` call, so we can't pass `exclude_unset` ourselves). |
 | Java | `null` field + `@JsonInclude(NON_NULL)` | **native** — the generated **getter** returns the default when the backing field is `null` (`return nickname != null ? nickname : "anon";`). Getters already exist in the POJO design (PRINCIPLES Java §1). |
-| TypeScript | `undefined` (the `?` field) | **advisory** — interfaces have no methods (PRINCIPLES TS §4), so the consumer applies the default with the native `?? DEFAULT_X`; the generator emits `export const DEFAULT_X = "anon"`. No accessor needed; `??` is the idiom. |
+| TypeScript | `undefined` (the `?` field) | **advisory** — interfaces have no methods (PRINCIPLES TS §2), so the consumer applies the default with the native `?? DEFAULT_X`; the generator emits `export const DEFAULT_X = "anon"`. No accessor needed; `??` is the idiom. |
 | Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()` — the same omit-default-on-wire + accessor-materializes-default pattern already familiar to Temporal users. Named `<Field>OrDefault` rather than `Get<Field>` to read as "the value, or its default" and to avoid implying a getter on every field. Alternative approaches considered: (a) advisory constant (`DEFAULT_X` + caller nil-checks) — pushes nil-checks to every call site; (b) populate on deserialize — destroys set-ness, forces deep-equals, breaks P9. |
 
 ### Naming and collisions (P15)
@@ -144,7 +144,7 @@ synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names with it.
 
 Python and Java materialize-on-read for free (attribute default / getter);
 Go does so via the generated `<Field>OrDefault()` accessor. TypeScript has
-no method (interfaces, PRINCIPLES TS §4), so it leans on the native `??` +
+no method (interfaces, PRINCIPLES TS §2), so it leans on the native `??` +
 a generated constant — an idiomatic stand-in for the same thing. In every
 language the **bare field still carries set-ness** (`nil` / `undefined` /
 out-of-`model_fields_set` / `null`); the default is layered on read, never
@@ -177,8 +177,8 @@ default. Mechanisms (all empirically verified):
 
 | Language | Omit-unset mechanism |
 |---|---|
-| Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON` (PRINCIPLES Go §6). Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence. |
-| TypeScript | `serializeX` skips keys whose value is `undefined` before `JSON.stringify` (PRINCIPLES TS §6). |
+| Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON`. Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence. |
+| TypeScript | `serializeX` skips keys whose value is `undefined` before `JSON.stringify` (PRINCIPLES TS §4). |
 | Python | generated `@model_serializer(mode='wrap')` emits only `model_fields_set` keys — omits unset while the attribute still reads the default; explicit-set (incl. set-to-default) pins. No deep-equals. Baked into the model so the **default Temporal `pydantic_data_converter`** (which owns `to_json`, not us) honors it. |
 | Java | `@JsonInclude(NON_NULL)` — `null` (unset) omitted; getter still returns the default to the consumer. |
 

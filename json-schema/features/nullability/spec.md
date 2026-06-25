@@ -160,7 +160,7 @@ actually carried**, so the distinction is *not* lost at the model level
 optional+nullable **faithfully** (wire `null` → set → re-emitted as
 `null`; wire-absent → unset → omitted), putting Python in the same
 faithful tier as TypeScript (see "Round-trip behavior" and
-"Serialize-side behavior" below, and PRINCIPLES Python §6).
+"Serialize-side behavior" below, and PRINCIPLES Python §3).
 
 ## Nullability convention
 
@@ -331,7 +331,7 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
 - **Go** — struct tags. Optional → `*T` with `,omitempty` (nil
   omitted); required+nullable → `*T` **without** `omitempty` (nil →
   `null`); required-non-nullable → bare value type. The type-alias
-  `MarshalJSON` lets the tags do the work (PRINCIPLES Go §6).
+  `MarshalJSON` lets the tags do the work.
 - **TypeScript** — `serializeX` omits `undefined`, emits `null`; the
   three-state gives faithful optional+nullable for free.
 - **Python** — a generated `@model_serializer(mode='wrap')` emits only
@@ -339,7 +339,7 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
   table; `model_fields_set` drives the faithful optional+nullable
   behavior. Baked into the model because the default Temporal
   `pydantic_data_converter` owns the `to_json` call — we don't pass
-  `exclude_unset` ourselves (PRINCIPLES Python §6).
+  `exclude_unset` ourselves (PRINCIPLES Python §3).
 - **Java** — `@JsonInclude(NON_NULL)` on optional fields;
   `@JsonInclude(ALWAYS)` forces the required+nullable `null`;
   optional+nullable collapses to the conservative omit (PRINCIPLES
