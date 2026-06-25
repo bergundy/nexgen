@@ -30,8 +30,8 @@ Lowers to a boundary count check; no effect on emitted types. Citing
 [[PRINCIPLES.md]]: **P7**, **P8**.
 
 Loader behavior:
-- Value not a non-negative integer (honors `1.0`-as-integer + **P16**
-  cap) → reject.
+- Value not a non-negative integer (honors `1.0`-as-integer + the
+  integer cap, see [[type]]) → reject.
 - `minProperties: 0` → accepted (no-op; equals omission).
 - `minProperties > maxProperties` (both present) → reject
   (unsatisfiable).
@@ -48,7 +48,7 @@ None. Constraint lives only in the validator.
 
 Per **P7**/**P8**. The "number of properties" is the count of **distinct
 member keys present on the wire**, taken at the deserialize boundary
-**before** default population (**P11**) — a default-filled key is never on
+**before** default population (see [[default]]) — a default-filled key is never on
 the wire and does not count (see Interactions). Count the wire object as a
 single number; do **not** sum a declared-fields bucket and an extras
 bucket separately (case-mapping can route a key to either, and in Pydantic
@@ -63,7 +63,7 @@ comparison:
 | Python | `model_validator`; `len(model_fields_set) < min` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into aggregated `ValidationError`. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`< min`) — one number over the wire object, **not** POJO fields + catch-all map summed post-bind; a violation joins the single `ValidationException`. |
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 The count runs again before emit, over the keys that **will actually be
 written** — *after* default omission and the omit-vs-`null` decision (the
@@ -113,7 +113,7 @@ serialize note (symmetric).
 - **`default`**: `default` is an annotation, not an assertion — a
   default-filled key is never on the wire, so it does **not** count
   toward the floor. The count is taken before default population
-  (**P11**); a client sending fewer than `minProperties` keys is invalid
+  (see [[default]]); a client sending fewer than `minProperties` keys is invalid
   regardless of server-side defaults.
 - **`const`** (future feature): an object-level `const` pins the exact
   member set, making `minProperties` statically decidable — a const

@@ -80,7 +80,7 @@ dependent is also present.
 | Python | `model_validator(mode='wrap')` reading the raw dict: for each present trigger, raise `InitErrorDetails` for each absent dependent, merged into the aggregated `pydantic.ValidationError`. Dependency map stored as a `ClassVar` constant (per PRINCIPLES Python §5). |
 | Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): over the parsed tree's present-key set, for each present trigger push a `Violation{path:dependent, reason}` per missing dependent into the single `ValidationException`. |
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 The cross-field check runs again before emit, over the **to-be-emitted**
 member set (present = will be written, after default omission). If a

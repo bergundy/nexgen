@@ -103,7 +103,7 @@ errors aggregate into the language-native primitive.
 Strategy per language:
 - **Go**: Every generated struct gets a custom `UnmarshalJSON`. It decodes
   into a shadow struct of `*json.Number` / `*T` pointers (absence
-  observable per P12), dispatches per field, builds
+  observable per P11), dispatches per field, builds
   `ValidationError{Path, Reason}` and aggregates with `errors.Join`.
   Integer fields go through a runtime helper that also enforces the
   cross-language integer cap (`±(2^53−1)`):
@@ -187,7 +187,7 @@ Strategy per language:
   a sub-parser — makes identical decisions but re-introduces a per-field
   throw/catch and a sub-parser allocation, so it was rejected.
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 On the way out the value is already decoded, so the wire-classification
 work (the `1.0`-vs-`1.5` parse, token typing) does **not** re-run — it

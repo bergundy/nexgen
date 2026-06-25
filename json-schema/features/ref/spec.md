@@ -33,10 +33,10 @@ only**, **no siblings**, **no `$id`**.
 target by name.
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P14 (external refs are local-file-only)**: file refs resolve to
+- **External refs are local-file-only**: file refs resolve to
   YAML/JSON on disk relative to the referring file; HTTP/URI refs are
   rejected for reproducibility.
-- **P13 (one file per input; merge recursion, not files)**: each input
+- **P12 (one file per input; merge recursion, not files)**: each input
   file becomes one generated module in a single flat package; reference
   cycles hoist the cyclic types into a shared module rather than merging
   whole files (see Recursion below and [[generated-file-layout]]).
@@ -70,9 +70,9 @@ fix-it:
   Fix-it: "move shared annotations onto the `$defs` target." (Siblings
   are implicit `allOf` — P5.)
 - **`$id` anywhere** (root or nested) → reject. Fix-it: "remove `$id`;
-  refs resolve by file path + JSON pointer." (P14 — no URI resolution.)
+  refs resolve by file path + JSON pointer." (local-file-only — no URI resolution.)
 - **HTTP/URI ref**, `$anchor` fragment, `$dynamicRef`, `$dynamicAnchor`
-  → reject (P14 / P5; the `$dynamic*` keywords have their own specs).
+  → reject (local-file-only / P5; the `$dynamic*` keywords have their own specs).
 - **Unresolvable target** (missing file, missing `$defs` entry) → reject.
   (`..` segments are resolved, not rejected — see Resolution.)
 
@@ -91,7 +91,7 @@ fix-it:
   computed **after** `..` normalization — so a ref that walks upward
   simply raises the common root. Module names derive relative to the root
   (see [[generated-file-layout]]); because they are relative to the
-  common ancestor they never contain `..`. Reproducible per **P14**.
+  common ancestor they never contain `..`. Reproducible (local-file-only).
 - **Dead `$defs`** (defined but never referenced) are still generated and
   exported — they are intended reusable API surface, not waste.
 
@@ -109,11 +109,11 @@ derived as:
   JSON-name → identifier algorithm ([[properties]] Identifier mapping).
 - **Anonymous inline** subschemas promoted to types → existing synthesis
   rules ([[const]]/[[enum]]/[[properties]]; nest where the language
-  allows, P18 backstop).
+  allows, P15 backstop).
 
 **Collision.** All type names occupy **one package-wide namespace**
 ([[generated-file-layout]]). A collision → **load reject, no mangling**;
-the escape hatch is `x-<lang>-name` / root `title` (**P18**, scope
+the escape hatch is `x-<lang>-name` / root `title` (**P15**, scope
 widened from per-object to per-package). Consistent with [[properties]],
 **collisions are evaluated per emitted target only** — a name set may be
 accepted for a Go-only run and rejected for a Java run, because
@@ -131,7 +131,7 @@ The `$ref`-relevant summary:
 - Reference cycles that span ≥2 input files **hoist** their
   strongly-connected types into a shared module (Python `_recursive.py`;
   TS/Go/Java handle cycles natively).
-- This **refines P13**: "merge on cycle" means *hoist the cyclic types*,
+- This **refines P12**: "merge on cycle" means *hoist the cyclic types*,
   not *merge whole input files*.
 
 ## Recursion & satisfiability
@@ -201,7 +201,7 @@ collecting deserializer, and would split reference sites into
 incompatible `A`-typed and `Main`-typed slots (a `Main` value cannot be
 assigned to an `A` field).
 
-## Validator / serializer (P17)
+## Validator / serializer (P14)
 
 `$ref` is pure delegation: validating a field typed `Foo` calls `Foo`'s
 own shared `Validate` (mirror-image on both directions). Composite types
@@ -233,12 +233,12 @@ helper is emitted — the named-type machinery already in place
 |---|---|
 | Pointer into non-`$defs` | `{"$ref": "#/properties/x/items"}` — not nameable (P10) |
 | Sibling keyword | `{"$ref": "#/$defs/X", "description": "…"}` — implicit `allOf` (P5) |
-| `$id` present | root or nested `$id` — no URI resolution (P14) |
-| HTTP ref | `{"$ref": "https://example.com/s.json"}` — not local (P14) |
+| `$id` present | root or nested `$id` — no URI resolution (local-file-only) |
+| HTTP ref | `{"$ref": "https://example.com/s.json"}` — not local (local-file-only) |
 | `$dynamicRef` / `$anchor` fragment | not in subset (P5) |
 | Unresolvable | missing file or missing `$defs` entry |
 | Unsatisfiable cycle | every edge required + non-nullable + single-valued |
-| Type-name collision | two targets → same identifier in an emitted language (per-target, P18) |
+| Type-name collision | two targets → same identifier in an emitted language (per-target, P15) |
 | Module-name collision | two inputs flatten to the same module name ([[generated-file-layout]]) |
 
 ### Runtime fixtures (validator)
@@ -261,7 +261,7 @@ helper is emitted — the named-type machinery already in place
 - **[[required]]** — owns which `$ref` edges are optional (a primary
   source of cycle termination).
 - **[[const]]** / **[[enum]]** — a `$defs` whose name a synthesized
-  const/enum type reuses enters the same per-package namespace (P18).
+  const/enum type reuses enters the same per-package namespace (P15).
 - **[[additionalProperties]]** — a `$ref`-valued catch-all/typed map is a
   collection-wrapped (terminating) edge.
 - **[[generated-file-layout]]** — owns the package structure this spec
@@ -287,6 +287,6 @@ helper is emitted — the named-type machinery already in place
   termination.
 - [[type]] — the named-type emission `$ref` delegates to.
 - [[PRINCIPLES.md]] — **P5** (strict subset), **P10/P10.1** (reject
-  loudly), **P13** (one file per input; merge recursion, not files),
-  **P14** (local-file-only), **P18** (one identifier namespace per
+  loudly), **P12** (one file per input; merge recursion, not files),
+  local-file-only external refs, **P15** (one identifier namespace per
   scope).

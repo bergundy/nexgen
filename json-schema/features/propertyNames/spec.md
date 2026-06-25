@@ -84,7 +84,7 @@ Reuses whatever the string-assertion specs ([[pattern]], [[minLength]],
 checks applied to keys instead of values, so it inherits their
 dialect/strategy decisions (notably [[pattern]]'s regex-dialect caveat).
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 The key check is part of the shared `Validate`, so it runs again before
 emit: every catch-all key about to be written is re-validated against the

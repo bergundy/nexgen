@@ -215,7 +215,7 @@ Empirical notes (Pydantic 2.13):
   `additionalProperties:{type:string}` yields two `extra_type` entries
   (`a`, `b`) in one `ValidationError`, while `c` passes and round-trips.
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 The catch-all is re-emitted by spreading its members back to top-level
 JSON (Go `MarshalJSON` / TS reserializer / Java the per-POJO collecting

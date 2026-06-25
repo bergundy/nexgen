@@ -5,7 +5,7 @@ Source: JSON Schema 2020-12, Validation vocabulary, §9.2
 
 Supplies a fallback value for an absent member. In the spec it is a pure
 **annotation** — it never affects validation pass/fail. We give it the
-operational semantics of **amended P11**: off-the-wire, set-ness tracked,
+**off-the-wire, materialized-on-read** operational semantics: set-ness tracked,
 omit-unset on serialize (no deep-equals), materialized **on read** via a
 generated `<Field>OrDefault()` accessor in Go and native language
 mechanisms elsewhere.
@@ -37,21 +37,21 @@ Distilled:
 
 ## Support decision
 
-**Support:** yes — with the **amended P11** semantics, *not* the literal
+**Support:** yes — with **off-the-wire, materialized-on-read** semantics, *not* the literal
 "populate on deserialize" reading.
 
 The defining choices (citing [[PRINCIPLES.md]]):
-- **P11 (default off-the-wire, materialized on read)**: the default is
+- **Default off-the-wire, materialized on read**: the default is
   **never** written into the field on deserialize and **never** emitted
   on serialize. The generator tracks field *set-ness*; serialize omits
   any unset field with **no value comparison** (never a deep-equals
   against the default). The default is surfaced lazily *on read*.
-- **P12 (absent ≠ zero / set)**: tracking set-ness (not value) is what
+- **P11 (absent ≠ zero / set)**: tracking set-ness (not value) is what
   preserves the absent-vs-explicitly-set distinction. Explicitly setting
   a field to a value *equal to* the default marks it set and **pins it
   on the wire** — a deep-equals strip would erase that signal, so we
   don't do one.
-- **P17 (serialize-side)**: omit-unset lives in the encode adapter; it is
+- **P14 (serialize-side)**: omit-unset lives in the encode adapter; it is
   the serialize mirror of the parse adapter's "wire-absence → use
   default on read." The shared `Validate` is unaffected — `default`
   contributes **no** constraint predicate (it is not an assertion).
@@ -82,7 +82,7 @@ Loader behavior:
   a default that can never satisfy the field (`{type:"integer",
   minimum:5, default:0}`, `{type:"string", default:42}`) is a schema bug,
   not a runtime concern. Diagnostic names the violated constraint.
-  **Called out, not yet fully specced (P10.4):** the `type`-mismatch case
+  **Called out, not yet fully specced:** the `type`-mismatch case
   (`default:42` on a `string`) is enforceable today; validating the
   default against *constraint* keywords — `pattern`, `minLength`/
   `maxLength`, `minimum`/`maximum`, `multipleOf`, … (e.g. the
@@ -120,9 +120,9 @@ which differ per language:
 | Python | `model_fields_set`, applied by a generated `@model_serializer` | **native** — the Pydantic field `default=<v>` makes the attribute *read* as the default; the generated `@model_serializer(mode='wrap')` omits it on the way out by emitting only `model_fields_set` keys. Omission is baked into the model (the default Temporal converter owns the `to_json` call, so we can't pass `exclude_unset` ourselves). |
 | Java | `null` field + `@JsonInclude(NON_NULL)` | **native** — the generated **getter** returns the default when the backing field is `null` (`return nickname != null ? nickname : "anon";`). Getters already exist in the POJO design (PRINCIPLES Java §1). |
 | TypeScript | `undefined` (the `?` field) | **advisory** — interfaces have no methods (PRINCIPLES TS §4), so the consumer applies the default with the native `?? DEFAULT_X`; the generator emits `export const DEFAULT_X = "anon"`. No accessor needed; `??` is the idiom. |
-| Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()` — the same omit-default-on-wire + accessor-materializes-default pattern already familiar to Temporal users. Named `<Field>OrDefault` rather than `Get<Field>` to read as "the value, or its default" and to avoid implying a getter on every field. Alternative approaches considered: (a) advisory constant (`DEFAULT_X` + caller nil-checks) — pushes nil-checks to every call site; (b) populate on deserialize — destroys set-ness, forces deep-equals, breaks P12. |
+| Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()` — the same omit-default-on-wire + accessor-materializes-default pattern already familiar to Temporal users. Named `<Field>OrDefault` rather than `Get<Field>` to read as "the value, or its default" and to avoid implying a getter on every field. Alternative approaches considered: (a) advisory constant (`DEFAULT_X` + caller nil-checks) — pushes nil-checks to every call site; (b) populate on deserialize — destroys set-ness, forces deep-equals, breaks P11. |
 
-### Naming and collisions (P18)
+### Naming and collisions (P15)
 
 The read-side surfacing synthesizes **one new identifier in two targets**
 — names absent from the schema, so they can collide:
@@ -134,7 +134,7 @@ The read-side surfacing synthesizes **one new identifier in two targets**
 | Python | none (native Pydantic field `default=`) | — | — |
 | Java | none (default folds into the existing getter) | — | — |
 
-Per **P18** these participate in the single per-scope collision pass and
+Per **P15** these participate in the single per-scope collision pass and
 **reject at load** on any coincidence — never auto-mangled (a
 `NicknameOrDefault2` would renumber under schema evolution, a P9 break).
 Python and Java add no name, so they carry no default-specific collision.
@@ -163,12 +163,12 @@ pass/fail. Its operational behavior is entirely in the **adapters**:
   sending fewer keys is judged on the wire, before any default — this is
   why [[minProperties]]/[[maxProperties]] count *before* default
   population).
-- **Encode adapter (serialize-only), P17:** omit any unset member —
+- **Encode adapter (serialize-only), P14:** omit any unset member —
   declaratively, via the per-language set-ness signal above — with **no
   deep-equals**. An explicitly-set member (even to the default value)
   emits.
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 The whole point of `default` lives here. The encode adapter omits unset
 members so the wire stays minimal and the round-trip is faithful: a value
@@ -189,7 +189,7 @@ Three consequences that the count specs already encode:
   the read-side mechanism) can legitimately serialize **fewer** keys than
   it appears to hold — by design.
 - Explicitly setting a member to a value equal to its default **keeps it
-  on the wire** (P12). This is the deliberate non-deep-equals behavior.
+  on the wire** (P11). This is the deliberate non-deep-equals behavior.
 
 ## Property-testing matrix
 
@@ -208,13 +208,13 @@ Three consequences that the count specs already encode:
 |---|---|
 | `default` on a required member | `required:["x"]` with `x:{type:"string", default:"a"}` |
 | Default `type`-mismatch (enforced now, P10.1) | `{type:"string", default:42}` |
-| Default fails a *constraint* (deferred, P10.4) | `{type:"integer", minimum:5, default:0}` |
+| Default fails a *constraint* (deferred) | `{type:"integer", minimum:5, default:0}` |
 | **Object default (deferred)** | `{type:"object", properties:{…}, default:{a:1}}` |
 | **Array default (deferred)** | `{type:"array", items:{type:"string"}, default:["a"]}` |
 | `default: null` (degenerate) | `{oneOf:[{type:"string"},{type:"null"}], default:null}` |
 | With `const` | `{type:"string", const:"v1", default:"v1"}` |
 | Conflicting merged defaults | two applicable `default`s with different values |
-| Synthesized-name collision (P18) | a field `nickname` with a `default` **and** a sibling member mapping to `NicknameOrDefault` (Go field/method clash); two `DEFAULT_<FIELD>` consts that case-map the same (TS) |
+| Synthesized-name collision (P15) | a field `nickname` with a `default` **and** a sibling member mapping to `NicknameOrDefault` (Go field/method clash); two `DEFAULT_<FIELD>` consts that case-map the same (TS) |
 
 ### Runtime fixtures (validator / adapters)
 
@@ -267,7 +267,7 @@ load-time MUST (P10.1), which is stricter than every source dialect — a
 schema that ships an out-of-range default is accepted upstream but
 rejected here, with a fix-it diagnostic. (The MUST is fully *defined*
 now; its enforcement against constraint keywords like `minimum` lands
-with those features — P10.4, see Loader behavior.)
+with those features — see Loader behavior.)
 
 ## See also
 
@@ -281,4 +281,4 @@ with those features — P10.4, see Loader behavior.)
 - [[type]] — the default value must be valid for the declared type.
 - [[properties]] — hosts the member subschema and the set-ness machinery,
   and owns the case-mapping + collision/escape-hatch policy that governs
-  the synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names (P18).
+  the synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names (P15).

@@ -170,7 +170,7 @@ forbids a field/method clash outright). The single collision pass runs
 over that full union and rejects on any coincidence; the `x-*-name`
 override (Stage 4) on the declaring member is the escape hatch, and
 re-mapping the member moves every name synthesized from it. The generator
-**never auto-mangles** (P18) — a numeric suffix would be unstable under
+**never auto-mangles** (P15) — a numeric suffix would be unstable under
 schema evolution (P9).
 
 ### Synthesized type names
@@ -193,14 +193,14 @@ collide with a coincidentally-named top-level type:
   an alias (nest under a `namespace` only if needed).
 - **Go** — has no nested types (a `type` decl inside a struct is a syntax
   error), so it falls back to flat package-level composition
-  `<EnclosingType><Property>` (`UserEventKind`) and relies on the P18
+  `<EnclosingType><Property>` (`UserEventKind`) and relies on the P15
   collision backstop (load reject + `x-go-name`) for any residual
   coincidence.
 
 This trades uniform cross-language shape for collision-minimization and
 per-language idiom — the one place the project accepts shape divergence,
 because flat-everywhere would needlessly inflict Go's limitation on Java,
-the language that benefits most from nesting. P18 remains the backstop in
+the language that benefits most from nesting. P15 remains the backstop in
 every language: nesting reduces, never eliminates, the collision surface.
 
 ### Documented limitation
@@ -231,7 +231,7 @@ per-member dispatch; presence/absence is [[required]], extras are
 A member subschema validates recursively — nested objects become nested
 aggregates, arrays use [[items]], etc.
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 `properties` is symmetric across directions: serialize recurses the
 shared `Validate` into each present member (a nested aggregate's own

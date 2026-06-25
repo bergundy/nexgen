@@ -30,7 +30,7 @@ types. Citing [[PRINCIPLES.md]]: **P7** (enforced at the boundary),
 
 Loader behavior:
 - Value not a non-negative integer (per spec; honors the `1.0`-as-integer
-  rule and the **P16** cap) → reject.
+  rule and the integer cap, see [[type]]) → reject.
 - `maxProperties: 0` → accepted (object must be empty). Note this is a
   near-equivalent of a closed empty object; prefer
   `additionalProperties:false` with no [[properties]] when *emptiness*
@@ -49,7 +49,7 @@ the validator.
 
 Per **P7**/**P8**. The "number of properties" is the count of **distinct
 member keys present on the wire**, taken at the deserialize boundary
-**before** default population (**P11**) — a default-filled key is never on
+**before** default population (see [[default]]) — a default-filled key is never on
 the wire and does not count (see Interactions). Count the wire object as a
 single number; do **not** sum a declared-fields bucket and an extras
 bucket separately (case-mapping can route a key to either, and in Pydantic
@@ -62,7 +62,7 @@ the two sets overlap — verified `json-schema/research/pyd_minprops_probe.py`).
 | Python | `model_validator`; `len(model_fields_set) > max` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into the aggregated `ValidationError`. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`> max`) — one number over the wire object, **not** populated POJO fields + catch-all map summed post-bind; a violation joins the single `ValidationException`. |
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 The count runs again before emit, over the keys that **will actually be
 written** — i.e. *after* default omission and the omit-vs-`null` decision
@@ -112,7 +112,7 @@ the wire object.
   the declared set; a `maxProperties` larger than that count is
   redundant (allowed, not an error).
 - **`default`**: `default` is an annotation, not an assertion, and
-  defaults are dropped on serialize (**P11**) — a default-filled key is
+  defaults are dropped on serialize (see [[default]]) — a default-filled key is
   never on the wire, so it does **not** count toward the cap. The count
   is taken before default population on deserialize.
 - **`const`** (future feature): an object-level `const` pins the exact

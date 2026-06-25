@@ -18,7 +18,7 @@ incorrect output.
 
 - **`PRINCIPLES.md`** — authoritative source for design decisions.
   Cross-cutting principles are numbered (P1–P15) with sub-principles
-  (e.g. P10.3); per-language principles live under language sections.
+  (e.g. P10.1); per-language principles live under language sections.
 - **Target spec:** JSON Schema 2020-12 (per P6).
   - <https://json-schema.org/draft/2020-12/json-schema-validation>
   - <https://json-schema.org/draft/2020-12/json-schema-core>
@@ -35,7 +35,7 @@ example at `features/type/spec.md`:
    citing PRINCIPLES.md by P-number
 3. **Type mapping** — emitted bare type for Go / TS / Python / Java
 4. **Validator mapping** — runtime check per language + strategy,
-   **including a `Serialize-side (P17)` subsection**: which checks the
+   **including a `Serialize-side (P14)` subsection**: which checks the
    shared `Validate` re-runs on emit vs. which are parse-adapter-only
    (deserialize) or encode-adapter-only (serialize: omit/emit-`null`,
    default omission, const auto-emit)
@@ -50,14 +50,13 @@ example at `features/type/spec.md`:
 
 ### Cross-cutting
 
-- `PRINCIPLES.md`: P1–P18 with sub-principles. P16: uniform `±(2^53−1)`
-  integer cap. P17: serialize-side validation — both directions share one
+- `PRINCIPLES.md`: P1–P15 with sub-principles. P14: serialize-side validation — both directions share one
   `Validate(model)` over the decoded model, flanked by a deserialize-only
   parse adapter and a serialize-only encode adapter; no IR round-trip.
-  P18: synthesized-identifier collisions reject at load time (no
-  mangling), sharing one per-scope namespace with declared names. P11:
-  `default` is materialized on *read* (set-ness tracked, omit-unset on
-  serialize, no deep-equals), not stored on deserialize. Java §5: a
+  P15: synthesized-identifier collisions reject at load time (no
+  mangling), sharing one per-scope namespace with declared names. (The
+  uniform `±(2^53−1)` integer cap now lives in [[type]]; `default`
+  off-the-wire / materialized-on-read lives in [[default]].) Java §5: a
   per-POJO class-level collecting `@JsonDeserialize`/`@JsonSerialize`
   (two-stage lenient-tree-then-validate, the Jackson analog of Go's
   shadow-layout `UnmarshalJSON`), throwing one `ValidationException
@@ -67,7 +66,7 @@ example at `features/type/spec.md`:
 - `features/nullability/spec.md`: cross-cutting design note (not a
   keyword). Covers optionality + nullability for all 4 languages with
   per-language enforcement strategies. Carries the per-field serialize
-  omit-vs-emit-`null` table (P17). Python optional+nullable uses
+  omit-vs-emit-`null` table (P14). Python optional+nullable uses
   `model_fields_set`/`exclude_unset` — faithful round-trip, same tier as
   TS. Go/Java are conservative-omit. Zero open questions.
 
@@ -76,7 +75,7 @@ example at `features/type/spec.md`:
 - `features/type/spec.md`: complete. Integer cap: ±(2^53−1). 1 open
   question — cross-language conformance suite.
 - `features/properties/spec.md`: complete. Shared 4-stage case-mapping
-  algorithm + `x-*-name` escape hatch + P18 per-scope collision pass.
+  algorithm + `x-*-name` escape hatch + P15 per-scope collision pass.
   One implementation dependency: the Python serialize keep-set must map
   field name↔alias when a JSON name is case-mapped (PRINCIPLES Python §6).
 - `features/additionalProperties/spec.md`: complete. Open-by-default;
@@ -88,7 +87,7 @@ example at `features/type/spec.md`:
 - `features/required/spec.md`: complete. Zero open questions.
 - `features/maxProperties/spec.md`, `features/minProperties/spec.md`:
   complete (runtime count assertions). Count is over **distinct wire
-  member keys**, taken before default population (P11) — defaults never
+  member keys**, taken before default population (see [[default]]) — defaults never
   count; counted as one number, never summed across declared/extras
   buckets. Zero open questions.
 - `features/dependentRequired/spec.md`: complete (runtime cross-field
@@ -111,8 +110,8 @@ example at `features/type/spec.md`:
   because it is set in memory. Mutually exclusive with `default` and
   `enum`. `const:null` rejected; composite (object/array) const
   temporarily unsupported. 1 open question — composite-const carve-out.
-- `features/default/spec.md`: complete — **supported** with P11
-  semantics: annotation (no validator, never fails validation);
+- `features/default/spec.md`: complete — **supported** with off-the-wire /
+  materialized-on-read semantics: annotation (no validator, never fails validation);
   off-the-wire; set-ness tracked; omit-unset with no deep-equals;
   materialized on read. Strengthens the spec's "RECOMMENDED valid
   default" to a load-time MUST (P10.1); rejects `default` on a required
@@ -126,7 +125,7 @@ example at `features/type/spec.md`:
 
 ### Key decisions taken
 
-- **Serialize-side validation is first-class (P17).** Validation runs in
+- **Serialize-side validation is first-class (P14).** Validation runs in
   both directions over one shared `Validate(model)` (constraint
   predicates over the decoded model), with mirror-image adapters: a
   deserialize-only parse adapter (spec-number parse, explicit-`null`
@@ -139,9 +138,9 @@ example at `features/type/spec.md`:
   serializes via plain `pydantic_core.to_json` — so the omit/const/guard
   logic is baked into a generated `@model_serializer(mode='wrap')`, which
   `to_json` honors.
-- **`default` materialized on read, not stored (P11).** Track set-ness;
+- **`default` materialized on read, not stored (see [[default]]).** Track set-ness;
   serialize omits unset fields with no deep-equals; surface the default
-  on read. Preserving absent-vs-set (P12) protects forward-compat (P9),
+  on read. Preserving absent-vs-set (P11) protects forward-compat (P9),
   live default evolution, and proxy/intermediary fidelity — exactly
   proto3's omit-on-wire model. Serialize/omit mechanisms: Go
   `,omitempty`+pointer, Pydantic a generated `@model_serializer` over
@@ -164,7 +163,7 @@ example at `features/type/spec.md`:
   Mutually exclusive with `default`/`enum`; `const:null` and composite
   consts rejected/deferred.
 - **Synthesized-identifier collisions reject at load time, never mangle
-  (P18).** Synthesized names — [[const]] type aliases + value consts,
+  (P15).** Synthesized names — [[const]] type aliases + value consts,
   future [[enum]] value class/members, the Go `<Field>OrDefault()`
   accessor and TS `DEFAULT_<FIELD>` ([[default]]) — share one per-scope
   namespace with declared types/members and with each other
@@ -200,10 +199,11 @@ example at `features/type/spec.md`:
   `additionalProperties` collides → reject (Go/Java/TS; Python exempt via
   `model_extra`).
 - **Integer cap = ±(2^53−1)** (`Number.MAX_SAFE_INTEGER`), uniform
-  across all four languages (P16). TS `Number.isSafeInteger` enforces it
+  across all four languages (see [[type]]). TS `Number.isSafeInteger` enforces it
   soundly with no third-party parser.
 - **Nullability via `oneOf: [{T}, {null}]`** — narrow exemption to
-  P10's discriminator-less `oneOf` rejection, formalized as P10.3.
+  P10's discriminator-less `oneOf` rejection (see [[nullability]]; a
+  general `oneOf` convention is deferred to a future oneOf spec).
 - **Required + nullable supported** (P10.2) — presence and
   null-acceptance are independent axes; all four states are legal,
   including required+nullable ("must be present, may be `null`").
@@ -236,7 +236,7 @@ example at `features/type/spec.md`:
   `@JsonSerialize(using=<Pojo>.Serializer.class)`. The (de)serializers
   are emitted as `public static final` nested classes on the model
   (`User.Deserializer` / `User.Serializer`) — each model owns its pair,
-  names never collide across models (same nesting idiom as P18's
+  names never collide across models (same nesting idiom as P15's
   const/enum value classes). The deserializer does a two-stage
   lenient-tree-then-validate bind (`readValueAsTree()` defeats Jackson's
   fail-fast `MismatchedInputException`, then every field runs through
@@ -305,7 +305,7 @@ example at `features/type/spec.md`:
 ### High priority
 
 All former high-priority blockers are resolved. Completed:
-- ±(2^53−1) integer cap (P16); all four PRINCIPLES.md language sections;
+- ±(2^53−1) integer cap (see [[type]]); all four PRINCIPLES.md language sections;
   open-by-default typed structs; Java error-aggregation primitive; `$ref`
   spec (`features/ref/spec.md` + `generated-file-layout.md`).
 
@@ -328,7 +328,7 @@ decisions:
   Python `Literal[…] | str`, Java a generated value class (static known
   constants + private ctor + `@JsonCreator fromString` + `@JsonValue` +
   `isUnrecognized()`). `enum` preserves unknown values (P9) where `const`
-  rejects them. Collision handling pre-settled (P18): two enum values
+  rejects them. Collision handling pre-settled (P15): two enum values
   mapping to the same identifier → load reject; the value-class name is
   package-scoped like const's; the class-body collision pass is the
   [[properties]] policy applied per value class.
@@ -351,7 +351,8 @@ decisions:
 **Applicators (mostly P5-rejected, each needs a spec'd rejection):**
 - `allOf`, `anyOf`, `not`, `if-then-else` — reject per P5; document
   rationale and rewrite hints.
-- `oneOf` — partial: nullability pattern accepted (P10.3);
+- `oneOf` — partial: nullability pattern accepted (see [[nullability]]);
+  formalizing the nullability-only `oneOf` rule and the
   discriminator-bearing form is the next open question (P10 implies
   support for the discriminator form, but no convention spec'd yet).
 
@@ -359,14 +360,14 @@ decisions:
 - ✅ `$ref`, ✅ `$defs` — landed (`features/ref/spec.md` +
   `generated-file-layout.md`). Named-targets-only, local-file-only, no
   siblings, no `$id`; single flat package per language; cyclic types hoist
-  (not merge; P13); unsatisfiable-cycle reject.
+  (not merge; P12); unsatisfiable-cycle reject.
 - Remaining: `$schema`, `$id` (reject — folded into `$ref` spec),
   `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$vocabulary`, `$comment`.
 
 **Metadata / annotations:**
 - `format` — high priority, codegen-relevant (e.g. `date-time` →
   `time.Time` in Go).
-- ✅ `default` — landed. P11 semantics (annotation, set-ness tracking,
+- ✅ `default` — landed. Off-the-wire semantics (annotation, set-ness tracking,
   omit-unset, materialize-on-read). Native in Python/Java, advisory in
   TS, `<Field>OrDefault()` accessor in Go.
 - `title`, `description`, `examples`, `deprecated`,
@@ -396,7 +397,7 @@ decisions:
    a deep structural-equality check. Deferred.
 2. Validating the const value against constraint keywords (`pattern`,
    `minLength`, `minimum`, `multipleOf`, …) at load time — deferred to
-   land with those constraint features (P10.4).
+   land with those constraint features.
 
 ### `features/default/spec.md`
 1. Composite (object/array) defaults — deferred, expected to relax. v1
@@ -405,7 +406,7 @@ decisions:
    folding it into the omit-unset machinery. Tracks with [[const]]'s
    composite-const carve-out (same materialization problem).
 2. Validating the default value against constraint keywords at load time
-   — deferred to land with those constraint features (P10.4).
+   — deferred to land with those constraint features.
 
 ### `features/ref/spec.md`
 1. **Sibling annotation passthrough** — currently all `$ref` siblings
@@ -417,7 +418,7 @@ decisions:
    Deferred pending demand.
 
 ### Cross-cutting
-1. **Literal-value-against-constraint validation at load time (P10.4).**
+1. **Literal-value-against-constraint validation at load time.**
    A `const`, `default`, or `enum` value must satisfy every sibling
    assertion on the same node. `type`-compatibility is enforced today;
    validating against constraint keywords (`pattern`, `minLength`/

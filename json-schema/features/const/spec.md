@@ -8,7 +8,7 @@ a `const` string on a member is how a typed object announces its
 variant on the wire. Supported for scalar values; the in-memory type
 stays the underlying primitive (**P9.1**). `const` is a **pure
 assertion** — equivalent to a single-value [[enum]] — checked in both
-directions by the shared `Validate` layer (**P17**). It carries **no
+directions by the shared `Validate` layer (**P14**). It carries **no
 serialize-side special-casing**: the value reaches the wire because it
 is *set in memory* (by the TS type, by a Java `final` field, by a
 Python `before`-validator inject, or by the Go consumer), not because
@@ -45,7 +45,7 @@ Rationale (citing [[PRINCIPLES.md]]):
 - **P7 (enforced)**: the equality check runs at the (de)serializer
   boundary, aggregated per **P8**. It is a pure predicate over the
   decoded value, identical in both directions — the **shared `Validate`**
-  layer of **P17**, with no serialize-side adapter logic of its own.
+  layer of **P14**, with no serialize-side adapter logic of its own.
 - **P9.1 (forward-compatible const)**: the emitted field type is the
   **underlying primitive** (`string`, not the literal type `"v1"`); the
   fixed value is validated at runtime. Bumping a const value in the
@@ -74,7 +74,7 @@ Loader behavior:
   unsatisfiable). The const value must validate against the **rest** of
   the field's own schema too (e.g. `{type:"string", minLength:5,
   const:"ab"}` → reject — the fixed value can never satisfy the field).
-  **Called out, not yet fully specced (P10.4):** validating the const
+  **Called out, not yet fully specced:** validating the const
   value against *constraint* keywords — `pattern`, `minLength`/
   `maxLength`, `minimum`/`maximum`, `multipleOf`, … — means running those
   keywords' own validators over the fixed value at load time. Those
@@ -214,7 +214,7 @@ plain primitive (a value class buys nothing there), matching the type
 table. This is heavier than a bare `String` field for a single-value
 const, accepted for cross-language and [[enum]] consistency.
 
-### Naming and collisions (P18)
+### Naming and collisions (P15)
 
 A scalar `const` synthesizes identifiers that do not exist in the input
 schema and so can collide with declared types or other synthesized names.
@@ -229,9 +229,9 @@ package/module namespace. Per-target:
 | Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` |
 | Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model |
 | TypeScript | only the validator's `KIND_CONST` constant (the type is inline `"v" \| (string & {})`) | module |
-| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types); P18 backstop |
+| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types); P15 backstop |
 
-Per **P18** every synthesized name still enters the **same per-scope
+Per **P15** every synthesized name still enters the **same per-scope
 namespace** as the declared names and as one another; the generator runs
 a single collision pass (after case-mapping) and **rejects at load** with
 a fix-it diagnostic on any coincidence. Nesting **shrinks** that surface
@@ -243,7 +243,7 @@ override on the declaring member. **No auto-mangling** — a synthesized
 `EventKind2` would be unstable across schema revisions (P9).
 
 **Java value class — two surfaces.** The shared value class (Type
-mapping above) collides on two levels, both under **P18**: its **name**
+mapping above) collides on two levels, both under **P15**: its **name**
 (`UserEventKind`) is *package*-scoped (vs declared types / other value
 classes), and its **value constants** are *class-body*-scoped. A scalar
 const has exactly one member (`USER`), so it can never self-collide on
@@ -264,7 +264,7 @@ single-value specialization).
 
 Per **P7**/**P8**. A single equality check against the fixed value,
 identical in both directions (it is a pure predicate over the decoded
-value — the **shared `Validate`** layer of **P17**).
+value — the **shared `Validate`** layer of **P14**).
 
 | Language | Strategy |
 |---|---|
@@ -273,7 +273,7 @@ value — the **shared `Validate`** layer of **P17**).
 | Python | a field/`model_validator` checking `== <const>`, raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. Field typed as the **open** union `Literal["user"] \| str` (`EventKind = Union[EventKindUser, str]`) — a closed `Literal` would make a const bump a type-level break against **P9.1**; the open union keeps any str assignable and only hints the value (see Type mapping). |
 | Java | the field is the generated value class (`UserEventKind`), whose own `@JsonCreator fromString` converts the wire string. The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the node, builds the value, checks `UserEventKind.USER.equals(v)` (equivalently `!v.isUnrecognized()`), and pushes a `Violation` on mismatch into the single `ValidationException`. The known value is the `public static final UserEventKind USER` constant. (For `integer`/`number`/`boolean` consts the field is the plain primitive and the check is a bare `==`.) |
 
-### Serialize-side (P17)
+### Serialize-side (P14)
 
 There is **no const-specific serialize logic**. `const` rides the same
 encode path as every other field: a set field is emitted, an unset
@@ -320,12 +320,12 @@ so the check is effectively a deserialize-direction guard there.
 | Reason | Example |
 |---|---|
 | Type-incompatible (P10.1) | `{type:"integer", const:"x"}` |
-| Fails own subschema — *constraint check, deferred (P10.4)* | `{type:"string", minLength:5, const:"ab"}` |
+| Fails own subschema — *constraint check, deferred* | `{type:"string", minLength:5, const:"ab"}` |
 | With `default` | `{type:"string", const:"v1", default:"v1"}` |
 | With `enum` (redundant) | `{type:"string", enum:["a"], const:"a"}` |
 | `const: null` (degenerate) | `{type:"null", const:null}` |
 | Composite const (deferred) | `{type:"object", const:{a:1}}`, `{type:"array", const:[1]}` |
-| Synthesized-name collision (P18) | Go flat `UserEventKind` (anonymous const) ⨯ a declared top-level `UserEventKind`; a `$defs`-named const reusing an existing type name; two consts colliding on one value-const name. (Nesting removes the Java/Python anonymous case; Go stays flat → still caught.) |
+| Synthesized-name collision (P15) | Go flat `UserEventKind` (anonymous const) ⨯ a declared top-level `UserEventKind`; a `$defs`-named const reusing an existing type name; two consts colliding on one value-const name. (Nesting removes the Java/Python anonymous case; Go stays flat → still caught.) |
 
 ### Runtime fixtures (validator)
 
@@ -341,7 +341,7 @@ so the check is effectively a deserialize-direction guard there.
   → rejected **loudly** by `Validate`, not silently rewritten — the key
   behavioral change from the dropped auto-emit.
 - Serialize after mutating an optional+const to a wrong value → rejected
-  before emit (**P17**).
+  before emit (**P14**).
 
 ## Interactions
 
@@ -399,7 +399,7 @@ so the check is effectively a deserialize-direction guard there.
 
 - [[enum]] — the multi-value sibling; `const` ≡ single-element enum.
 - [[properties]] — owns the identifier case-mapping + collision/escape-hatch
-  policy that governs const's synthesized type/value-const names (P18).
+  policy that governs const's synthesized type/value-const names (P15).
 - [[type]] — supplies the emitted primitive type; gates value
   compatibility.
 - [[required]] — owns presence; a required+const is the always-present

@@ -309,7 +309,7 @@ absent) and **null acceptance** (non-nullable = reject `null`; nullable
 
 ## Serialize-side behavior
 
-Per **P17** the encode adapter chooses, *per field from the
+Per **P14** the encode adapter chooses, *per field from the
 optional/nullable/required declaration*, whether an empty in-memory
 value (`undefined`/`nil`/`None`/`null`) is omitted or emitted as
 `null`. The decision is **static** (baked into the generated
@@ -477,5 +477,5 @@ only the value, not "was the key present" — the absent-vs-explicit-
 - [[oneOf]] — rejected per **P5** in the general case; the nullability
   `oneOf:[{T},{null}]` pattern is the accepted narrow exemption (defined
   under "Nullability convention" above).
-- [[PRINCIPLES.md]] — **P10.2** (optional ≠ nullable), **P12**
+- [[PRINCIPLES.md]] — **P10.2** (optional ≠ nullable), **P11**
   (distinguish absent from zero value), **P1** (hand-written feel).

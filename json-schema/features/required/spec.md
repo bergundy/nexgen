@@ -45,7 +45,7 @@ Rationale (citing [[PRINCIPLES.md]]):
   **required+nullable** — must be present, value may be `null` — and is
   **supported** (presence-check on, null-rejection off). See
   [[nullability]].
-- **P12 (distinguish absent from zero)**: Go/Java read a shadow pointer/
+- **P11 (distinguish absent from zero)**: Go/Java read a shadow pointer/
   boxed value to detect absence; a present zero value is not "absent."
 
 Loader behavior:
@@ -103,7 +103,7 @@ rejected (may not be `null`) — same machinery as the
 optional-non-nullable null rejection in [[nullability]]. For a required
 **nullable** member, `null` is accepted (only absence is rejected).
 
-**Serialize side (P17).** The presence check runs again before emit, off
+**Serialize side (P14).** The presence check runs again before emit, off
 the in-memory value: a required member that is empty in memory (Go `nil`
 pointer · TS `undefined` · Python unset · Java `null` reference) is a
 `ValidationError`, so `MarshalJSON`/`serializeX`/`model_dump` fails
