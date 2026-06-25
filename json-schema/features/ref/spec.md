@@ -36,14 +36,14 @@ Rationale (citing [[PRINCIPLES.md]]):
 - **External refs are local-file-only**: file refs resolve to
   YAML/JSON on disk relative to the referring file; HTTP/URI refs are
   rejected for reproducibility.
-- **P12 (one file per input; merge recursion, not files)**: each input
+- **P14 (one file per input; merge recursion, not files)**: each input
   file becomes one generated module in a single flat package; reference
   cycles hoist the cyclic types into a shared module rather than merging
   whole files (see Recursion below and [[generated-file-layout]]).
-- **P10 / P10.1 (strict schema, reject loudly)**: every accepted `$ref`
+- **P7 / P7.1 (strict schema, reject loudly)**: every accepted `$ref`
   must resolve to a **nameable, top-level generated type** — codegen has
   no name for a pointer into the middle of a schema.
-- **P5 (strict subset)**: `$ref` siblings are an implicit `allOf`; we
+- **P6 (strict subset)**: `$ref` siblings are an implicit `allOf`; we
   reject `allOf`, so we reject sibling-bearing `$ref` too. `$id`
   re-basing opens a URI-resolution surface we otherwise avoid.
 
@@ -65,14 +65,14 @@ fix-it:
 
 - **Pointer into a non-`$defs` node** (`#/properties/x/items`, `#/items`,
   …) → reject. Fix-it: "extract the target into `$defs` and reference
-  that." (Every ref must resolve to a nameable type — P10.)
+  that." (Every ref must resolve to a nameable type — P7.)
 - **Any sibling key alongside `$ref`** — even `description` → reject.
   Fix-it: "move shared annotations onto the `$defs` target." (Siblings
-  are implicit `allOf` — P5.)
+  are implicit `allOf` — P6.)
 - **`$id` anywhere** (root or nested) → reject. Fix-it: "remove `$id`;
   refs resolve by file path + JSON pointer." (local-file-only — no URI resolution.)
 - **HTTP/URI ref**, `$anchor` fragment, `$dynamicRef`, `$dynamicAnchor`
-  → reject (local-file-only / P5; the `$dynamic*` keywords have their own specs).
+  → reject (local-file-only / P6; the `$dynamic*` keywords have their own specs).
 - **Unresolvable target** (missing file, missing `$defs` entry) → reject.
   (`..` segments are resolved, not rejected — see Resolution.)
 
@@ -131,7 +131,7 @@ The `$ref`-relevant summary:
 - Reference cycles that span ≥2 input files **hoist** their
   strongly-connected types into a shared module (Python `_recursive.py`;
   TS/Go/Java handle cycles natively).
-- This **refines P12**: "merge on cycle" means *hoist the cyclic types*,
+- This **refines P14**: "merge on cycle" means *hoist the cyclic types*,
   not *merge whole input files*.
 
 ## Recursion & satisfiability
@@ -201,7 +201,7 @@ collecting deserializer, and would split reference sites into
 incompatible `A`-typed and `Main`-typed slots (a `Main` value cannot be
 assigned to an `A` field).
 
-## Validator / serializer (P14)
+## Validator / serializer (P12)
 
 `$ref` is pure delegation: validating a field typed `Foo` calls `Foo`'s
 own shared `Validate` (mirror-image on both directions). Composite types
@@ -231,11 +231,11 @@ helper is emitted — the named-type machinery already in place
 
 | Case | Reason |
 |---|---|
-| Pointer into non-`$defs` | `{"$ref": "#/properties/x/items"}` — not nameable (P10) |
-| Sibling keyword | `{"$ref": "#/$defs/X", "description": "…"}` — implicit `allOf` (P5) |
+| Pointer into non-`$defs` | `{"$ref": "#/properties/x/items"}` — not nameable (P7) |
+| Sibling keyword | `{"$ref": "#/$defs/X", "description": "…"}` — implicit `allOf` (P6) |
 | `$id` present | root or nested `$id` — no URI resolution (local-file-only) |
 | HTTP ref | `{"$ref": "https://example.com/s.json"}` — not local (local-file-only) |
-| `$dynamicRef` / `$anchor` fragment | not in subset (P5) |
+| `$dynamicRef` / `$anchor` fragment | not in subset (P6) |
 | Unresolvable | missing file or missing `$defs` entry |
 | Unsatisfiable cycle | every edge required + non-nullable + single-valued |
 | Type-name collision | two targets → same identifier in an emitted language (per-target, P15) |
@@ -249,7 +249,7 @@ helper is emitted — the named-type machinery already in place
   validates; the terminating edge (absent / `null` / empty array) ends
   the chain.
 - An invalid value at a referenced position pushes a `Violation` whose
-  path includes the nested location, aggregated with sibling errors (P8).
+  path includes the nested location, aggregated with sibling errors (P11).
 
 ## Interactions
 
@@ -274,7 +274,7 @@ helper is emitted — the named-type machinery already in place
 | draft-07 (`$ref` siblings ignored) | reject sibling-bearing `$ref`; the draft-07 author intended the siblings to be dead, so dropping them and re-pointing is a safe rewrite |
 | `definitions` (draft-07 keyword) | not recognized; require `$defs`. Diagnostic suggests renaming `definitions` → `$defs` |
 | `$id`-rebased refs (OpenAPI/JSON-Schema bundlers) | reject; the input must be a flat local-file tree resolvable by path + pointer |
-| `$anchor` / `$dynamicRef` | reject (P5); not in the subset |
+| `$anchor` / `$dynamicRef` | reject (P6); not in the subset |
 
 ## See also
 
@@ -286,7 +286,7 @@ helper is emitted — the named-type machinery already in place
 - [[nullability]], [[required]] — optional/nullable wrapping and cycle
   termination.
 - [[type]] — the named-type emission `$ref` delegates to.
-- [[PRINCIPLES.md]] — **P5** (strict subset), **P10/P10.1** (reject
-  loudly), **P12** (one file per input; merge recursion, not files),
+- [[PRINCIPLES.md]] — **P6** (strict subset), **P7/P7.1** (reject
+  loudly), **P14** (one file per input; merge recursion, not files),
   local-file-only external refs, **P15** (one identifier namespace per
   scope).

@@ -17,9 +17,9 @@ incorrect output.
 ## Foundations
 
 - **`PRINCIPLES.md`** — authoritative source for design decisions.
-  Cross-cutting principles are numbered (P1–P15) with sub-principles
-  (e.g. P10.1); per-language principles live under language sections.
-- **Target spec:** JSON Schema 2020-12 (per P6).
+  Cross-cutting principles are numbered (P1–P16) with sub-principles
+  (e.g. P7.1); per-language principles live under language sections.
+- **Target spec:** JSON Schema 2020-12 (per P5).
   - <https://json-schema.org/draft/2020-12/json-schema-validation>
   - <https://json-schema.org/draft/2020-12/json-schema-core>
 - **Per-feature specs:** `features/<keyword>/spec.md`, following the
@@ -35,7 +35,7 @@ example at `features/type/spec.md`:
    citing PRINCIPLES.md by P-number
 3. **Type mapping** — emitted bare type for Go / TS / Python / Java
 4. **Validator mapping** — runtime check per language + strategy,
-   **including a `Serialize-side (P14)` subsection**: which checks the
+   **including a `Serialize-side (P12)` subsection**: which checks the
    shared `Validate` re-runs on emit vs. which are parse-adapter-only
    (deserialize) or encode-adapter-only (serialize: omit/emit-`null`,
    default omission, const auto-emit)
@@ -50,7 +50,7 @@ example at `features/type/spec.md`:
 
 ### Cross-cutting
 
-- `PRINCIPLES.md`: P1–P15 with sub-principles. P14: serialize-side validation — both directions share one
+- `PRINCIPLES.md`: P1–P16 with sub-principles. P12: serialize-side validation — both directions share one
   `Validate(model)` over the decoded model, flanked by a deserialize-only
   parse adapter and a serialize-only encode adapter; no IR round-trip.
   P15: synthesized-identifier collisions reject at load time (no
@@ -66,7 +66,7 @@ example at `features/type/spec.md`:
 - `features/nullability/spec.md`: cross-cutting design note (not a
   keyword). Covers optionality + nullability for all 4 languages with
   per-language enforcement strategies. Carries the per-field serialize
-  omit-vs-emit-`null` table (P14). Python optional+nullable uses
+  omit-vs-emit-`null` table (P12). Python optional+nullable uses
   `model_fields_set`/`exclude_unset` — faithful round-trip, same tier as
   TS. Go/Java are conservative-omit. Zero open questions.
 
@@ -91,7 +91,7 @@ example at `features/type/spec.md`:
   count; counted as one number, never summed across declared/extras
   buckets. Zero open questions.
 - `features/dependentRequired/spec.md`: complete (runtime cross-field
-  presence; `dependentSchemas` split off as P5-reject). Zero open Qs.
+  presence; `dependentSchemas` split off as P6-reject). Zero open Qs.
 - `features/patternProperties/spec.md`: complete — **temporarily
   unsupported** (rejected at load time in v1, deferred not categorically
   excluded: a single-pattern typed-map form is plausibly lowerable).
@@ -100,7 +100,7 @@ example at `features/type/spec.md`:
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
 - `features/const/spec.md`: complete — **supported (scalar)**. Emits the
-  underlying primitive (P9.1) via an open form per target, closed only at
+  underlying primitive (P13.1) via an open form per target, closed only at
   runtime: TS `'v' | (string & {})` + `readonly`, Go alias
   `type X = string` + typed value const, Python `Literal['v'] | str`,
   Java a generated value class (`@JsonCreator`/`@JsonValue`,
@@ -114,7 +114,7 @@ example at `features/type/spec.md`:
   materialized-on-read semantics: annotation (no validator, never fails validation);
   off-the-wire; set-ness tracked; omit-unset with no deep-equals;
   materialized on read. Strengthens the spec's "RECOMMENDED valid
-  default" to a load-time MUST (P10.1); rejects `default` on a required
+  default" to a load-time MUST (P7.1); rejects `default` on a required
   member and `default`+`const`. Read-side surfacing is native in Python
   (Pydantic field default) and Java (getter), advisory in TS
   (`?? DEFAULT_X` constant), and a generated `<Field>OrDefault()`
@@ -125,7 +125,7 @@ example at `features/type/spec.md`:
 
 ### Key decisions taken
 
-- **Serialize-side validation is first-class (P14).** Validation runs in
+- **Serialize-side validation is first-class (P12).** Validation runs in
   both directions over one shared `Validate(model)` (constraint
   predicates over the decoded model), with mirror-image adapters: a
   deserialize-only parse adapter (spec-number parse, explicit-`null`
@@ -140,7 +140,7 @@ example at `features/type/spec.md`:
   `to_json` honors.
 - **`default` materialized on read, not stored (see [[default]]).** Track set-ness;
   serialize omits unset fields with no deep-equals; surface the default
-  on read. Preserving absent-vs-set (P11) protects forward-compat (P9),
+  on read. Preserving absent-vs-set (P9) protects forward-compat (P13),
   live default evolution, and proxy/intermediary fidelity — exactly
   proto3's omit-on-wire model. Serialize/omit mechanisms: Go
   `,omitempty`+pointer, Pydantic a generated `@model_serializer` over
@@ -152,7 +152,7 @@ example at `features/type/spec.md`:
   `const` is treated as a single-value `enum`: validate `== value` in
   both directions; the generator does not force-write. Presence is owned
   by `required`; the fixed value reaches the wire because it is set in
-  memory. Emits the underlying primitive via an open form (P9.1): TS
+  memory. Emits the underlying primitive via an open form (P13.1): TS
   `'v' | (string & {})` + `readonly`, Go named alias `type X = string`
   + typed value const, Python `Literal['v'] | str`, Java a generated
   value class shared with [[enum]]. Go sets it via that value const (zero
@@ -170,7 +170,7 @@ example at `features/type/spec.md`:
   (package/module scope; the Go accessor sits in the struct method-set,
   where a field/method clash is a hard compile error). A single collision
   pass (after case-mapping) rejects loudly on any coincidence.
-  Auto-mangling is rejected as unstable under schema evolution (P9). The
+  Auto-mangling is rejected as unstable under schema evolution (P13). The
   escape hatch is the [[properties]] `x-*-name` override on the
   declaring member.
 - **Optional+nullable round-trip is capability-tiered:** faithful in
@@ -186,7 +186,7 @@ example at `features/type/spec.md`:
 - **`type: "object"` requires explicit shape** — bare `{type:"object"}`
   rejected; must add `properties`, `additionalProperties: true`, or
   `additionalProperties: false`.
-- **Typed structs are open by default** (per spec + P9) — extras
+- **Typed structs are open by default** (per spec + P13) — extras
   preserved into a catch-all; closed behavior requires explicit
   `additionalProperties: false`. Typed `additionalProperties` is
   supported in every position — including alongside `properties` — via a
@@ -202,9 +202,9 @@ example at `features/type/spec.md`:
   across all four languages (see [[type]]). TS `Number.isSafeInteger` enforces it
   soundly with no third-party parser.
 - **Nullability via `oneOf: [{T}, {null}]`** — narrow exemption to
-  P10's discriminator-less `oneOf` rejection (see [[nullability]]; a
+  P7's discriminator-less `oneOf` rejection (see [[nullability]]; a
   general `oneOf` convention is deferred to a future oneOf spec).
-- **Required + nullable supported** (P10.2) — presence and
+- **Required + nullable supported** (P8) — presence and
   null-acceptance are independent axes; all four states are legal,
   including required+nullable ("must be present, may be `null`").
   Required+nullable is decidable, enforceable (presence-check on,
@@ -269,7 +269,7 @@ example at `features/type/spec.md`:
     becomes a private model attr.
   - Pydantic's `model_validator(mode='before')` that raises
     short-circuits Pydantic's own field validation; use `mode='wrap'`
-    for P8 aggregation across both error sources.
+    for P11 aggregation across both error sources.
   - A key injected into the input dict by a `model_validator(mode='before')`
     lands in `model_fields_set` — Pydantic treats it as provided. This
     is what lets `const` auto-fill and emit through the generic omit-unset
@@ -278,14 +278,14 @@ example at `features/type/spec.md`:
     Custom deserializer is mandatory.
   - Jackson is fail-fast: the first field's `MismatchedInputException`
     aborts the whole bind, so per-field `@JsonDeserialize` cannot aggregate
-    (P8). The class-level collecting deserializer (tree-first) is the only
+    (P11). The class-level collecting deserializer (tree-first) is the only
     approach that works through the default converter (Java §5). A
     mapper-level `DeserializationProblemHandler` is out: we can't reach
-    the default converter's mapper, and it misses 4 of 6 P8 cases anyway.
+    the default converter's mapper, and it misses 4 of 6 P11 cases anyway.
     Jackson 3.1's built-in `CollectingProblemHandler` is also out: it
     floors at Jackson 3.1 (SDK default is 2.x; P3/P4), is
     reader-configured + per-call so it never fires under the default
-    converter, and collects only structural problems — not P7 constraints.
+    converter, and collects only structural problems — not P10 constraints.
   - A `JsonMappingException` subclass thrown from a custom
     `JsonDeserializer` propagates verbatim through the Temporal
     `DefaultDataConverter` as the cause of `DataConverterException`,
@@ -319,22 +319,22 @@ decisions:
 - ✅ `required`, ✅ `minProperties`, ✅ `maxProperties`,
   ✅ `dependentRequired`, ✅ `patternProperties` (temporarily unsupported),
   ✅ `propertyNames` (partial)
-- Remaining: `unevaluatedProperties` (expect P5-reject),
-  `dependentSchemas` (expect P5-reject)
+- Remaining: `unevaluatedProperties` (expect P6-reject),
+  `dependentSchemas` (expect P6-reject)
 
 **Any-type assertions:**
 - `enum` — remaining. Representation pre-decided (with const):
   per-language open form — TS `… | (string & {})`, Go alias,
   Python `Literal[…] | str`, Java a generated value class (static known
   constants + private ctor + `@JsonCreator fromString` + `@JsonValue` +
-  `isUnrecognized()`). `enum` preserves unknown values (P9) where `const`
+  `isUnrecognized()`). `enum` preserves unknown values (P13) where `const`
   rejects them. Collision handling pre-settled (P15): two enum values
   mapping to the same identifier → load reject; the value-class name is
   package-scoped like const's; the class-body collision pass is the
   [[properties]] policy applied per value class.
 - ✅ `const` — landed (scalar). Pure assertion, validated both
   directions; presence owned by `required`. Open-form emit per target
-  (P9.1). Mutually exclusive with `default`/`enum`; composite consts
+  (P13.1). Mutually exclusive with `default`/`enum`; composite consts
   deferred.
 
 **Numeric assertions** (gated by integer-cap decision):
@@ -348,19 +348,19 @@ decisions:
 **String assertions:**
 - `maxLength`, `minLength`, `pattern`
 
-**Applicators (mostly P5-rejected, each needs a spec'd rejection):**
-- `allOf`, `anyOf`, `not`, `if-then-else` — reject per P5; document
+**Applicators (mostly P6-rejected, each needs a spec'd rejection):**
+- `allOf`, `anyOf`, `not`, `if-then-else` — reject per P6; document
   rationale and rewrite hints.
 - `oneOf` — partial: nullability pattern accepted (see [[nullability]]);
   formalizing the nullability-only `oneOf` rule and the
-  discriminator-bearing form is the next open question (P10 implies
+  discriminator-bearing form is the next open question (P7 implies
   support for the discriminator form, but no convention spec'd yet).
 
 **Core / structural:**
 - ✅ `$ref`, ✅ `$defs` — landed (`features/ref/spec.md` +
   `generated-file-layout.md`). Named-targets-only, local-file-only, no
   siblings, no `$id`; single flat package per language; cyclic types hoist
-  (not merge; P12); unsatisfiable-cycle reject.
+  (not merge; P14); unsatisfiable-cycle reject.
 - Remaining: `$schema`, `$id` (reject — folded into `$ref` spec),
   `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$vocabulary`, `$comment`.
 

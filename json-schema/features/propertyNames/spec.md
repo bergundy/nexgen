@@ -32,9 +32,9 @@ object with [[additionalProperties]] and **no** [[properties]]);
 **rejected** when [[properties]] is present.
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P7 (enforced)**: on a map, key constraints lower to a clean runtime
-  loop over the keys — checked at the boundary, aggregated per **P8**.
-- **P10 / P10.1 (reject ambiguity)**: alongside [[properties]] the
+- **P10 (enforced)**: on a map, key constraints lower to a clean runtime
+  loop over the keys — checked at the boundary, aggregated per **P11**.
+- **P7 / P7.1 (reject ambiguity)**: alongside [[properties]] the
   declared member names are static and known at generation time;
   layering a name constraint over them is ambiguous (does it gate the
   declared names, the extras, or both?) and adds little. Reject and ask
@@ -42,7 +42,7 @@ Rationale (citing [[PRINCIPLES.md]]):
 - The propertyNames subschema must itself be a **supported string
   subschema** — implicitly/explicitly `type:"string"` with only
   string-applicable assertions. Anything else (e.g. `type:"integer"`,
-  which can never match a string key) → reject per **P10.1**.
+  which can never match a string key) → reject per **P7.1**.
 
 Loader behavior:
 - `propertyNames` value not a valid schema → reject.
@@ -55,7 +55,7 @@ Loader behavior:
 - `propertyNames` with no [[additionalProperties]] (so no map, no
   properties) → already rejected by [[type]] (`type:object` needs a
   shape); `propertyNames` alone is not a shape.
-- Empty / `true` subschema → reject per **P10.1** (no constraint; just
+- Empty / `true` subschema → reject per **P7.1** (no constraint; just
   drop the keyword).
 
 ## Type mapping
@@ -69,7 +69,7 @@ Record<string,T>` / Pydantic `BaseModel` with extras in `model_extra`).
 
 ## Validator mapping
 
-Per **P7**/**P8**. Loop over the parsed object's keys; validate each key
+Per **P10**/**P11**. Loop over the parsed object's keys; validate each key
 string against the (string) constraint.
 
 | Language | Strategy |
@@ -84,7 +84,7 @@ Reuses whatever the string-assertion specs ([[pattern]], [[minLength]],
 checks applied to keys instead of values, so it inherits their
 dialect/strategy decisions (notably [[pattern]]'s regex-dialect caveat).
 
-### Serialize-side (P14)
+### Serialize-side (P12)
 
 The key check is part of the shared `Validate`, so it runs again before
 emit: every catch-all key about to be written is re-validated against the
@@ -107,7 +107,7 @@ exactly the wire key the check applies to, in both directions.
 
 | Reason | Example |
 |---|---|
-| With `properties` (P10) | `{type:object, properties:{id:{type:integer}}, propertyNames:{type:string, pattern:"…"}}` |
+| With `properties` (P7) | `{type:object, properties:{id:{type:integer}}, propertyNames:{type:string, pattern:"…"}}` |
 | Non-string subschema | `propertyNames:{type:integer}` |
 | Shapeless subschema | `propertyNames:{}`, `propertyNames:true` |
 | No host map | `propertyNames` with neither `properties` nor `additionalProperties` (caught by [[type]]) |
@@ -117,7 +117,7 @@ exactly the wire key the check applies to, in both directions.
 - All keys satisfy the constraint → OK.
 - One key violates (bad pattern / too long) → one
   `ValidationError{path:key, reason}`.
-- Multiple bad keys → all reported in one shot (P8).
+- Multiple bad keys → all reported in one shot (P11).
 - Empty object → vacuously OK.
 
 ## Interactions

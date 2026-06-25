@@ -5,7 +5,7 @@ Source: JSON Schema 2020-12, Core (Applicator vocabulary), §10.3.2.2
 
 Applies subschemas to members whose **names match a regular
 expression**. **Temporarily unsupported** — rejected at load time in v1,
-but not a categorical P5 exclusion: a narrow single-pattern form is
+but not a categorical P6 exclusion: a narrow single-pattern form is
 plausibly lowerable and is deferred to post-v1.
 
 ## Spec summary
@@ -45,10 +45,10 @@ form carries real lowering hazards (below), yet a narrow single-pattern
 form is plausibly representable and is tracked for a future release.
 
 Why deferred rather than landed in v1 (citing [[PRINCIPLES.md]]):
-- **P5 (strict subset)**: regex-keyed members produce a **dynamically
+- **P6 (strict subset)**: regex-keyed members produce a **dynamically
   keyed** member set that cannot lower to named, statically-typed fields
   in Go/TS/Java/Python. It is a map construct wearing object clothes.
-- **P10 / P10.1 (reject ambiguity loudly)**: overlapping patterns mean a
+- **P7 / P7.1 (reject ambiguity loudly)**: overlapping patterns mean a
   single member may be governed by several subschemas at once (validate
   against *all* matching) — the emitted value type would be an
   intersection with no coherent cross-language representation.
@@ -61,7 +61,7 @@ Why deferred rather than landed in v1 (citing [[PRINCIPLES.md]]):
 
 These hazards apply to the general form only. A single-pattern,
 no-`properties`, RE2-safe schema is the candidate carve-out — it is why
-this keyword is "temporarily unsupported" rather than a hard P5 reject
+this keyword is "temporarily unsupported" rather than a hard P6 reject
 like [[dependentSchemas]].
 
 Loader behavior (v1):
@@ -81,7 +81,7 @@ None — rejected before any type is emitted.
 ## Validator mapping
 
 None — rejected at load time, so there is no (de)serialize boundary and
-no serialize-side behavior (**P14**). If the single-pattern typed-map
+no serialize-side behavior (**P12**). If the single-pattern typed-map
 carve-out later lands, its key+value checks would join the shared
 `Validate` and run in both directions exactly like [[propertyNames]]'s
 key check.
@@ -92,7 +92,7 @@ key check.
 
 | Reason | Example |
 |---|---|
-| Any pattern map (P5) | `{type:object, patternProperties:{"^x-":{type:string}}}` |
+| Any pattern map (P6) | `{type:object, patternProperties:{"^x-":{type:string}}}` |
 | With `properties` | `{type:object, properties:{id:{type:integer}}, patternProperties:{"^meta_":{type:string}}}` |
 | Overlapping patterns | `{type:object, patternProperties:{"^a":{…}, "a$":{…}}}` |
 | RE2-incompatible pattern | `{type:object, patternProperties:{"(?=x)":{type:string}}}` |
@@ -108,7 +108,7 @@ would add accepted + runtime rows.
   we reject `patternProperties` at load time in v1, that contribution
   never arises in practice — `additionalProperties` only ever excludes
   [[properties]] matches in our subset.
-- **[[unevaluatedProperties]]**: rejected per P5 (a hard exclusion, unlike
+- **[[unevaluatedProperties]]**: rejected per P6 (a hard exclusion, unlike
   this keyword's temporary status); both belong to the
   annotation-dependent object machinery we exclude.
 - **[[propertyNames]]**: the supported escape hatch for *constraining
@@ -121,7 +121,7 @@ would add accepted + runtime rows.
 
 | Source dialect | Action |
 |---|---|
-| JSON Schema 2020-12 | Reject (P5). |
+| JSON Schema 2020-12 | Reject (P6). |
 | OpenAPI 3.1 | `patternProperties` present (3.1 adopts 2020-12) → reject. |
 | OpenAPI 3.0 | No `patternProperties` keyword — nothing to reject; users already lean on `additionalProperties`. |
 | Swagger 2.0 / draft-4 | `patternProperties` present → reject. |
@@ -132,5 +132,5 @@ would add accepted + runtime rows.
 - [[propertyNames]] — constrain key shape (partial support).
 - [[properties]] — enumerate a known key set.
 - [[pattern]] — value-level regex with dialect caveats.
-- [[unevaluatedProperties]] — hard-rejected (P5), unlike this keyword's
+- [[unevaluatedProperties]] — hard-rejected (P6), unlike this keyword's
   temporary status.

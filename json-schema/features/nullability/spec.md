@@ -2,7 +2,7 @@
 
 Not a JSON Schema keyword. Captures the generator's per-language convention
 for how **optionality** ("key may be absent") and **nullability** ("value
-may be `null`") are encoded in emitted code. Per **P10.2** these are two
+may be `null`") are encoded in emitted code. Per **P8** these are two
 different concerns and we keep them distinct.
 
 ## Concept matrix
@@ -182,7 +182,7 @@ sibling keyword recognized for that `type`:
 ]}
 ```
 
-This is a **narrow exemption to P5** — we still reject `oneOf` in the
+This is a **narrow exemption to P6** — we still reject `oneOf` in the
 general case; only this exact recognized shape is accepted.
 
 ### Pattern acceptance rules
@@ -195,7 +195,7 @@ The generator accepts a `oneOf` schema iff:
   `"null"` — `{type:"null"}` paired with `{type:"null"}` is a
   tautology and rejected).
 
-Any other `oneOf` shape → reject at load time per **P5** with a
+Any other `oneOf` shape → reject at load time per **P6** with a
 diagnostic naming the recognized nullability form.
 
 ### Required + nullable is supported
@@ -206,7 +206,7 @@ be present, value may be `null`" — `{}` is rejected (absent), `{"x":
 null}` and `{"x": T}` are both accepted. The construct is fully
 decidable: required+nullable accepts `{"x":null}` and `{"x":T}`;
 optional+non-nullable accepts `{}` — disjoint edge cases, with none of
-the other three states expressing the `{null, T}` space. Per **P10.2**
+the other three states expressing the `{null, T}` space. Per **P8**
 optional and nullable are orthogonal, so all four combinations are
 legal.
 
@@ -272,7 +272,7 @@ already rely on a validator the type can't express.)
 "absent" and "JSON null" are the same (`nil`, `null`), and — unlike
 Python's `model_fields_set` and TS's `undefined` — there is no side
 channel recording which the wire carried, so post-validation user code
-can't recover it. This matches **P10.2**'s framing — optional and
+can't recover it. This matches **P8**'s framing — optional and
 nullable are distinct *schema* concerns; runtime collapse is acceptable
 when the language can't represent the difference. Making Go/Java
 faithful would require a presence-tracking wrapper (`Null[T]` / shadow
@@ -291,7 +291,7 @@ Wire form → required generator output:
 | `"type": ["T", "null"]` (array form) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
 | `{type:"T", "nullable": true}` (OAS 3.0) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
 | `oneOf` with `{type:"null"}` branch where field is in `required` | **Accept** — required+nullable (must be present, may be `null`). |
-| `oneOf` of 3+ branches with `{type:"null"}` among them | Reject (P5). Diagnostic distinguishes from the supported 2-branch form. |
+| `oneOf` of 3+ branches with `{type:"null"}` among them | Reject (P6). Diagnostic distinguishes from the supported 2-branch form. |
 
 ## Validator implications
 
@@ -309,7 +309,7 @@ absent) and **null acceptance** (non-nullable = reject `null`; nullable
 
 ## Serialize-side behavior
 
-Per **P14** the encode adapter chooses, *per field from the
+Per **P12** the encode adapter chooses, *per field from the
 optional/nullable/required declaration*, whether an empty in-memory
 value (`undefined`/`nil`/`None`/`null`) is omitted or emitted as
 `null`. The decision is **static** (baked into the generated
@@ -403,7 +403,7 @@ A model-level `model_validator(mode='wrap')` wraps Pydantic's
 field-validation pass. It pre-scans the raw input dict for
 optional-non-nullable keys present with `None`, runs the inner
 handler, and combines any pre-errors with field-validation errors
-into a single `ValidationError` — preserving P8 aggregation across
+into a single `ValidationError` — preserving P11 aggregation across
 both sources.
 
 Each generated model carries a `ClassVar[frozenset]` listing the
@@ -462,7 +462,7 @@ class User(BaseModel):
 
 Why `mode='wrap'` rather than `mode='before'`: a `mode='before'`
 validator that raises short-circuits Pydantic's own field validation,
-breaking P8 aggregation across error sources. `mode='wrap'` lets us
+breaking P11 aggregation across error sources. `mode='wrap'` lets us
 run the inner handler, catch its errors, and combine.
 
 Why not a `BeforeValidator` per field: `BeforeValidator` receives
@@ -474,8 +474,8 @@ only the value, not "was the key present" — the absent-vs-explicit-
 - [[type]] — emitted bare type per `type` token; this doc wraps that.
 - [[required]] — owns *which* fields are optional (the JSON Schema
   side of the decision).
-- [[oneOf]] — rejected per **P5** in the general case; the nullability
+- [[oneOf]] — rejected per **P6** in the general case; the nullability
   `oneOf:[{T},{null}]` pattern is the accepted narrow exemption (defined
   under "Nullability convention" above).
-- [[PRINCIPLES.md]] — **P10.2** (optional ≠ nullable), **P11**
-  (distinguish absent from zero value), **P1** (hand-written feel).
+- [[PRINCIPLES.md]] — **P8** (optional ≠ nullable), **P9**
+  (distinguish absent from zero value), **P2** (ergonomics).

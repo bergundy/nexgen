@@ -47,7 +47,7 @@ The binding decision:
 
 > **Typed structs are OPEN by default.** Per the JSON Schema spec
 > default (omitted `additionalProperties` = empty schema = allow
-> anything) and **P9** (forward compatibility: accept and preserve
+> anything) and **P13** (forward compatibility: accept and preserve
 > unknown fields), a `{type:object, properties:{...}}` with no
 > `additionalProperties` emits an **untyped catch-all** that preserves
 > and round-trips unmatched members. Closed behavior requires an
@@ -61,15 +61,15 @@ Accepted forms and their meaning:
 | **`false`** | closed struct (extras rejected) | closed empty object (any member rejected) |
 | **`true`** | open struct + untyped catch-all | open opaque map |
 | **`{type:T}`** (supported subschema) | **supported** — typed catch-all (`T`-valued extras) | typed map (`T`-valued) |
-| **`{}`** (empty-schema spelling) | **rejected** per **P10** | **rejected** per **P10** |
+| **`{}`** (empty-schema spelling) | **rejected** per **P7** | **rejected** per **P7** |
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P9 (forward compat)**: open-by-default preserves unknown members so
+- **P13 (forward compat)**: open-by-default preserves unknown members so
   a producer adding a field never breaks an older consumer. Verified the
   preserve+round-trip behavior per language (see Validator mapping).
-- **P10 (strict schema)**: `additionalProperties: {}` is the empty-schema
+- **P7 (strict schema)**: `additionalProperties: {}` is the empty-schema
   spelling of `true` — ambiguous, so **rejected**; diagnostic says "use
-  `true` for an open object." (Matches PRINCIPLES P10's
+  `true` for an open object." (Matches PRINCIPLES P7's
   `additionalProperties: {}` → reject.)
 - **Typed `additionalProperties` is supported in every position**,
   including *alongside* `properties`. The key that makes it lower
@@ -80,7 +80,7 @@ Rationale (citing [[PRINCIPLES.md]]):
   `T`) never arises.
 - The extras schema must be a **supported subschema** (`{type:T}` with a
   recognized shape). `additionalProperties:{type:object}` with no shape
-  is rejected per **P10.1**, same as anywhere else.
+  is rejected per **P7.1**, same as anywhere else.
 
 ### Catch-all representation: always a named field
 
@@ -102,7 +102,7 @@ catch-all member:
 
 This buys two things:
 
-1. **Shape stability** (**P1**/**P9**): adding `properties` later only
+1. **Shape stability** (**P2**/**P13**): adding `properties` later only
    *adds fields/attributes* to the same type — it never changes kind
    ("map alias" → "struct/model"), so downstream call sites keep
    compiling. Verified the Python instability this avoids
@@ -140,7 +140,7 @@ All four languages emit the named catch-all member when extras are
 allowed (see representation note above). The catch-all element type is
 `T` for `{type:T}`, else the raw type (`json.RawMessage` / `unknown` /
 `Any` / `Object`) so untyped extras survive a round-trip without the
-generator guessing their shape (**P9**).
+generator guessing their shape (**P13**).
 
 | Case | Go | TypeScript | Python | Java |
 |---|---|---|---|---|
@@ -167,7 +167,7 @@ normal attribute there.
 
 The Go untyped element type is `json.RawMessage` (verbatim bytes),
 **not** `any` (`map[string]interface{}`). This is load-bearing for
-**P9** — `any` corrupts the very data the catch-all exists to preserve,
+**P13** — `any` corrupts the very data the catch-all exists to preserve,
 because `encoding/json` decodes **every JSON number to `float64`**.
 Empirically, the same opaque object round-trips as:
 
@@ -196,7 +196,7 @@ representation, so no equivalent workaround is needed.)
 
 ## Validator mapping
 
-Per **P7**/**P8**: extras are handled at the boundary and any closed-mode
+Per **P10**/**P11**: extras are handled at the boundary and any closed-mode
 violation aggregates.
 
 | Language | Open, untyped (preserve) | Open, typed `{type:T}` | Closed (reject extras) |
@@ -215,7 +215,7 @@ Empirical notes (Pydantic 2.13):
   `additionalProperties:{type:string}` yields two `extra_type` entries
   (`a`, `b`) in one `ValidationError`, while `c` passes and round-trips.
 
-### Serialize-side (P14)
+### Serialize-side (P12)
 
 The catch-all is re-emitted by spreading its members back to top-level
 JSON (Go `MarshalJSON` / TS reserializer / Java the per-POJO collecting
@@ -254,9 +254,9 @@ unambiguous in both directions.
 
 | Reason | Example |
 |---|---|
-| Empty-schema spelling (P10) | `additionalProperties: {}` (use `true`) |
+| Empty-schema spelling (P7) | `additionalProperties: {}` (use `true`) |
 | Non-schema value | `additionalProperties: "yes"`, `…: 1` |
-| Out-of-subset extras schema (P10.1) | `additionalProperties:{type:object}` with no shape |
+| Out-of-subset extras schema (P7.1) | `additionalProperties:{type:object}` with no shape |
 | Catch-all name collision | `{properties:{additionalProperties:{type:string}}, additionalProperties:{type:integer}}` (declared member collides with the generated field) |
 
 ### Runtime fixtures (validator)
@@ -265,7 +265,7 @@ unambiguous in both directions.
 - Closed struct + extra key → one `ValidationError` per extra,
   aggregated with declared-field errors.
 - Typed map / typed extras + value of wrong type → rejected with
-  `path = key`; multiple bad extras reported in one shot (P8).
+  `path = key`; multiple bad extras reported in one shot (P11).
 - Typed extras + good value → validated and round-trips.
 - Open opaque map round-trips arbitrary nested JSON unchanged.
 - Pure map (all four languages) decodes into the wrapper's catch-all
@@ -281,7 +281,7 @@ unambiguous in both directions.
   matches are excluded — every other member is "additional."
 - **[[unevaluatedProperties]]**: strictly more powerful (sees the
   transitive evaluated set across applicators). We **reject**
-  `unevaluatedProperties` per **P5** (its annotation-dependent semantics
+  `unevaluatedProperties` per **P6** (its annotation-dependent semantics
   don't lower); `additionalProperties` is the supported subset.
 - **[[type]]**: `additionalProperties: true|false` is one of the three
   explicit resolutions [[type]] requires for `{type:object}` with no
@@ -304,7 +304,7 @@ unambiguous in both directions.
 
 - [[properties]] — declares the matched members this keyword excludes.
 - [[patternProperties]] — temporarily unsupported; typed-map alternative.
-- [[unevaluatedProperties]] — rejected per **P5**; this is the subset.
+- [[unevaluatedProperties]] — rejected per **P6**; this is the subset.
 - [[type]] — requires an explicit open/closed choice for bare objects.
 - [[minProperties]], [[maxProperties]], [[propertyNames]] — other
   object-level assertions.

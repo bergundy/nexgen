@@ -27,15 +27,15 @@ We accept `type: "<primitive>"` for all seven primitive type names. We
 `type` keyword.
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P5 (strict subset)**: Multi-type unions don't lower coherently across
+- **P6 (strict subset)**: Multi-type unions don't lower coherently across
   Go/Java; we keep the language ceiling at OpenAPI 3.0's level.
-- **P10 / P10.1 (strict schema, reject loudly)**: Array `type` is
+- **P7 / P7.1 (strict schema, reject loudly)**: Array `type` is
   structurally ambiguous (is `["T","null"]` an optional T, a nullable T, or
   a sum type?). Reject at load time with a fix-it message.
-- **P10.2 (optional ≠ nullable)**: The `["T","null"]` idiom collapses two
+- **P8 (optional ≠ nullable)**: The `["T","null"]` idiom collapses two
   different concerns; model nullability through the dedicated
   `oneOf:[{type:T},{type:null}]` convention instead (see [[nullability]]).
-- Absent `type` makes field shape undecidable, violating **P10**.
+- Absent `type` makes field shape undecidable, violating **P7**.
 
 Loader behavior:
 - Array `type` → reject with diagnostic naming the schema location and
@@ -44,7 +44,7 @@ Loader behavior:
   schema.
 - Unknown type name (`"int"`, `"date"`, etc.) → reject.
 - `type: "object"` with no `properties`, `patternProperties`, or
-  `additionalProperties` → reject (P10.1). Per spec this is "any object",
+  `additionalProperties` → reject (P7.1). Per spec this is "any object",
   but the typed-codegen contract requires explicit intent. Diagnostic
   names the three resolutions: add `properties: {...}` (typed struct),
   add `additionalProperties: true` (open opaque map), or add
@@ -87,7 +87,7 @@ Notes:
 
 ## Validator mapping
 
-Per **P7** validation is enforced at the (de)serializer boundary. Per **P8**
+Per **P10** validation is enforced at the (de)serializer boundary. Per **P11**
 errors aggregate into the language-native primitive.
 
 | `type` token | Go | TypeScript | Python | Java |
@@ -103,7 +103,7 @@ errors aggregate into the language-native primitive.
 Strategy per language:
 - **Go**: Every generated struct gets a custom `UnmarshalJSON`. It decodes
   into a shadow struct of `*json.Number` / `*T` pointers (absence
-  observable per P11), dispatches per field, builds
+  observable per P9), dispatches per field, builds
   `ValidationError{Path, Reason}` and aggregates with `errors.Join`.
   Integer fields go through a runtime helper that also enforces the
   cross-language integer cap (`±(2^53−1)`):
@@ -171,7 +171,7 @@ Strategy per language:
   }
   ```
   Rationale (empirically verified, Jackson 2.18): Jackson's defaults
-  *silently truncate* `1.5`→`1` for `Long` fields — a P10 violation
+  *silently truncate* `1.5`→`1` for `Long` fields — a P7 violation
   blocking shipping with defaults. `ACCEPT_FLOAT_AS_INT=false` fixes
   truncation but rejects spec-valid `1.0`/`1e2` and still coerces `"1"`.
   The custom helper is the only path that matches the spec.
@@ -187,7 +187,7 @@ Strategy per language:
   a sub-parser — makes identical decisions but re-introduces a per-field
   throw/catch and a sub-parser allocation, so it was rejected.
 
-### Serialize-side (P14)
+### Serialize-side (P12)
 
 On the way out the value is already decoded, so the wire-classification
 work (the `1.0`-vs-`1.5` parse, token typing) does **not** re-run — it
@@ -200,7 +200,7 @@ before emit:
   magnitudes the cap forbids, and Python ints are unbounded, so this
   check has real teeth on the out-path.
 - **TS `number` non-finiteness.** `JSON.stringify` silently turns `NaN`
-  and `±Infinity` into `null` (empirically verified — a P10 violation on
+  and `±Infinity` into `null` (empirically verified — a P7 violation on
   the *out* path). The serializer rejects non-finite numbers for
   `integer`/`number` fields (`Number.isFinite`, plus
   `Number.isSafeInteger` for `integer`) before stringifying. This is the
@@ -225,9 +225,9 @@ Loader must produce a clear, located diagnostic for each.
 
 | Reason | Values |
 |---|---|
-| Array form (P5/P10) | `["string","null"]`, `["integer","number"]`, full 7-element union, `[]`, `["string"]` |
-| Absent `type` (P10) | `{}`, `{"description":"…"}` |
-| Object without shape (P10.1) | `{"type":"object"}` with no `properties`, `patternProperties`, or `additionalProperties` (spec says "any object"; we require explicit intent) |
+| Array form (P6/P7) | `["string","null"]`, `["integer","number"]`, full 7-element union, `[]`, `["string"]` |
+| Absent `type` (P7) | `{}`, `{"description":"…"}` |
+| Object without shape (P7.1) | `{"type":"object"}` with no `properties`, `patternProperties`, or `additionalProperties` (spec says "any object"; we require explicit intent) |
 | `"null"` standalone | `{"type":"null"}` anywhere except as a branch of the [[nullability]] `oneOf` pattern |
 | Unknown type name | `"int"`, `"float"`, `"date"`, `"any"`, `"bigint"`, `"String"`, `"INTEGER"` |
 | Wrong outer type | `5`, `null`, `true`, `{"type":"string"}` |
@@ -259,15 +259,15 @@ For each accepted `type`, fuzz over:
 ## Interactions
 
 - **Gates which assertions apply.** Spec §3.4 silently ignores
-  type-mismatched keywords; per **P10.1** we instead **reject** mismatched
+  type-mismatched keywords; per **P7.1** we instead **reject** mismatched
   combinations at generator time (e.g. `{type:"string", minimum: 5}`
   errors).
-- **[[const]]**: per **P9.1**, emitted field type is `type`'s mapping
+- **[[const]]**: per **P13.1**, emitted field type is `type`'s mapping
   (`string`, not `"v1"`). Validator checks the const value at runtime so
   bumping a const never breaks the type signature.
 - **[[enum]]**: emitted type comes from `type`; `enum` narrows runtime
-  values; per **P9** unknown enum values are preserved on deserialize.
-- **[[oneOf]]**: rejected in general per **P5**. The **only** accepted
+  values; per **P13** unknown enum values are preserved on deserialize.
+- **[[oneOf]]**: rejected in general per **P6**. The **only** accepted
   shape is the [[nullability]] pattern — `oneOf` with exactly 2
   branches, one being `{"type":"null"}` (order-insensitive). This is
   also the only context in which `type:"null"` may appear.
@@ -275,7 +275,7 @@ For each accepted `type`, fuzz over:
   / `"array"`. Cross-product mismatches are generator-time errors.
   Object-shape decisions live in [[properties]] / [[additionalProperties]];
   in summary, **typed structs are open by default** (per JSON Schema
-  spec and **P9** — accept and preserve extras into a catch-all),
+  spec and **P13** — accept and preserve extras into a catch-all),
   closed behavior requires explicit `additionalProperties: false`.
 - **[[format]]**: format hints layer onto `type:"string"` (mostly); a
   format may pick a more specific emitted type (`time.Time` in Go for
@@ -301,7 +301,7 @@ no current toolchain emits it.
 - [[multipleOf]], [[minimum]], [[maximum]], [[exclusiveMinimum]],
   [[exclusiveMaximum]] — numeric assertions gated by `type`.
 - [[format]] — string refinements layered on `type:"string"`.
-- [[oneOf]] — rejected per P5 in the general case; the nullability
+- [[oneOf]] — rejected per P6 in the general case; the nullability
   `oneOf:[{T},{null}]` pattern is the one accepted exemption (see
   [[nullability]]).
 - [[required]], [[nullability]] — own optional/nullable wrapping.

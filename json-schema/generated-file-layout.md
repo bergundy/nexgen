@@ -3,7 +3,7 @@
 Not a JSON Schema keyword. Specifies how a set of input schema files
 becomes generated source in each language: the package structure, file
 names, where shared runtime lives, and how reference cycles and
-name collisions are handled at the file level. Driven by **P12** (one
+name collisions are handled at the file level. Driven by **P14** (one
 file per input; merge recursion, not files) and local-file-only
 external refs; the reference semantics that feed it live in [[ref]].
 
@@ -59,7 +59,7 @@ Holds the schema-independent runtime, defined once per package:
 - Spec-number helpers — `parseSpecInteger` (Go), `SpecInt` /
   `_parse_spec_integer` (Python), `SpecNumbers.specLong` (Java), TS's
   safe-integer check.
-- Shared (de)serialize scaffolding — the **P14** three-layer base, the
+- Shared (de)serialize scaffolding — the **P12** three-layer base, the
   Python optional-non-nullable `model_validator` helper. Java's
   collecting (de)serializer stays per-class, but the shared `Violation` /
   `ValidationException` / `SpecNumbers` classes live here.
@@ -122,7 +122,7 @@ only** — normalization differs per language.
 
 ## Recursion: hoist types, not files
 
-This is the file-level realization of **P12**. "Merge on cycle" does
+This is the file-level realization of **P14**. "Merge on cycle" does
 **not** mean merge whole input files — it means hoist only the cyclic
 types:
 
@@ -165,6 +165,6 @@ including dead ones; anonymous types stay nested):
 - [[properties]] — the shared identifier/collision algorithm.
 - [[nullability]] — optional/nullable wrapping (a source of cycle
   termination).
-- [[PRINCIPLES.md]] — **P12** (one file per input; merge recursion, not
+- [[PRINCIPLES.md]] — **P14** (one file per input; merge recursion, not
   files), local-file-only external refs, **P15** (one identifier namespace
   per scope).

@@ -42,13 +42,13 @@ Distilled:
 
 `properties` is the canonical way to declare a typed struct and is fully
 supported. Each member subschema is recursively a supported subschema
-(rejected at load if it isn't, per [[type]] and **P10.1**).
+(rejected at load if it isn't, per [[type]] and **P7.1**).
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P1 (hand-written feel)**: members lower to idiomatic fields
+- **P2 (idiomatic output)**: members lower to idiomatic fields
   (struct fields / interface members / model attrs / POJO fields +
   accessors).
-- **P10 / P10.1 (strict schema)**: each member must carry an explicit,
+- **P7 / P7.1 (strict schema)**: each member must carry an explicit,
   supported `type` (or the [[nullability]] `oneOf` pattern); a member
   schema that is bare `{}` or otherwise out-of-subset is rejected with a
   located diagnostic.
@@ -57,7 +57,7 @@ Loader behavior:
 - `properties` value not an object → reject.
 - Any member value not a valid subschema → reject (recurse).
 - A member schema that is empty `{}` / `true` / `false` → reject per
-  **P10.1** (no shape). Diagnostic names the member and asks for an
+  **P7.1** (no shape). Diagnostic names the member and asks for an
   explicit `type`.
 - Member name collisions after idiomatic case-mapping (see below) →
   reject (two JSON names would map to one field). Diagnostic names both.
@@ -84,7 +84,7 @@ from [[type]]; optional/nullable wrapping from [[required]] +
 Field naming: JSON member names are mapped to each language's idiomatic
 identifier and the **original JSON name is always pinned** via
 tag/alias/annotation so the wire contract is stable regardless of the
-emitted identifier (**P1**, **P3**). The exact transform, collision
+emitted identifier (**P2**, **P3**). The exact transform, collision
 policy, and escape hatch are specified in [Identifier
 case-mapping](#identifier-case-mapping) below.
 
@@ -171,7 +171,7 @@ over that full union and rejects on any coincidence; the `x-*-name`
 override (Stage 4) on the declaring member is the escape hatch, and
 re-mapping the member moves every name synthesized from it. The generator
 **never auto-mangles** (P15) — a numeric suffix would be unstable under
-schema evolution (P9).
+schema evolution (P13).
 
 ### Synthesized type names
 
@@ -216,8 +216,8 @@ this spec's other guarantees.
 
 ## Validator mapping
 
-Per **P7** each present member is validated at the (de)serializer
-boundary; per **P8** failures aggregate. `properties` contributes the
+Per **P10** each present member is validated at the (de)serializer
+boundary; per **P11** failures aggregate. `properties` contributes the
 per-member dispatch; presence/absence is [[required]], extras are
 [[additionalProperties]].
 
@@ -231,7 +231,7 @@ per-member dispatch; presence/absence is [[required]], extras are
 A member subschema validates recursively — nested objects become nested
 aggregates, arrays use [[items]], etc.
 
-### Serialize-side (P14)
+### Serialize-side (P12)
 
 `properties` is symmetric across directions: serialize recurses the
 shared `Validate` into each present member (a nested aggregate's own
@@ -266,7 +266,7 @@ failure is the JSON member name, identical to deserialize.
 |---|---|
 | `properties` not object | `{type:object, properties: []}`, `…: "x"` |
 | Member not a schema | `{properties:{a: 5}}`, `{properties:{a: "string"}}` |
-| Shapeless member (P10.1) | `{properties:{a: {}}}`, `{a: true}`, `{a: false}` |
+| Shapeless member (P7.1) | `{properties:{a: {}}}`, `{a: true}`, `{a: false}` |
 | Member missing `type` | `{properties:{a: {minLength: 1}}}` |
 | `properties` without `type:object` | `{properties:{...}}` (no `type`) — per [[type]] |
 | Name collision after recasing (emitted lang) | `{properties:{user_id:{…}, userId:{…}}}` → one Go `UserId` |
@@ -294,14 +294,14 @@ failure is the JSON member name, identical to deserialize.
 
 - **[[additionalProperties]]**: consumes `properties`' matched-name
   annotation. Members listed in `properties` are never "additional."
-  Typed structs are **open by default** (per spec + **P9**) — see
+  Typed structs are **open by default** (per spec + **P13**) — see
   [[additionalProperties]] for the binding decision; closed requires
   explicit `additionalProperties: false`.
 - **[[required]]**: orthogonal — `properties` types the members,
   `required` decides which must be present. A name may appear in
   `required` without appearing in `properties` (spec-legal); we
   **reject** that as a schema bug (required name with no declared
-  shape) per **P10.1**.
+  shape) per **P7.1**.
 - **[[patternProperties]]**: per spec also contributes to the
   matched-name annotation, but it is **temporarily unsupported** (rejected
   at load time in v1), so [[properties]] is the only contributor in
@@ -311,7 +311,7 @@ failure is the JSON member name, identical to deserialize.
 - **[[nullability]]**: a member whose schema is the recognized
   `oneOf` null pattern is nullable; it is optional+nullable when absent
   from `required` and required+nullable when listed (both supported —
-  presence and null-acceptance are orthogonal per **P10.2**).
+  presence and null-acceptance are orthogonal per **P8**).
 - **[[dependentRequired]] / [[dependentSchemas]] / [[propertyNames]] /
   [[minProperties]] / [[maxProperties]]**: layer additional object-level
   assertions over the same member set.

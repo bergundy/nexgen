@@ -29,7 +29,7 @@ Distilled:
 - `{"a": ["b","c"]}` means: if `a` is present, `b` and `c` must also be
   present. If `a` is absent, no constraint.
 - Names dependencies only — it never applies subschemas (contrast
-  [[dependentSchemas]], which does and is rejected per **P5**).
+  [[dependentSchemas]], which does and is rejected per **P6**).
 
 ## Support decision
 
@@ -42,10 +42,10 @@ conditional — a member that were unconditionally required would go in
 [[required]] instead.
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P7 (enforced)**: the conditional requirement is checked at the
-  boundary, aggregated per **P8**.
+- **P10 (enforced)**: the conditional requirement is checked at the
+  boundary, aggregated per **P11**.
 - This is the one *conditional* object keyword that lowers cleanly:
-  unlike [[dependentSchemas]] / `if`-`then`-`else` (rejected per **P5**),
+  unlike [[dependentSchemas]] / `if`-`then`-`else` (rejected per **P6**),
   it only tests name presence, never branches on subschema validation,
   so no language needs sum-type or conditional-shape machinery.
 
@@ -53,7 +53,7 @@ Loader behavior:
 - Value not an object → reject.
 - Any value not an array of unique strings → reject.
 - A trigger name or any dependent name not declared in [[properties]] →
-  reject per **P10.1** (presence check on an undeclared member is
+  reject per **P7.1** (presence check on an undeclared member is
   undecidable). Diagnostic names the offender.
 - A dependent name that is **also** in [[required]] → reject as
   redundant (it is unconditionally required already; the dependency is
@@ -70,7 +70,7 @@ None. All involved members keep their optional emitted form (see
 
 ## Validator mapping
 
-Per **P7**/**P8**. For each trigger present in the instance, verify each
+Per **P10**/**P11**. For each trigger present in the instance, verify each
 dependent is also present.
 
 | Language | Strategy |
@@ -80,7 +80,7 @@ dependent is also present.
 | Python | `model_validator(mode='wrap')` reading the raw dict: for each present trigger, raise `InitErrorDetails` for each absent dependent, merged into the aggregated `pydantic.ValidationError`. Dependency map stored as a `ClassVar` constant (per PRINCIPLES Python §5). |
 | Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): over the parsed tree's present-key set, for each present trigger push a `Violation{path:dependent, reason}` per missing dependent into the single `ValidationException`. |
 
-### Serialize-side (P14)
+### Serialize-side (P12)
 
 The cross-field check runs again before emit, over the **to-be-emitted**
 member set (present = will be written, after default omission). If a
@@ -105,7 +105,7 @@ only by an omitted default does **not** count as present.
 |---|---|
 | Not object / not arrays | `dependentRequired:[]`, `{"a":"b"}` |
 | Non-string / non-unique dependents | `{"a":[1]}`, `{"a":["b","b"]}` |
-| Undeclared trigger/dependent (P10.1) | trigger or dependent absent from [[properties]] |
+| Undeclared trigger/dependent (P7.1) | trigger or dependent absent from [[properties]] |
 | Dependent already in `required` | `required:["b"], dependentRequired:{"a":["b"]}` |
 | Trigger in `required` | `required:["a"], dependentRequired:{"a":["b"]}` |
 
@@ -116,7 +116,7 @@ only by an omitted default does **not** count as present.
 - Trigger present + a dependent absent → one
   `ValidationError{path:dependent, reason}`.
 - Multiple triggers each missing dependents → all reported in one shot
-  (P8).
+  (P11).
 
 ## Interactions
 
@@ -124,7 +124,7 @@ only by an omitted default does **not** count as present.
   (`required` wins; the dependency would be vacuous → load error).
 - **[[properties]]**: every trigger and dependent must be declared.
 - **[[dependentSchemas]]**: the subschema-applying sibling — **rejected**
-  per **P5** (conditional shape doesn't lower). `dependentRequired` is
+  per **P6** (conditional shape doesn't lower). `dependentRequired` is
   the supported subset of conditional object logic.
 - **[[nullability]]**: independent — dependency is about presence, not
   null-ness.
@@ -142,5 +142,5 @@ only by an omitted default does **not** count as present.
 
 - [[required]] — unconditional presence.
 - [[dependentSchemas]] — conditional *subschema* application (rejected,
-  P5).
+  P6).
 - [[properties]] — declares the members named here.

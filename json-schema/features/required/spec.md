@@ -34,18 +34,18 @@ Distilled:
 Each listed name becomes a **mandatory** member: in languages with a
 type-level presence channel it is emitted unwrapped (non-pointer /
 non-`?` / non-`Optional`); everywhere the (de)serializer enforces
-presence per **P7** and aggregates per **P8**.
+presence per **P10** and aggregates per **P11**.
 
 Rationale (citing [[PRINCIPLES.md]]):
-- **P7 (enforced, not advisory)**: presence is checked at the boundary,
+- **P10 (enforced, not advisory)**: presence is checked at the boundary,
   not just documented.
-- **P10.2 (optional ≠ nullable)**: presence and null-acceptance are
+- **P8 (optional ≠ nullable)**: presence and null-acceptance are
   orthogonal, so `required` composes freely with the [[nullability]]
   `oneOf` pattern. A required name whose schema is nullable is
   **required+nullable** — must be present, value may be `null` — and is
   **supported** (presence-check on, null-rejection off). See
   [[nullability]].
-- **P11 (distinguish absent from zero)**: Go/Java read a shadow pointer/
+- **P9 (distinguish absent from zero)**: Go/Java read a shadow pointer/
   boxed value to detect absence; a present zero value is not "absent."
 
 Loader behavior:
@@ -54,7 +54,7 @@ Loader behavior:
 - Duplicate elements → reject (spec says MUST be unique; a dup is a
   schema bug).
 - A required name **not** present in [[properties]] → reject per
-  **P10.1**: a mandatory member with no declared shape is undecidable.
+  **P7.1**: a mandatory member with no declared shape is undecidable.
   Diagnostic names the missing property. (This is the binding form of
   the rule sketched in [[properties]].)
 - A required name whose schema matches the [[nullability]] pattern →
@@ -88,7 +88,7 @@ non-null validator. See [[nullability]] and PRINCIPLES Java §3.
 
 ## Validator mapping
 
-Per **P7**/**P8**. The "Required, non-nullable" row of
+Per **P10**/**P11**. The "Required, non-nullable" row of
 [[nullability]]'s matrix is authoritative; summarized here:
 
 | Language | Presence enforcement |
@@ -103,7 +103,7 @@ rejected (may not be `null`) — same machinery as the
 optional-non-nullable null rejection in [[nullability]]. For a required
 **nullable** member, `null` is accepted (only absence is rejected).
 
-**Serialize side (P14).** The presence check runs again before emit, off
+**Serialize side (P12).** The presence check runs again before emit, off
 the in-memory value: a required member that is empty in memory (Go `nil`
 pointer · TS `undefined` · Python unset · Java `null` reference) is a
 `ValidationError`, so `MarshalJSON`/`serializeX`/`model_dump` fails
@@ -132,7 +132,7 @@ vs the missing shadow pointer on the wire).
 | Not an array | `required:"id"`, `required:{}` |
 | Non-string element | `required:[1]`, `required:[true]` |
 | Duplicate element | `required:["id","id"]` |
-| Name not in `properties` (P10.1) | `properties:{id:{…}}, required:["name"]` |
+| Name not in `properties` (P7.1) | `properties:{id:{…}}, required:["name"]` |
 
 ### Runtime fixtures (validator)
 
@@ -141,7 +141,7 @@ vs the missing shadow pointer on the wire).
 - Required **non-nullable** member present as `null` → rejected.
 - Required **nullable** member present as `null` → OK; absent → still
   one `ValidationError{…, reason:"required"}`.
-- Multiple required members absent → all reported in one shot (P8).
+- Multiple required members absent → all reported in one shot (P11).
 - Optional member absent → no error (contrast control).
 
 ## Interactions
@@ -149,7 +149,7 @@ vs the missing shadow pointer on the wire).
 - **[[properties]]**: orthogonal — `properties` types the member,
   `required` makes it mandatory. Required name must exist in
   `properties` (else reject).
-- **[[nullability]]**: orthogonal (P10.2). `required` controls presence;
+- **[[nullability]]**: orthogonal (P8). `required` controls presence;
   the `oneOf` null pattern controls null-acceptance. All four
   combinations are legal, including required+nullable. Optional is the
   default (name absent from `required`).

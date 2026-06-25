@@ -25,8 +25,8 @@ Distilled:
 **Support:** yes — runtime assertion.
 
 Lowers to a boundary count check in every language; no effect on emitted
-types. Citing [[PRINCIPLES.md]]: **P7** (enforced at the boundary),
-**P8** (aggregated).
+types. Citing [[PRINCIPLES.md]]: **P10** (enforced at the boundary),
+**P11** (aggregated).
 
 Loader behavior:
 - Value not a non-negative integer (per spec; honors the `1.0`-as-integer
@@ -47,7 +47,7 @@ the validator.
 
 ## Validator mapping
 
-Per **P7**/**P8**. The "number of properties" is the count of **distinct
+Per **P10**/**P11**. The "number of properties" is the count of **distinct
 member keys present on the wire**, taken at the deserialize boundary
 **before** default population (see [[default]]) — a default-filled key is never on
 the wire and does not count (see Interactions). Count the wire object as a
@@ -62,7 +62,7 @@ the two sets overlap — verified `json-schema/research/pyd_minprops_probe.py`).
 | Python | `model_validator`; `len(model_fields_set) > max` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into the aggregated `ValidationError`. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`> max`) — one number over the wire object, **not** populated POJO fields + catch-all map summed post-bind; a violation joins the single `ValidationException`. |
 
-### Serialize-side (P14)
+### Serialize-side (P12)
 
 The count runs again before emit, over the keys that **will actually be
 written** — i.e. *after* default omission and the omit-vs-`null` decision
@@ -99,7 +99,7 @@ the wire object.
 - Member count `== max` → OK (≤ is inclusive).
 - Member count `max+1` (including via extras) → one
   `ValidationError{reason:"maxProperties"}`.
-- Combined with other failing assertions → all reported in one shot (P8).
+- Combined with other failing assertions → all reported in one shot (P11).
 
 ## Interactions
 
