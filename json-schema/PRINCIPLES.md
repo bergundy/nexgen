@@ -35,8 +35,8 @@
     `model_fields_set` (Python §6 — the default Temporal converter owns
     `to_json`, so omission is baked into the model, not a `model_dump`
     call we make); TS `undefined`; Java `@JsonInclude(NON_NULL)`.
-    Empirically verified (`/tmp/serialize_probe/`,
-    `/tmp/temporal_pydantic_probe.py`, `/tmp/pyd_serialize_probe.py`).
+    Empirically verified (`json-schema/research/serialize_probe/`,
+    `json-schema/research/temporal_pydantic_probe.py`, `json-schema/research/pyd_serialize_probe.py`).
     See [[default]].
 12. **Distinguish absent from zero value**. For example in Go, prefer `string` for representing optional strings.
 13. **One file per input; merge recursion, not files.** Each input schema file maps to one generated module in a single flat output package per language (Go's one-directory-per-package rule forces the flatten; all languages flatten for an identical structure). Cross-file reference *cycles* do **not** merge whole files — only the cycle's strongly-connected types hoist into one shared module (Python `_recursive.py`; Go/Java/TS handle cycles natively). No circular-import gymnastics. See [[ref]], [[generated-file-layout]].
@@ -87,8 +87,8 @@
     logic is baked into a generated `@model_serializer(mode='wrap')`,
     which `to_json` honors (Python §6). Empirically verified in Go and
     Python, including against the live default converter
-    (`/tmp/serialize_probe/`, `/tmp/temporal_pydantic_probe.py`,
-    `/tmp/pyd_serialize_probe.py`, `/tmp/pyd_null_serialize_probe.py`).
+    (`json-schema/research/serialize_probe/`, `json-schema/research/temporal_pydantic_probe.py`,
+    `json-schema/research/pyd_serialize_probe.py`, `json-schema/research/pyd_null_serialize_probe.py`).
 18. **One identifier namespace per scope; synthesized-name collisions
     reject at load time — never silently mangled.** Beyond the declared
     properties and types, the generator *synthesizes* identifiers:
@@ -100,7 +100,7 @@
     package/module scope for package-level types/consts/aliases, the
     struct method-set for the Go accessor (which Go **forbids** from
     coinciding with a field — a hard compile error, verified
-    `/tmp/collide_probe`), the value-class body for enum/const members.
+    `json-schema/research/collide_probe`), the value-class body for enum/const members.
     The generator runs **one collision pass** over that union (after the
     identifier case-mapping is applied) and any two would-be identifiers
     that coincide are a **load-time reject** with a fix-it diagnostic. We
@@ -194,7 +194,7 @@
    The default Temporal `pydantic_data_converter` **owns** the serialize
    call — it does a plain `pydantic_core.to_json(value)`
    (`exclude_unset=False`, no validation; verified
-   `/tmp/temporal_pydantic_probe.py`, SDK 1.29 / Pydantic 2.13). So we
+   `json-schema/research/temporal_pydantic_probe.py`, SDK 1.29 / Pydantic 2.13). So we
    **cannot** depend on calling `model_dump(exclude_unset=True)`
    ourselves (P3 — work with the default converter) and instead bake the
    behavior into the model, where `to_json` honors it. Every generated
@@ -203,7 +203,7 @@
    explicitly-set `None` (incl. required+nullable) emits `null`. `const`
    needs **no** keep-set entry: its `model_validator(mode='before')`
    injects the fixed value when absent, which lands it *in*
-   `model_fields_set` (verified `/tmp/const_fields_set_probe.py`), so the
+   `model_fields_set` (verified `json-schema/research/const_fields_set_probe.py`), so the
    discriminator emits via the normal path with no special-casing — see
    [[const]]. Because `model_fields_set` distinguishes a wire `null`
    from a wire-absent key, Python round-trips optional+nullable
@@ -215,8 +215,8 @@
    `validate_assignment` covers in-place mutation. On the read side the
    converter's `TypeAdapter.validate_json` runs every model validator, so
    deserialize-side validation needs no extra hook. Empirically verified
-   against the live default converter (`/tmp/temporal_pydantic_probe.py`,
-   `/tmp/pyd_serialize_probe.py`, `/tmp/pyd_null_serialize_probe.py`).
+   against the live default converter (`json-schema/research/temporal_pydantic_probe.py`,
+   `json-schema/research/pyd_serialize_probe.py`, `json-schema/research/pyd_null_serialize_probe.py`).
    **Caveat:** the keep-set filters Python field names against serialized
    keys; once JSON-name aliases land (the case-mapping question in
    [[properties]]) the filter must map name↔alias. See [[nullability]].
@@ -289,7 +289,7 @@
    branch in the collecting deserializer over the node's `isNull()`,
    exactly the three-way Go makes in `UnmarshalJSON` (see
    [[nullability]] Java). The node-helper-vs-retained-`JsonDeserializer`
-   choice was settled empirically (`/tmp/javaagg/SpecCmp.java`): both
+   choice was settled empirically (`json-schema/research/javaagg/SpecCmp.java`): both
    make identical accept/reject decisions, but the node helper wins —
    no per-field throw/catch, zero sub-parser allocation, and full
    `{path, reason}` control.
@@ -304,10 +304,10 @@
    the names never collide across models (no need to involve them in the
    P18 per-scope collision pass) and they sit visibly with the type they
    serve (P1). This is the same nest-where-the-language-allows idiom P18
-   uses for synthesized const/enum value classes (`/tmp/nestprobe/`);
+   uses for synthesized const/enum value classes (`json-schema/research/nestprobe/`);
    Jackson resolves `@JsonDeserialize(using = User.Deserializer.class)`
    referencing a nested class on the enclosing type with no issue
-   (verified `/tmp/javaagg/`). The deserializer is the Jackson analog
+   (verified `json-schema/research/javaagg/`). The deserializer is the Jackson analog
    of Go's shadow-layout `UnmarshalJSON` (Go §5): a **two-stage
    lenient-then-validate** bind. Stage 1 reads the whole object into a
    `JsonNode` tree (`p.readValueAsTree()`), which *cannot* throw
@@ -338,7 +338,7 @@
    **wouldn't even suffice if we owned the mapper** — it intercepts only a
    fixed set of Jackson-recoverable *binding* events and must return a
    fabricated fallback to continue, so it never sees our spec/constraint
-   violations: verified (`/tmp/javaagg/HandlerProbe.java`) that 4 of 6 P8
+   violations: verified (`json-schema/research/javaagg/HandlerProbe.java`) that 4 of 6 P8
    cases fire **no** hook at all — `1.5` is silently truncated to `1`, the
    `±(2^53−1)` cap is a valid `long`, and missing-required is a non-event
    — while `"abc"`→`long` recovers by writing a fabricated `0`. It is also
@@ -348,7 +348,7 @@
    converter owns `to_json`, so behavior must live in the model
    (`@model_serializer`), not a call we make. Empirically proven
    end-to-end through `DefaultDataConverter.STANDARD_INSTANCE` in
-   `/tmp/javaagg/`: three independent deserialize errors aggregated in one
+   `json-schema/research/javaagg/`: three independent deserialize errors aggregated in one
    shot; `1.0` accepted / `1.5` rejected as integer; type mismatches
    aggregated; the `ValidationException` recovered from the
    `DataConverterException` cause chain with all violations intact.
@@ -387,7 +387,7 @@
    nullable collapses (absent and `null` share one in-memory `null`) →
    **conservative omit**, the same tier as Go (not the faithful TS/Python
    round-trip). Serialize-side error aggregation is **resolved with §5**
-   (same `ValidationException` primitive) — proven in `/tmp/javaagg/`: an
+   (same `ValidationException` primitive) — proven in `json-schema/research/javaagg/`: an
    invalid in-memory model fails loudly with every violation; a valid one
    omits an optional `null`.
 
@@ -432,8 +432,8 @@
    - required-non-nullable: bare value type → always emitted.
    `omitempty` on a pointer omits only `nil`, so a pointer-to-zero-value
    still serializes — pointer presence is the set-ness signal (P11/P12).
-   No hand-built map needed. Verified `/tmp/oe/`,
-   `/tmp/serialize_probe/`.
+   No hand-built map needed. Verified `json-schema/research/oe/`,
+   `json-schema/research/serialize_probe/`.
 
 7. **`<Field>OrDefault()` accessor for default-bearing fields (P11).**
    Go has no language-native default and the structs are otherwise

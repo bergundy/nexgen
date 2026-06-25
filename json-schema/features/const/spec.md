@@ -67,7 +67,7 @@ Rationale (citing [[PRINCIPLES.md]]):
   serializer from **silently rewriting** a wrong in-memory value: setting
   `kind="admin"` on a type whose const is `"user"` now fails `Validate`
   loudly instead of being masked. The earlier "always-emit" design (and
-  `/tmp/pyd_serialize_probe.py`'s omit-unset-drops-discriminator finding)
+  `json-schema/research/pyd_serialize_probe.py`'s omit-unset-drops-discriminator finding)
   was solving a presence problem that [[required]] already owns.
 
 Loader behavior:
@@ -161,7 +161,7 @@ EventKind     = Union[EventKindUser, str]  # the open field type
 The field is typed `EventKind`. Because `str` is in the union, **any**
 string stays assignable — including a future/unknown value (**P9.1**);
 the union is what an editor reads to suggest `"user"`. Three honest
-caveats, all verified in `/tmp/const_open_enum_probe.py`:
+caveats, all verified in `json-schema/research/const_open_enum_probe.py`:
 - It is **open, not closed** — to a static type checker the union is
   *semantically* just `str` (the `Literal` is absorbed), so it provides
   **no** compile-time closedness. That is exactly what we want for
@@ -227,10 +227,10 @@ package/module namespace. Per-target:
 
 | Target | Synthesized identifier(s) | Placement / scope |
 |---|---|---|
-| Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` (verified `/tmp/nestprobe/java`) |
-| Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model (`/tmp/nestprobe/pynest.py`) |
+| Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` (verified `json-schema/research/nestprobe/java`) |
+| Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model (`json-schema/research/nestprobe/pynest.py`) |
 | TypeScript | only the validator's `KIND_CONST` constant (the type is inline `"v" \| (string & {})`) | module |
-| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types — `/tmp/nestprobe/nest.go`); P18 backstop |
+| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types — `json-schema/research/nestprobe/nest.go`); P18 backstop |
 
 Per **P18** every synthesized name still enters the **same per-scope
 namespace** as the declared names and as one another; the generator runs
@@ -251,7 +251,7 @@ const has exactly one member (`USER`), so it can never self-collide on
 the second surface — but [[enum]] synthesizes **many** members into one
 class and is the first feature to exercise it: two enum values that
 case-map to the same Java identifier (`"user"` + `"USER"` → both `USER`)
-are a **hard compile error** (verified `/tmp/javacollide` Case A) → load
+are a **hard compile error** (verified `json-schema/research/javacollide` Case A) → load
 reject. The class-body pass only has to police **member-vs-member**: the
 fixed scaffolding (`value` field, `fromString`/`getValue`/
 `isUnrecognized` methods) does *not* constrain member names, because
@@ -297,7 +297,7 @@ in:
 |---|---|
 | Go | Plain field typed as the alias (`Kind UserEventKind`), no force-write. The consumer sets it idiomatically via the typed value constant: `UserEvent{Kind: UserEventKindUser}` (`type UserEventKind = string`; `const UserEventKindUser = UserEventKind("user")`). A forgotten field is the zero value (`""`), which the shared `Validate` rejects **loudly** on serialize — consistent with how Go treats every required field (no compile enforcement; validation catches it). No `readonly` exists in Go, so `Validate` is the whole guard. optional+const uses `*UserEventKind`+`,omitempty`, validated when non-nil. |
 | TypeScript | `readonly kind: "user" \| (string & {})`. Required+const is always set by the type, emitted by the normal `serializeX`; the validator rejects a non-const value (and `readonly` blocks in-memory mutation at compile time). optional+const emits when not `undefined`. No unconditional literal write. |
-| Python | The generated `@model_serializer(mode='wrap')` keeps **only** `model_fields_set` — **no** `const_fields` union. A `model_validator(mode='before')` injects the value when absent (`data[field]=<const>`), which makes it *provided* → in `model_fields_set` → emitted by the normal keep-set; and enforces `==` when present. The field carries **no** Pydantic `default` (a default isn't in `model_fields_set` and would be dropped). Verified end-to-end in `/tmp/const_fields_set_probe.py`: before-inject lands in `model_fields_set`, the const emits under plain `to_json` (the **default Temporal converter** path), a wrong value is rejected, and a genuinely-absent optional field stays omitted. |
+| Python | The generated `@model_serializer(mode='wrap')` keeps **only** `model_fields_set` — **no** `const_fields` union. A `model_validator(mode='before')` injects the value when absent (`data[field]=<const>`), which makes it *provided* → in `model_fields_set` → emitted by the normal keep-set; and enforces `==` when present. The field carries **no** Pydantic `default` (a default isn't in `model_fields_set` and would be dropped). Verified end-to-end in `json-schema/research/const_fields_set_probe.py`: before-inject lands in `model_fields_set`, the const emits under plain `to_json` (the **default Temporal converter** path), a wrong value is rejected, and a genuinely-absent optional field stays omitted. |
 | Java | `private final UserEventKind kind = UserEventKind.USER;` initialized to the known constant, getter only, **no setter**. The field is always `USER`, so Jackson's getter (via `@JsonValue`) emits `"user"` by the normal path — this is *not* force-write, the field simply cannot hold a wrong value. On the way in, the per-POJO collecting deserializer (PRINCIPLES Java §5) reads `kind`, checks `UserEventKind.USER.equals(v)`, and pushes a `Violation` on mismatch into the single `ValidationException`. The `final`-initializer is required+const only; optional+const is a normal nullable field, validated if non-null. **No builders** — they are a model-wide decision, deferred, and const does not justify them. |
 
 The serialize equality check has teeth only where a wrong value can be

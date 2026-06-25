@@ -190,7 +190,7 @@ Strategy per language:
   alternative — retaining a `JsonDeserializer<Long>` and driving it over
   a sub-parser — makes identical decisions but re-introduces a per-field
   throw/catch and a sub-parser allocation, so it was rejected (both
-  verified side-by-side, `/tmp/javaagg/SpecCmp.java`).
+  verified side-by-side, `json-schema/research/javaagg/SpecCmp.java`).
 
 ### Serialize-side (P17)
 

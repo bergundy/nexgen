@@ -67,7 +67,7 @@ example at `features/type/spec.md`:
   validate, the Jackson analog of Go's shadow-layout `UnmarshalJSON`),
   throwing one `ValidationException extends JsonMappingException` with
   `List<Violation{path,reason}>`. Proven end-to-end through the *default*
-  Temporal data converter (`/tmp/javaagg/`). Closes the last
+  Temporal data converter (`json-schema/research/javaagg/`). Closes the last
   language-section gap **and** the serialize-direction dependency
   (§6 rides the same primitive).
 - `features/nullability/spec.md`: cross-cutting design note (not a
@@ -133,7 +133,7 @@ example at `features/type/spec.md`:
   a `before`-validator inject
   (which lands it in `model_fields_set`, so the generic
   `@model_serializer` emits it with **no** `const_fields` keep-set —
-  verified `/tmp/const_fields_set_probe.py`), Go by the consumer via a
+  verified `json-schema/research/const_fields_set_probe.py`), Go by the consumer via a
   named alias `type X = string` + typed value const (`UserEventKind` /
   `UserEventKindUser`). Dropping force-write also stops the serializer
   silently rewriting a wrong in-memory value (now a loud `Validate`
@@ -167,12 +167,12 @@ example at `features/type/spec.md`:
   layer, not by re-serializing to a generic value tree. Serialize fails
   before emitting a byte; Python only re-validates to catch
   `model_construct`/mutation bypasses. Empirically proven in Go +
-  Python (`/tmp/serialize_probe/`, `/tmp/oe/`, `/tmp/pyd_serialize_probe.py`,
-  `/tmp/pyd_null_serialize_probe.py`). **Python encode adapter is not a
+  Python (`json-schema/research/serialize_probe/`, `json-schema/research/oe/`, `json-schema/research/pyd_serialize_probe.py`,
+  `json-schema/research/pyd_null_serialize_probe.py`). **Python encode adapter is not a
   call site we own** — the default Temporal `pydantic_data_converter`
   serializes via plain `pydantic_core.to_json` — so the omit/const/guard
   logic is baked into a generated `@model_serializer(mode='wrap')`, which
-  `to_json` honors (verified `/tmp/temporal_pydantic_probe.py`).
+  `to_json` honors (verified `json-schema/research/temporal_pydantic_probe.py`).
 - **`default` materialized on read, not stored (P11 amended).** Track
   set-ness; serialize omits unset fields with **no deep-equals** against
   the default; surface the default on read. **Why omit rather than
@@ -207,7 +207,7 @@ example at `features/type/spec.md`:
   no setter, no builders; Python injects it in a `model_validator(mode='before')`
   (which marks it set → `model_fields_set` → emitted by the generic
   `@model_serializer`, **no** `const_fields` keep-set —
-  `/tmp/const_fields_set_probe.py`); mutually exclusive with
+  `json-schema/research/const_fields_set_probe.py`); mutually exclusive with
   `default`/`enum`; `const:null` and composite consts rejected/deferred.
 - **Synthesized-identifier collisions reject at load time, never mangle
   (P18).** The generator emits names that aren't in the schema — [[const]]
@@ -216,7 +216,7 @@ example at `features/type/spec.md`:
   `<FIELD>_CONST` ([[default]]). These share **one per-scope namespace**
   with declared types/members and with each other (package/module scope;
   the Go accessor sits in the struct method-set, where a field/method
-  clash is a **hard compile error** — verified `/tmp/collide_probe`). A
+  clash is a **hard compile error** — verified `json-schema/research/collide_probe`). A
   single collision pass (after case-mapping) **rejects loudly** on any
   coincidence; auto-mangling (`EventKind2`) is rejected as unstable under
   schema evolution (P9) and exactly the silently-wrong output the mission
@@ -232,7 +232,7 @@ example at `features/type/spec.md`:
   would need a presence wrapper — rejected for v1 as P2 overhead).
   Per-field omit-vs-emit-`null` is a static decision from the
   optional/nullable/required declaration; the full table lives in
-  [[nullability]]. Proven `/tmp/pyd_null_serialize_probe.py`.
+  [[nullability]]. Proven `json-schema/research/pyd_null_serialize_probe.py`.
 - **`type` is single-string only** — array form rejected; missing
   `type` rejected; `type: "null"` standalone rejected (only allowed
   inside the nullability pattern).
@@ -309,7 +309,7 @@ example at `features/type/spec.md`:
   `UserDeserializer` types** — each model owns its pair, so the names
   never collide across models, and they sit with the type they serve
   (same nesting idiom as P18's const/enum value classes; verified
-  `/tmp/javaagg/`). The deserializer does a **two-stage
+  `json-schema/research/javaagg/`). The deserializer does a **two-stage
   lenient-tree-then-validate** bind (`readValueAsTree()` defeats
   Jackson's fail-fast `MismatchedInputException`, then every field runs
   through shared spec-strict + constraint helpers, collecting
@@ -320,7 +320,7 @@ example at `features/type/spec.md`:
   aggregate), and there is no `…StrictDeserializer` sibling: the
   explicit-`null` decision is a per-field branch over `node.isNull()`,
   the same three-way Go makes (Option A, chosen over driving a retained
-  `JsonDeserializer` through a sub-parser — `/tmp/javaagg/SpecCmp.java`).**
+  `JsonDeserializer` through a sub-parser — `json-schema/research/javaagg/SpecCmp.java`).**
   Crucially this works through the
   **default** Temporal data converter (which owns a stock
   `new ObjectMapper()` we can't configure — so a mapper-level
@@ -330,7 +330,7 @@ example at `features/type/spec.md`:
   (handler walks the chain → `getViolations()` → one BAD_REQUEST). Exact
   parallel of the Python `to_json`/`@model_serializer` finding. Serialize
   side (§6) rides the same primitive. Empirically proven end-to-end in
-  `/tmp/javaagg/`. Also closes additionalProperties OQ1 (closed-struct
+  `json-schema/research/javaagg/`. Also closes additionalProperties OQ1 (closed-struct
   extra-key aggregation falls out of the tree stage).
 
 ### Methodology established
@@ -339,8 +339,11 @@ example at `features/type/spec.md`:
   `JSON.parse` + `Number.isInteger` all have non-trivial behaviors
   that diverge from what their docs imply. Verify with throwaway
   probes before committing the spec text.
-- **Probes at `/tmp/`** (re-runnable any time, candidate to promote
-  into a conformance suite — see `type/spec.md` OQ2):
+- **Probes at `json-schema/research/`** (re-runnable any time, candidate to promote
+  into a conformance suite — see `type/spec.md` OQ2). Items below still
+  shown with a `/tmp/` path were not present on disk at relocation time —
+  only their documented findings survive; recreate under
+  `json-schema/research/` if you need to re-run them:
   - `/tmp/pyd_int_test.py` — baseline Pydantic int under strict vs
     lax × Python-mode vs JSON-mode
   - `/tmp/pyd_int_test2.py` — `Annotated[int, BeforeValidator(...)]`
@@ -350,8 +353,8 @@ example at `features/type/spec.md`:
   - `/tmp/jacktest/` — Jackson Maven project: default Long behavior,
     `ACCEPT_FLOAT_AS_INT=false`, a custom token-based `SpecLongDeserializer`
     (**superseded** — the strict parse is now a node helper
-    `SpecNumbers.specLong`, see `/tmp/javaagg/SpecCmp.java`)
-  - `/tmp/javaagg/` — **Java error-aggregation primitive** (Java §5/§6)
+    `SpecNumbers.specLong`, see `json-schema/research/javaagg/SpecCmp.java`)
+  - `json-schema/research/javaagg/` — **Java error-aggregation primitive** (Java §5/§6)
     proven end-to-end through `DefaultDataConverter.STANDARD_INSTANCE`
     (temporal-sdk 1.30.1): a per-POJO class-level `@JsonDeserialize`
     collecting deserializer — emitted as a **nested `User.Deserializer`**
@@ -374,7 +377,7 @@ example at `features/type/spec.md`:
     arrays/objects included) — **without** `@JsonAnySetter`/`@JsonAnyGetter`
     (a class-level custom (de)serializer bypasses those), so [[additionalProperties]]
     Java now rides the same primitive.
-  - `/tmp/javaagg/SpecCmp.java` — settles the spec-strict integer primitive
+  - `json-schema/research/javaagg/SpecCmp.java` — settles the spec-strict integer primitive
     shape (type/spec.md OQ): a **node helper** over `JsonNode` (Option A,
     chosen) vs a retained `JsonDeserializer<Long>` driven over
     `node.traverse()` (Option B). Both make **identical** accept/reject
@@ -397,7 +400,7 @@ example at `features/type/spec.md`:
   - `/tmp/pyd_map_shape.py` — Python pure-map shape instability: a
     `dict[str,T]` alias that becomes a `BaseModel` breaks `m["k"]`
     (justifies always emitting pure maps as Pydantic models)
-  - `/tmp/pyd_minprops_probe.py` — property counting for
+  - `json-schema/research/pyd_minprops_probe.py` — property counting for
     min/maxProperties: `len(model_fields_set)` is the exact wire-key
     count (includes extras, excludes default-filled fields). Naive
     `len(model_dump())` over-counts via defaults; `model_fields_set` +
@@ -407,42 +410,42 @@ example at `features/type/spec.md`:
     `[k:string]:T` alongside `id:number` is TS2411 (illegal); this is why
     typed extras use a named `additionalProperties: Record<string,T>`
     member instead of an inline index signature
-  - `/tmp/serialize_probe/` — Go shared `Validate()` called by BOTH
+  - `json-schema/research/serialize_probe/` — Go shared `Validate()` called by BOTH
     `MarshalJSON` and `UnmarshalJSON`; parse-layer (1.5 reject) stays
     deserialize-only; default omit-unset (const adds nothing); round-trip
     byte-identical (no default echo) — proves the P17 decomposition
-  - `/tmp/oe/` — Go `omitempty` quadrant: nil omits / ptr-to-`""` emits;
+  - `json-schema/research/oe/` — Go `omitempty` quadrant: nil omits / ptr-to-`""` emits;
     no-`omitempty` `*T` nil → `null`; type-alias `MarshalJSON` honors
     tags without recursion (the declarative omit-vs-`null` encode layer)
-  - `/tmp/pyd_serialize_probe.py` — Pydantic `exclude_unset` omits while
+  - `json-schema/research/pyd_serialize_probe.py` — Pydantic `exclude_unset` omits while
     the attr still reads the default (no deep-equals); explicit-set pins;
     const+`exclude_unset` would wrongly drop a *defaulted* discriminator;
     `model_construct` bypass caught by re-validation. (The "const must
     force-emit" conclusion is **superseded** — see
-    `/tmp/const_fields_set_probe.py`: a `before`-inject marks the field
+    `json-schema/research/const_fields_set_probe.py`: a `before`-inject marks the field
     set, so it emits with no force-keep and no Pydantic default.)
-  - `/tmp/const_fields_set_probe.py` — proves the **validate-only** const
+  - `json-schema/research/const_fields_set_probe.py` — proves the **validate-only** const
     design: a key injected by a `model_validator(mode='before')` lands in
     `model_fields_set`, so const emits under the generic
     `@model_serializer` (keep-set = `model_fields_set`, **no**
     `const_fields`) and under plain `to_json` (the default Temporal path);
     a wrong value is rejected; a genuinely-absent optional stays omitted.
-  - `/tmp/const_open_enum_probe.py` — the Python **open-enum hint** for
+  - `json-schema/research/const_open_enum_probe.py` — the Python **open-enum hint** for
     const: field typed `Union[Literal['user'], str]`. Pydantic preserves
     the union, auto-fill+emit work, a wrong value is rejected *by our
     validator*; crucially, without the validator Pydantic accepts an
     arbitrary `'user_v2'` through the `str` arm — proving the type is open
     (P9.1) and the runtime check is what closes it (the Python parallel to
     TS `string & {}` / the Go alias).
-  - `/tmp/pyd_null_serialize_probe.py` — per-field omit-vs-emit-`null`:
+  - `json-schema/research/pyd_null_serialize_probe.py` — per-field omit-vs-emit-`null`:
     required+nullable emits `null`; `model_fields_set` distinguishes
     wire-`null` from wire-absent (Python optional+nullable is faithful);
     optional-non-nullable explicit `null` rejected in strict mode
-  - `/tmp/collide_probe/` — Go **field/method name collision** is a hard
+  - `json-schema/research/collide_probe/` — Go **field/method name collision** is a hard
     compile error (`field and method with the same name NicknameOrDefault`),
     proving the `<Field>OrDefault` accessor can't silently shadow a
     declared member — grounds the P18 reject-at-load decision.
-  - `/tmp/javacollide/` — Java value-class (const/[[enum]]) collisions:
+  - `json-schema/research/javacollide/` — Java value-class (const/[[enum]]) collisions:
     (A) two static members with the same name → compile error (the
     enum-specific member-vs-member surface; const can't hit it with one
     member); (B) UPPER_SNAKE member `VALUE` coexists with lowerCamel
@@ -450,14 +453,14 @@ example at `features/type/spec.md`:
     field+method is legal in Java (unlike Go). Conclusion: the value
     class's class-body pass need only police member-vs-member, = the
     [[properties]] case-mapping collision policy applied per value class.
-  - `/tmp/nestprobe/` — **nesting** synthesized const/enum types to shrink
+  - `json-schema/research/nestprobe/` — **nesting** synthesized const/enum types to shrink
     the collision surface: Java `public static final class Kind` nested in
     `UserEvent` round-trips via Jackson **and coexists with an independent
     top-level `UserEventKind`** (the win); Python `Kind: ClassVar =
     Union[…]` resolves via `model_rebuild()` and round-trips; Go nested
     `type` decl is a **syntax error** (so Go stays flat package-level +
     P18 backstop). Grounds the "nest where supported, Go flat" decision.
-  - `/tmp/temporal_pydantic_probe.py` — **compatibility with the default
+  - `json-schema/research/temporal_pydantic_probe.py` — **compatibility with the default
     Temporal `pydantic_data_converter`** (SDK 1.29, Pydantic 2.13). The
     converter owns serialization via plain `pydantic_core.to_json`
     (`exclude_unset=False`, no validation), so `model_dump(exclude_unset=
@@ -465,7 +468,7 @@ example at `features/type/spec.md`:
     `@model_serializer(mode='wrap')`**: keep-set `model_fields_set`
     (the `∪ const_fields` union was later **dropped** — const rides the
     normal keep-set via a `before`-inject, see
-    `/tmp/const_fields_set_probe.py`) reproduces omit-unset, explicit-set
+    `json-schema/research/const_fields_set_probe.py`) reproduces omit-unset, explicit-set
     pinning (no deep-equals), faithful optional+nullable, and nested
     recursion; an in-serializer `validate_python` catches the
     `model_construct`/mutation bypass without recursion; deserialize via
@@ -484,7 +487,7 @@ example at `features/type/spec.md`:
     `model_validator(mode='before')` lands in `model_fields_set` — Pydantic
     treats it as provided. This is what lets `const` auto-fill *and* emit
     through the generic omit-unset serializer with no special keep-set
-    (`/tmp/const_fields_set_probe.py`).
+    (`json-schema/research/const_fields_set_probe.py`).
   - Jackson's default `Long` deserializer **silently truncates**
     `1.5` to `1`. Custom deserializer is mandatory, not optional.
   - Jackson is **fail-fast**: the first field's `MismatchedInputException`
@@ -499,7 +502,7 @@ example at `features/type/spec.md`:
     fabricated fallback to continue, so 4 of 6 P8 cases fire no hook
     (`1.5`→`1` silent, cap is a valid `long`, missing-required is a
     non-event), it's mapper-global, and deserialize-only. Verified
-    `/tmp/javaagg/HandlerProbe.java`. The tree route is the only one that
+    `json-schema/research/javaagg/HandlerProbe.java`. The tree route is the only one that
     works through the default converter (Java §5).
   - **Jackson 3.1's built-in problem collection**
     (`CollectingProblemHandler` / `readValueCollectingProblems()` →
@@ -516,7 +519,7 @@ example at `features/type/spec.md`:
     **cause** of a `DataConverterException`. So a custom
     `ValidationException extends JsonMappingException` reaches the Nexus
     handler intact via `getCause()`, carrying its `List<Violation>`.
-    Verified `/tmp/javaagg/`.
+    Verified `json-schema/research/javaagg/`.
   - The default Temporal Java converter
     (`JacksonJsonPayloadConverter.newDefaultObjectMapper()`) is a stock
     `new ObjectMapper()` + JavaTimeModule + Jdk8Module + field-visibility
@@ -546,7 +549,7 @@ example at `features/type/spec.md`:
     strictly more robust: the contract travels with the model under any
     caller. Caveat: the keep-set filter matches Python field names; JSON
     aliases (future case-mapping) will need a name↔alias map. Verified
-    `/tmp/temporal_pydantic_probe.py`.
+    `json-schema/research/temporal_pydantic_probe.py`.
 
 ## Remaining work
 
@@ -568,7 +571,7 @@ Next-highest leverage (newly surfaced TBDs that gate clusters of specs):
 - ~~**Java error-aggregation primitive** (PRINCIPLES Java §5).~~
   **RESOLVED (2026-06-23)** — per-POJO collecting `@JsonDeserialize`/
   `@JsonSerialize`, two-stage lenient-tree-then-validate, proven through
-  the default Temporal data converter (`/tmp/javaagg/`). Unblocked the
+  the default Temporal data converter (`json-schema/research/javaagg/`). Unblocked the
   closed-struct + multi-field-error story across every Java spec.
 - ~~**`$ref`** — now the single highest-priority structural keyword
   (drives file-per-input + merge-on-cycle, P13–P14).~~ **SPEC WRITTEN.**
@@ -604,7 +607,7 @@ decisions:
   synthesize *multiple* members into one Java value class / Go alias /
   Python union, so it is the first to exercise the **member-vs-member**
   surface (two values case-mapping to the same identifier → load reject;
-  Java verified `/tmp/javacollide` Case A). The value-class **name** is
+  Java verified `json-schema/research/javacollide` Case A). The value-class **name** is
   package-scoped like const's; the class-body pass is the [[properties]]
   collision policy applied per value class. Scaffolding members don't
   constrain member names (Cases B/C). No new naming policy needed.
@@ -682,7 +685,7 @@ Snapshot as of this checkpoint.
    to flat package-level `UserEventKind`** (no nested types) with the P18
    collision pass as backstop. Deliberately trades uniform cross-language
    shape for collision-minimization + idiom. All four verified
-   (`/tmp/nestprobe/`: Java nested value class coexists with a top-level
+   (`json-schema/research/nestprobe/`: Java nested value class coexists with a top-level
    `UserEventKind`; Python `ClassVar` alias round-trips; Go nested-type
    decl is a syntax error). Landed in [[properties]] Resolved Q2 +
    [[const]] naming section. Surfaced by `UserEvent.kind` ⨯
@@ -737,7 +740,7 @@ Snapshot as of this checkpoint.
    time — see the cross-cutting entry below (P10.4).
 3. ~~`<Field>OrDefault` / `DEFAULT_<FIELD>` name collisions.~~ **RESOLVED
    (P18)** — Go accessor vs declared member is a hard compile error
-   (`/tmp/collide_probe`); both names join the per-scope collision pass
+   (`json-schema/research/collide_probe`); both names join the per-scope collision pass
    → load reject, no mangling; escape hatch is the [[properties]]
    `x-*-name` override. Python/Java synthesize no new name.
 
@@ -774,7 +777,7 @@ Snapshot as of this checkpoint.
   converter (mechanism baked into the POJO, not the mapper — parallel to
   the Python `to_json` finding); the exception surfaces as the cause of
   `DataConverterException`. Serialize direction (§6) rides the same
-  primitive. Proven `/tmp/javaagg/`. **No open language-section gaps
+  primitive. Proven `json-schema/research/javaagg/`. **No open language-section gaps
   remain.**
 
 ## How to pick up the work in a new session

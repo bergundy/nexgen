@@ -345,18 +345,18 @@ failure is the JSON member name, identical to deserialize.
      - **Java** — `public static final class Kind` nested in `UserEvent`,
        referenced `UserEvent.Kind`. Verified to deserialize/serialize via
        Jackson **and coexist with an independent top-level `UserEventKind`**
-       (`/tmp/nestprobe/java`). This is the primary win — Java is the only
+       (`json-schema/research/nestprobe/java`). This is the primary win — Java is the only
        target that *cannot* inline a const/enum, so it is where the
        collision bit hardest.
      - **Python** — a `Kind: ClassVar = Union[Literal[…], str]` member on
        the model, field typed `"UserEvent.Kind"`, resolved by
-       `model_rebuild()` (`/tmp/nestprobe/pynest.py`). The `ClassVar`
+       `model_rebuild()` (`json-schema/research/nestprobe/pynest.py`). The `ClassVar`
        spelling is slightly unidiomatic but functional.
      - **TypeScript** — a const has **no named type** (it is inline
        `"v" | (string & {})`), so there is nothing to collide or nest; an
        [[enum]] stays an alias (nest under a `namespace` only if needed).
      - **Go** — has **no nested types** (a `type` decl inside a struct is
-       a syntax error, `/tmp/nestprobe/nest.go`), so it **falls back to
+       a syntax error, `json-schema/research/nestprobe/nest.go`), so it **falls back to
        flat package-level composition** `<EnclosingType><Property>`
        (`UserEventKind`) and relies on the **P18 collision backstop**
        (load reject + `x-go-name`) for the residual coincidence.

@@ -273,8 +273,8 @@ Go and Java:
   level but tracks `model_fields_set`, so the generated
   `@model_serializer` re-emits a wire `null` as `null` and omits a
   wire-absent key (empirically verified through the **default Temporal
-  converter**, `/tmp/temporal_pydantic_probe.py`, and
-  `/tmp/pyd_null_serialize_probe.py`). Go (`*T` `nil`) and
+  converter**, `json-schema/research/temporal_pydantic_probe.py`, and
+  `json-schema/research/pyd_null_serialize_probe.py`). Go (`*T` `nil`) and
   Java (`null`) genuinely cannot distinguish the two in memory, so they
   emit a single canonical form — the key is **omitted** (the
   conservative choice; emitting `null` would fabricate a value the
@@ -347,7 +347,7 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
   omitted); required+nullable → `*T` **without** `omitempty` (nil →
   `null`); required-non-nullable → bare value type. The type-alias
   `MarshalJSON` lets the tags do the work (PRINCIPLES Go §6; verified
-  `/tmp/oe/`).
+  `json-schema/research/oe/`).
 - **TypeScript** — `serializeX` omits `undefined`, emits `null`; the
   three-state gives faithful optional+nullable for free.
 - **Python** — a generated `@model_serializer(mode='wrap')` emits only
@@ -356,7 +356,7 @@ Per-language mechanism (all are *encode-adapter* concerns; the shared
   behavior. Baked into the model because the default Temporal
   `pydantic_data_converter` owns the `to_json` call — we don't pass
   `exclude_unset` ourselves (PRINCIPLES Python §6; verified
-  `/tmp/temporal_pydantic_probe.py`).
+  `json-schema/research/temporal_pydantic_probe.py`).
 - **Java** — `@JsonInclude(NON_NULL)` on optional fields;
   `@JsonInclude(ALWAYS)` forces the required+nullable `null`;
   optional+nullable collapses to the conservative omit (PRINCIPLES

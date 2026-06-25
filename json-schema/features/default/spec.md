@@ -117,7 +117,7 @@ which differ per language:
 
 | Language | Set-ness signal (omit-unset) | Read-side surfacing of the default |
 |---|---|---|
-| Python | `model_fields_set`, applied by a generated `@model_serializer` | **native** — the Pydantic field `default=<v>` makes the attribute *read* as the default; the generated `@model_serializer(mode='wrap')` omits it on the way out by emitting only `model_fields_set` keys. Omission is baked into the model (the default Temporal converter owns the `to_json` call, so we can't pass `exclude_unset` ourselves — verified `/tmp/temporal_pydantic_probe.py`). |
+| Python | `model_fields_set`, applied by a generated `@model_serializer` | **native** — the Pydantic field `default=<v>` makes the attribute *read* as the default; the generated `@model_serializer(mode='wrap')` omits it on the way out by emitting only `model_fields_set` keys. Omission is baked into the model (the default Temporal converter owns the `to_json` call, so we can't pass `exclude_unset` ourselves — verified `json-schema/research/temporal_pydantic_probe.py`). |
 | Java | `null` field + `@JsonInclude(NON_NULL)` | **native** — the generated **getter** returns the default when the backing field is `null` (`return nickname != null ? nickname : "anon";`). Getters already exist in the POJO design (PRINCIPLES Java §1). |
 | TypeScript | `undefined` (the `?` field) | **advisory** — interfaces have no methods (PRINCIPLES TS §4), so the consumer applies the default with the native `?? DEFAULT_X`; the generator emits `export const DEFAULT_X = "anon"`. No accessor needed; `??` is the idiom. |
 | Go | `*T` `nil` + `,omitempty` | **generated accessor** — a `func (m M) <Field>OrDefault() T` returns `*m.Field` when set and the default literal when `nil` (`func (u User) NicknameOrDefault() string { if u.Nickname != nil { return *u.Nickname }; return "anon" }`). The bare field stays `*T` (set-ness intact); the accessor is the materialize-on-read path. Emitted **only** for default-bearing fields. Modeled on proto3's `GetX()`. |
@@ -129,7 +129,7 @@ The read-side surfacing synthesizes **one new identifier in two targets**
 
 | Target | Synthesized identifier | Scope | Collision risk |
 |---|---|---|---|
-| Go | `<Field>OrDefault()` method | struct method-set | a **declared** member whose name maps to `<Field>OrDefault` (Go forbids a field and method of the same name — a **hard compile error**, verified `/tmp/collide_probe`); another `<Field>OrDefault` from a sibling field |
+| Go | `<Field>OrDefault()` method | struct method-set | a **declared** member whose name maps to `<Field>OrDefault` (Go forbids a field and method of the same name — a **hard compile error**, verified `json-schema/research/collide_probe`); another `<Field>OrDefault` from a sibling field |
 | TypeScript | `DEFAULT_<FIELD>` const | module | another `DEFAULT_<FIELD>` from a field that case-maps the same, or a [[const]] `<FIELD>_CONST` |
 | Python | none (native Pydantic field `default=`) | — | — |
 | Java | none (default folds into the existing getter) | — | — |
@@ -177,9 +177,9 @@ default. Mechanisms (all empirically verified):
 
 | Language | Omit-unset mechanism |
 |---|---|
-| Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON` (PRINCIPLES Go §6). Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence (`/tmp/oe/`, `/tmp/serialize_probe/`). |
+| Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON` (PRINCIPLES Go §6). Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence (`json-schema/research/oe/`, `json-schema/research/serialize_probe/`). |
 | TypeScript | `serializeX` skips keys whose value is `undefined` before `JSON.stringify` (PRINCIPLES TS §6). |
-| Python | generated `@model_serializer(mode='wrap')` emits only `model_fields_set` keys — omits unset while the attribute still reads the default; explicit-set (incl. set-to-default) pins. No deep-equals. Baked into the model so the **default Temporal `pydantic_data_converter`** (which owns `to_json`, not us) honors it (`/tmp/temporal_pydantic_probe.py`, `/tmp/pyd_serialize_probe.py`). |
+| Python | generated `@model_serializer(mode='wrap')` emits only `model_fields_set` keys — omits unset while the attribute still reads the default; explicit-set (incl. set-to-default) pins. No deep-equals. Baked into the model so the **default Temporal `pydantic_data_converter`** (which owns `to_json`, not us) honors it (`json-schema/research/temporal_pydantic_probe.py`, `json-schema/research/pyd_serialize_probe.py`). |
 | Java | `@JsonInclude(NON_NULL)` — `null` (unset) omitted; getter still returns the default to the consumer. |
 
 Three consequences that the count specs already encode:

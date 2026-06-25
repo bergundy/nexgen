@@ -131,7 +131,7 @@ JSON members; the in-memory catch-all is bridged by the generated
 `@JsonDeserialize`/`@JsonSerialize` — which routes undeclared tree keys
 into the catch-all map and spreads them back on write, **not**
 `@JsonAnySetter`/`@JsonAnyGetter` (a class-level custom (de)serializer
-bypasses those); verified `/tmp/javaagg/`, TS hand-emitted ser/deser that
+bypasses those); verified `json-schema/research/javaagg/`, TS hand-emitted ser/deser that
 lifts top-level extras into `additionalProperties` and spreads them back
 out, Python `model_extra`).
 
@@ -309,7 +309,7 @@ unambiguous in both directions.
    undeclared key as a `Violation` in the same single-shot pass — no
    fail-fast `ignoreUnknown=false`/`UnrecognizedPropertyException`.
    Aggregated with declared-field errors (**P8**). Proven through the
-   default Temporal data converter in `/tmp/javaagg/`.
+   default Temporal data converter in `json-schema/research/javaagg/`.
 2. **Catch-all representation — resolved.** All four languages wrap the
    catch-all in a dedicated named member, even for pure maps, so the
    emitted shape is stable when `properties` are added later: Go exported
