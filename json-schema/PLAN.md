@@ -123,6 +123,40 @@ example at `features/type/spec.md`:
   `default:null` rejected, expected to relax. 1 open question —
   composite-default materialization.
 
+- `features/services/spec.md`: complete — **supported**. Nexus extension
+  (not a JSON Schema keyword, like [[nullability]]): a top-level
+  `services` map → per-language service bindings (Go `struct` of
+  `OperationReference`s, TS `nexus.service`, Python `@nexusrpc.service`
+  class, Java `@Service` interface). Two-name model (identifier key +
+  optional `fqn` wire name); operation default wire name = PascalCase
+  canonical; the generator always emits the resolved wire name explicitly
+  (the four SDKs default differently) for P1. `input`/`output` is
+  **object-only** — a `$ref` to an object `$defs` or an inline object
+  promoted to a synthesized `<Op>Input`/`Output` type (P15 namespace);
+  non-object I/O rejects; omitted → void (`nexus.NoValue`/`void`/`None`/
+  `void`). **Document gating now lives in [[input-files]]:** `services` is
+  recognized only in a Nexus document (root `nexusrpc: "1.0.0"`); the
+  envelope, dialect, and stray-`services` rules moved there. TS service
+  const is `camelCase` (the WIT generator emits
+  PascalCase and must be fixed). Services emit into the declaring module;
+  Java is the per-file exception. Shape-compatible with the existing WIT
+  emitters for reuse by the future separate crate. 2 open questions.
+
+### Cross-cutting (continued)
+
+- `input-files.md`: cross-cutting design note (not a keyword) — the
+  document-level concerns of an input file. Two file modes selected by the
+  root `nexusrpc` property: **Nexus document** (root is an envelope, not a
+  type; enables [[services]]; a schema-shaped root keyword rejects) vs
+  **pure JSON Schema** (root is a type). Root rules: `nexusrpc` v1 =
+  exactly `"1.0.0"` (else reject, P13 forward-compat); `$schema` optional,
+  2020-12 only / assumed-when-absent / reject-other (P5); `$id` rejected
+  (owned by [[ref]]); stray-`services` guard (P7.1). References [[ref]] /
+  [[generated-file-layout]] for the input-set/closure and module
+  computation rather than duplicating them. Houses the dialect/`$id`
+  decisions the standalone `$schema`/`$id` keyword specs should defer to.
+  2 open questions (keyword-spec deferral; widening the `nexusrpc` range).
+
 ### Key decisions taken
 
 - **Serialize-side validation is first-class (P12).** Validation runs in
@@ -361,7 +395,10 @@ decisions:
   `generated-file-layout.md`). Named-targets-only, local-file-only, no
   siblings, no `$id`; single flat package per language; cyclic types hoist
   (not merge; P14); unsatisfiable-cycle reject.
-- Remaining: `$schema`, `$id` (reject — folded into `$ref` spec),
+- Remaining: `$schema`, `$id` (the document-level rules are already
+  settled — `$schema` 2020-12-only/assumed in [[input-files]]; `$id`
+  reject in [[ref]] + restated in [[input-files]] — so these keyword specs
+  should defer to those rather than restate),
   `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$vocabulary`, `$comment`.
 
 **Metadata / annotations:**
@@ -398,6 +435,23 @@ decisions:
 2. Validating the const value against constraint keywords (`pattern`,
    `minLength`, `minimum`, `multipleOf`, …) at load time — deferred to
    land with those constraint features.
+
+### `input-files.md`
+1. **Standalone `$schema` / `$id` keyword specs defer here** — the
+   dialect rule (2020-12 only / assumed-when-absent) and the `$id` reject
+   are settled in this doc + [[ref]]; those keyword specs should point
+   here rather than restate.
+2. **Widening the `nexusrpc` version range** — v1 pins `"1.0.0"`; the
+   reject path is forward-compatible but the acceptance policy for
+   `>1.0.0` is deferred (P13.2).
+
+### `features/services/spec.md`
+1. **Explicit-vs-default wire name (Python/Java)** — generator always
+   emits `name=` for P1 clarity; could omit when `fqn` equals the SDK
+   default. Deferred.
+2. **Async/handler-shape metadata** — generated binding is a typed
+   contract only; sync/async, headers, links are implementation-time and
+   not surfaced. Flagged for future I/O cardinality/streaming concepts.
 
 ### `features/default/spec.md`
 1. Composite (object/array) defaults — deferred, expected to relax. v1

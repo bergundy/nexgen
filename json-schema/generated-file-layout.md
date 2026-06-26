@@ -115,7 +115,10 @@ Any collision in that namespace → **load reject** with a fix-it
 - two inputs flattening to the same module (`full/name` vs `full_name`);
 - an input flattening onto a reserved generated name (a root-level
   `definitions.json`);
-- (type-name collisions are handled the same way — see [[ref]]).
+- (type-name collisions are handled the same way — see [[ref]]);
+- a generated **service binding** colliding with a model (or synthesized
+  I/O) type — service `ChatService` against a `$defs/ChatService`; see
+  [[services]], which shares this one namespace.
 
 Like [[properties]], collisions are evaluated **per emitted target
 only** — normalization differs per language.
@@ -158,10 +161,23 @@ including dead ones; anonymous types stay nested):
 - **Go** — no aggregator; capitalized identifiers are exported.
 - **Java** — `public` class per file; boilerplate classes public too.
 
+## Service bindings
+
+A Nexus service ([[services]]) emits into the **same per-input module** as
+the models declared in that file (Go/Python/TS), sharing the one package
+namespace and the P15 collision pass with the file's types and the
+synthesized operation `<Op>Input`/`<Op>Output` types. **Java is the
+exception**: each service is its own `<Service>.java`, like each model
+class. Aggregators (`index.ts` / `__init__.py`) re-export services too.
+
 ## See also
 
+- [[input-files]] — per-file document modes (Nexus document vs pure JSON
+  Schema) and root rules decided before the input-set/module computation
+  here.
 - [[ref]] — reference semantics, type-name derivation, recursion graph +
   satisfiability, bare-`$ref`-root alias.
+- [[services]] — Nexus service/operation bindings placed by these rules.
 - [[properties]] — the shared identifier/collision algorithm.
 - [[nullability]] — optional/nullable wrapping (a source of cycle
   termination).

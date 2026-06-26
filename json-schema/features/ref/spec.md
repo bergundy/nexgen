@@ -266,6 +266,10 @@ helper is emitted — the named-type machinery already in place
   collection-wrapped (terminating) edge.
 - **[[generated-file-layout]]** — owns the package structure this spec
   references.
+- **[[services]]** — an operation's `input`/`output` is a `$ref` to a
+  `$defs` type or an inline schema promoted to a synthesized
+  `<Op>Input`/`Output` type; both join this spec's reference graph and
+  type-name namespace.
 
 ## Ecosystem variance
 
@@ -278,6 +282,9 @@ helper is emitted — the named-type machinery already in place
 
 ## See also
 
+- [[input-files]] — per-file document modes and root rules (the `$id`
+  reject restated here, the `$schema` dialect, the Nexus-document
+  envelope) that precede the input-set/closure computed here.
 - [[generated-file-layout]] — the output package structure this spec
   references (file names, shared `definitions`, `_recursive`,
   aggregators, flattening, single-vs-multi-input).
@@ -286,6 +293,8 @@ helper is emitted — the named-type machinery already in place
 - [[nullability]], [[required]] — optional/nullable wrapping and cycle
   termination.
 - [[type]] — the named-type emission `$ref` delegates to.
+- [[services]] — operation `input`/`output` `$ref` and inline-type
+  promotion.
 - [[PRINCIPLES.md]] — **P6** (strict subset), **P7/P7.1** (reject
   loudly), **P14** (one file per input; merge recursion, not files),
   local-file-only external refs, **P15** (one identifier namespace per
