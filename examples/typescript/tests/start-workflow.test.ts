@@ -3,7 +3,8 @@ import { describe, expect, test } from "vitest";
 import type { temporal } from "@temporalio/proto";
 import * as nexus from "nexus-rpc";
 
-import { StartedWorkflow, StartWorkflowService } from "../start-workflow/index.ts";
+import { StartedWorkflow } from "../start-workflow/resources.ts";
+import { StartWorkflowService } from "../start-workflow/service.ts";
 import { executeWorkflowWithNexus, withWorkflowEnvironment } from "./helpers.ts";
 
 const workflowsPath = fileURLToPath(

@@ -488,6 +488,9 @@ struct RenderedOperation<'a> {
     return_doc: Option<String>,
     input_proto_ref: String,
     output_proto_ref: String,
+    input_type_id: String,
+    output_type_id: String,
+    input_model_name: Option<String>,
     input_type_parameters: Vec<RenderedTypeParameter>,
     input_annotation: String,
     input_to_proto_expr: String,
@@ -770,7 +773,7 @@ fn resolve_operation<'a>(
     );
     let output_transform = operation.output_transform.as_ref();
     let output_resource_return = operation.output_resource_return.clone();
-    let (output_proto_ref, output_annotation_default) = match &operation.output {
+    let (output_proto_ref, output_type_id, output_annotation_default) = match &operation.output {
         PlannedOperationOutput::Message(output) => {
             if output_transform.is_none()
                 && output_resource_return.is_none()
@@ -782,14 +785,20 @@ fn resolve_operation<'a>(
             }
             (
                 operation_type_ref(output),
+                output.info.full_name.clone(),
                 resolve_output_annotation(output, api_plan, enums, flags, variants, models),
             )
         }
-        PlannedOperationOutput::Resource { type_name } => (type_name.clone(), type_name.clone()),
-        PlannedOperationOutput::None => ("void".to_string(), "void".to_string()),
+        PlannedOperationOutput::Resource { type_name } => {
+            (type_name.clone(), type_name.clone(), type_name.clone())
+        }
+        PlannedOperationOutput::None => {
+            ("void".to_string(), "void".to_string(), "void".to_string())
+        }
     };
-    let input_type_parameters = models
-        .get(&operation.input.info.full_name)
+    let input_model = models.get(&operation.input.info.full_name);
+    let input_model_name = input_model.map(|model| model.name.clone());
+    let input_type_parameters = input_model
         .map(|model| {
             model
                 .type_parameters
@@ -823,6 +832,9 @@ fn resolve_operation<'a>(
             .map(str::to_string),
         input_proto_ref: operation_type_ref(&operation.input),
         output_proto_ref,
+        input_type_id: operation.input.info.full_name.clone(),
+        output_type_id,
+        input_model_name,
         input_type_parameters,
         input_annotation,
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
@@ -2158,10 +2170,7 @@ fn render_module_files(
     let support_source = support_source.filter(|source| !source.trim().is_empty());
     let support_exports = support_source.map(support_exports);
     let mut files = BTreeMap::<PathBuf, String>::new();
-    files.insert(
-        "index.ts".into(),
-        render_index_module(enums, flags, variants, models, services),
-    );
+    files.insert("index.ts".into(), render_index_module(services));
     files.insert(
         "models.ts".into(),
         render_models_module(
@@ -2476,68 +2485,61 @@ fn render_support_module(support_source: &str) -> String {
     render_generated_module(String::new(), support_source.to_string())
 }
 
-fn render_index_module(
-    enums: &[&RenderedEnum],
-    flags: &[&RenderedFlags],
-    variants: &[&RenderedVariant],
-    models: &[&RenderedModel],
-    services: &[RenderedService<'_>],
-) -> String {
+fn render_index_module(services: &[RenderedService<'_>]) -> String {
     let mut output = String::new();
     output.push_str(GENERATED_HEADER);
     output.push_str("\n\n");
-    for service in services {
-        output.push_str("export { ");
-        output.push_str(service.name);
-        output.push_str(" } from './service.ts';\n");
-    }
     for service in services {
         for operation in &service.operations {
             output.push_str("export { ");
             output.push_str(&operation.attr_name);
             output.push_str(" } from './operations/");
             output.push_str(&operation_file_name(operation));
-            output.push_str(".ts';\n");
+            output.push_str("';\n");
         }
     }
-
-    let value_model_names = enums
-        .iter()
-        .map(|enumeration| enumeration.name.as_str())
-        .chain(flags.iter().map(|flags| flags.name.as_str()))
-        .collect::<Vec<_>>();
-    if !value_model_names.is_empty() {
-        output.push_str("export { ");
-        output.push_str(&value_model_names.join(", "));
-        output.push_str(" } from './models.ts';\n");
-    }
-
-    let type_model_names = variants
-        .iter()
-        .map(|variant| variant.name.as_str())
-        .chain(models.iter().map(|model| model.name.as_str()))
-        .collect::<Vec<_>>();
-    if !type_model_names.is_empty() {
-        output.push_str("export type { ");
-        output.push_str(&type_model_names.join(", "));
-        output.push_str(" } from './models.ts';\n");
-    }
-
-    let resource_names = services
+    let mut input_model_names = services
         .iter()
         .flat_map(|service| {
             service
-                .resources
+                .operations
                 .iter()
-                .map(|resource| resource.type_name.as_str())
+                .filter_map(|operation| operation.input_model_name.as_deref())
         })
         .collect::<Vec<_>>();
-    if !resource_names.is_empty() {
-        output.push_str("export { ");
-        output.push_str(&resource_names.join(", "));
-        output.push_str(" } from './resources.ts';\n");
+    input_model_names.sort();
+    input_model_names.dedup();
+    if !input_model_names.is_empty() {
+        output.push_str("export type { ");
+        output.push_str(&input_model_names.join(", "));
+        output.push_str(" } from './models';\n");
     }
     output
+}
+
+fn render_operation_registry_module(services: &[RenderedService<'_>]) -> String {
+    let mut body = String::new();
+    body.push_str("export const operationRegistry = [\n");
+    for service in services {
+        for operation in &service.operations {
+            body.push_str("  {\n");
+            body.push_str("    service: ");
+            body.push_str(&typescript_string_literal(service.wire_name));
+            body.push_str(",\n");
+            body.push_str("    operation: ");
+            body.push_str(&typescript_string_literal(operation.wire_name));
+            body.push_str(",\n");
+            body.push_str("    inputType: ");
+            body.push_str(&typescript_string_literal(&operation.input_type_id));
+            body.push_str(",\n");
+            body.push_str("    outputType: ");
+            body.push_str(&typescript_string_literal(&operation.output_type_id));
+            body.push_str(",\n");
+            body.push_str("  },\n");
+        }
+    }
+    body.push_str("] as const;\n");
+    body
 }
 
 fn render_models_module(
@@ -2614,10 +2616,10 @@ fn render_models_module(
     render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
     render_value_imports(
         &mut imports,
-        "../nex-gen-runtime.ts",
+        "../nex-gen-runtime",
         &used_import_names(&body, &["registerNexusType".to_string()]),
     );
-    render_support_imports(&mut imports, support_exports, "./support.ts", &body);
+    render_support_imports(&mut imports, support_exports, "./support", &body);
     render_generated_module(imports, body)
 }
 
@@ -2637,12 +2639,13 @@ fn render_service_module(
         render_service_definition(&mut body, service);
         body.push('\n');
     }
+    body.push_str(&render_operation_registry_module(services));
     let mut imports = String::new();
     if has_model_registrations {
         // Side-effect import: model interfaces are imported `type`-only
         // elsewhere, so without this the `registerNexusType` calls in
         // models.ts would never run at runtime.
-        imports.push_str("import \"./models.ts\";\n");
+        imports.push_str("import \"./models\";\n");
     }
     render_typescript_namespace_imports(
         &mut imports,
@@ -2653,12 +2656,12 @@ fn render_service_module(
     render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
     render_type_imports(
         &mut imports,
-        "./models.ts",
+        "./models",
         &used_import_names(&body, &model_type_names(enums, flags, variants, models)),
     );
     render_type_imports(
         &mut imports,
-        "./resources.ts",
+        "./resources",
         &used_import_names(&body, &resource_type_names(services)),
     );
     render_generated_module(imports, body)
@@ -2689,7 +2692,7 @@ fn render_resources_module(
     render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
     render_value_imports(
         &mut imports,
-        "../nex-gen-runtime.ts",
+        "../nex-gen-runtime",
         &used_import_names(
             &body,
             &[
@@ -2700,16 +2703,16 @@ fn render_resources_module(
     );
     render_type_imports(
         &mut imports,
-        "./models.ts",
+        "./models",
         &used_import_names(&body, &model_type_names(enums, flags, variants, models)),
     );
-    render_support_imports(&mut imports, support_exports, "./support.ts", &body);
+    render_support_imports(&mut imports, support_exports, "./support", &body);
     for service in services {
         for operation in &service.operations {
             if contains_identifier(&body, &operation.attr_name) {
                 render_value_imports(
                     &mut imports,
-                    &format!("./operations/{}.ts", operation_file_name(operation)),
+                    &format!("./operations/{}", operation_file_name(operation)),
                     std::slice::from_ref(&operation.attr_name),
                 );
             }
@@ -2740,32 +2743,42 @@ fn render_operation_module(
         &[("workflow", "@temporalio/workflow")],
     );
     render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
-    render_value_imports(&mut imports, "../service.ts", &[service.name.to_string()]);
+    render_value_imports(&mut imports, "../service", &[service.name.to_string()]);
     let mut model_values = model_to_proto_function_names(models);
     model_values.push("requiredField".to_string());
     model_values.sort();
     model_values.dedup();
     render_value_imports(
         &mut imports,
-        "../models.ts",
+        "../models",
         &used_import_names(&body, &model_values),
     );
     render_type_imports(
         &mut imports,
-        "../models.ts",
+        "../models",
         &used_import_names(&body, &model_type_names(enums, flags, variants, models)),
     );
-    render_support_imports(&mut imports, support_exports, "../support.ts", &body);
-    let resources = resource_type_names(services);
-    render_value_imports(
-        &mut imports,
-        "../resources.ts",
-        &used_import_names(&body, &resources),
-    );
+    render_support_imports(&mut imports, support_exports, "../support", &body);
+    let resources = used_import_names(&body, &resource_type_names(services));
+    let value_resources = resources
+        .iter()
+        .filter(|resource| body.contains(&format!("new {resource}(")))
+        .cloned()
+        .collect::<Vec<_>>();
+    let type_resources = resources
+        .iter()
+        .filter(|resource| !value_resources.contains(resource))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !type_resources.is_empty() {
+        imports.push_str("import '../resources';\n");
+    }
+    render_value_imports(&mut imports, "../resources", &value_resources);
+    render_type_imports(&mut imports, "../resources", &type_resources);
     if operation.input_nexus_type_id.is_some() {
         render_value_imports(
             &mut imports,
-            "../../nex-gen-runtime.ts",
+            "../../nex-gen-runtime",
             &["nexusValue".to_string()],
         );
     }
