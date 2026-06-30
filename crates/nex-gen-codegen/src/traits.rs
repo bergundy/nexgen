@@ -12,6 +12,7 @@ use crate::emit::EmittedFile;
 use crate::error::Result;
 use crate::ir::{IR, SymbolTable};
 use crate::language::Language;
+use crate::render::NameResolver;
 use crate::schema_type::SchemaType;
 
 /// Validates input files for one schema_type and produces the base IR.
@@ -45,5 +46,18 @@ pub trait Emitter {
     fn schema_type(&self) -> SchemaType;
 
     /// Render the symbols into a set of files (bodies without import blocks).
+    ///
+    /// Each [`EmittedFile`] declares the symbols it references (`refs`) and any
+    /// non-symbol runtime imports; the base resolves them into the import block
+    /// during [`assemble`](crate::assemble) using [`resolver`](Emitter::resolver).
     fn emit(&self, symbols: &SymbolTable) -> Vec<EmittedFile>;
+
+    /// How the base names and locates referenced symbols for this emitter.
+    ///
+    /// Used by [`assemble`](crate::assemble) to resolve each
+    /// [`EmittedFile`](crate::EmittedFile)'s `refs` into cross-module imports,
+    /// and by [`render_service`](crate::render_service) to name operation I/O
+    /// types. Resolution stays out of the emitter's `emit` body: the emitter
+    /// only declares `refs`, the base resolves them through this resolver.
+    fn resolver(&self) -> &dyn NameResolver;
 }

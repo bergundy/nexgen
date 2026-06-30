@@ -20,8 +20,13 @@
 //! `kind`, `refs`) and emit-tier data (`module`, `type_ref`, `import_binding`,
 //! `body`) uniformly, and never inspects a schema_type's private type data.
 //!
-//! Phase 1 status: every type and trait is defined and documented; bodies the
-//! plan defers to prototyping are marked `// TODO(prototype): ...`.
+//! The import-resolution + assembly path is implemented end-to-end: the
+//! [`Module`] / [`Import`] / [`ImportBinding`] shapes are concrete,
+//! [`assemble`] resolves each [`EmittedFile`]'s `refs` to cross-module imports
+//! (dropping same-module refs, unioning runtime imports, deduping) and
+//! [`render_imports`] renders them for Python and TypeScript. Bodies still
+//! deferred to later phases are marked `// TODO(prototype): ...` (the
+//! per-language [`render_service`], and the registry emitter-factory).
 
 pub mod assemble;
 pub mod emit;
