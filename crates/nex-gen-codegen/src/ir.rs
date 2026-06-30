@@ -50,9 +50,9 @@ pub struct Symbol {
 /// The kind of a [`Symbol`], with whatever base data is frontend-independent.
 #[derive(Clone, Debug)]
 pub enum SymbolKind {
-    /// A Nexus service. `ServiceDef` is base data (services are
+    /// A Nexus service. `Service` is base data (services are
     /// frontend-independent).
-    Service(ServiceDef),
+    Service(Service),
     /// A type. Carries **nothing** schema-specific here; its definition data
     /// lives in the schema_type's PRIVATE side table, keyed by [`Symbol::id`],
     /// so the base IR stays pure (no generics, no erased payloads). A
@@ -62,12 +62,18 @@ pub enum SymbolKind {
 }
 
 /// Base data for a service symbol: operations, wire names, docs.
+///
+/// All fields are Nexus service properties that any front-end (WIT, JSON
+/// Schema, ...) carries — none of them leak proto/WIT specifics.
 #[derive(Clone, Debug)]
-pub struct ServiceDef {
+pub struct Service {
     /// Canonical service name.
     pub name: Name,
     /// On-the-wire service name (may differ from the canonical name).
     pub wire_name: String,
+    /// Whether the service is marked experimental. A Nexus annotation,
+    /// schema-agnostic.
+    pub experimental: bool,
     /// The service's operations.
     pub operations: Vec<Operation>,
     /// Documentation for the service, if any.
@@ -75,12 +81,19 @@ pub struct ServiceDef {
 }
 
 /// A single service operation.
+///
+/// All fields are Nexus operation properties shared across front-ends; the
+/// I/O are referenced by [`SymbolId`] so the base never sees the
+/// schema-specific type data.
 #[derive(Clone, Debug)]
 pub struct Operation {
     /// Canonical operation name.
     pub name: Name,
     /// On-the-wire operation name.
     pub wire_name: String,
+    /// Whether the operation is marked experimental. A Nexus annotation,
+    /// schema-agnostic.
+    pub experimental: bool,
     /// Input type symbol, if any (`None` for input-less operations).
     pub input: Option<SymbolId>,
     /// Output type symbol, if any (`None` for output-less operations).

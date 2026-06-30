@@ -275,6 +275,7 @@ dependencies = [
  "clap",
  "heck",
  "indexmap",
+ "nex-gen-codegen",
  "prost",
  "prost-types",
  "tempfile",

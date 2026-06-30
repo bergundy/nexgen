@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use nex_gen_codegen::emit::{EmittedFile, Import, ImportBinding, Module};
 use nex_gen_codegen::ir::{
-    Name, Operation, ServiceDef, Symbol, SymbolId, SymbolKind, SymbolTable,
+    Name, Operation, Service, Symbol, SymbolId, SymbolKind, SymbolTable,
 };
 use nex_gen_codegen::{
     GeneratedOutputLayout, Language, NameResolver, SchemaType, assemble, render_imports,
@@ -62,12 +62,14 @@ fn build_table() -> (SymbolTable, SymbolId, SymbolId, SymbolId, SymbolId) {
     table.insert(Symbol {
         id: svc,
         name: Name::new("UserService"),
-        kind: SymbolKind::Service(ServiceDef {
+        kind: SymbolKind::Service(Service {
             name: Name::new("UserService"),
             wire_name: "UserService".to_string(),
+            experimental: false,
             operations: vec![Operation {
                 name: Name::new("GetUser"),
                 wire_name: "GetUser".to_string(),
+                experimental: false,
                 input: Some(req),
                 output: Some(user),
                 docs: None,

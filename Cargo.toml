@@ -18,6 +18,7 @@ include = [
 ]
 
 [dependencies]
+nex-gen-codegen = { path = "crates/nex-gen-codegen" }
 clap = { version = "4.5", features = ["derive"] }
 heck = "0.5"
 indexmap = { version = "2.7", features = ["serde"] }

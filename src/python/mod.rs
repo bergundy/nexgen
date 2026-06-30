@@ -3600,50 +3600,77 @@ fn render_package_init(
     output
 }
 
+/// Adapter that lets the base [`render_service`](nex_gen_codegen::render_service)
+/// utility name operation I/O types using the already-resolved Python type
+/// references on each [`RenderedOperation`].
+///
+/// The base reasons over [`SymbolId`](nex_gen_codegen::SymbolId)s; here each id
+/// indexes a precomputed type-ref string (already `models.`-stripped — a
+/// Python-placement concern applied in the adapter, keeping the base
+/// schema-agnostic). `module_of` / `import_binding` are never called during
+/// service rendering (it only uses `type_ref`), so they are unreachable.
+struct ServiceTypeRefResolver {
+    type_refs: Vec<String>,
+}
+
+impl nex_gen_codegen::NameResolver for ServiceTypeRefResolver {
+    fn type_ref(&self, id: nex_gen_codegen::SymbolId) -> String {
+        self.type_refs[id.0 as usize].clone()
+    }
+
+    fn module_of(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Module {
+        unreachable!("render_service only resolves type_ref, never module_of")
+    }
+
+    fn import_binding(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Import {
+        unreachable!("render_service only resolves type_ref, never import_binding")
+    }
+}
+
 fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    if service.wire_name == service.name {
-        output.push_str("@service\n");
-    } else {
-        output.push_str("@service(name=");
-        output.push_str(&python_string_literal(service.wire_name));
-        output.push_str(")\n");
-    }
-    output.push_str("class ");
-    output.push_str(service.name);
-    output.push_str(":\n");
-    render_python_docstring(output, "    ", None, &[], None, service.experimental);
+    use nex_gen_codegen::{Language as BaseLanguage, Name, Operation, Service, SymbolId};
 
-    if service.operations.is_empty() {
-        if !service.experimental {
-            output.push_str("    pass\n");
-        }
-        return;
-    }
+    // Build the frontend-agnostic service binding model + a resolver over the
+    // already-computed (and `models.`-stripped) Python type refs, then delegate
+    // the rendering to the base `render_service` utility. Resources and
+    // proto-conversion stay here.
+    let mut type_refs: Vec<String> = Vec::new();
+    let mut next_io_id = |type_ref: &str| -> SymbolId {
+        let id = SymbolId(type_refs.len() as u32);
+        type_refs.push(service_type_ref(type_ref));
+        id
+    };
 
-    for (operation_index, operation) in service.operations.iter().enumerate() {
-        if operation.experimental {
-            output.push_str("    # ");
-            output.push_str(".. warning:: ");
-            output.push_str(EXPERIMENTAL_WARNING);
-            output.push('\n');
-        }
-        output.push_str("    ");
-        output.push_str(&operation.attr_name);
-        output.push_str(": Operation[\n");
-        output.push_str("        ");
-        output.push_str(&service_type_ref(&operation.input_ref));
-        output.push_str(",\n");
-        output.push_str("        ");
-        output.push_str(&service_type_ref(&operation.output_ref));
-        output.push_str(",\n");
-        output.push_str("    ] = Operation(name=");
-        output.push_str(&python_string_literal(operation.wire_name));
-        output.push_str(")\n");
+    // Python's `Operation[...]` always lists both input and output as concrete
+    // refs (no `void`/`None` collapsing); the WIT front-end always provides both
+    // strings, so both are `Some`.
+    let operations = service
+        .operations
+        .iter()
+        .map(|operation| Operation {
+            name: Name::new(operation.name),
+            wire_name: operation.wire_name.to_string(),
+            experimental: operation.experimental,
+            input: Some(next_io_id(&operation.input_ref)),
+            output: Some(next_io_id(&operation.output_ref)),
+            docs: operation.doc.clone(),
+        })
+        .collect();
 
-        if operation_index + 1 != service.operations.len() {
-            output.push('\n');
-        }
-    }
+    let service_def = Service {
+        name: Name::new(service.name),
+        wire_name: service.wire_name.to_string(),
+        experimental: service.experimental,
+        operations,
+        docs: None,
+    };
+
+    let resolver = ServiceTypeRefResolver { type_refs };
+    output.push_str(&nex_gen_codegen::render_service(
+        BaseLanguage::Python,
+        &service_def,
+        &resolver,
+    ));
 }
 
 fn service_type_ref(type_ref: &str) -> String {

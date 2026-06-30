@@ -4249,31 +4249,76 @@ fn render_model(output: &mut String, model: &RenderedModel) {
     }
 }
 
-fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    let service_doc_tags = experimental_doc_tag(service.experimental);
-    render_typescript_doc_comment(output, "", None, &service_doc_tags);
-    output.push_str("export const ");
-    output.push_str(&service.attr_name);
-    output.push_str(" = nexus.service('");
-    output.push_str(service.wire_name);
-    output.push_str("', {\n");
-    for operation in &service.operations {
-        let operation_doc_tags = experimental_doc_tag(operation.experimental);
-        render_typescript_doc_comment(output, "  ", None, &operation_doc_tags);
-        output.push_str("  ");
-        output.push_str(&operation.attr_name);
-        output.push_str(": nexus.operation<\n");
-        output.push_str("    ");
-        output.push_str(&operation.input_proto_ref);
-        output.push_str(",\n");
-        output.push_str("    ");
-        output.push_str(&operation.output_proto_ref);
-        output.push('\n');
-        output.push_str("  >({ name: ");
-        output.push_str(&typescript_string_literal(operation.wire_name));
-        output.push_str(" }),\n");
+/// Adapter that lets the base [`render_service`](nex_gen_codegen::render_service)
+/// utility name operation I/O types using the already-resolved TypeScript type
+/// references on each [`RenderedOperation`].
+///
+/// The base reasons over [`SymbolId`](nex_gen_codegen::SymbolId)s; here each id
+/// indexes a precomputed type-ref string. Operations with a type carry
+/// `Some(id)`; input/output-less operations carry `None` (the base renders
+/// `void` for those). `module_of` / `import_binding` are never called during
+/// service rendering (it only uses `type_ref`), so they are unreachable.
+struct ServiceTypeRefResolver {
+    type_refs: Vec<String>,
+}
+
+impl nex_gen_codegen::NameResolver for ServiceTypeRefResolver {
+    fn type_ref(&self, id: nex_gen_codegen::SymbolId) -> String {
+        self.type_refs[id.0 as usize].clone()
     }
-    output.push_str("});\n\n");
+
+    fn module_of(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Module {
+        unreachable!("render_service only resolves type_ref, never module_of")
+    }
+
+    fn import_binding(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Import {
+        unreachable!("render_service only resolves type_ref, never import_binding")
+    }
+}
+
+fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
+    use nex_gen_codegen::{Language as BaseLanguage, Name, Operation, Service, SymbolId};
+
+    // Build the frontend-agnostic service binding model + a resolver over the
+    // already-computed TS type refs, then delegate the rendering to the base
+    // `render_service` utility. Resources and proto-conversion stay here.
+    let mut type_refs: Vec<String> = Vec::new();
+    let mut next_io_id = |type_ref: &str| -> SymbolId {
+        let id = SymbolId(type_refs.len() as u32);
+        type_refs.push(type_ref.to_string());
+        id
+    };
+
+    let operations = service
+        .operations
+        .iter()
+        .map(|operation| Operation {
+            name: Name::new(operation.name),
+            wire_name: operation.wire_name.to_string(),
+            experimental: operation.experimental,
+            input: Some(next_io_id(&operation.input_proto_ref)),
+            output: Some(next_io_id(&operation.output_proto_ref)),
+            docs: operation.doc.clone(),
+        })
+        .collect();
+
+    let service_def = Service {
+        // The base emits the service-binding const name verbatim; TypeScript
+        // exports it lower-camel-cased, so pass the already-cased `attr_name`
+        // (the canonical name is `service.name`).
+        name: Name::new(service.attr_name.clone()),
+        wire_name: service.wire_name.to_string(),
+        experimental: service.experimental,
+        operations,
+        docs: None,
+    };
+
+    let resolver = ServiceTypeRefResolver { type_refs };
+    output.push_str(&nex_gen_codegen::render_service(
+        BaseLanguage::TypeScript,
+        &service_def,
+        &resolver,
+    ));
 }
 
 fn typescript_resource_type_id(
