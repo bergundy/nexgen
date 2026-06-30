@@ -287,6 +287,17 @@ example at `features/type/spec.md`:
   Serialize side (§6) rides the same primitive. Closed-struct extra-key
   aggregation falls out of the tree stage, closing the additionalProperties
   Java question.
+- **NOTE — aggregated error does not yet surface to the caller.** The
+  current Temporal SDKs offer no hook to aggregate per-field validation
+  errors and map them onto the `BAD_REQUEST` `HandlerError` returned to
+  the Nexus caller (the path P11 assumes — handler walks the cause chain,
+  pulls `getViolations()`, emits one `HandlerError`). All the generated
+  (de)serializers still *collect* every violation into the per-language
+  aggregated primitive (`AggregateError` / `pydantic.ValidationError` /
+  `ValidationException`), but for now that aggregate stays internal: it
+  fails the (de)serialize boundary without being projected onto the
+  wire-level error the caller receives. Surfacing it requires an SDK
+  change; tracked in `TODO.md`.
 
 ### Methodology established
 
