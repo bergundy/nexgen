@@ -74,8 +74,8 @@ string against the (string) constraint.
 
 | Language | Strategy |
 |---|---|
-| Go | In `UnmarshalJSON`, iterate decoded keys; run the key-constraint check (e.g. compiled `regexp` for [[pattern]], length checks); failures → `ValidationError{Path:key, Reason:"propertyName"}`, `errors.Join`. |
-| TypeScript | `for (const k of Object.keys(parsed))` apply the check; push `ValidationError{path:k, reason}`, throw `AggregateError`. |
+| Go | In `UnmarshalJSON`, iterate decoded keys; run the key-constraint check (e.g. compiled `regexp` for [[pattern]], length checks); failures → `Violation{Path:key, Reason:"propertyName"}`, collected into one `ValidationError`. |
+| TypeScript | `for (const k of Object.keys(parsed))` apply the check; push `Violation{path:k, reason}`, throw one `ValidationError`. |
 | Python | a field/model validator over `__pydantic_extra__` / the dict keys, raising `InitErrorDetails` per bad key into the aggregated `pydantic.ValidationError`. |
 | Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5), iterate the parsed tree's keys, apply the key check, and push a `Violation{path:key, reason}` per bad key into the single `ValidationException`. |
 

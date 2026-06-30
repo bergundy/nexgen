@@ -57,8 +57,8 @@ the two sets overlap — verified `json-schema/research/pyd_minprops_probe.py`).
 
 | Language | Strategy |
 |---|---|
-| Go | In `UnmarshalJSON`, count decoded members (wire keys, pre-population); `> max` → `ValidationError{Path:"", Reason:"maxProperties"}`, joined via `errors.Join`. |
-| TypeScript | `Object.keys(parsed).length > max` on the raw parsed wire object (before defaults applied) → push `ValidationError{path, reason}`, throw `AggregateError`. |
+| Go | In `UnmarshalJSON`, count decoded members (wire keys, pre-population); `> max` → `Violation{Path:"", Reason:"maxProperties"}`, collected into one `ValidationError`. |
+| TypeScript | `Object.keys(parsed).length > max` on the raw parsed wire object (before defaults applied) → push `Violation{path, reason}`, throw one `ValidationError`. |
 | Python | `model_validator`; `len(model_fields_set) > max` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into the aggregated `ValidationError`. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`> max`) — one number over the wire object, **not** populated POJO fields + catch-all map summed post-bind; a violation joins the single `ValidationException`. |
 

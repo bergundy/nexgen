@@ -93,8 +93,8 @@ Per **P10**/**P11**. The "Required, non-nullable" row of
 
 | Language | Presence enforcement |
 |---|---|
-| Go | shadow `*json.RawMessage` per member; `nil` → `ValidationError{Path:name, Reason:"required"}`, joined via `errors.Join`. |
-| TypeScript | `parsed.x === undefined \|\| parsed.x === null` → push `ValidationError{path, reason}`, throw `AggregateError`. |
+| Go | shadow `*json.RawMessage` per member; `nil` → `Violation{Path:name, Reason:"required"}`, collected into one `ValidationError`. |
+| TypeScript | `parsed.x === undefined \|\| parsed.x === null` → push `Violation{path, reason}`, throw one `ValidationError`. |
 | Python | Pydantic field with no default → strict mode raises automatically; aggregated in `pydantic.ValidationError`. |
 | Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): a missing or `null` tree node for a required member → `Violation{path:name, reason:"required"}`; the strict-vs-non-strict `null`-token logic (Java §4) runs as a helper here, not as a per-field binder. Collected into one `ValidationException`. |
 

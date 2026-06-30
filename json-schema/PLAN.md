@@ -263,7 +263,9 @@ example at `features/type/spec.md`:
 - **Go-specific:** `int64`/`float64` numeric primitives; optional via
   `*T`; `new(expr)` for pointer-from-literal (Go 1.26+ preferred, not
   required); custom `UnmarshalJSON` on every struct with `*json.RawMessage`
-  shadow + `errors.Join` aggregation.
+  shadow, collecting `Violation`s into a single aggregating
+  `ValidationError` (a struct over `[]Violation` implementing `error`, not
+  `errors.Join`).
 - **Java error aggregation is a per-POJO collecting (de)serializer
   (Java §4–§6).** Each emitted POJO carries class-level
   `@JsonDeserialize(using=<Pojo>.Deserializer.class)` +
@@ -293,8 +295,9 @@ example at `features/type/spec.md`:
   the Nexus caller (the path P11 assumes — handler walks the cause chain,
   pulls `getViolations()`, emits one `HandlerError`). All the generated
   (de)serializers still *collect* every violation into the per-language
-  aggregated primitive (`AggregateError` / `pydantic.ValidationError` /
-  `ValidationException`), but for now that aggregate stays internal: it
+  aggregated primitive (the Go/TS `ValidationError` over `[]Violation` /
+  `pydantic.ValidationError` / `ValidationException`), but for now that
+  aggregate stays internal: it
   fails the (de)serialize boundary without being projected onto the
   wire-level error the caller receives. Surfacing it requires an SDK
   change; tracked in `TODO.md`.

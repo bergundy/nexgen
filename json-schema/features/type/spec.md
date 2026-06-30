@@ -104,7 +104,8 @@ Strategy per language:
 - **Go**: Every generated struct gets a custom `UnmarshalJSON`. It decodes
   into a shadow struct of `*json.Number` / `*T` pointers (absence
   observable per P9), dispatches per field, builds
-  `ValidationError{Path, Reason}` and aggregates with `errors.Join`.
+  `Violation{Path, Reason}` and collects them into a single
+  `ValidationError` (a struct over `[]Violation` implementing `error`).
   Integer fields go through a runtime helper that also enforces the
   cross-language integer cap (`±(2^53−1)`):
   ```go
@@ -126,8 +127,9 @@ Strategy per language:
   runtime schema library (P4). `Number.isInteger(v)` is spec-compliant
   for type-classification (`1.0 === 1` in JS, so
   `Number.isInteger(1.0) === true`) — verified empirically across all
-  10 type-classification fixtures. Push `ValidationError { path, reason }`
-  into an array, throw `AggregateError` at the end.
+  10 type-classification fixtures. Push `Violation { path, reason }`
+  into a list, throw one `ValidationError` (a class extending `Error`,
+  holding the `Violation[]`) at the end.
   `JSON.parse` silently rounds integers past 2^53 to the nearest
   double, but with the cap at `Number.MAX_SAFE_INTEGER` (`2^53−1`),
   a plain post-parse `Number.isSafeInteger(v)` is a complete and sound

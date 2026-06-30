@@ -52,10 +52,15 @@ SCC in the whole closure. See Recursion below.
 
 Holds the schema-independent runtime, defined once per package:
 
-- Error types — `ValidationError` + `Violation` (Python with the Pydantic
-  aggregation machinery; Go `ValidationError`/`Violation` structs; TS
-  `ValidationError` class; Java `ValidationException extends
-  JsonMappingException` + `Violation`).
+- Error types — a **single aggregating error holding a list of
+  `Violation { path, reason }`**, identical in spirit across all four
+  targets: Python the Pydantic aggregation machinery (`pydantic.ValidationError`);
+  Go a `ValidationError` struct implementing `error` over `[]Violation`
+  (its `Error()` surfaces every violation — *not* `errors.Join`); TS a
+  `ValidationError` class extending `Error` over `Violation[]` (*not* a
+  built-in `AggregateError`); Java `ValidationException extends
+  JsonMappingException` holding `List<Violation>`. One error type, every
+  violation surfaced in one shot (P11).
 - Spec-number helpers — `parseSpecInteger` (Go), `SpecInt` /
   `_parse_spec_integer` (Python), `SpecNumbers.specLong` (Java), TS's
   safe-integer check.

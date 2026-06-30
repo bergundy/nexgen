@@ -268,8 +268,8 @@ value — the **shared `Validate`** layer of **P12**).
 
 | Language | Strategy |
 |---|---|
-| Go | In `UnmarshalJSON`, after decoding, compare the field to the typed value constant (`if v != UserEventKindUser { … ValidationError{Path, Reason:"const"} }`), `errors.Join`. Emitted as `type UserEventKind = string` + `const UserEventKindUser = UserEventKind("user")` — the typed const is also the idiomatic way to set it (`UserEvent{Kind: UserEventKindUser}`). |
-| TypeScript | `if (v !== KIND_CONST) push(ValidationError{path, reason:"const"})`, throw `AggregateError`. Fixed value emitted as `const KIND_CONST = "user"`. |
+| Go | In `UnmarshalJSON`, after decoding, compare the field to the typed value constant (`if v != UserEventKindUser { … Violation{Path, Reason:"const"} }`), collected into one `ValidationError`. Emitted as `type UserEventKind = string` + `const UserEventKindUser = UserEventKind("user")` — the typed const is also the idiomatic way to set it (`UserEvent{Kind: UserEventKindUser}`). |
+| TypeScript | `if (v !== KIND_CONST) push(Violation{path, reason:"const"})`, throw one `ValidationError`. Fixed value emitted as `const KIND_CONST = "user"`. |
 | Python | a field/`model_validator` checking `== <const>`, raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. Field typed as the **open** union `Literal["user"] \| str` (`EventKind = Union[EventKindUser, str]`) — a closed `Literal` would make a const bump a type-level break against **P13.1**; the open union keeps any str assignable and only hints the value (see Type mapping). |
 | Java | the field is the generated value class (`UserEventKind`), whose own `@JsonCreator fromString` converts the wire string. The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the node, builds the value, checks `UserEventKind.USER.equals(v)` (equivalently `!v.isUnrecognized()`), and pushes a `Violation` on mismatch into the single `ValidationException`. The known value is the `public static final UserEventKind USER` constant. (For `integer`/`number`/`boolean` consts the field is the plain primitive and the check is a bare `==`.) |
 

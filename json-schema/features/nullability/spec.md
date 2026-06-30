@@ -389,7 +389,7 @@ Natural three-way via `=== undefined` vs `=== null`:
 
 ```typescript
 if (parsed.x === null) {
-    errors.push(new ValidationError("x", "explicit null not allowed"));
+    violations.push({ path: "x", reason: "explicit null not allowed" });
 } else if (parsed.x !== undefined) {
     // validate value
 }
