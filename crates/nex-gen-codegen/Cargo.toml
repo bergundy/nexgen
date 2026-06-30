@@ -1,0 +1,11 @@
+[package]
+name = "nex-gen-codegen"
+version = "0.1.0"
+edition = "2024"
+description = "Front-end-agnostic codegen base: loaders, symbols, emitters, assembly"
+license = "MIT"
+repository = "https://github.com/temporalio/nex-gen"
+
+[dependencies]
+heck = "0.5"
+thiserror = "2.0"
