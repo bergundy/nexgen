@@ -17,7 +17,8 @@ use crate::resources::{
 use crate::spec::{
     ApiSpec, AuthoredFieldTypeSpec, FunctionFieldSpec, GeneratedModelSpec, LanguageStringSpec,
     OperationOutputTransformSpec, OperationSpec, ResourceFieldSpec, ServiceSpec,
-    TypeReplacementSpec, WitEnumSpec, WitFlagsSpec, WitRecordSpec, WitVariantSpec,
+    SupportFragmentSpec, TypeReplacementSpec, WitEnumSpec, WitFlagsSpec, WitRecordSpec,
+    WitVariantSpec,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -27,6 +28,7 @@ struct WitTables {
     pub(crate) flags: IndexMap<String, WitFlags>,
     pub(crate) variants: IndexMap<String, WitVariant>,
     pub(crate) models: IndexMap<String, WitModel>,
+    pub(crate) fragments: Vec<SupportFragmentSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -427,9 +429,15 @@ pub(crate) fn field_type(field: &FieldDescriptorProto) -> Option<Type> {
 /// items into a transient [`WitTables`] (private to this module: it never
 /// escapes as an API), then explodes them into a [`SymbolTable`] via
 /// [`tables_to_symbols`]. There is no `WitSymbols`: the symbol table is the IR.
+///
+/// The resolved support `fragments` (spec-embedded plus any external `--support`
+/// files, already picked for the target language) are lowered into
+/// [`WitSymbolKind::Fragment`] symbols so they travel through the IR rather than
+/// as an emitter-side channel.
 pub(crate) fn build_wit_symbols(
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
+    fragments: &[SupportFragmentSpec],
 ) -> Result<SymbolTable<WitSymbolKind>> {
     let mut tables = WitTables::default();
     let root_model_capabilities = root_model_capabilities(spec, descriptors)?;
@@ -444,6 +452,8 @@ pub(crate) fn build_wit_symbols(
         )?;
         tables.services.push(wit_service);
     }
+
+    tables.fragments = fragments.to_vec();
 
     Ok(tables_to_symbols(tables))
 }
@@ -1581,6 +1591,9 @@ pub(crate) enum WitSymbolKind {
     Enum(WitEnum),
     Flags(WitFlags),
     Variant(WitVariant),
+    /// A support code fragment (already resolved for the target language).
+    /// Carries no `refs`: it is opaque code copied verbatim into the output.
+    Fragment(SupportFragmentSpec),
 }
 
 /// Explode the transient [`WitTables`] into a [`SymbolTable`], resolving
@@ -1589,8 +1602,9 @@ pub(crate) enum WitSymbolKind {
 /// Runs in two passes so a symbol's `refs` can point at not-yet-inserted
 /// symbols: pass 1 allocates ids and builds a `full_name -> SymbolId` index;
 /// pass 2 computes each symbol's `refs` from that index and inserts it. Ids are
-/// allocated services -> models -> enums -> flags -> variants, each group in its
-/// source order, so [`WitSymbols`] can replay the original grouping order.
+/// allocated services -> models -> enums -> flags -> variants -> fragments, each
+/// group in its source order, so [`WitSymbols`] can replay the original grouping
+/// order.
 fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
     let WitTables {
         services,
@@ -1598,17 +1612,19 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
         flags,
         variants,
         models,
+        fragments,
     } = tables;
 
     let mut table = SymbolTable::new();
 
     // Owned, id-tagged items in the fixed insertion order:
-    // services, models, enums, flags, variants.
+    // services, models, enums, flags, variants, fragments.
     let mut wit_services: Vec<(SymbolId, WitService)> = Vec::new();
     let mut wit_models: Vec<(SymbolId, WitModel)> = Vec::new();
     let mut wit_enums: Vec<(SymbolId, WitEnum)> = Vec::new();
     let mut wit_flags: Vec<(SymbolId, WitFlags)> = Vec::new();
     let mut wit_variants: Vec<(SymbolId, WitVariant)> = Vec::new();
+    let mut wit_fragments: Vec<(SymbolId, SupportFragmentSpec)> = Vec::new();
 
     // Maps a type's `full_name` (the IndexMap key) to its allocated `SymbolId`.
     // Services are not referenced by full_name, so they are not indexed.
@@ -1638,6 +1654,12 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
         let id = table.alloc_id();
         full_name_to_id.insert(full_name, id);
         wit_variants.push((id, variant));
+    }
+    // Fragments are opaque code, not referenced by any symbol, so they are not
+    // indexed by `full_name`; they keep their collection order.
+    for fragment in fragments {
+        let id = table.alloc_id();
+        wit_fragments.push((id, fragment));
     }
 
     // Pass 2: compute refs + insert.
@@ -1687,6 +1709,15 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
             name,
             refs,
             kind: WitSymbolKind::Variant(variant),
+        });
+    }
+    for (id, fragment) in wit_fragments {
+        let name = Name::new(&fragment.path);
+        table.insert(Symbol {
+            id,
+            name,
+            refs: Vec::new(),
+            kind: WitSymbolKind::Fragment(fragment),
         });
     }
 
@@ -1809,6 +1840,7 @@ pub(crate) struct WitSymbols<'a> {
     enums: IndexMap<&'a str, &'a WitEnum>,
     flags: IndexMap<&'a str, &'a WitFlags>,
     variants: IndexMap<&'a str, &'a WitVariant>,
+    fragments: Vec<&'a SupportFragmentSpec>,
 }
 
 impl<'a> WitSymbols<'a> {
@@ -1821,6 +1853,7 @@ impl<'a> WitSymbols<'a> {
             enums: IndexMap::new(),
             flags: IndexMap::new(),
             variants: IndexMap::new(),
+            fragments: Vec::new(),
         };
         for symbol in symbols.iter() {
             match &symbol.kind {
@@ -1839,6 +1872,7 @@ impl<'a> WitSymbols<'a> {
                     view.variants
                         .insert(variant.info.full_name.as_str(), variant);
                 }
+                WitSymbolKind::Fragment(fragment) => view.fragments.push(fragment),
             }
         }
         view
@@ -1846,6 +1880,12 @@ impl<'a> WitSymbols<'a> {
 
     pub(crate) fn services(&self) -> impl Iterator<Item = &'a WitService> + '_ {
         self.services.iter().copied()
+    }
+
+    /// The support code fragments, in collection order. Emitters copy these
+    /// verbatim into the generated support package/module.
+    pub(crate) fn fragments(&self) -> impl Iterator<Item = &'a SupportFragmentSpec> + '_ {
+        self.fragments.iter().copied()
     }
 
     pub(crate) fn models(&self) -> impl Iterator<Item = &'a WitModel> + '_ {

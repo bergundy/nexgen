@@ -45,19 +45,19 @@ pub fn generate_files(
 ) -> Result<GeneratedFiles> {
     validate_type_overrides(spec, descriptors, language)?;
     ensure_unique_resource_names(spec)?;
-    let table = build_wit_symbols(spec, descriptors)?;
-    let symbols = WitSymbols::new(&table);
-    let warnings = generation_warnings(&symbols);
     let support_fragments = if support.fragments.is_empty() {
         spec.support.fragments_for_language(language)
     } else {
         &support.fragments
     };
+    let table = build_wit_symbols(spec, descriptors, support_fragments)?;
+    let symbols = WitSymbols::new(&table);
+    let warnings = generation_warnings(&symbols);
 
     let mut generated = match language {
-        Language::Dotnet => dotnet::generate(&symbols, support_fragments),
-        Language::Python => python::generate(&symbols, support_fragments),
-        Language::TypeScript => typescript::generate(&symbols, support_fragments),
+        Language::Dotnet => dotnet::generate(&symbols),
+        Language::Python => python::generate(&symbols),
+        Language::TypeScript => typescript::generate(&symbols),
         language => Err(Error::UnsupportedLanguage { language }),
     }?;
     generated.warnings = warnings;

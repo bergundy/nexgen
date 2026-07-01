@@ -89,8 +89,8 @@ pub fn generate_to_string_with_inputs_and_support(
     descriptor_paths: &[PathBuf],
     support_paths: &[PathBuf],
 ) -> Result<String> {
-    let fragments = resolve_support_fragments(language, input_paths, support_paths)?;
-    let generated = generate_via_generator(language, input_paths, descriptor_paths, fragments)?;
+    let generated =
+        generate_via_generator(language, input_paths, descriptor_paths, support_paths)?;
     print_warnings(&generated);
     Ok(match generated.layout {
         GeneratedOutputLayout::SingleFile => generated
@@ -102,16 +102,11 @@ pub fn generate_to_string_with_inputs_and_support(
 }
 
 pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
-    let fragments = resolve_support_fragments(
-        request.language,
-        &request.input_paths,
-        &request.support_paths,
-    )?;
     let generated = generate_via_generator(
         request.language,
         &request.input_paths,
         &request.descriptor_paths,
-        fragments,
+        &request.support_paths,
     )?;
     print_warnings(&generated);
 
@@ -124,30 +119,16 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the support fragments for a run: the spec-embedded fragments for
-/// `language` plus any external `--support` files.
-///
-/// This parses the spec to read its embedded support fragments; the WIT
-/// [`Loader`](nex_gen_codegen::Loader) re-parses it to build the IR (fragments
-/// do not live in the IR yet — see the codegen integration plan).
-fn resolve_support_fragments(
-    language: Language,
-    input_paths: &[PathBuf],
-    support_paths: &[PathBuf],
-) -> Result<Vec<SupportFragmentSpec>> {
-    let spec = ApiSpec::load_for_language_with_inputs(language, input_paths)?;
-    Ok(load_support_files(language, &spec, support_paths)?.fragments)
-}
-
 /// Run the WIT generation pipeline through the base [`Generator`]: the
-/// [`WitLoader`](wit_loader::WitLoader) lowers the inputs to `IR<WitSymbolKind>`
-/// (+ warnings) and the language emitter renders it through
-/// [`assemble`](nex_gen_codegen::assemble).
+/// [`WitLoader`](wit_loader::WitLoader) parses the inputs once, resolving both
+/// the type symbols and the support-fragment symbols (spec-embedded plus any
+/// external `--support` files), and the language emitter renders the resulting
+/// `IR<WitSymbolKind>` through [`assemble`](nex_gen_codegen::assemble).
 fn generate_via_generator(
     language: Language,
     input_paths: &[PathBuf],
     descriptor_paths: &[PathBuf],
-    fragments: Vec<SupportFragmentSpec>,
+    support_paths: &[PathBuf],
 ) -> Result<GeneratedFiles> {
     use nex_gen_codegen::{Emitter, Generator};
 
@@ -156,14 +137,18 @@ fn generate_via_generator(
     use wit_loader::WitLoader;
 
     let emitter: Box<dyn Emitter<WitSymbolKind>> = match language {
-        Language::Python => Box::new(PythonEmitter::new(fragments)),
-        Language::TypeScript => Box::new(TypeScriptEmitter::new(fragments)),
-        Language::Dotnet => Box::new(DotnetEmitter::new(fragments)),
+        Language::Python => Box::new(PythonEmitter::new()),
+        Language::TypeScript => Box::new(TypeScriptEmitter::new()),
+        Language::Dotnet => Box::new(DotnetEmitter::new()),
         language => return Err(error::Error::UnsupportedLanguage { language }),
     };
 
     let generator = Generator::new(
-        WitLoader::new(input_paths.to_vec(), descriptor_paths.to_vec()),
+        WitLoader::new(
+            input_paths.to_vec(),
+            descriptor_paths.to_vec(),
+            support_paths.to_vec(),
+        ),
         [emitter],
     );
 

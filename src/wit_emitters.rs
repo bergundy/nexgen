@@ -19,7 +19,6 @@ use nex_gen_codegen::{
 
 use crate::wit_symbols::{WitSymbolKind, WitSymbols};
 use crate::generator::GeneratedFiles;
-use crate::spec::SupportFragmentSpec;
 
 /// A resolver that is never consulted.
 ///
@@ -63,17 +62,16 @@ fn into_emitted_files(generated: GeneratedFiles) -> Vec<EmittedFile> {
         .collect()
 }
 
-/// The Python WIT emitter. Holds the support fragments to render (the frontend
-/// supplies them at construction, since they come from the parsed spec).
+/// The Python WIT emitter. Support fragments now travel through the IR as
+/// [`Fragment`](crate::wit_symbols::WitSymbolKind::Fragment) symbols, so the
+/// emitter is stateless apart from its (unused) resolver.
 pub(crate) struct PythonEmitter {
-    support_fragments: Vec<SupportFragmentSpec>,
     resolver: UnusedResolver,
 }
 
 impl PythonEmitter {
-    pub(crate) fn new(support_fragments: Vec<SupportFragmentSpec>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            support_fragments,
             resolver: UnusedResolver,
         }
     }
@@ -86,10 +84,9 @@ impl Emitter<WitSymbolKind> for PythonEmitter {
 
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
         let symbols = WitSymbols::new(&ir.symbols);
-        let generated = crate::python::generate(&symbols, &self.support_fragments)
-            .map_err(|error| Error::Load {
-                message: error.to_string(),
-            })?;
+        let generated = crate::python::generate(&symbols).map_err(|error| Error::Load {
+            message: error.to_string(),
+        })?;
         Ok(into_emitted_files(generated))
     }
 
@@ -100,14 +97,12 @@ impl Emitter<WitSymbolKind> for PythonEmitter {
 
 /// The TypeScript WIT emitter.
 pub(crate) struct TypeScriptEmitter {
-    support_fragments: Vec<SupportFragmentSpec>,
     resolver: UnusedResolver,
 }
 
 impl TypeScriptEmitter {
-    pub(crate) fn new(support_fragments: Vec<SupportFragmentSpec>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            support_fragments,
             resolver: UnusedResolver,
         }
     }
@@ -120,10 +115,9 @@ impl Emitter<WitSymbolKind> for TypeScriptEmitter {
 
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
         let symbols = WitSymbols::new(&ir.symbols);
-        let generated = crate::typescript::generate(&symbols, &self.support_fragments)
-            .map_err(|error| Error::Load {
-                message: error.to_string(),
-            })?;
+        let generated = crate::typescript::generate(&symbols).map_err(|error| Error::Load {
+            message: error.to_string(),
+        })?;
         Ok(into_emitted_files(generated))
     }
 
@@ -134,14 +128,12 @@ impl Emitter<WitSymbolKind> for TypeScriptEmitter {
 
 /// The .NET WIT emitter.
 pub(crate) struct DotnetEmitter {
-    support_fragments: Vec<SupportFragmentSpec>,
     resolver: UnusedResolver,
 }
 
 impl DotnetEmitter {
-    pub(crate) fn new(support_fragments: Vec<SupportFragmentSpec>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            support_fragments,
             resolver: UnusedResolver,
         }
     }
@@ -154,10 +146,9 @@ impl Emitter<WitSymbolKind> for DotnetEmitter {
 
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
         let symbols = WitSymbols::new(&ir.symbols);
-        let generated = crate::dotnet::generate(&symbols, &self.support_fragments)
-            .map_err(|error| Error::Load {
-                message: error.to_string(),
-            })?;
+        let generated = crate::dotnet::generate(&symbols).map_err(|error| Error::Load {
+            message: error.to_string(),
+        })?;
         Ok(into_emitted_files(generated))
     }
 
@@ -213,14 +204,14 @@ interface user-service {
             ApiSpec::parse_for_language(language, INLINE_WIT, PathBuf::from("inline.wit")).unwrap();
         let descriptors =
             DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap();
-        IR::new(build_wit_symbols(&spec, &descriptors).unwrap())
+        IR::new(build_wit_symbols(&spec, &descriptors, &[]).unwrap())
     }
 
     #[test]
     fn python_emitter_matches_direct_generate() {
         let ir = build_ir(Language::Python);
-        let expected = crate::python::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
-        let emitter = PythonEmitter::new(Vec::new());
+        let expected = crate::python::generate(&WitSymbols::new(&ir.symbols)).unwrap();
+        let emitter = PythonEmitter::new();
         let assembled = assemble(&ir, &emitter).unwrap();
         assert_eq!(assembled.files, expected.files);
     }
@@ -228,8 +219,8 @@ interface user-service {
     #[test]
     fn typescript_emitter_matches_direct_generate() {
         let ir = build_ir(Language::TypeScript);
-        let expected = crate::typescript::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
-        let emitter = TypeScriptEmitter::new(Vec::new());
+        let expected = crate::typescript::generate(&WitSymbols::new(&ir.symbols)).unwrap();
+        let emitter = TypeScriptEmitter::new();
         let assembled = assemble(&ir, &emitter).unwrap();
         assert_eq!(assembled.files, expected.files);
     }
@@ -237,8 +228,8 @@ interface user-service {
     #[test]
     fn dotnet_emitter_matches_direct_generate() {
         let ir = build_ir(Language::Dotnet);
-        let expected = crate::dotnet::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
-        let emitter = DotnetEmitter::new(Vec::new());
+        let expected = crate::dotnet::generate(&WitSymbols::new(&ir.symbols)).unwrap();
+        let emitter = DotnetEmitter::new();
         let assembled = assemble(&ir, &emitter).unwrap();
         assert_eq!(assembled.files, expected.files);
     }

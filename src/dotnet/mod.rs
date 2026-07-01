@@ -23,10 +23,9 @@ const GENERATED_CODE_ATTRIBUTE: &str = "[GeneratedCode(\"nex-gen\", null)]";
 const EXPERIMENTAL_WARNING: &str =
     "WARNING: This API is experimental and may change in the future.";
 
-pub(crate) fn generate(
-    symbols: &WitSymbols,
-    support_fragments: &[SupportFragmentSpec],
-) -> Result<GeneratedFiles> {
+pub(crate) fn generate(symbols: &WitSymbols) -> Result<GeneratedFiles> {
+    let support_fragments: Vec<SupportFragmentSpec> = symbols.fragments().cloned().collect();
+    let support_fragments = support_fragments.as_slice();
     let support_namespace = dotnet_support_namespace(support_fragments)?;
     validate_dotnet_support_references(symbols, support_namespace.as_deref())?;
     let namespace = dotnet_namespace(symbols);
