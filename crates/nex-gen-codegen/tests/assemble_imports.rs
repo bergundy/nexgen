@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use nex_gen_codegen::emit::{EmittedFile, Import, ImportBinding, Module};
 use nex_gen_codegen::ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
 use nex_gen_codegen::{
-    GeneratedOutputLayout, Language, NameResolver, SchemaType, assemble, render_imports,
+    GeneratedOutputLayout, Language, NameResolver, assemble, render_imports,
     traits::Emitter,
 };
 
@@ -148,10 +148,6 @@ struct TestEmitter {
 impl Emitter<TestKind> for TestEmitter {
     fn language(&self) -> Language {
         Language::TypeScript
-    }
-
-    fn schema_type(&self) -> SchemaType {
-        SchemaType::Wit
     }
 
     fn emit(&self, ir: &IR<TestKind>) -> nex_gen_codegen::Result<Vec<EmittedFile>> {

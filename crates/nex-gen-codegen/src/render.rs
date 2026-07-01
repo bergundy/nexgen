@@ -4,7 +4,7 @@
 //! [`render_service`] renders a service binding (structural logic + per-
 //! language formatting), naming I/O types via a [`NameResolver`] the emitter
 //! supplies; [`render_imports`] renders a file's import block. Only **type**
-//! rendering is per-schema_type and stays in the front-end crate — service and
+//! rendering is per-frontend and stays in the front-end crate — service and
 //! import rendering are written once per language here.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,7 +17,7 @@ use crate::language::Language;
 
 /// How the base names and locates a referenced symbol, supplied by the emitter.
 ///
-/// The base never inspects the schema_type's private type data, so when it
+/// The base never inspects the frontend's private type data, so when it
 /// renders a service it asks the emitter (via this resolver) how to name and
 /// import each operation's I/O type by [`SymbolId`].
 pub trait NameResolver {

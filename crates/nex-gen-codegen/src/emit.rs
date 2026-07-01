@@ -1,6 +1,6 @@
 //! Emit-tier types: the placement key, structured imports, and emitted files.
 //!
-//! These are computed per `(lang, schema_type)` by an
+//! These are computed per language by an
 //! [`Emitter`](crate::Emitter). `module` is the placement key that drives both
 //! which file a symbol lands in and whether a cross-module reference needs an
 //! import; `Import` / `ImportBinding` describe a resolved import; `EmittedFile`

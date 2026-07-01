@@ -14,8 +14,7 @@
 //! is a follow-up that requires extending the base import model.
 
 use nex_gen_codegen::{
-    Emitter, EmittedFile, Error, Import, Language, Module, NameResolver, Result, SchemaType,
-    SymbolId, IR,
+    Emitter, EmittedFile, Error, Import, Language, Module, NameResolver, Result, SymbolId, IR,
 };
 
 use crate::wit_symbols::{WitSymbolKind, WitSymbols};
@@ -85,10 +84,6 @@ impl Emitter<WitSymbolKind> for PythonEmitter {
         Language::Python
     }
 
-    fn schema_type(&self) -> SchemaType {
-        SchemaType::Wit
-    }
-
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
         let symbols = WitSymbols::new(&ir.symbols);
         let generated = crate::python::generate(&symbols, &self.support_fragments)
@@ -123,10 +118,6 @@ impl Emitter<WitSymbolKind> for TypeScriptEmitter {
         Language::TypeScript
     }
 
-    fn schema_type(&self) -> SchemaType {
-        SchemaType::Wit
-    }
-
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
         let symbols = WitSymbols::new(&ir.symbols);
         let generated = crate::typescript::generate(&symbols, &self.support_fragments)
@@ -159,10 +150,6 @@ impl DotnetEmitter {
 impl Emitter<WitSymbolKind> for DotnetEmitter {
     fn language(&self) -> Language {
         Language::Dotnet
-    }
-
-    fn schema_type(&self) -> SchemaType {
-        SchemaType::Wit
     }
 
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {

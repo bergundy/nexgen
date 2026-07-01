@@ -3,7 +3,7 @@
 //! Mirror of the existing crate's `src/language.rs`. Duplicated here for now;
 //! Phase 3 may unify the two. The base layer is language-aware (placement,
 //! import rendering, and service rendering are per-language) but
-//! schema_type-agnostic.
+//! frontend-agnostic.
 
 use std::fmt;
 

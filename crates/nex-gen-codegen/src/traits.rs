@@ -1,19 +1,18 @@
 //! The two front-end-facing traits: [`Loader`] and [`Emitter`].
 //!
-//! A [`Loader`] is per-schema_type: it validates input files and lowers them
-//! into the IR. An [`Emitter`] is per-`(lang, schema_type)`: it renders symbols
-//! for one target language, owning file layout. Both are generic over the
-//! frontend's open kind type `K`; the emitter renders straight from the
-//! loader's `IR<K>` (no private side table) and produces the files itself.
+//! A [`Loader`] is per-frontend: it validates input files and lowers them into
+//! the IR. An [`Emitter`] is per-language: it renders symbols for one target
+//! language, owning file layout. Both are generic over the frontend's open kind
+//! type `K`; the emitter renders straight from the loader's `IR<K>` (no private
+//! side table) and produces the files itself.
 
 use crate::emit::EmittedFile;
 use crate::error::Result;
 use crate::ir::{LoadOutput, IR};
 use crate::language::Language;
 use crate::render::NameResolver;
-use crate::schema_type::SchemaType;
 
-/// Validates input files for one schema_type and produces the base IR.
+/// Validates input files for one frontend and produces the base IR.
 ///
 /// This is where **input validation** lives: JSON Schema strict-subset checks
 /// for the JSON loader; WIT parse + proto descriptor resolution for the WIT
@@ -23,23 +22,21 @@ use crate::schema_type::SchemaType;
 ///
 /// The loader instance is **constructed by the frontend**, holding its own
 /// inputs/config (input paths, descriptor paths, …). `language` is supplied per
-/// call — one loader backs every language emitter for its schema_type, and some
+/// call — one loader backs every language emitter for its frontend, and some
 /// frontends (WIT) resolve types per-language at parse time.
 ///
 /// [`SymbolTable`]: crate::SymbolTable
 pub trait Loader {
-    /// The frontend's open symbol-kind type (e.g. `WitSymbolKind`).
+    /// The frontend's open symbol-kind type (e.g. `WitSymbolKind`). The registry
+    /// is keyed by this kind: emitters are paired with a loader that shares it.
     type Kind;
-
-    /// The schema_type this loader handles. Used as the registry key.
-    fn schema_type(&self) -> SchemaType;
 
     /// Validate the loader's inputs and lower them into the IR for `language`,
     /// together with any non-fatal warnings surfaced during lowering.
     fn load(&self, language: Language) -> Result<LoadOutput<Self::Kind>>;
 }
 
-/// Renders symbols for one `(language, schema_type)` pair, owning file layout.
+/// Renders symbols for one language, owning file layout.
 ///
 /// Type symbols are rendered by the emitter (reading its private data by id);
 /// service symbols are rendered by the base
@@ -48,11 +45,8 @@ pub trait Loader {
 /// [`render_imports`](crate::render_imports) (not an emitter method) and
 /// stitched in during [`assemble`](crate::assemble).
 pub trait Emitter<K> {
-    /// The target language. Part of the registry key.
+    /// The target language. The registry key.
     fn language(&self) -> Language;
-
-    /// The schema_type. Part of the registry key.
-    fn schema_type(&self) -> SchemaType;
 
     /// Render the IR into a set of files (bodies without import blocks).
     ///

@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use nex_gen_codegen::{IR, Language, LoadOutput, SchemaType};
+use nex_gen_codegen::{IR, Language, LoadOutput};
 
 use crate::wit_symbols::{WitSymbolKind, WitSymbols, build_wit_symbols};
 use crate::descriptors::DescriptorIndex;
@@ -40,10 +40,6 @@ impl WitLoader {
 
 impl nex_gen_codegen::Loader for WitLoader {
     type Kind = WitSymbolKind;
-
-    fn schema_type(&self) -> SchemaType {
-        SchemaType::Wit
-    }
 
     fn load(&self, language: Language) -> nex_gen_codegen::Result<LoadOutput<WitSymbolKind>> {
         let spec = ApiSpec::load_for_language_with_inputs(language, &self.input_paths)

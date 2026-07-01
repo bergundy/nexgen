@@ -149,7 +149,7 @@ fn generate_via_registry(
     descriptor_paths: &[PathBuf],
     fragments: Vec<SupportFragmentSpec>,
 ) -> Result<GeneratedFiles> {
-    use nex_gen_codegen::{Emitter, Registry, SchemaType};
+    use nex_gen_codegen::{Emitter, Registry};
 
     use wit_symbols::WitSymbolKind;
     use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
@@ -169,7 +169,7 @@ fn generate_via_registry(
     );
 
     registry
-        .generate(language, SchemaType::Wit)
+        .generate(language)
         .expect("pipeline registered above")
         .map_err(error::Error::from)
 }

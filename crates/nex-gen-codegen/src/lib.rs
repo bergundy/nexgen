@@ -10,13 +10,13 @@
 //! The pipeline is **loader -> IR -> emitter**:
 //!
 //! ```text
-//! inputs --Loader[schema_type]--> IR<K> (SymbolTable<K>; K = frontend kind)
-//!        --Emitter[(lang, schema_type)]--> Vec<EmittedFile>
+//! inputs --Loader--> IR<K> (SymbolTable<K>; K = frontend kind)
+//!        --Emitter[lang]--> Vec<EmittedFile>
 //!        --assemble: group by module -> resolve imports -> render -> write/format
 //!        --> GeneratedFiles
 //! ```
 //!
-//! It is **schema_type-agnostic**: symbol kinds are frontend-defined (the
+//! It is **frontend-agnostic**: symbol kinds are frontend-defined (the
 //! generic `K`), and the base reasons only over `id` / `name` / `refs` plus
 //! emit-tier data (`module`, `type_ref`, `import_binding`, `body`) — it never
 //! inspects `K`. Services stay a base concept ([`Service`] + [`render_service`]),
@@ -35,7 +35,6 @@ pub mod language;
 pub mod output;
 pub mod registry;
 pub mod render;
-pub mod schema_type;
 pub mod traits;
 
 pub use assemble::assemble;
@@ -49,5 +48,4 @@ pub use output::{
 };
 pub use registry::Registry;
 pub use render::{NameResolver, render_imports, render_service};
-pub use schema_type::SchemaType;
 pub use traits::{Emitter, Loader};
