@@ -97,6 +97,10 @@ pub struct Operation {
     pub output: Option<SymbolId>,
     /// Documentation for the operation, if any.
     pub docs: Option<String>,
+    /// Documentation for the operation's return value, if any. Rendered by
+    /// front-ends whose service binding documents returns (e.g. .NET's XML
+    /// `<returns>`); front-ends that don't leave it `None`.
+    pub returns_doc: Option<String>,
 }
 
 /// The symbol table produced by a loader, generic over the frontend kind `K`.

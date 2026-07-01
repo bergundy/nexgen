@@ -79,6 +79,7 @@ fn build_table() -> (SymbolTable<TestKind>, SymbolId, SymbolId, SymbolId, Symbol
                 input: Some(req),
                 output: Some(user),
                 docs: None,
+                returns_doc: None,
             }],
             docs: None,
         }),

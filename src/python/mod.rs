@@ -3650,6 +3650,7 @@ fn render_service_definition(output: &mut String, service: &RenderedService<'_>)
             input: Some(next_io_id(&operation.input_ref)),
             output: Some(next_io_id(&operation.output_ref)),
             docs: operation.doc.clone(),
+            returns_doc: None,
         })
         .collect();
 

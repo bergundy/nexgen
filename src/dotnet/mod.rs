@@ -284,22 +284,97 @@ fn render_service_file(namespace: &str, symbols: &WitSymbols) -> String {
         &["System", "System.CodeDom.Compiler", "NexusRpc"],
     );
     for service in symbols.services() {
-        render_xml_summary(&mut output, "", None, service.experimental);
-        output.push_str(GENERATED_CODE_ATTRIBUTE);
-        output.push('\n');
-        output.push_str("[NexusService(");
-        output.push_str(&csharp_string_literal(&service.wire_name));
-        output.push_str(")]\n");
-        output.push_str("internal interface I");
-        output.push_str(&csharp_type_name(&service.name));
-        output.push_str("\n{\n");
-        for operation in &service.operations {
-            render_service_operation(&mut output, operation, symbols);
-        }
-        output.push_str("}\n\n");
+        render_service_definition(&mut output, service, symbols);
     }
     close_namespace(&mut output);
     output
+}
+
+/// Adapter that lets the base [`render_service`](nex_gen_codegen::render_service)
+/// utility name operation I/O types using the already-resolved C# type strings
+/// (`operation_raw_input_type` / `operation_raw_return_type`) for this service.
+///
+/// The base reasons over [`SymbolId`](nex_gen_codegen::SymbolId)s; here each id
+/// indexes a precomputed type-ref string. `module_of` / `import_binding` are
+/// never called during service rendering (it only uses `type_ref`), so they are
+/// unreachable.
+struct ServiceTypeRefResolver {
+    type_refs: Vec<String>,
+}
+
+impl nex_gen_codegen::NameResolver for ServiceTypeRefResolver {
+    fn type_ref(&self, id: nex_gen_codegen::SymbolId) -> String {
+        self.type_refs[id.0 as usize].clone()
+    }
+
+    fn module_of(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Module {
+        unreachable!("render_service only resolves type_ref, never module_of")
+    }
+
+    fn import_binding(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Import {
+        unreachable!("render_service only resolves type_ref, never import_binding")
+    }
+}
+
+fn render_service_definition(output: &mut String, service: &WitService, symbols: &WitSymbols) {
+    use nex_gen_codegen::{Language as BaseLanguage, Name, Operation, Service, SymbolId};
+
+    // Build the frontend-agnostic service binding model + a resolver over the
+    // already-computed C# I/O type strings, then delegate the rendering to the
+    // base `render_service` utility. The file prelude, `using` block, and
+    // namespace wrapping stay in `render_service_file`.
+    let mut type_refs: Vec<String> = Vec::new();
+    let mut next_io_id = |type_ref: String| -> SymbolId {
+        let id = SymbolId(type_refs.len() as u32);
+        type_refs.push(type_ref);
+        id
+    };
+
+    let operations = service
+        .operations
+        .iter()
+        .map(|operation| {
+            // `input` is `Some` only when the operation takes a request
+            // parameter; the base emits no parameter for `None`. `output` is
+            // always registered (the raw return type already collapses the
+            // output-less case to `"void"`).
+            let input = operation_has_input(operation, symbols)
+                .then(|| next_io_id(operation_raw_input_type(&operation.input)));
+            let output = Some(next_io_id(operation_raw_return_type(operation)));
+            // The service binding only documents a return when the operation
+            // has an output, matching `render_operation_summary_xml_doc`.
+            let returns_doc = match operation.output {
+                WitOperationOutput::None => None,
+                _ => dotnet_doc(&operation.return_doc).map(str::to_string),
+            };
+            Operation {
+                name: Name::new(operation.name.as_str()),
+                wire_name: operation.wire_name.to_string(),
+                experimental: operation.experimental,
+                input,
+                output,
+                docs: dotnet_doc(&operation.doc).map(str::to_string),
+                returns_doc,
+            }
+        })
+        .collect();
+
+    let service_def = Service {
+        name: Name::new(service.name.as_str()),
+        wire_name: service.wire_name.to_string(),
+        experimental: service.experimental,
+        operations,
+        // The .NET service interface renders no `<summary>` for the service
+        // itself; only the experimental flag matters.
+        docs: None,
+    };
+
+    let resolver = ServiceTypeRefResolver { type_refs };
+    output.push_str(&nex_gen_codegen::render_service(
+        BaseLanguage::Dotnet,
+        &service_def,
+        &resolver,
+    ));
 }
 
 fn render_operations_file(
@@ -427,25 +502,6 @@ fn render_operation_xml_doc(
     );
 }
 
-fn render_operation_summary_xml_doc(
-    output: &mut String,
-    indent: &str,
-    operation: &WitOperation,
-) {
-    let return_doc = match operation.output {
-        WitOperationOutput::None => None,
-        _ => dotnet_doc(&operation.return_doc),
-    };
-    render_xml_doc(
-        output,
-        indent,
-        dotnet_doc(&operation.doc),
-        Vec::new(),
-        return_doc,
-        operation.experimental,
-    );
-}
-
 fn render_field_xml_doc(output: &mut String, indent: &str, field: &WitField) {
     render_xml_summary(
         output,
@@ -517,26 +573,6 @@ fn xml_doc_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-fn render_service_operation(output: &mut String, operation: &WitOperation, symbols: &WitSymbols) {
-    render_operation_summary_xml_doc(output, "    ", operation);
-    output.push_str("    ");
-    output.push_str(GENERATED_CODE_ATTRIBUTE);
-    output.push('\n');
-    output.push_str("    [NexusOperation(");
-    output.push_str(&csharp_string_literal(&operation.wire_name));
-    output.push_str(")]\n");
-    output.push_str("    ");
-    output.push_str(&operation_raw_return_type(operation));
-    output.push(' ');
-    output.push_str(&csharp_type_name(&operation.name));
-    output.push('(');
-    if operation_has_input(operation, symbols) {
-        output.push_str(&operation_raw_input_type(&operation.input));
-        output.push_str(" request");
-    }
-    output.push_str(");\n\n");
 }
 
 fn render_operations_class(
