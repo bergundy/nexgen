@@ -37,7 +37,7 @@ pub trait NameResolver {
 ///
 /// Structural logic (operations, wire names, docs) is language-agnostic;
 /// per-language formatting branches on `lang`. I/O type names come from
-/// `names`. Type rendering, proto conversion, and resources stay in the
+/// `names`. Type rendering, foreign-type conversion, and resources stay in the
 /// front-end crate; only the service/operation binding is rendered here.
 pub fn render_service(lang: Language, svc: &Service, names: &dyn NameResolver) -> String {
     match lang {
@@ -58,7 +58,7 @@ const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to chan
 /// (`export const X = nexus.service('wire', { op: nexus.operation<In, Out>({ name: ... }) });`).
 ///
 /// Operation I/O type names come from `names` (`type_ref`), never from
-/// proto/WIT knowledge.
+/// frontend-specific knowledge.
 fn render_typescript_service(svc: &Service, names: &dyn NameResolver) -> String {
     let mut output = String::new();
     let service_doc_tags = experimental_doc_tag(svc.experimental);
@@ -324,10 +324,10 @@ fn render_python_service(svc: &Service, names: &dyn NameResolver) -> String {
     output
 }
 
-/// Resolve an operation I/O symbol to its Python type name. The WIT front-end
-/// always supplies both refs as concrete types (Python's `Operation[...]` lists
-/// both, with no `void`/`None` collapsing), so `None` never occurs for current
-/// inputs; we fall back to `None` (Python's no-value type name) defensively.
+/// Resolve an operation I/O symbol to its Python type name. Frontends supply
+/// both refs as concrete types (Python's `Operation[...]` lists both, with no
+/// `void`/`None` collapsing), so `None` never occurs for current inputs; we
+/// fall back to `None` (Python's no-value type name) defensively.
 fn python_operation_io_ref(id: Option<SymbolId>, names: &dyn NameResolver) -> String {
     match id {
         Some(id) => names.type_ref(id),
@@ -653,8 +653,8 @@ fn render_python_named_import(module: &str, names: &[&str]) -> String {
 ///   `import [type] * as <alias> from "<mod>"` (alias from [`Import::name`],
 ///   defaulting to the module string when absent).
 /// - [`ImportBinding::Named`] => `import [type] { X, Y } from "<mod>"`, names
-///   merged per module and sorted. The proto namespace-head import is a `Named`
-///   import whose single name is the namespace head (e.g. `temporal`).
+///   merged per module and sorted. A namespace-head import is a `Named`
+///   import whose single name is the namespace head (e.g. `root`).
 ///
 /// `type_only` selects `import type`; type-only and value imports for the same
 /// module render as separate statements (they cannot merge).

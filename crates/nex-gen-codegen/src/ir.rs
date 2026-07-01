@@ -3,12 +3,12 @@
 //! `Symbol<K>` is the core IR primitive. Its `kind: K` is **frontend-defined
 //! and open** — the base is compile-time-agnostic to `K` and only ever touches
 //! `id` / `name` / `refs` (plus the emitter's [`NameResolver`](crate::NameResolver)).
-//! A WIT record, enum, variant, resource, proto-ref, and service are all
-//! `WitSymbolKind` variants the WIT crate owns; the JSON crate defines its own.
+//! Records, enums, variants, resources, type references, and services are all
+//! variants of the kind type each frontend crate defines and owns.
 //!
 //! Because `refs` are explicit on every symbol, placement, import resolution,
 //! reachability, and dedup are one algorithm over `refs` + the emitter-computed
-//! `module`, with no schema-specific knowledge in the base.
+//! `module`, with no frontend-specific knowledge in the base.
 //!
 //! Services stay a base concept (they are well-defined across all frontends):
 //! the base provides the [`Service`] / [`Operation`] data structs and the
@@ -59,8 +59,9 @@ pub struct Symbol<K> {
 /// Base data for a service symbol: operations, wire names, docs.
 ///
 /// Services are frontend-independent, so this is base data a frontend kind
-/// wraps (e.g. `WitSymbolKind::Service(Service)`); it never leaks proto/WIT
-/// specifics. Rendered by [`render_service`](crate::render_service).
+/// wraps (e.g. a frontend's `Kind::Service(Service)` variant); it never leaks
+/// frontend-specific details. Rendered by
+/// [`render_service`](crate::render_service).
 #[derive(Clone, Debug)]
 pub struct Service {
     /// Canonical service name.

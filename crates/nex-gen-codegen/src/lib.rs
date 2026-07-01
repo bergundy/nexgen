@@ -1,6 +1,6 @@
 //! `nex-gen-codegen` — the front-end-agnostic codegen base layer.
 //!
-//! This crate is the base described in `json-schema/integration-plan.md`: the
+//! This crate is the frontend-agnostic base: the
 //! `Symbol`-centric IR, the [`Loader`] / [`Emitter`] traits, the per-language
 //! [`render_service`] / [`render_imports`] utilities, the [`assemble`]
 //! pipeline (placement + import resolution), the [`Generator`], and the output

@@ -1,10 +1,10 @@
 //! End-to-end import-resolution + assembly test.
 //!
 //! Hand-builds a small [`SymbolTable`] — a service plus two types in a `models`
-//! module and one foreign (proto-style) type — and a trivial test
-//! [`Emitter`]/[`NameResolver`], then runs [`assemble`] and asserts the
-//! base-owned resolution rules: cross-module refs import, same-module refs do
-//! not, the foreign ref produces a namespace/foreign import, imports dedup, and
+//! module and one foreign type (living in another tool's package) — and a
+//! trivial test [`Emitter`]/[`NameResolver`], then runs [`assemble`] and asserts
+//! the base-owned resolution rules: cross-module refs import, same-module refs
+//! do not, the foreign ref produces a namespace/foreign import, imports dedup, and
 //! the service file imports its I/O types.
 //!
 //! The test emitter renders a minimal inline service body (it does NOT depend
@@ -30,10 +30,10 @@ enum TestKind {
 
 const MODELS_MODULE: &str = "./models.ts";
 const SERVICE_MODULE: &str = "./service.ts";
-const PROTO_MODULE: &str = "@temporalio/proto";
+const FOREIGN_MODULE: &str = "foreign-pkg";
 
 /// Build: a `UserService` (in `service.ts`) with one operation taking
-/// `GetUserRequest` (models) and returning `User` (a foreign proto type), plus
+/// `GetUserRequest` (models) and returning `User` (a foreign type), plus
 /// a second `models` type `Extra` referenced by `GetUserRequest` (same-module
 /// from the models file's perspective).
 fn build_table() -> (SymbolTable<TestKind>, SymbolId, SymbolId, SymbolId, SymbolId) {
@@ -57,7 +57,7 @@ fn build_table() -> (SymbolTable<TestKind>, SymbolId, SymbolId, SymbolId, Symbol
         kind: TestKind::Type,
         refs: vec![],
     });
-    // foreign proto type (its module is the foreign package; empty body).
+    // foreign type (its module is the foreign package; empty body).
     table.insert(Symbol {
         id: user,
         name: Name::new("User"),
@@ -99,7 +99,7 @@ impl NameResolver for TestResolver {
         match id {
             i if i == self.req => "GetUserRequest".to_string(),
             i if i == self.extra => "Extra".to_string(),
-            i if i == self.user => "temporal.api.user.v1.User".to_string(),
+            i if i == self.user => "foreign.pkg.User".to_string(),
             _ => panic!("unknown symbol {id:?}"),
         }
     }
@@ -107,7 +107,7 @@ impl NameResolver for TestResolver {
     fn module_of(&self, id: SymbolId) -> Module {
         match id {
             i if i == self.req || i == self.extra => Module::new(MODELS_MODULE),
-            i if i == self.user => Module::new(PROTO_MODULE),
+            i if i == self.user => Module::new(FOREIGN_MODULE),
             _ => panic!("unknown symbol {id:?}"),
         }
     }
@@ -126,10 +126,10 @@ impl NameResolver for TestResolver {
                 binding: ImportBinding::Named,
                 type_only: true,
             },
-            // foreign proto: namespace-head import (`{ temporal }`).
+            // foreign: namespace-head import (`{ foreign }`).
             i if i == self.user => Import {
-                module: Module::new(PROTO_MODULE),
-                name: Some("temporal".to_string()),
+                module: Module::new(FOREIGN_MODULE),
+                name: Some("foreign".to_string()),
                 binding: ImportBinding::Named,
                 type_only: true,
             },
@@ -164,7 +164,7 @@ impl Emitter<TestKind> for TestEmitter {
         };
 
         // service.ts: inline-rendered service body (NOT via render_service).
-        // It references its I/O types: GetUserRequest (models) + User (proto).
+        // It references its I/O types: GetUserRequest (models) + User (foreign).
         let mut body = String::new();
         for symbol in ir.symbols.iter() {
             if let TestKind::Service(def) = &symbol.kind {
@@ -240,15 +240,15 @@ fn assemble_resolves_cross_module_and_foreign_imports() {
     );
 
     // service.ts: imports its I/O types. GetUserRequest is a cross-module named
-    // import from ./models.ts; the proto output is a foreign namespace-head
-    // import from @temporalio/proto; the runtime nexus import is present.
+    // import from ./models.ts; the foreign output is a namespace-head import
+    // from foreign-pkg; the runtime nexus import is present.
     assert!(
         service.contains("import type { GetUserRequest } from \"./models.ts\";"),
         "service.ts should import its input type, got:\n{service}"
     );
     assert!(
-        service.contains("import type { temporal } from \"@temporalio/proto\";"),
-        "service.ts should import the foreign proto namespace head, got:\n{service}"
+        service.contains("import type { foreign } from \"foreign-pkg\";"),
+        "service.ts should import the foreign namespace head, got:\n{service}"
     );
     assert!(
         service.contains("import * as nexus from \"nexus-rpc\";"),
@@ -256,7 +256,7 @@ fn assemble_resolves_cross_module_and_foreign_imports() {
     );
     // The service body (stitched after the import block) names the I/O types.
     assert!(service.contains("GetUserRequest"));
-    assert!(service.contains("temporal.api.user.v1.User"));
+    assert!(service.contains("foreign.pkg.User"));
 }
 
 #[test]

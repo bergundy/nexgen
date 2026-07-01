@@ -32,7 +32,7 @@ impl<L: Loader> Generator<L> {
     /// every emitter's `K` must match.
     ///
     /// `emitters` is any iterable of boxed emitters, e.g. an array literal:
-    /// `Generator::new(WitLoader::new(), [Box::new(py), Box::new(ts)])`.
+    /// `Generator::new(loader, [Box::new(py), Box::new(ts)])`.
     pub fn new(
         loader: L,
         emitters: impl IntoIterator<Item = Box<dyn Emitter<L::Kind>>>,

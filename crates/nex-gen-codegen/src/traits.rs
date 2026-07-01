@@ -14,22 +14,20 @@ use crate::render::NameResolver;
 
 /// Validates input files for one frontend and produces the base IR.
 ///
-/// This is where **input validation** lives: JSON Schema strict-subset checks
-/// for the JSON loader; WIT parse + proto descriptor resolution for the WIT
-/// loader. The loader lowers its inputs directly into a [`SymbolTable`]
-/// (`IR<Self::Kind>`) whose symbols carry all the data their emitter needs —
-/// there is no private side table.
+/// This is where **input validation** lives: each frontend loader parses and
+/// validates its own input format before lowering. The loader lowers its inputs
+/// directly into a [`SymbolTable`] (`IR<Self::Kind>`) whose symbols carry all
+/// the data their emitter needs — there is no private side table.
 ///
 /// The loader instance is **constructed by the frontend**, holding its own
 /// inputs/config (input paths, descriptor paths, …). `language` is supplied per
 /// call — one loader backs every language emitter for its frontend, and some
-/// frontends (WIT) resolve types per-language at parse time.
+/// frontends resolve types per-language at parse time.
 ///
 /// [`SymbolTable`]: crate::SymbolTable
 pub trait Loader {
-    /// The frontend's open symbol-kind type (e.g. `WitSymbolKind`). The
-    /// generator is fixed to this kind: emitters are paired with a loader that
-    /// shares it.
+    /// The frontend's open symbol-kind type. The generator is fixed to this
+    /// kind: emitters are paired with a loader that shares it.
     type Kind;
 
     /// Validate the loader's inputs and lower them into the IR for `language`,
