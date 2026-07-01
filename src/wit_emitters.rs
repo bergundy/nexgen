@@ -141,6 +141,44 @@ impl Emitter<WitSymbolKind> for TypeScriptEmitter {
     }
 }
 
+/// The .NET WIT emitter.
+pub(crate) struct DotnetEmitter {
+    support_fragments: Vec<SupportFragmentSpec>,
+    resolver: UnusedResolver,
+}
+
+impl DotnetEmitter {
+    pub(crate) fn new(support_fragments: Vec<SupportFragmentSpec>) -> Self {
+        Self {
+            support_fragments,
+            resolver: UnusedResolver,
+        }
+    }
+}
+
+impl Emitter<WitSymbolKind> for DotnetEmitter {
+    fn language(&self) -> Language {
+        Language::Dotnet
+    }
+
+    fn schema_type(&self) -> SchemaType {
+        SchemaType::Wit
+    }
+
+    fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
+        let symbols = WitSymbols::new(&ir.symbols);
+        let generated = crate::dotnet::generate(&symbols, &self.support_fragments)
+            .map_err(|error| Error::Load {
+                message: error.to_string(),
+            })?;
+        Ok(into_emitted_files(generated))
+    }
+
+    fn resolver(&self) -> &dyn NameResolver {
+        &self.resolver
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -148,7 +186,7 @@ mod tests {
     use nex_gen_codegen::{assemble, IR};
     use prost_types::FileDescriptorSet;
 
-    use super::{PythonEmitter, TypeScriptEmitter};
+    use super::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
     use crate::api_plan::{build_api_plan, WitSymbolKind, WitSymbols};
     use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
@@ -205,6 +243,15 @@ interface user-service {
         let ir = build_ir(Language::TypeScript);
         let expected = crate::typescript::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
         let emitter = TypeScriptEmitter::new(Vec::new());
+        let assembled = assemble(&ir, &emitter).unwrap();
+        assert_eq!(assembled.files, expected.files);
+    }
+
+    #[test]
+    fn dotnet_emitter_matches_direct_generate() {
+        let ir = build_ir(Language::Dotnet);
+        let expected = crate::dotnet::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
+        let emitter = DotnetEmitter::new(Vec::new());
         let assembled = assemble(&ir, &emitter).unwrap();
         assert_eq!(assembled.files, expected.files);
     }

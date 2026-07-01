@@ -56,8 +56,10 @@ impl Registry {
             let language = emitter.language();
             let key = (language, emitter.schema_type());
             let runner: Runner = Box::new(move || {
-                let ir = loader.load(language)?;
-                assemble(&ir, emitter.as_ref())
+                let loaded = loader.load(language)?;
+                let mut generated = assemble(&loaded.ir, emitter.as_ref())?;
+                generated.warnings = loaded.warnings;
+                Ok(generated)
             });
             self.runners.insert(key, runner);
         }

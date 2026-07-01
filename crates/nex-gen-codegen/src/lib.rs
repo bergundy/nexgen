@@ -41,7 +41,7 @@ pub mod traits;
 pub use assemble::assemble;
 pub use emit::{EmittedFile, Import, ImportBinding, Module};
 pub use error::{Error, Result};
-pub use ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
+pub use ir::{IR, LoadOutput, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
 pub use language::Language;
 pub use output::{
     GeneratedFiles, GeneratedOutputLayout, format_generated_file, formatter_command,

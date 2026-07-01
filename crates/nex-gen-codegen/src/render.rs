@@ -580,6 +580,12 @@ fn python_docstring_literal_text(value: &str) -> String {
 /// (`ruff` / `prettier`) reflows it afterwards. [`ImportBinding::Named`]
 /// imports to the same module are merged into one statement.
 pub fn render_imports(lang: Language, imports: &[Import]) -> String {
+    // No imports to render is an empty block in every language — short-circuit
+    // before the per-language rendering so emitters that inline their own
+    // imports (and declare no refs) never require language-specific support.
+    if imports.is_empty() {
+        return String::new();
+    }
     match lang {
         Language::Python => render_python_imports(imports),
         Language::TypeScript => render_typescript_imports(imports),

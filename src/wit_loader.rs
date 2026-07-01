@@ -10,10 +10,11 @@
 
 use std::path::PathBuf;
 
-use nex_gen_codegen::{IR, Language, SchemaType};
+use nex_gen_codegen::{IR, Language, LoadOutput, SchemaType};
 
-use crate::api_plan::{WitSymbolKind, build_api_plan};
+use crate::api_plan::{WitSymbolKind, WitSymbols, build_api_plan};
 use crate::descriptors::DescriptorIndex;
+use crate::generator::generation_warnings;
 use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
 use crate::validation::validate_type_overrides;
@@ -44,7 +45,7 @@ impl nex_gen_codegen::Loader for WitLoader {
         SchemaType::Wit
     }
 
-    fn load(&self, language: Language) -> nex_gen_codegen::Result<IR<WitSymbolKind>> {
+    fn load(&self, language: Language) -> nex_gen_codegen::Result<LoadOutput<WitSymbolKind>> {
         let spec = ApiSpec::load_for_language_with_inputs(language, &self.input_paths)
             .map_err(|error| nex_gen_codegen::Error::Load {
                 message: error.to_string(),
@@ -67,7 +68,8 @@ impl nex_gen_codegen::Loader for WitLoader {
                 message: error.to_string(),
             }
         })?;
-        Ok(IR::new(symbols))
+        let warnings = generation_warnings(&WitSymbols::new(&symbols));
+        Ok(LoadOutput::with_warnings(IR::new(symbols), warnings))
     }
 }
 

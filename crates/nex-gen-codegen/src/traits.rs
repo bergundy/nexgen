@@ -8,7 +8,7 @@
 
 use crate::emit::EmittedFile;
 use crate::error::Result;
-use crate::ir::IR;
+use crate::ir::{LoadOutput, IR};
 use crate::language::Language;
 use crate::render::NameResolver;
 use crate::schema_type::SchemaType;
@@ -34,8 +34,9 @@ pub trait Loader {
     /// The schema_type this loader handles. Used as the registry key.
     fn schema_type(&self) -> SchemaType;
 
-    /// Validate the loader's inputs and lower them into the IR for `language`.
-    fn load(&self, language: Language) -> Result<IR<Self::Kind>>;
+    /// Validate the loader's inputs and lower them into the IR for `language`,
+    /// together with any non-fatal warnings surfaced during lowering.
+    fn load(&self, language: Language) -> Result<LoadOutput<Self::Kind>>;
 }
 
 /// Renders symbols for one `(language, schema_type)` pair, owning file layout.

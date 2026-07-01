@@ -1,6 +1,3 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-
 use crate::SupportFiles;
 use crate::api_plan::{WitSymbols, build_api_plan};
 use crate::descriptors::DescriptorIndex;
@@ -13,44 +10,10 @@ use crate::spec::ApiSpec;
 use crate::typescript;
 use crate::validation::validate_type_overrides;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedOutputLayout {
-    SingleFile,
-    Directory,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GeneratedFiles {
-    pub layout: GeneratedOutputLayout,
-    pub files: BTreeMap<PathBuf, String>,
-    pub warnings: Vec<String>,
-}
-
-impl GeneratedFiles {
-    pub fn single_file(contents: String) -> Self {
-        let mut files = BTreeMap::new();
-        files.insert(PathBuf::from("output"), contents);
-        Self {
-            layout: GeneratedOutputLayout::SingleFile,
-            files,
-            warnings: Vec::new(),
-        }
-    }
-
-    pub fn directory(files: BTreeMap<PathBuf, String>) -> Self {
-        Self {
-            layout: GeneratedOutputLayout::Directory,
-            files,
-            warnings: Vec::new(),
-        }
-    }
-
-    pub fn single_file_contents(&self) -> Option<&str> {
-        (self.layout == GeneratedOutputLayout::SingleFile)
-            .then(|| self.files.values().next().map(String::as_str))
-            .flatten()
-    }
-}
+// The generated-file model + layout now live in the base crate (the output
+// plumbing is schema_type-agnostic). Re-exported here so existing
+// `crate::generator::GeneratedFiles` paths keep working.
+pub use nex_gen_codegen::{GeneratedFiles, GeneratedOutputLayout};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ModelCapabilities {
@@ -122,7 +85,7 @@ pub fn generate_source(
     })
 }
 
-fn generation_warnings(plan: &WitSymbols) -> Vec<String> {
+pub(crate) fn generation_warnings(plan: &WitSymbols) -> Vec<String> {
     plan.services()
         .flat_map(|service| {
             service.resources.iter().flat_map(|resource| {

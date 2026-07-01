@@ -171,3 +171,34 @@ impl<K> IR<K> {
         Self { symbols }
     }
 }
+
+/// A loader's full output: the [`IR`] plus any non-fatal warnings surfaced
+/// while lowering the inputs.
+///
+/// Warnings are frontend diagnostics that are **not** symbols and place no code
+/// (e.g. "resource method generated as a stub"). They are derived from the
+/// inputs during load, so they travel alongside the IR rather than living in it;
+/// [`assemble`](crate::assemble) copies them onto the resulting
+/// [`GeneratedFiles`](crate::GeneratedFiles) via the [`Registry`](crate::Registry).
+#[derive(Clone, Debug)]
+pub struct LoadOutput<K> {
+    /// The lowered IR.
+    pub ir: IR<K>,
+    /// Non-fatal diagnostics surfaced during lowering.
+    pub warnings: Vec<String>,
+}
+
+impl<K> LoadOutput<K> {
+    /// Wrap an IR with no warnings.
+    pub fn new(ir: IR<K>) -> Self {
+        Self {
+            ir,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Wrap an IR together with the warnings surfaced during lowering.
+    pub fn with_warnings(ir: IR<K>, warnings: Vec<String>) -> Self {
+        Self { ir, warnings }
+    }
+}

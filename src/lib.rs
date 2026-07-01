@@ -1,14 +1,11 @@
 mod api_plan;
-// The WIT `Loader` (Step 2). `build_api_plan` (the symbol-table lowering it
-// wraps) is already on the production path via `generator`, but the `WitLoader`
-// type itself is not yet wired into the pipeline (Step 4 does that), so it reads
-// as dead code until then; the tests exercise the symbol lowering.
-#[allow(dead_code)]
+// The WIT `Loader`: validates inputs and lowers them into `IR<WitSymbolKind>`
+// (+ warnings). Wired into the CLI generation path via the base `Registry`
+// (see `generate_via_registry`).
 mod wit_loader;
-// The WIT emitters (Step 3): render straight from `IR<WitSymbolKind>` through
-// the base `assemble` pipeline. Not yet wired into the pipeline (Step 4 does
-// that); the tests assert byte-identity with the legacy `generate` path.
-#[allow(dead_code)]
+// The WIT emitters: render straight from `IR<WitSymbolKind>` through the base
+// `assemble` pipeline. Wired into the CLI generation path via the `Registry`;
+// the tests assert byte-identity with the direct `generate` path.
 mod wit_emitters;
 
 pub mod add_rpc;
@@ -29,7 +26,7 @@ use std::process::Command;
 use add_rpc::generate_add_rpc_wit;
 use descriptors::DescriptorIndex;
 use error::Result;
-use generator::{GeneratedFiles, GeneratedOutputLayout, generate_files};
+use generator::{GeneratedFiles, GeneratedOutputLayout};
 use heck::ToSnakeCase;
 use spec::{ApiSpec, SupportFragmentSpec, write_prepared_wit_directory};
 
@@ -92,10 +89,8 @@ pub fn generate_to_string_with_inputs_and_support(
     descriptor_paths: &[PathBuf],
     support_paths: &[PathBuf],
 ) -> Result<String> {
-    let spec = ApiSpec::load_for_language_with_inputs(language, input_paths)?;
-    let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
-    let support = load_support_files(language, &spec, support_paths)?;
-    let generated = generate_files(language, &spec, &descriptors, &support)?;
+    let fragments = resolve_support_fragments(language, input_paths, support_paths)?;
+    let generated = generate_via_registry(language, input_paths, descriptor_paths, fragments)?;
     print_warnings(&generated);
     Ok(match generated.layout {
         GeneratedOutputLayout::SingleFile => generated
@@ -107,10 +102,17 @@ pub fn generate_to_string_with_inputs_and_support(
 }
 
 pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
-    let spec = ApiSpec::load_for_language_with_inputs(request.language, &request.input_paths)?;
-    let descriptors = DescriptorIndex::load_many(&request.descriptor_paths)?;
-    let support = load_support_files(request.language, &spec, &request.support_paths)?;
-    let generated = generate_files(request.language, &spec, &descriptors, &support)?;
+    let fragments = resolve_support_fragments(
+        request.language,
+        &request.input_paths,
+        &request.support_paths,
+    )?;
+    let generated = generate_via_registry(
+        request.language,
+        &request.input_paths,
+        &request.descriptor_paths,
+        fragments,
+    )?;
     print_warnings(&generated);
 
     write_generated_files(&request.output_path, &generated)?;
@@ -120,6 +122,56 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve the support fragments for a run: the spec-embedded fragments for
+/// `language` plus any external `--support` files.
+///
+/// This parses the spec to read its embedded support fragments; the WIT
+/// [`Loader`](nex_gen_codegen::Loader) re-parses it to build the IR (fragments
+/// do not live in the IR yet — see the codegen integration plan).
+fn resolve_support_fragments(
+    language: Language,
+    input_paths: &[PathBuf],
+    support_paths: &[PathBuf],
+) -> Result<Vec<SupportFragmentSpec>> {
+    let spec = ApiSpec::load_for_language_with_inputs(language, input_paths)?;
+    Ok(load_support_files(language, &spec, support_paths)?.fragments)
+}
+
+/// Run the WIT generation pipeline through the base [`Registry`]: the
+/// [`WitLoader`](wit_loader::WitLoader) lowers the inputs to `IR<WitSymbolKind>`
+/// (+ warnings) and the language emitter renders it through
+/// [`assemble`](nex_gen_codegen::assemble).
+fn generate_via_registry(
+    language: Language,
+    input_paths: &[PathBuf],
+    descriptor_paths: &[PathBuf],
+    fragments: Vec<SupportFragmentSpec>,
+) -> Result<GeneratedFiles> {
+    use nex_gen_codegen::{Emitter, Registry, SchemaType};
+
+    use api_plan::WitSymbolKind;
+    use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
+    use wit_loader::WitLoader;
+
+    let emitter: Box<dyn Emitter<WitSymbolKind>> = match language {
+        Language::Python => Box::new(PythonEmitter::new(fragments)),
+        Language::TypeScript => Box::new(TypeScriptEmitter::new(fragments)),
+        Language::Dotnet => Box::new(DotnetEmitter::new(fragments)),
+        language => return Err(error::Error::UnsupportedLanguage { language }),
+    };
+
+    let mut registry = Registry::new();
+    registry.register(
+        WitLoader::new(input_paths.to_vec(), descriptor_paths.to_vec()),
+        [emitter],
+    );
+
+    registry
+        .generate(language, SchemaType::Wit)
+        .expect("pipeline registered above")
+        .map_err(error::Error::from)
 }
 
 pub fn add_rpc_to_string(
