@@ -2,9 +2,9 @@
 //!
 //! Each emitter builds a borrowing [`WitSymbols`] view over the symbol table
 //! and runs the existing per-language renderers, then routes the result through
-//! the base [`assemble`](nex_gen_codegen::assemble) pipeline. There is no
-//! `ApiPlan`: the emitter derives everything it needs from the IR, satisfying
-//! the "emitter works only from the IR" contract.
+//! the base [`assemble`](nex_gen_codegen::assemble) pipeline. The emitter
+//! derives everything it needs from the IR, satisfying the "emitter works only
+//! from the IR" contract.
 //!
 //! These emitters currently keep their import blocks inlined in each file's
 //! body and declare no `refs`, so `assemble` runs as a stitch/layout pass and
@@ -18,7 +18,7 @@ use nex_gen_codegen::{
     SymbolId, IR,
 };
 
-use crate::api_plan::{WitSymbolKind, WitSymbols};
+use crate::wit_symbols::{WitSymbolKind, WitSymbols};
 use crate::generator::GeneratedFiles;
 use crate::spec::SupportFragmentSpec;
 
@@ -187,7 +187,7 @@ mod tests {
     use prost_types::FileDescriptorSet;
 
     use super::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
-    use crate::api_plan::{build_api_plan, WitSymbolKind, WitSymbols};
+    use crate::wit_symbols::{build_wit_symbols, WitSymbolKind, WitSymbols};
     use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
     use crate::Language;
@@ -226,7 +226,7 @@ interface user-service {
             ApiSpec::parse_for_language(language, INLINE_WIT, PathBuf::from("inline.wit")).unwrap();
         let descriptors =
             DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap();
-        IR::new(build_api_plan(&spec, &descriptors).unwrap())
+        IR::new(build_wit_symbols(&spec, &descriptors).unwrap())
     }
 
     #[test]

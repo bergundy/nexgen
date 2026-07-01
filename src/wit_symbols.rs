@@ -21,16 +21,16 @@ use crate::spec::{
 };
 
 #[derive(Debug, Clone, Default)]
-struct PlanTables {
-    pub(crate) services: Vec<PlannedService>,
-    pub(crate) enums: IndexMap<String, PlannedEnum>,
-    pub(crate) flags: IndexMap<String, PlannedFlags>,
-    pub(crate) variants: IndexMap<String, PlannedVariant>,
-    pub(crate) models: IndexMap<String, PlannedModel>,
+struct WitTables {
+    pub(crate) services: Vec<WitService>,
+    pub(crate) enums: IndexMap<String, WitEnum>,
+    pub(crate) flags: IndexMap<String, WitFlags>,
+    pub(crate) variants: IndexMap<String, WitVariant>,
+    pub(crate) models: IndexMap<String, WitModel>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedService {
+pub(crate) struct WitService {
     pub(crate) name: String,
     pub(crate) wire_name: String,
     pub(crate) namespace: LanguageStringSpec,
@@ -38,82 +38,82 @@ pub(crate) struct PlannedService {
     pub(crate) endpoint: String,
     pub(crate) experimental: bool,
     pub(crate) delay_load_temporalio_workflow: bool,
-    pub(crate) operations: Vec<PlannedOperation>,
-    pub(crate) resources: Vec<PlannedResource>,
+    pub(crate) operations: Vec<WitOperation>,
+    pub(crate) resources: Vec<WitResource>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedOperation {
+pub(crate) struct WitOperation {
     pub(crate) name: String,
     pub(crate) wire_name: String,
     pub(crate) experimental: bool,
     pub(crate) doc: LanguageStringSpec,
     pub(crate) return_doc: LanguageStringSpec,
-    pub(crate) input: PlannedMessageType,
-    pub(crate) output: PlannedOperationOutput,
+    pub(crate) input: WitMessageType,
+    pub(crate) output: WitOperationOutput,
     pub(crate) output_transform: Option<OperationOutputTransformSpec>,
-    pub(crate) output_resource_return: Option<PlannedOperationResourceReturn>,
+    pub(crate) output_resource_return: Option<WitOperationResourceReturn>,
     pub(crate) output_direct_result: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PlannedOperationOutput {
-    Message(PlannedMessageType),
+pub(crate) enum WitOperationOutput {
+    Message(WitMessageType),
     Resource { type_name: String },
     None,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedOperationResourceReturn {
+pub(crate) struct WitOperationResourceReturn {
     pub(crate) resource_type_name: String,
-    pub(crate) bindings: Vec<PlannedOperationResourceFieldBinding>,
+    pub(crate) bindings: Vec<WitOperationResourceFieldBinding>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedOperationResourceFieldBinding {
+pub(crate) struct WitOperationResourceFieldBinding {
     pub(crate) field_name: String,
     pub(crate) optional: bool,
     pub(crate) source: ResolvedResourceBindingSource,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedResource {
+pub(crate) struct WitResource {
     pub(crate) name: String,
     pub(crate) type_name: String,
-    pub(crate) fields: Vec<PlannedResourceField>,
-    pub(crate) methods: Vec<PlannedResourceMethod>,
+    pub(crate) fields: Vec<WitResourceField>,
+    pub(crate) methods: Vec<WitResourceMethod>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedResourceField {
+pub(crate) struct WitResourceField {
     pub(crate) name: String,
     pub(crate) optional: bool,
-    pub(crate) kind: PlannedFieldKind,
+    pub(crate) kind: WitFieldKind,
     pub(crate) function: Option<FunctionFieldSpec>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedResourceMethod {
+pub(crate) struct WitResourceMethod {
     pub(crate) name: String,
-    pub(crate) params: Vec<PlannedResourceField>,
-    pub(crate) result: Option<PlannedResourceMethodResult>,
-    pub(crate) binding: PlannedResourceMethodBindingSpec,
+    pub(crate) params: Vec<WitResourceField>,
+    pub(crate) result: Option<WitResourceMethodResult>,
+    pub(crate) binding: WitResourceMethodBindingSpec,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedResourceMethodResult {
-    pub(crate) kind: PlannedResourceMethodResultKind,
+pub(crate) struct WitResourceMethodResult {
+    pub(crate) kind: WitResourceMethodResultKind,
     pub(crate) optional: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PlannedResourceMethodResultKind {
+pub(crate) enum WitResourceMethodResultKind {
     Resource { type_name: String },
-    Value(PlannedFieldKind),
+    Value(WitFieldKind),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PlannedResourceMethodBindingSpec {
+pub(crate) enum WitResourceMethodBindingSpec {
     Operation {
         operation_name: String,
         request_plan: RequestPlan,
@@ -123,7 +123,7 @@ pub(crate) enum PlannedResourceMethodBindingSpec {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedTypeInfo {
+pub(crate) struct WitTypeInfo {
     pub(crate) full_name: String,
     pub(crate) package: String,
     pub(crate) file_name: Option<String>,
@@ -132,7 +132,7 @@ pub(crate) struct PlannedTypeInfo {
     pub(crate) proto_type_name: crate::spec::LanguageStringSpec,
 }
 
-impl PlannedTypeInfo {
+impl WitTypeInfo {
     fn from_message(message: &MessageMetadata, spec: &ApiSpec) -> Self {
         Self {
             full_name: message.full_name.clone(),
@@ -213,122 +213,122 @@ impl PlannedTypeInfo {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedEnum {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitEnum {
+    pub(crate) info: WitTypeInfo,
     pub(crate) name: String,
-    pub(crate) values: Vec<PlannedEnumValue>,
+    pub(crate) values: Vec<WitEnumValue>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedEnumValue {
+pub(crate) struct WitEnumValue {
     pub(crate) name: String,
     pub(crate) number: i32,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedFlags {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitFlags {
+    pub(crate) info: WitTypeInfo,
     pub(crate) name: String,
-    pub(crate) flags: Vec<PlannedFlag>,
+    pub(crate) flags: Vec<WitFlag>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedFlag {
+pub(crate) struct WitFlag {
     pub(crate) name: String,
     pub(crate) bit: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedVariant {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitVariant {
+    pub(crate) info: WitTypeInfo,
     pub(crate) name: String,
-    pub(crate) cases: Vec<PlannedVariantCase>,
+    pub(crate) cases: Vec<WitVariantCase>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedVariantCase {
+pub(crate) struct WitVariantCase {
     pub(crate) name: String,
-    pub(crate) payload: Option<PlannedValueType>,
+    pub(crate) payload: Option<WitValueType>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedModel {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitModel {
+    pub(crate) info: WitTypeInfo,
     pub(crate) name: String,
     pub(crate) capabilities: ModelCapabilities,
     pub(crate) flatten_in_api: bool,
     pub(crate) experimental: bool,
     pub(crate) generated_model: GeneratedModelSpec,
-    pub(crate) fields: Vec<PlannedField>,
-    pub(crate) sourced_fields: Vec<PlannedSourcedField>,
+    pub(crate) fields: Vec<WitField>,
+    pub(crate) sourced_fields: Vec<WitSourcedField>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedField {
+pub(crate) struct WitField {
     pub(crate) owner_name: String,
     pub(crate) proto_name: String,
     pub(crate) authored_name: String,
     pub(crate) doc: Option<LanguageStringSpec>,
     pub(crate) annotation_override: Option<crate::spec::LanguageStringSpec>,
-    pub(crate) default_value: Option<PlannedFieldDefault>,
+    pub(crate) default_value: Option<WitFieldDefault>,
     pub(crate) required: bool,
     pub(crate) has_presence: bool,
-    pub(crate) role: PlannedFieldRole,
+    pub(crate) role: WitFieldRole,
     pub(crate) function: Option<FunctionFieldSpec>,
     pub(crate) function_args: bool,
-    pub(crate) kind: PlannedFieldKind,
+    pub(crate) kind: WitFieldKind,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedFieldDefault {
+pub(crate) struct WitFieldDefault {
     pub(crate) enum_case: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedSourcedField {
+pub(crate) struct WitSourcedField {
     pub(crate) proto_name: String,
     pub(crate) source_expr: String,
-    pub(crate) kind: PlannedFieldKind,
+    pub(crate) kind: WitFieldKind,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PlannedFieldRole {
+pub(crate) enum WitFieldRole {
     Plain,
     Function(FunctionFieldSpec),
     FunctionArgs(FunctionFieldSpec),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PlannedFieldKind {
-    Singular(PlannedValueType),
-    Repeated(PlannedValueType),
+pub(crate) enum WitFieldKind {
+    Singular(WitValueType),
+    Repeated(WitValueType),
     Map {
-        key: PlannedValueType,
-        value: PlannedValueType,
+        key: WitValueType,
+        value: WitValueType,
     },
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PlannedValueType {
-    Scalar(PlannedScalarType),
-    Enum(PlannedEnumType),
-    Flags(PlannedFlagsType),
-    Variant(PlannedVariantType),
-    Message(PlannedMessageType),
-    Tuple(Vec<PlannedValueType>),
+pub(crate) enum WitValueType {
+    Scalar(WitScalarType),
+    Enum(WitEnumType),
+    Flags(WitFlagsType),
+    Variant(WitVariantType),
+    Message(WitMessageType),
+    Tuple(Vec<WitValueType>),
     Result {
-        ok: Option<Box<PlannedValueType>>,
-        err: Option<Box<PlannedValueType>>,
+        ok: Option<Box<WitValueType>>,
+        err: Option<Box<WitValueType>>,
     },
     External {
         type_name: crate::spec::LanguageStringSpec,
-        fallback: Box<PlannedValueType>,
+        fallback: Box<WitValueType>,
     },
     Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PlannedScalarType {
+pub(crate) enum WitScalarType {
     Float,
     Int32,
     Int64,
@@ -338,35 +338,35 @@ pub(crate) enum PlannedScalarType {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedEnumType {
-    pub(crate) info: Option<PlannedTypeInfo>,
+pub(crate) struct WitEnumType {
+    pub(crate) info: Option<WitTypeInfo>,
     pub(crate) name: Option<String>,
     pub(crate) replacement: Option<TypeReplacementSpec>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedFlagsType {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitFlagsType {
+    pub(crate) info: WitTypeInfo,
     pub(crate) name: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedVariantType {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitVariantType {
+    pub(crate) info: WitTypeInfo,
     pub(crate) name: String,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PlannedMessageType {
-    pub(crate) info: PlannedTypeInfo,
+pub(crate) struct WitMessageType {
+    pub(crate) info: WitTypeInfo,
     pub(crate) model_name: String,
     pub(crate) replacement: Option<TypeReplacementSpec>,
     pub(crate) authored_type: Option<AuthoredFieldTypeSpec>,
-    pub(crate) source: PlannedMessageSource,
+    pub(crate) source: WitMessageSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PlannedMessageSource {
+pub(crate) enum WitMessageSource {
     Proto,
     Wit,
 }
@@ -380,7 +380,7 @@ pub(crate) fn message_model_name(full_name: &str) -> String {
         .to_string()
 }
 
-fn planned_proto_model_name(message: &MessageMetadata, spec: &ApiSpec) -> String {
+fn wit_proto_model_name(message: &MessageMetadata, spec: &ApiSpec) -> String {
     spec.type_override(&message.full_name)
         .and_then(|type_override| type_override.model_name())
         .map(str::to_string)
@@ -423,43 +423,43 @@ pub(crate) fn field_type(field: &FieldDescriptorProto) -> Option<Type> {
 }
 
 /// Lower a validated [`ApiSpec`] (+ proto descriptors) into the WIT symbol
-/// table — the WIT front-end's IR. Internally it groups the lowered `Planned*`
-/// items into a transient [`PlanTables`] (private to this module: it never
+/// table — the WIT front-end's IR. Internally it groups the lowered `Wit*`
+/// items into a transient [`WitTables`] (private to this module: it never
 /// escapes as an API), then explodes them into a [`SymbolTable`] via
-/// [`tables_to_symbols`]. There is no `ApiPlan`: the symbol table is the IR.
-pub(crate) fn build_api_plan(
+/// [`tables_to_symbols`]. There is no `WitSymbols`: the symbol table is the IR.
+pub(crate) fn build_wit_symbols(
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
 ) -> Result<SymbolTable<WitSymbolKind>> {
-    let mut plan = PlanTables::default();
+    let mut tables = WitTables::default();
     let root_model_capabilities = root_model_capabilities(spec, descriptors)?;
 
     for service in &spec.services {
-        let planned_service = plan_service(
+        let wit_service = build_service(
             service,
             spec,
             descriptors,
             &root_model_capabilities,
-            &mut plan,
+            &mut tables,
         )?;
-        plan.services.push(planned_service);
+        tables.services.push(wit_service);
     }
 
-    Ok(tables_to_symbols(plan))
+    Ok(tables_to_symbols(tables))
 }
 
-fn plan_message_type(
+fn build_message_type(
     message: &MessageMetadata,
     requested_capabilities: ModelCapabilities,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedMessageType {
-    let planned_message = planned_message_reference(message, spec);
-    if planned_message.replacement.is_none() && planned_message.authored_type.is_none() {
-        ensure_model_plan(message, requested_capabilities, spec, descriptors, plan);
+    tables: &mut WitTables,
+) -> WitMessageType {
+    let wit_message = wit_message_reference(message, spec);
+    if wit_message.replacement.is_none() && wit_message.authored_type.is_none() {
+        ensure_model(message, requested_capabilities, spec, descriptors, tables);
     }
-    planned_message
+    wit_message
 }
 
 fn root_model_capabilities(
@@ -509,13 +509,13 @@ fn root_model_capabilities(
     Ok(capabilities)
 }
 
-fn plan_service(
+fn build_service(
     service: &ServiceSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
     root_model_capabilities: &BTreeMap<String, ModelCapabilities>,
-    plan: &mut PlanTables,
-) -> Result<PlannedService> {
+    tables: &mut WitTables,
+) -> Result<WitService> {
     let endpoint = service
         .endpoint
         .as_deref()
@@ -529,13 +529,13 @@ fn plan_service(
         .operations
         .iter()
         .map(|operation| {
-            plan_operation(
+            build_operation(
                 &service.name,
                 operation,
                 spec,
                 descriptors,
                 root_model_capabilities,
-                plan,
+                tables,
                 resolved_resources.operation_returns.get(&operation.name),
             )
         })
@@ -554,18 +554,18 @@ fn plan_service(
         .resources
         .iter()
         .map(|resource| {
-            plan_resource(
+            build_resource(
                 service,
                 resource,
                 &operation_bindings,
                 spec,
                 descriptors,
-                plan,
+                tables,
             )
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(PlannedService {
+    Ok(WitService {
         name: service.name.clone(),
         wire_name: service.wire_name.clone(),
         namespace: service.namespace.clone(),
@@ -578,34 +578,34 @@ fn plan_service(
     })
 }
 
-fn plan_operation(
+fn build_operation(
     service_name: &str,
     operation: &OperationSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
     root_model_capabilities: &BTreeMap<String, ModelCapabilities>,
-    plan: &mut PlanTables,
+    tables: &mut WitTables,
     output_resource_return: Option<&ResolvedResourceReturnSpec>,
-) -> Result<PlannedOperation> {
-    let input = plan_operation_input(
+) -> Result<WitOperation> {
+    let input = build_operation_input(
         service_name,
         operation,
         spec,
         descriptors,
         root_model_capabilities,
-        plan,
+        tables,
     )?;
-    let output = plan_operation_output(
+    let output = build_operation_output(
         service_name,
         operation,
         spec,
         descriptors,
         root_model_capabilities,
-        plan,
+        tables,
         output_resource_return,
     )?;
 
-    Ok(PlannedOperation {
+    Ok(WitOperation {
         name: operation.name.clone(),
         wire_name: operation.wire_name.clone(),
         experimental: operation.experimental,
@@ -614,21 +614,21 @@ fn plan_operation(
         input,
         output,
         output_transform: operation.output_transform().cloned(),
-        output_resource_return: plan_operation_resource_return(output_resource_return),
+        output_resource_return: build_operation_resource_return(output_resource_return),
         output_direct_result: operation.output_proto().is_none()
             && operation.output_record().is_none()
             && operation.output_resource().is_some(),
     })
 }
 
-fn plan_operation_input(
+fn build_operation_input(
     service_name: &str,
     operation: &OperationSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
     root_model_capabilities: &BTreeMap<String, ModelCapabilities>,
-    plan: &mut PlanTables,
-) -> Result<PlannedMessageType> {
+    tables: &mut WitTables,
+) -> Result<WitMessageType> {
     if let Some(input_proto) = operation.input_proto() {
         let input_message =
             descriptors
@@ -639,7 +639,7 @@ fn plan_operation_input(
                     type_name: input_proto.to_string(),
                 })?;
 
-        return Ok(plan_message_type(
+        return Ok(build_message_type(
             input_message,
             root_model_capabilities
                 .get(&input_message.full_name)
@@ -647,12 +647,12 @@ fn plan_operation_input(
                 .unwrap_or(ModelCapabilities::TO_PROTO_ONLY),
             spec,
             descriptors,
-            plan,
+            tables,
         ));
     }
 
     let record_name = operation.input_record().ok_or_else(|| Error::InvalidWit {
-        path: std::path::PathBuf::from("<api-plan>"),
+        path: std::path::PathBuf::from("<api-tables>"),
         reason: format!(
             "operation `{}` has no proto-backed or WIT-native input type",
             operation.name
@@ -662,30 +662,30 @@ fn plan_operation_input(
         .records
         .get(record_name)
         .ok_or_else(|| Error::InvalidWit {
-            path: std::path::PathBuf::from("<api-plan>"),
+            path: std::path::PathBuf::from("<api-tables>"),
             reason: format!(
                 "operation `{}` references unknown WIT record `{record_name}`",
                 operation.name
             ),
         })?;
-    Ok(plan_wit_record_type(
+    Ok(build_wit_record_type(
         record,
         ModelCapabilities::default(),
         spec,
         descriptors,
-        plan,
+        tables,
     ))
 }
 
-fn plan_operation_output(
+fn build_operation_output(
     service_name: &str,
     operation: &OperationSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
     root_model_capabilities: &BTreeMap<String, ModelCapabilities>,
-    plan: &mut PlanTables,
+    tables: &mut WitTables,
     output_resource_return: Option<&ResolvedResourceReturnSpec>,
-) -> Result<PlannedOperationOutput> {
+) -> Result<WitOperationOutput> {
     if let Some(output_proto) = operation.output_proto() {
         let output_message = descriptors.message(output_proto).ok_or_else(|| {
             Error::UnknownOperationOutputProto {
@@ -694,9 +694,9 @@ fn plan_operation_output(
                 type_name: output_proto.to_string(),
             }
         })?;
-        let output = planned_message_reference(output_message, spec);
+        let output = wit_message_reference(output_message, spec);
         if operation.output_transform().is_none() && output_resource_return.is_none() {
-            let _ = plan_message_type(
+            let _ = build_message_type(
                 output_message,
                 root_model_capabilities
                     .get(&output_message.full_name)
@@ -704,10 +704,10 @@ fn plan_operation_output(
                     .unwrap_or(ModelCapabilities::BIDIRECTIONAL),
                 spec,
                 descriptors,
-                plan,
+                tables,
             );
         }
-        return Ok(PlannedOperationOutput::Message(output));
+        return Ok(WitOperationOutput::Message(output));
     }
 
     if let Some(record_name) = operation.output_record() {
@@ -715,39 +715,39 @@ fn plan_operation_output(
             .records
             .get(record_name)
             .ok_or_else(|| Error::InvalidWit {
-                path: std::path::PathBuf::from("<api-plan>"),
+                path: std::path::PathBuf::from("<api-tables>"),
                 reason: format!(
                     "operation `{}` references unknown WIT record `{record_name}`",
                     operation.name
                 ),
             })?;
-        return Ok(PlannedOperationOutput::Message(plan_wit_record_type(
+        return Ok(WitOperationOutput::Message(build_wit_record_type(
             record,
             ModelCapabilities::default(),
             spec,
             descriptors,
-            plan,
+            tables,
         )));
     }
 
     if let Some(resource_name) = operation.output_resource() {
-        return Ok(PlannedOperationOutput::Resource {
+        return Ok(WitOperationOutput::Resource {
             type_name: resource_name.to_upper_camel_case(),
         });
     }
 
-    Ok(PlannedOperationOutput::None)
+    Ok(WitOperationOutput::None)
 }
 
-fn plan_operation_resource_return(
+fn build_operation_resource_return(
     output_resource_return: Option<&ResolvedResourceReturnSpec>,
-) -> Option<PlannedOperationResourceReturn> {
-    output_resource_return.map(|resource_return| PlannedOperationResourceReturn {
+) -> Option<WitOperationResourceReturn> {
+    output_resource_return.map(|resource_return| WitOperationResourceReturn {
         resource_type_name: resource_return.resource_name.to_upper_camel_case(),
         bindings: resource_return
             .bindings
             .iter()
-            .map(|binding| PlannedOperationResourceFieldBinding {
+            .map(|binding| WitOperationResourceFieldBinding {
                 field_name: binding.field_name.clone(),
                 optional: binding.optional,
                 source: binding.source.clone(),
@@ -762,14 +762,14 @@ struct OperationBindingInfo<'a> {
     direct_return: bool,
 }
 
-fn plan_resource(
+fn build_resource(
     service: &ServiceSpec,
     resource: &ResolvedResourceSpec,
     operations: &[OperationBindingInfo<'_>],
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> Result<PlannedResource> {
+    tables: &mut WitTables,
+) -> Result<WitResource> {
     let methods = resource
         .methods
         .iter()
@@ -788,73 +788,73 @@ fn plan_resource(
                             method: method.name.to_string(),
                             reason: format!("bound operation `{operation_name}` was not rendered"),
                         })?;
-                    PlannedResourceMethodBindingSpec::Operation {
+                    WitResourceMethodBindingSpec::Operation {
                         operation_name: operation.name.to_string(),
                         request_plan: request_plan.clone(),
                         direct_return: operation.direct_return,
                     }
                 }
-                ResolvedResourceMethodBinding::Stub => PlannedResourceMethodBindingSpec::Stub,
+                ResolvedResourceMethodBinding::Stub => WitResourceMethodBindingSpec::Stub,
             };
 
-            Ok(PlannedResourceMethod {
+            Ok(WitResourceMethod {
                 name: method.name.clone(),
                 params: method
                     .params
                     .iter()
-                    .map(|field| planned_resource_field(field, spec, descriptors, plan))
+                    .map(|field| wit_resource_field(field, spec, descriptors, tables))
                     .collect(),
                 result: method
                     .result
                     .as_ref()
-                    .map(|result| planned_resource_method_result(result, spec, descriptors, plan)),
+                    .map(|result| wit_resource_method_result(result, spec, descriptors, tables)),
                 binding,
             })
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(PlannedResource {
+    Ok(WitResource {
         name: resource.name.clone(),
         type_name: resource.name.to_upper_camel_case(),
         fields: resource
             .fields
             .iter()
-            .map(|field| planned_resource_field(field, spec, descriptors, plan))
+            .map(|field| wit_resource_field(field, spec, descriptors, tables))
             .collect(),
         methods,
     })
 }
 
-fn planned_resource_method_result(
+fn wit_resource_method_result(
     result: &crate::spec::ResourceResultSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedResourceMethodResult {
+    tables: &mut WitTables,
+) -> WitResourceMethodResult {
     let optional = matches!(result.result_type, AuthoredFieldTypeSpec::Option(_));
     let kind = if let Some(resource) = result.resource.as_ref() {
-        PlannedResourceMethodResultKind::Resource {
+        WitResourceMethodResultKind::Resource {
             type_name: resource.to_upper_camel_case(),
         }
     } else {
-        PlannedResourceMethodResultKind::Value(planned_field_kind_from_authored(
+        WitResourceMethodResultKind::Value(wit_field_kind_from_authored(
             &result.result_type,
             spec,
             descriptors,
-            plan,
+            tables,
         ))
     };
-    PlannedResourceMethodResult { kind, optional }
+    WitResourceMethodResult { kind, optional }
 }
 
-fn planned_resource_field(
+fn wit_resource_field(
     field: &ResourceFieldSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedResourceField {
-    let kind = planned_field_kind_from_authored(&field.field_type, spec, descriptors, plan);
-    PlannedResourceField {
+    tables: &mut WitTables,
+) -> WitResourceField {
+    let kind = wit_field_kind_from_authored(&field.field_type, spec, descriptors, tables);
+    WitResourceField {
         name: field.name.clone(),
         optional: field.optional,
         kind,
@@ -862,53 +862,53 @@ fn planned_resource_field(
     }
 }
 
-fn planned_message_reference(message: &MessageMetadata, spec: &ApiSpec) -> PlannedMessageType {
+fn wit_message_reference(message: &MessageMetadata, spec: &ApiSpec) -> WitMessageType {
     let type_override = spec.type_override(&message.full_name);
-    PlannedMessageType {
-        info: PlannedTypeInfo::from_message(message, spec),
-        model_name: planned_proto_model_name(message, spec),
+    WitMessageType {
+        info: WitTypeInfo::from_message(message, spec),
+        model_name: wit_proto_model_name(message, spec),
         replacement: type_override
             .and_then(|type_override| type_override.replacement())
             .cloned(),
         authored_type: type_override.and_then(|type_override| type_override.authored_type.clone()),
-        source: PlannedMessageSource::Proto,
+        source: WitMessageSource::Proto,
     }
 }
 
-fn plan_wit_record_type(
+fn build_wit_record_type(
     record: &WitRecordSpec,
     requested_capabilities: ModelCapabilities,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedMessageType {
-    let planned_message = PlannedMessageType {
-        info: PlannedTypeInfo::from_wit_record(record),
+    tables: &mut WitTables,
+) -> WitMessageType {
+    let wit_message = WitMessageType {
+        info: WitTypeInfo::from_wit_record(record),
         model_name: record.name.clone(),
         replacement: None,
         authored_type: None,
-        source: PlannedMessageSource::Wit,
+        source: WitMessageSource::Wit,
     };
-    ensure_wit_model_plan(record, requested_capabilities, spec, descriptors, plan);
-    planned_message
+    ensure_wit_model(record, requested_capabilities, spec, descriptors, tables);
+    wit_message
 }
 
-fn ensure_wit_model_plan(
+fn ensure_wit_model(
     record: &WitRecordSpec,
     requested_capabilities: ModelCapabilities,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
+    tables: &mut WitTables,
 ) {
-    if let Some(existing) = plan.models.get_mut(&record.full_name) {
+    if let Some(existing) = tables.models.get_mut(&record.full_name) {
         existing.capabilities.merge(requested_capabilities);
         return;
     }
 
-    plan.models.insert(
+    tables.models.insert(
         record.full_name.clone(),
-        PlannedModel {
-            info: PlannedTypeInfo::from_wit_record(record),
+        WitModel {
+            info: WitTypeInfo::from_wit_record(record),
             name: record.name.clone(),
             capabilities: requested_capabilities,
             flatten_in_api: false,
@@ -929,22 +929,22 @@ fn ensure_wit_model_plan(
                 .field_sources
                 .contains_key(*field_name)
         })
-        .map(|field_name| plan_wit_field(record, field_name, spec, descriptors, plan))
+        .map(|field_name| build_wit_field(record, field_name, spec, descriptors, tables))
         .collect();
 
-    let model = plan
+    let model = tables
         .models
         .get_mut(&record.full_name)
-        .expect("WIT model should be inserted before recursive field planning");
+        .expect("WIT model should be inserted before recursive field lowering");
     model.fields = fields;
 }
 
-fn ensure_model_plan(
+fn ensure_model(
     message: &MessageMetadata,
     requested_capabilities: ModelCapabilities,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
+    tables: &mut WitTables,
 ) {
     if spec
         .type_override(&message.full_name)
@@ -954,7 +954,7 @@ fn ensure_model_plan(
         return;
     }
 
-    if let Some(existing) = plan.models.get_mut(&message.full_name) {
+    if let Some(existing) = tables.models.get_mut(&message.full_name) {
         existing.capabilities.merge(requested_capabilities);
         return;
     }
@@ -967,11 +967,11 @@ fn ensure_model_plan(
     let flatten_in_api = type_override.is_some_and(|type_override| type_override.flatten_in_api());
     let experimental = type_override.is_some_and(|type_override| type_override.experimental());
 
-    plan.models.insert(
+    tables.models.insert(
         message.full_name.clone(),
-        PlannedModel {
-            info: PlannedTypeInfo::from_message(message, spec),
-            name: planned_proto_model_name(message, spec),
+        WitModel {
+            info: WitTypeInfo::from_message(message, spec),
+            name: wit_proto_model_name(message, spec),
             capabilities: requested_capabilities,
             flatten_in_api,
             experimental,
@@ -981,7 +981,7 @@ fn ensure_model_plan(
         },
     );
 
-    let fields = planned_message_fields(message, &generated_model)
+    let fields = wit_message_fields(message, &generated_model)
         .into_iter()
         .filter(|field| {
             let proto_name = field
@@ -992,10 +992,10 @@ fn ensure_model_plan(
                 .type_override(&message.full_name)
                 .is_some_and(|type_override| type_override.is_field_hidden(proto_name))
         })
-        .map(|field| plan_field(message, field, spec, descriptors, plan))
+        .map(|field| build_field(message, field, spec, descriptors, tables))
         .collect();
 
-    let sourced_fields = planned_message_fields(message, &generated_model)
+    let sourced_fields = wit_message_fields(message, &generated_model)
         .into_iter()
         .filter_map(|field| {
             let proto_name = field
@@ -1005,20 +1005,20 @@ fn ensure_model_plan(
             spec.type_override(&message.full_name)
                 .and_then(|type_override| type_override.field_source(proto_name))
                 .map(|source_expr| {
-                    plan_sourced_field(message, field, source_expr, spec, descriptors, plan)
+                    build_sourced_field(message, field, source_expr, spec, descriptors, tables)
                 })
         })
         .collect();
 
-    let model = plan
+    let model = tables
         .models
         .get_mut(&message.full_name)
-        .expect("model should be inserted before recursive field planning");
+        .expect("model should be inserted before recursive field lowering");
     model.fields = fields;
     model.sourced_fields = sourced_fields;
 }
 
-fn planned_message_fields<'a>(
+fn wit_message_fields<'a>(
     message: &'a MessageMetadata,
     generated_model: &GeneratedModelSpec,
 ) -> Vec<&'a FieldDescriptorProto> {
@@ -1045,18 +1045,18 @@ fn descriptor_field_by_name<'a>(
         .expect("declared generated model field should exist in descriptor")
 }
 
-fn ensure_enum_plan(enumeration: &EnumMetadata, spec: &ApiSpec, plan: &mut PlanTables) {
-    plan.enums
+fn ensure_enum(enumeration: &EnumMetadata, spec: &ApiSpec, tables: &mut WitTables) {
+    tables.enums
         .entry(enumeration.full_name.clone())
-        .or_insert_with(|| PlannedEnum {
-            info: PlannedTypeInfo::from_enum(enumeration, spec),
+        .or_insert_with(|| WitEnum {
+            info: WitTypeInfo::from_enum(enumeration, spec),
             name: enum_name(&enumeration.full_name),
             values: enumeration
                 .descriptor
                 .value
                 .iter()
                 .filter_map(|value| {
-                    Some(PlannedEnumValue {
+                    Some(WitEnumValue {
                         name: value.name.as_deref()?.to_string(),
                         number: value.number?,
                     })
@@ -1065,16 +1065,16 @@ fn ensure_enum_plan(enumeration: &EnumMetadata, spec: &ApiSpec, plan: &mut PlanT
         });
 }
 
-fn ensure_wit_enum_plan(enumeration: &WitEnumSpec, plan: &mut PlanTables) {
-    plan.enums
+fn ensure_wit_enum(enumeration: &WitEnumSpec, tables: &mut WitTables) {
+    tables.enums
         .entry(enumeration.full_name.clone())
-        .or_insert_with(|| PlannedEnum {
-            info: PlannedTypeInfo::from_wit_enum(enumeration),
+        .or_insert_with(|| WitEnum {
+            info: WitTypeInfo::from_wit_enum(enumeration),
             name: enumeration.name.clone(),
             values: enumeration
                 .values
                 .iter()
-                .map(|value| PlannedEnumValue {
+                .map(|value| WitEnumValue {
                     name: value.name.clone(),
                     number: value.number,
                 })
@@ -1082,16 +1082,16 @@ fn ensure_wit_enum_plan(enumeration: &WitEnumSpec, plan: &mut PlanTables) {
         });
 }
 
-fn ensure_wit_flags_plan(flags: &WitFlagsSpec, plan: &mut PlanTables) {
-    plan.flags
+fn ensure_wit_flags(flags: &WitFlagsSpec, tables: &mut WitTables) {
+    tables.flags
         .entry(flags.full_name.clone())
-        .or_insert_with(|| PlannedFlags {
-            info: PlannedTypeInfo::from_wit_flags(flags),
+        .or_insert_with(|| WitFlags {
+            info: WitTypeInfo::from_wit_flags(flags),
             name: flags.name.clone(),
             flags: flags
                 .flags
                 .iter()
-                .map(|flag| PlannedFlag {
+                .map(|flag| WitFlag {
                     name: flag.name.clone(),
                     bit: flag.bit,
                 })
@@ -1099,44 +1099,44 @@ fn ensure_wit_flags_plan(flags: &WitFlagsSpec, plan: &mut PlanTables) {
         });
 }
 
-fn ensure_wit_variant_plan(
+fn ensure_wit_variant(
     variant: &WitVariantSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
+    tables: &mut WitTables,
 ) {
-    if plan.variants.contains_key(&variant.full_name) {
+    if tables.variants.contains_key(&variant.full_name) {
         return;
     }
 
     let cases = variant
         .cases
         .iter()
-        .map(|case| PlannedVariantCase {
+        .map(|case| WitVariantCase {
             name: case.name.clone(),
             payload: case
                 .payload
                 .as_ref()
-                .map(|payload| planned_value_type_from_authored(payload, spec, descriptors, plan)),
+                .map(|payload| wit_value_type_from_authored(payload, spec, descriptors, tables)),
         })
         .collect();
-    plan.variants.insert(
+    tables.variants.insert(
         variant.full_name.clone(),
-        PlannedVariant {
-            info: PlannedTypeInfo::from_wit_variant(variant),
+        WitVariant {
+            info: WitTypeInfo::from_wit_variant(variant),
             name: variant.name.clone(),
             cases,
         },
     );
 }
 
-fn plan_field(
+fn build_field(
     message: &MessageMetadata,
     field: &FieldDescriptorProto,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedField {
+    tables: &mut WitTables,
+) -> WitField {
     let proto_name = field
         .name
         .as_deref()
@@ -1146,8 +1146,8 @@ fn plan_field(
         .type_override(&message.full_name)
         .and_then(|type_override| type_override.generated_model());
 
-    PlannedField {
-        owner_name: planned_proto_model_name(message, spec),
+    WitField {
+        owner_name: wit_proto_model_name(message, spec),
         authored_name: generated_model
             .and_then(|generated_model| generated_model.field_name_override(&proto_name))
             .unwrap_or(&proto_name)
@@ -1160,37 +1160,37 @@ fn plan_field(
             .cloned(),
         default_value: generated_model
             .and_then(|generated_model| generated_model.field_default(&proto_name))
-            .map(|field_default| PlannedFieldDefault {
+            .map(|field_default| WitFieldDefault {
                 enum_case: field_default.enum_case.clone(),
             }),
         required: spec
             .type_override(&message.full_name)
             .is_some_and(|type_override| type_override.is_field_required(&proto_name)),
         has_presence: field_has_presence(field, field_type(field)),
-        role: planned_field_role(generated_model, &proto_name),
+        role: wit_field_role(generated_model, &proto_name),
         function: generated_model
             .and_then(|generated_model| generated_model.function(&proto_name))
             .cloned(),
         function_args: generated_model
             .and_then(|generated_model| generated_model.function_for_args_field(&proto_name))
             .is_some(),
-        kind: planned_field_kind(field, spec, descriptors, plan),
+        kind: wit_field_kind(field, spec, descriptors, tables),
         proto_name,
     }
 }
 
-fn plan_wit_field(
+fn build_wit_field(
     record: &WitRecordSpec,
     field_name: &str,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedField {
+    tables: &mut WitTables,
+) -> WitField {
     let wit_type = record
         .generated_model
         .field_wit_type(field_name)
         .expect("declared WIT field should have a WIT type");
-    PlannedField {
+    WitField {
         owner_name: record.name.clone(),
         proto_name: field_name.to_string(),
         authored_name: record
@@ -1203,36 +1203,36 @@ fn plan_wit_field(
         default_value: record
             .generated_model
             .field_default(field_name)
-            .map(|field_default| PlannedFieldDefault {
+            .map(|field_default| WitFieldDefault {
                 enum_case: field_default.enum_case.clone(),
             }),
         required: record.required_fields.contains(field_name),
         has_presence: !record.required_fields.contains(field_name),
-        role: planned_field_role(Some(&record.generated_model), field_name),
+        role: wit_field_role(Some(&record.generated_model), field_name),
         function: record.generated_model.function(field_name).cloned(),
         function_args: record
             .generated_model
             .function_for_args_field(field_name)
             .is_some(),
-        kind: planned_field_kind_from_authored(wit_type, spec, descriptors, plan),
+        kind: wit_field_kind_from_authored(wit_type, spec, descriptors, tables),
     }
 }
 
-fn planned_field_kind_from_authored(
+fn wit_field_kind_from_authored(
     wit_type: &AuthoredFieldTypeSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedFieldKind {
+    tables: &mut WitTables,
+) -> WitFieldKind {
     if let AuthoredFieldTypeSpec::Proto(proto_name) = wit_type {
         if let Some(type_override) = spec.type_override(proto_name) {
             if type_override.replacement.is_none() {
                 if let Some(authored_type) = type_override.authored_type.as_ref() {
-                    return planned_field_kind_from_authored(
+                    return wit_field_kind_from_authored(
                         authored_type,
                         spec,
                         descriptors,
-                        plan,
+                        tables,
                     );
                 }
             }
@@ -1241,49 +1241,49 @@ fn planned_field_kind_from_authored(
 
     match wit_type {
         AuthoredFieldTypeSpec::Option(inner) => {
-            planned_field_kind_from_authored(inner, spec, descriptors, plan)
+            wit_field_kind_from_authored(inner, spec, descriptors, tables)
         }
-        AuthoredFieldTypeSpec::List(inner) => PlannedFieldKind::Repeated(
-            planned_value_type_from_authored(inner.without_option(), spec, descriptors, plan),
+        AuthoredFieldTypeSpec::List(inner) => WitFieldKind::Repeated(
+            wit_value_type_from_authored(inner.without_option(), spec, descriptors, tables),
         ),
-        AuthoredFieldTypeSpec::Map(key, value) => PlannedFieldKind::Map {
-            key: planned_value_type_from_authored(key.without_option(), spec, descriptors, plan),
-            value: planned_value_type_from_authored(
+        AuthoredFieldTypeSpec::Map(key, value) => WitFieldKind::Map {
+            key: wit_value_type_from_authored(key.without_option(), spec, descriptors, tables),
+            value: wit_value_type_from_authored(
                 value.without_option(),
                 spec,
                 descriptors,
-                plan,
+                tables,
             ),
         },
-        _ => PlannedFieldKind::Singular(planned_value_type_from_authored(
+        _ => WitFieldKind::Singular(wit_value_type_from_authored(
             wit_type.without_option(),
             spec,
             descriptors,
-            plan,
+            tables,
         )),
     }
 }
 
-fn planned_value_type_from_authored(
+fn wit_value_type_from_authored(
     wit_type: &AuthoredFieldTypeSpec,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedValueType {
+    tables: &mut WitTables,
+) -> WitValueType {
     match wit_type {
-        AuthoredFieldTypeSpec::Bool => PlannedValueType::Scalar(PlannedScalarType::Bool),
-        AuthoredFieldTypeSpec::Int => PlannedValueType::Scalar(PlannedScalarType::Int32),
-        AuthoredFieldTypeSpec::Float => PlannedValueType::Scalar(PlannedScalarType::Float),
-        AuthoredFieldTypeSpec::String => PlannedValueType::Scalar(PlannedScalarType::String),
-        AuthoredFieldTypeSpec::Bytes => PlannedValueType::Scalar(PlannedScalarType::Bytes),
+        AuthoredFieldTypeSpec::Bool => WitValueType::Scalar(WitScalarType::Bool),
+        AuthoredFieldTypeSpec::Int => WitValueType::Scalar(WitScalarType::Int32),
+        AuthoredFieldTypeSpec::Float => WitValueType::Scalar(WitScalarType::Float),
+        AuthoredFieldTypeSpec::String => WitValueType::Scalar(WitScalarType::String),
+        AuthoredFieldTypeSpec::Bytes => WitValueType::Scalar(WitScalarType::Bytes),
         AuthoredFieldTypeSpec::Proto(proto_name) => {
             if let Some(message) = descriptors.message(proto_name) {
-                PlannedValueType::Message(plan_message_type(
+                WitValueType::Message(build_message_type(
                     message,
                     ModelCapabilities::BIDIRECTIONAL,
                     spec,
                     descriptors,
-                    plan,
+                    tables,
                 ))
             } else if let Some(enumeration) = descriptors.enumeration(proto_name) {
                 let replacement = spec
@@ -1291,89 +1291,89 @@ fn planned_value_type_from_authored(
                     .and_then(|type_override| type_override.replacement())
                     .cloned();
                 if replacement.is_none() {
-                    ensure_enum_plan(enumeration, spec, plan);
+                    ensure_enum(enumeration, spec, tables);
                 }
-                PlannedValueType::Enum(PlannedEnumType {
-                    info: Some(PlannedTypeInfo::from_enum(enumeration, spec)),
+                WitValueType::Enum(WitEnumType {
+                    info: Some(WitTypeInfo::from_enum(enumeration, spec)),
                     name: Some(enum_name(&enumeration.full_name)),
                     replacement,
                 })
             } else {
-                PlannedValueType::Unknown
+                WitValueType::Unknown
             }
         }
         AuthoredFieldTypeSpec::Enum(enum_name) => spec
             .enums
             .get(enum_name)
             .map(|enumeration| {
-                ensure_wit_enum_plan(enumeration, plan);
-                PlannedValueType::Enum(PlannedEnumType {
-                    info: Some(PlannedTypeInfo::from_wit_enum(enumeration)),
+                ensure_wit_enum(enumeration, tables);
+                WitValueType::Enum(WitEnumType {
+                    info: Some(WitTypeInfo::from_wit_enum(enumeration)),
                     name: Some(enumeration.name.clone()),
                     replacement: None,
                 })
             })
-            .unwrap_or(PlannedValueType::Unknown),
+            .unwrap_or(WitValueType::Unknown),
         AuthoredFieldTypeSpec::Flags(flags_name) => spec
             .flags
             .get(flags_name)
             .map(|flags| {
-                ensure_wit_flags_plan(flags, plan);
-                PlannedValueType::Flags(PlannedFlagsType {
-                    info: PlannedTypeInfo::from_wit_flags(flags),
+                ensure_wit_flags(flags, tables);
+                WitValueType::Flags(WitFlagsType {
+                    info: WitTypeInfo::from_wit_flags(flags),
                     name: flags.name.clone(),
                 })
             })
-            .unwrap_or(PlannedValueType::Unknown),
+            .unwrap_or(WitValueType::Unknown),
         AuthoredFieldTypeSpec::Variant(variant_name) => spec
             .variants
             .get(variant_name)
             .map(|variant| {
-                ensure_wit_variant_plan(variant, spec, descriptors, plan);
-                PlannedValueType::Variant(PlannedVariantType {
-                    info: PlannedTypeInfo::from_wit_variant(variant),
+                ensure_wit_variant(variant, spec, descriptors, tables);
+                WitValueType::Variant(WitVariantType {
+                    info: WitTypeInfo::from_wit_variant(variant),
                     name: variant.name.clone(),
                 })
             })
-            .unwrap_or(PlannedValueType::Unknown),
+            .unwrap_or(WitValueType::Unknown),
         AuthoredFieldTypeSpec::Record(record_name) => spec
             .records
             .get(record_name)
             .map(|record| {
-                PlannedValueType::Message(plan_wit_record_type(
+                WitValueType::Message(build_wit_record_type(
                     record,
                     ModelCapabilities::default(),
                     spec,
                     descriptors,
-                    plan,
+                    tables,
                 ))
             })
-            .unwrap_or(PlannedValueType::Unknown),
-        AuthoredFieldTypeSpec::Resource(_) => PlannedValueType::Unknown,
+            .unwrap_or(WitValueType::Unknown),
+        AuthoredFieldTypeSpec::Resource(_) => WitValueType::Unknown,
         AuthoredFieldTypeSpec::Option(inner) => {
-            planned_value_type_from_authored(inner.without_option(), spec, descriptors, plan)
+            wit_value_type_from_authored(inner.without_option(), spec, descriptors, tables)
         }
-        AuthoredFieldTypeSpec::Tuple(items) => PlannedValueType::Tuple(
+        AuthoredFieldTypeSpec::Tuple(items) => WitValueType::Tuple(
             items
                 .iter()
-                .map(|item| planned_value_type_from_authored(item, spec, descriptors, plan))
+                .map(|item| wit_value_type_from_authored(item, spec, descriptors, tables))
                 .collect(),
         ),
-        AuthoredFieldTypeSpec::Result { ok, err } => PlannedValueType::Result {
+        AuthoredFieldTypeSpec::Result { ok, err } => WitValueType::Result {
             ok: ok.as_ref().map(|ok| {
-                Box::new(planned_value_type_from_authored(
+                Box::new(wit_value_type_from_authored(
                     ok,
                     spec,
                     descriptors,
-                    plan,
+                    tables,
                 ))
             }),
             err: err.as_ref().map(|err| {
-                Box::new(planned_value_type_from_authored(
+                Box::new(wit_value_type_from_authored(
                     err,
                     spec,
                     descriptors,
-                    plan,
+                    tables,
                 ))
             }),
         },
@@ -1381,69 +1381,69 @@ fn planned_value_type_from_authored(
             target, type_name, ..
         } => {
             let fallback =
-                planned_value_type_from_authored(target.without_option(), spec, descriptors, plan);
-            PlannedValueType::External {
+                wit_value_type_from_authored(target.without_option(), spec, descriptors, tables);
+            WitValueType::External {
                 type_name: type_name.clone(),
                 fallback: Box::new(fallback),
             }
         }
         AuthoredFieldTypeSpec::List(_) | AuthoredFieldTypeSpec::Map(_, _) => {
-            PlannedValueType::Unknown
+            WitValueType::Unknown
         }
     }
 }
 
-fn plan_sourced_field(
+fn build_sourced_field(
     _message: &MessageMetadata,
     field: &FieldDescriptorProto,
     source_expr: &str,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedSourcedField {
-    PlannedSourcedField {
+    tables: &mut WitTables,
+) -> WitSourcedField {
+    WitSourcedField {
         proto_name: field
             .name
             .as_deref()
             .expect("descriptor fields should be named")
             .to_string(),
         source_expr: source_expr.to_string(),
-        kind: planned_field_kind(field, spec, descriptors, plan),
+        kind: wit_field_kind(field, spec, descriptors, tables),
     }
 }
 
-fn planned_field_role(
+fn wit_field_role(
     generated_model: Option<&GeneratedModelSpec>,
     proto_name: &str,
-) -> PlannedFieldRole {
+) -> WitFieldRole {
     if let Some(function) =
         generated_model.and_then(|generated_model| generated_model.function(proto_name))
     {
-        return PlannedFieldRole::Function(function.clone());
+        return WitFieldRole::Function(function.clone());
     }
     if let Some(function) = generated_model
         .and_then(|generated_model| generated_model.function_for_args_field(proto_name))
     {
-        return PlannedFieldRole::FunctionArgs(function.clone());
+        return WitFieldRole::FunctionArgs(function.clone());
     }
-    PlannedFieldRole::Plain
+    WitFieldRole::Plain
 }
 
-fn planned_field_kind(
+fn wit_field_kind(
     field: &FieldDescriptorProto,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedFieldKind {
-    if let Some((key, value)) = map_field_value_types(field, spec, descriptors, plan) {
-        return PlannedFieldKind::Map { key, value };
+    tables: &mut WitTables,
+) -> WitFieldKind {
+    if let Some((key, value)) = map_field_value_types(field, spec, descriptors, tables) {
+        return WitFieldKind::Map { key, value };
     }
 
-    let value = planned_value_type(field, spec, descriptors, plan);
+    let value = wit_value_type(field, spec, descriptors, tables);
     if field_label(field) == Some(Label::Repeated) {
-        PlannedFieldKind::Repeated(value)
+        WitFieldKind::Repeated(value)
     } else {
-        PlannedFieldKind::Singular(value)
+        WitFieldKind::Singular(value)
     }
 }
 
@@ -1451,8 +1451,8 @@ fn map_field_value_types(
     field: &FieldDescriptorProto,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> Option<(PlannedValueType, PlannedValueType)> {
+    tables: &mut WitTables,
+) -> Option<(WitValueType, WitValueType)> {
     if field_label(field) != Some(Label::Repeated) || field_type(field) != Some(Type::Message) {
         return None;
     }
@@ -1481,62 +1481,62 @@ fn map_field_value_types(
         .find(|field| field.name.as_deref() == Some("value"))?;
 
     Some((
-        planned_value_type(key_field, spec, descriptors, plan),
-        planned_value_type(value_field, spec, descriptors, plan),
+        wit_value_type(key_field, spec, descriptors, tables),
+        wit_value_type(value_field, spec, descriptors, tables),
     ))
 }
 
-fn planned_value_type(
+fn wit_value_type(
     field: &FieldDescriptorProto,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedValueType {
+    tables: &mut WitTables,
+) -> WitValueType {
     match field_type(field) {
-        Some(Type::Double | Type::Float) => PlannedValueType::Scalar(PlannedScalarType::Float),
+        Some(Type::Double | Type::Float) => WitValueType::Scalar(WitScalarType::Float),
         Some(Type::Int64 | Type::Uint64 | Type::Fixed64 | Type::Sfixed64 | Type::Sint64) => {
-            PlannedValueType::Scalar(PlannedScalarType::Int64)
+            WitValueType::Scalar(WitScalarType::Int64)
         }
         Some(Type::Int32 | Type::Fixed32 | Type::Uint32 | Type::Sfixed32 | Type::Sint32) => {
-            PlannedValueType::Scalar(PlannedScalarType::Int32)
+            WitValueType::Scalar(WitScalarType::Int32)
         }
-        Some(Type::Bool) => PlannedValueType::Scalar(PlannedScalarType::Bool),
-        Some(Type::String) => PlannedValueType::Scalar(PlannedScalarType::String),
-        Some(Type::Bytes) => PlannedValueType::Scalar(PlannedScalarType::Bytes),
-        Some(Type::Enum) => PlannedValueType::Enum(plan_enum_type(field, spec, descriptors, plan)),
+        Some(Type::Bool) => WitValueType::Scalar(WitScalarType::Bool),
+        Some(Type::String) => WitValueType::Scalar(WitScalarType::String),
+        Some(Type::Bytes) => WitValueType::Scalar(WitScalarType::Bytes),
+        Some(Type::Enum) => WitValueType::Enum(build_enum_type(field, spec, descriptors, tables)),
         Some(Type::Message) | Some(Type::Group) => {
             if let Some(message) = field
                 .type_name
                 .as_deref()
                 .and_then(|type_name| descriptors.message(type_name.trim_start_matches('.')))
             {
-                PlannedValueType::Message(plan_message_type(
+                WitValueType::Message(build_message_type(
                     message,
                     ModelCapabilities::BIDIRECTIONAL,
                     spec,
                     descriptors,
-                    plan,
+                    tables,
                 ))
             } else {
-                PlannedValueType::Unknown
+                WitValueType::Unknown
             }
         }
-        None => PlannedValueType::Unknown,
+        None => WitValueType::Unknown,
     }
 }
 
-fn plan_enum_type(
+fn build_enum_type(
     field: &FieldDescriptorProto,
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
-    plan: &mut PlanTables,
-) -> PlannedEnumType {
+    tables: &mut WitTables,
+) -> WitEnumType {
     let Some(enumeration) = field
         .type_name
         .as_deref()
         .and_then(|type_name| descriptors.enumeration(type_name.trim_start_matches('.')))
     else {
-        return PlannedEnumType {
+        return WitEnumType {
             info: None,
             name: None,
             replacement: None,
@@ -1548,11 +1548,11 @@ fn plan_enum_type(
         .and_then(|type_override| type_override.replacement())
         .cloned();
     if replacement.is_none() {
-        ensure_enum_plan(enumeration, spec, plan);
+        ensure_enum(enumeration, spec, tables);
     }
 
-    PlannedEnumType {
-        info: Some(PlannedTypeInfo::from_enum(enumeration, spec)),
+    WitEnumType {
+        info: Some(WitTypeInfo::from_enum(enumeration, spec)),
         name: Some(enum_name(&enumeration.full_name)),
         replacement,
     }
@@ -1563,11 +1563,11 @@ fn plan_enum_type(
 //
 // `WitSymbolKind` is the WIT front-end's open symbol-kind; each variant owns
 // the corresponding lowered item so an emitter renders straight from the
-// symbol. `tables_to_symbols` explodes the transient `PlanTables` into a
+// symbol. `tables_to_symbols` explodes the transient `WitTables` into a
 // `SymbolTable<WitSymbolKind>`, resolving cross-type references to `SymbolId`s.
 // `WitSymbols` is a borrowing, grouped *view* over that table, indexed the way
 // the emitters query it — it holds no owned data and replaces the old owned
-// `ApiPlan`.
+// `WitSymbols`.
 // ---------------------------------------------------------------------------
 
 /// The WIT front-end's open symbol-kind: one variant per lowered type/service.
@@ -1576,14 +1576,14 @@ fn plan_enum_type(
 /// straight from the symbol without a private side table.
 #[derive(Debug, Clone)]
 pub(crate) enum WitSymbolKind {
-    Service(PlannedService),
-    Model(PlannedModel),
-    Enum(PlannedEnum),
-    Flags(PlannedFlags),
-    Variant(PlannedVariant),
+    Service(WitService),
+    Model(WitModel),
+    Enum(WitEnum),
+    Flags(WitFlags),
+    Variant(WitVariant),
 }
 
-/// Explode the transient [`PlanTables`] into a [`SymbolTable`], resolving
+/// Explode the transient [`WitTables`] into a [`SymbolTable`], resolving
 /// cross-type references to [`SymbolId`]s.
 ///
 /// Runs in two passes so a symbol's `refs` can point at not-yet-inserted
@@ -1591,24 +1591,24 @@ pub(crate) enum WitSymbolKind {
 /// pass 2 computes each symbol's `refs` from that index and inserts it. Ids are
 /// allocated services -> models -> enums -> flags -> variants, each group in its
 /// source order, so [`WitSymbols`] can replay the original grouping order.
-fn tables_to_symbols(plan: PlanTables) -> SymbolTable<WitSymbolKind> {
-    let PlanTables {
+fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
+    let WitTables {
         services,
         enums,
         flags,
         variants,
         models,
-    } = plan;
+    } = tables;
 
     let mut table = SymbolTable::new();
 
     // Owned, id-tagged items in the fixed insertion order:
     // services, models, enums, flags, variants.
-    let mut planned_services: Vec<(SymbolId, PlannedService)> = Vec::new();
-    let mut planned_models: Vec<(SymbolId, PlannedModel)> = Vec::new();
-    let mut planned_enums: Vec<(SymbolId, PlannedEnum)> = Vec::new();
-    let mut planned_flags: Vec<(SymbolId, PlannedFlags)> = Vec::new();
-    let mut planned_variants: Vec<(SymbolId, PlannedVariant)> = Vec::new();
+    let mut wit_services: Vec<(SymbolId, WitService)> = Vec::new();
+    let mut wit_models: Vec<(SymbolId, WitModel)> = Vec::new();
+    let mut wit_enums: Vec<(SymbolId, WitEnum)> = Vec::new();
+    let mut wit_flags: Vec<(SymbolId, WitFlags)> = Vec::new();
+    let mut wit_variants: Vec<(SymbolId, WitVariant)> = Vec::new();
 
     // Maps a type's `full_name` (the IndexMap key) to its allocated `SymbolId`.
     // Services are not referenced by full_name, so they are not indexed.
@@ -1617,31 +1617,31 @@ fn tables_to_symbols(plan: PlanTables) -> SymbolTable<WitSymbolKind> {
     // Pass 1: allocate + index (services, models, enums, flags, variants).
     for service in services {
         let id = table.alloc_id();
-        planned_services.push((id, service));
+        wit_services.push((id, service));
     }
     for (full_name, model) in models {
         let id = table.alloc_id();
         full_name_to_id.insert(full_name, id);
-        planned_models.push((id, model));
+        wit_models.push((id, model));
     }
     for (full_name, enumeration) in enums {
         let id = table.alloc_id();
         full_name_to_id.insert(full_name, id);
-        planned_enums.push((id, enumeration));
+        wit_enums.push((id, enumeration));
     }
     for (full_name, flag_set) in flags {
         let id = table.alloc_id();
         full_name_to_id.insert(full_name, id);
-        planned_flags.push((id, flag_set));
+        wit_flags.push((id, flag_set));
     }
     for (full_name, variant) in variants {
         let id = table.alloc_id();
         full_name_to_id.insert(full_name, id);
-        planned_variants.push((id, variant));
+        wit_variants.push((id, variant));
     }
 
     // Pass 2: compute refs + insert.
-    for (id, service) in planned_services {
+    for (id, service) in wit_services {
         let refs = service_refs(&service, &full_name_to_id);
         let name = Name::new(&service.name);
         table.insert(Symbol {
@@ -1651,7 +1651,7 @@ fn tables_to_symbols(plan: PlanTables) -> SymbolTable<WitSymbolKind> {
             kind: WitSymbolKind::Service(service),
         });
     }
-    for (id, model) in planned_models {
+    for (id, model) in wit_models {
         let refs = model_refs(&model, &full_name_to_id);
         let name = Name::new(&model.name);
         table.insert(Symbol {
@@ -1661,7 +1661,7 @@ fn tables_to_symbols(plan: PlanTables) -> SymbolTable<WitSymbolKind> {
             kind: WitSymbolKind::Model(model),
         });
     }
-    for (id, enumeration) in planned_enums {
+    for (id, enumeration) in wit_enums {
         let name = Name::new(&enumeration.name);
         table.insert(Symbol {
             id,
@@ -1670,7 +1670,7 @@ fn tables_to_symbols(plan: PlanTables) -> SymbolTable<WitSymbolKind> {
             kind: WitSymbolKind::Enum(enumeration),
         });
     }
-    for (id, flag_set) in planned_flags {
+    for (id, flag_set) in wit_flags {
         let name = Name::new(&flag_set.name);
         table.insert(Symbol {
             id,
@@ -1679,7 +1679,7 @@ fn tables_to_symbols(plan: PlanTables) -> SymbolTable<WitSymbolKind> {
             kind: WitSymbolKind::Flags(flag_set),
         });
     }
-    for (id, variant) in planned_variants {
+    for (id, variant) in wit_variants {
         let refs = variant_refs(&variant, &full_name_to_id);
         let name = Name::new(&variant.name);
         table.insert(Symbol {
@@ -1704,7 +1704,7 @@ fn push_unique(out: &mut Vec<SymbolId>, id: SymbolId) {
 /// Resolve `full_name` to a `SymbolId` (if present in `map`) and push it.
 ///
 /// References whose `full_name` is not in the table (replacements, externals,
-/// unknown/proto types not planned) are silently skipped.
+/// unknown/proto types not in the table) are silently skipped.
 fn push_full_name(map: &BTreeMap<String, SymbolId>, full_name: &str, out: &mut Vec<SymbolId>) {
     if let Some(id) = map.get(full_name) {
         push_unique(out, *id);
@@ -1712,31 +1712,31 @@ fn push_full_name(map: &BTreeMap<String, SymbolId>, full_name: &str, out: &mut V
 }
 
 fn value_type_refs(
-    value_type: &PlannedValueType,
+    value_type: &WitValueType,
     map: &BTreeMap<String, SymbolId>,
     out: &mut Vec<SymbolId>,
 ) {
     match value_type {
-        PlannedValueType::Message(message) => {
+        WitValueType::Message(message) => {
             push_full_name(map, &message.info.full_name, out);
         }
-        PlannedValueType::Enum(enum_type) => {
+        WitValueType::Enum(enum_type) => {
             if let Some(info) = &enum_type.info {
                 push_full_name(map, &info.full_name, out);
             }
         }
-        PlannedValueType::Flags(flags_type) => {
+        WitValueType::Flags(flags_type) => {
             push_full_name(map, &flags_type.info.full_name, out);
         }
-        PlannedValueType::Variant(variant_type) => {
+        WitValueType::Variant(variant_type) => {
             push_full_name(map, &variant_type.info.full_name, out);
         }
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Tuple(items) => {
             for item in items {
                 value_type_refs(item, map, out);
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             if let Some(ok) = ok {
                 value_type_refs(ok, map, out);
             }
@@ -1744,26 +1744,26 @@ fn value_type_refs(
                 value_type_refs(err, map, out);
             }
         }
-        PlannedValueType::External { fallback, .. } => {
+        WitValueType::External { fallback, .. } => {
             value_type_refs(fallback, map, out);
         }
-        PlannedValueType::Scalar(_) | PlannedValueType::Unknown => {}
+        WitValueType::Scalar(_) | WitValueType::Unknown => {}
     }
 }
 
-fn field_kind_refs(kind: &PlannedFieldKind, map: &BTreeMap<String, SymbolId>, out: &mut Vec<SymbolId>) {
+fn field_kind_refs(kind: &WitFieldKind, map: &BTreeMap<String, SymbolId>, out: &mut Vec<SymbolId>) {
     match kind {
-        PlannedFieldKind::Singular(value_type) | PlannedFieldKind::Repeated(value_type) => {
+        WitFieldKind::Singular(value_type) | WitFieldKind::Repeated(value_type) => {
             value_type_refs(value_type, map, out);
         }
-        PlannedFieldKind::Map { key, value } => {
+        WitFieldKind::Map { key, value } => {
             value_type_refs(key, map, out);
             value_type_refs(value, map, out);
         }
     }
 }
 
-fn model_refs(model: &PlannedModel, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
+fn model_refs(model: &WitModel, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
     let mut refs = Vec::new();
     for field in &model.fields {
         field_kind_refs(&field.kind, map, &mut refs);
@@ -1774,22 +1774,22 @@ fn model_refs(model: &PlannedModel, map: &BTreeMap<String, SymbolId>) -> Vec<Sym
     refs
 }
 
-fn service_refs(service: &PlannedService, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
+fn service_refs(service: &WitService, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
     let mut refs = Vec::new();
     for operation in &service.operations {
         push_full_name(map, &operation.input.info.full_name, &mut refs);
         match &operation.output {
-            PlannedOperationOutput::Message(message) => {
+            WitOperationOutput::Message(message) => {
                 push_full_name(map, &message.info.full_name, &mut refs);
             }
             // TODO: resource refs when resources become symbols
-            PlannedOperationOutput::Resource { .. } | PlannedOperationOutput::None => {}
+            WitOperationOutput::Resource { .. } | WitOperationOutput::None => {}
         }
     }
     refs
 }
 
-fn variant_refs(variant: &PlannedVariant, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
+fn variant_refs(variant: &WitVariant, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
     let mut refs = Vec::new();
     for case in &variant.cases {
         if let Some(payload) = &case.payload {
@@ -1802,13 +1802,13 @@ fn variant_refs(variant: &PlannedVariant, map: &BTreeMap<String, SymbolId>) -> V
 /// A borrowing, grouped view over a WIT [`SymbolTable`], indexed the way the
 /// emitters query it: services in symbol-id (source) order, and types by
 /// `full_name`. The data lives in the symbols — this is only a query layer,
-/// built once per generation, that replaces the old owned `ApiPlan`.
+/// built once per generation, that replaces the old owned `WitSymbols`.
 pub(crate) struct WitSymbols<'a> {
-    services: Vec<&'a PlannedService>,
-    models: IndexMap<&'a str, &'a PlannedModel>,
-    enums: IndexMap<&'a str, &'a PlannedEnum>,
-    flags: IndexMap<&'a str, &'a PlannedFlags>,
-    variants: IndexMap<&'a str, &'a PlannedVariant>,
+    services: Vec<&'a WitService>,
+    models: IndexMap<&'a str, &'a WitModel>,
+    enums: IndexMap<&'a str, &'a WitEnum>,
+    flags: IndexMap<&'a str, &'a WitFlags>,
+    variants: IndexMap<&'a str, &'a WitVariant>,
 }
 
 impl<'a> WitSymbols<'a> {
@@ -1844,27 +1844,27 @@ impl<'a> WitSymbols<'a> {
         view
     }
 
-    pub(crate) fn services(&self) -> impl Iterator<Item = &'a PlannedService> + '_ {
+    pub(crate) fn services(&self) -> impl Iterator<Item = &'a WitService> + '_ {
         self.services.iter().copied()
     }
 
-    pub(crate) fn models(&self) -> impl Iterator<Item = &'a PlannedModel> + '_ {
+    pub(crate) fn models(&self) -> impl Iterator<Item = &'a WitModel> + '_ {
         self.models.values().copied()
     }
 
-    pub(crate) fn enums(&self) -> impl Iterator<Item = &'a PlannedEnum> + '_ {
+    pub(crate) fn enums(&self) -> impl Iterator<Item = &'a WitEnum> + '_ {
         self.enums.values().copied()
     }
 
-    pub(crate) fn flags(&self) -> impl Iterator<Item = &'a PlannedFlags> + '_ {
+    pub(crate) fn flags(&self) -> impl Iterator<Item = &'a WitFlags> + '_ {
         self.flags.values().copied()
     }
 
-    pub(crate) fn variants(&self) -> impl Iterator<Item = &'a PlannedVariant> + '_ {
+    pub(crate) fn variants(&self) -> impl Iterator<Item = &'a WitVariant> + '_ {
         self.variants.values().copied()
     }
 
-    pub(crate) fn model(&self, full_name: &str) -> Option<&'a PlannedModel> {
+    pub(crate) fn model(&self, full_name: &str) -> Option<&'a WitModel> {
         self.models.get(full_name).copied()
     }
 
@@ -1872,15 +1872,15 @@ impl<'a> WitSymbols<'a> {
         self.models.contains_key(full_name)
     }
 
-    pub(crate) fn enum_(&self, full_name: &str) -> Option<&'a PlannedEnum> {
+    pub(crate) fn enum_(&self, full_name: &str) -> Option<&'a WitEnum> {
         self.enums.get(full_name).copied()
     }
 
-    pub(crate) fn flags_(&self, full_name: &str) -> Option<&'a PlannedFlags> {
+    pub(crate) fn flags_(&self, full_name: &str) -> Option<&'a WitFlags> {
         self.flags.get(full_name).copied()
     }
 
-    pub(crate) fn variant_(&self, full_name: &str) -> Option<&'a PlannedVariant> {
+    pub(crate) fn variant_(&self, full_name: &str) -> Option<&'a WitVariant> {
         self.variants.get(full_name).copied()
     }
 }

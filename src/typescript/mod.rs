@@ -6,12 +6,12 @@ use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToUpperCamelCase};
 use indexmap::IndexMap;
 use prost_types::FieldDescriptorProto;
 
-use crate::api_plan::{
-    WitSymbols, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFlags, PlannedMessageSource,
-    PlannedMessageType, PlannedOperation, PlannedOperationOutput,
-    PlannedOperationResourceFieldBinding, PlannedOperationResourceReturn, PlannedResource,
-    PlannedResourceMethod, PlannedResourceMethodBindingSpec, PlannedResourceMethodResultKind,
-    PlannedScalarType, PlannedSourcedField, PlannedTypeInfo, PlannedValueType, PlannedVariant,
+use crate::wit_symbols::{
+    WitSymbols, WitEnum, WitField, WitFieldKind, WitFlags, WitMessageSource,
+    WitMessageType, WitOperation, WitOperationOutput,
+    WitOperationResourceFieldBinding, WitOperationResourceReturn, WitResource,
+    WitResourceMethod, WitResourceMethodBindingSpec, WitResourceMethodResultKind,
+    WitScalarType, WitSourcedField, WitTypeInfo, WitValueType, WitVariant,
     relative_descriptor_name,
 };
 use crate::error::{Error, Result};
@@ -31,16 +31,16 @@ const TYPESCRIPT_FORMAT_LINE_LENGTH: usize = 88;
 const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to change.";
 
 pub(crate) fn generate(
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_fragments: &[SupportFragmentSpec],
 ) -> Result<GeneratedFiles> {
     reject_support_namespaces(Language::TypeScript, support_fragments)?;
-    let language_imports = collect_typescript_language_imports(api_plan);
+    let language_imports = collect_typescript_language_imports(symbols);
     let mut enums = IndexMap::new();
     let mut flags = IndexMap::new();
     let mut variants = IndexMap::new();
     let mut models = IndexMap::new();
-    let services = api_plan
+    let services = symbols
         .services()
         .map(|service| {
             let operations = service
@@ -49,7 +49,7 @@ pub(crate) fn generate(
                 .map(|operation| {
                     resolve_operation(
                         operation,
-                        api_plan,
+                        symbols,
                         &mut enums,
                         &mut flags,
                         &mut variants,
@@ -74,7 +74,7 @@ pub(crate) fn generate(
         for resource in &service.resources {
             ensure_resource_field_types(
                 resource,
-                api_plan,
+                symbols,
                 &mut enums,
                 &mut flags,
                 &mut variants,
@@ -90,7 +90,7 @@ pub(crate) fn generate(
     );
 
     let support_source = support_source(support_fragments);
-    let model_registrations = render_model_schema_registrations(api_plan, &models);
+    let model_registrations = render_model_schema_registrations(symbols, &models);
 
     Ok(render_module_files(
         enums.values().collect::<Vec<_>>().as_slice(),
@@ -102,19 +102,19 @@ pub(crate) fn generate(
         &language_imports,
         support_source.as_deref(),
         &model_registrations,
-        api_plan,
+        symbols,
     ))
 }
 
-fn collect_typescript_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportSpec> {
+fn collect_typescript_language_imports(symbols: &WitSymbols) -> Vec<LanguageImportSpec> {
     let mut imports = BTreeSet::new();
-    for enumeration in api_plan.enums() {
+    for enumeration in symbols.enums() {
         collect_type_info_imports(&enumeration.info, &mut imports);
     }
-    for flags in api_plan.flags() {
+    for flags in symbols.flags() {
         collect_type_info_imports(&flags.info, &mut imports);
     }
-    for variant in api_plan.variants() {
+    for variant in symbols.variants() {
         collect_type_info_imports(&variant.info, &mut imports);
         for case in &variant.cases {
             if let Some(payload) = &case.payload {
@@ -122,7 +122,7 @@ fn collect_typescript_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImp
             }
         }
     }
-    for model in api_plan.models() {
+    for model in symbols.models() {
         collect_type_info_imports(&model.info, &mut imports);
         for annotation in model.generated_model.field_annotations.values() {
             collect_typescript_import(annotation, true, false, &mut imports);
@@ -143,14 +143,14 @@ fn collect_typescript_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImp
             collect_value_type_imports_from_kind(&sourced_field.kind, &mut imports);
         }
     }
-    for service in api_plan.services() {
+    for service in symbols.services() {
         for operation in &service.operations {
             collect_message_type_imports(&operation.input, &mut imports);
             match &operation.output {
-                PlannedOperationOutput::Message(message) => {
+                WitOperationOutput::Message(message) => {
                     collect_message_type_imports(message, &mut imports);
                 }
-                PlannedOperationOutput::Resource { .. } | PlannedOperationOutput::None => {}
+                WitOperationOutput::Resource { .. } | WitOperationOutput::None => {}
             }
             if let Some(transform) = &operation.output_transform {
                 collect_typescript_import(&transform.type_name, true, false, &mut imports);
@@ -171,7 +171,7 @@ fn collect_typescript_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImp
                     }
                 }
                 if let Some(result) = &method.result {
-                    if let PlannedResourceMethodResultKind::Value(kind) = &result.kind {
+                    if let WitResourceMethodResultKind::Value(kind) = &result.kind {
                         collect_value_type_imports_from_kind(kind, &mut imports);
                     }
                 }
@@ -182,7 +182,7 @@ fn collect_typescript_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImp
 }
 
 fn collect_type_info_imports(
-    info: &crate::api_plan::PlannedTypeInfo,
+    info: &crate::wit_symbols::WitTypeInfo,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     collect_typescript_import(&info.proto_reference, true, true, imports);
@@ -190,7 +190,7 @@ fn collect_type_info_imports(
 }
 
 fn collect_message_type_imports(
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     collect_type_info_imports(&message.info, imports);
@@ -212,14 +212,14 @@ fn collect_type_replacement_imports(
 }
 
 fn collect_value_type_imports_from_kind(
-    kind: &PlannedFieldKind,
+    kind: &WitFieldKind,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
             collect_value_type_imports(value, imports);
         }
-        PlannedFieldKind::Map { key, value } => {
+        WitFieldKind::Map { key, value } => {
             collect_value_type_imports(key, imports);
             collect_value_type_imports(value, imports);
         }
@@ -227,11 +227,11 @@ fn collect_value_type_imports_from_kind(
 }
 
 fn collect_value_type_imports(
-    value: &PlannedValueType,
+    value: &WitValueType,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     match value {
-        PlannedValueType::Enum(enumeration) => {
+        WitValueType::Enum(enumeration) => {
             if let Some(info) = &enumeration.info {
                 collect_type_info_imports(info, imports);
             }
@@ -239,15 +239,15 @@ fn collect_value_type_imports(
                 collect_type_replacement_imports(replacement, imports);
             }
         }
-        PlannedValueType::Flags(flags) => collect_type_info_imports(&flags.info, imports),
-        PlannedValueType::Variant(variant) => collect_type_info_imports(&variant.info, imports),
-        PlannedValueType::Message(message) => collect_message_type_imports(message, imports),
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Flags(flags) => collect_type_info_imports(&flags.info, imports),
+        WitValueType::Variant(variant) => collect_type_info_imports(&variant.info, imports),
+        WitValueType::Message(message) => collect_message_type_imports(message, imports),
+        WitValueType::Tuple(items) => {
             for item in items {
                 collect_value_type_imports(item, imports);
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             if let Some(ok) = ok {
                 collect_value_type_imports(ok, imports);
             }
@@ -255,14 +255,14 @@ fn collect_value_type_imports(
                 collect_value_type_imports(err, imports);
             }
         }
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => {
             collect_typescript_import(type_name, true, false, imports);
             collect_value_type_imports(fallback, imports);
         }
-        PlannedValueType::Scalar(_) | PlannedValueType::Unknown => {}
+        WitValueType::Scalar(_) | WitValueType::Unknown => {}
     }
 }
 
@@ -423,38 +423,38 @@ fn reject_support_namespaces(
 }
 
 fn ensure_resource_field_types(
-    resource: &PlannedResource,
-    api_plan: &WitSymbols,
+    resource: &WitResource,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
     for field in &resource.fields {
-        ensure_resource_field_type(&field.kind, api_plan, enums, flags, variants, models);
+        ensure_resource_field_type(&field.kind, symbols, enums, flags, variants, models);
     }
     for method in &resource.methods {
         for param in &method.params {
-            ensure_resource_field_type(&param.kind, api_plan, enums, flags, variants, models);
+            ensure_resource_field_type(&param.kind, symbols, enums, flags, variants, models);
         }
     }
 }
 
 fn ensure_resource_field_type(
-    kind: &PlannedFieldKind,
-    api_plan: &WitSymbols,
+    kind: &WitFieldKind,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         }
-        PlannedFieldKind::Map { key, value } => {
-            resolve_planned_value_type(key, api_plan, enums, flags, variants, models);
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+        WitFieldKind::Map { key, value } => {
+            resolve_wit_value_type(key, symbols, enums, flags, variants, models);
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         }
     }
 }
@@ -794,7 +794,7 @@ struct RenderedService<'a> {
     endpoint: String,
     experimental: bool,
     operations: Vec<RenderedOperation<'a>>,
-    resources: Vec<PlannedResource>,
+    resources: Vec<WitResource>,
 }
 
 #[derive(Debug)]
@@ -816,7 +816,7 @@ struct RenderedOperation<'a> {
     input_nexus_type_id: Option<String>,
     output_annotation: String,
     output_transform_expr: Option<String>,
-    output_resource_return: Option<PlannedOperationResourceReturn>,
+    output_resource_return: Option<WitOperationResourceReturn>,
     output_direct_result: bool,
 }
 
@@ -1075,8 +1075,8 @@ fn typescript_to_proto_converter(name: &str, replacement: &TypeReplacementSpec) 
 }
 
 fn resolve_operation<'a>(
-    operation: &'a PlannedOperation,
-    api_plan: &WitSymbols,
+    operation: &'a WitOperation,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1084,7 +1084,7 @@ fn resolve_operation<'a>(
 ) -> Result<RenderedOperation<'a>> {
     let input_conversion = resolve_message_value_conversion(
         &operation.input,
-        api_plan,
+        symbols,
         enums,
         flags,
         variants,
@@ -1093,25 +1093,25 @@ fn resolve_operation<'a>(
     let output_transform = operation.output_transform.as_ref();
     let output_resource_return = operation.output_resource_return.clone();
     let (output_proto_ref, output_type_id, output_annotation_default) = match &operation.output {
-        PlannedOperationOutput::Message(output) => {
+        WitOperationOutput::Message(output) => {
             if output_transform.is_none()
                 && output_resource_return.is_none()
                 && !operation.output_direct_result
             {
                 let _output_conversion = resolve_message_value_conversion(
-                    output, api_plan, enums, flags, variants, models,
+                    output, symbols, enums, flags, variants, models,
                 );
             }
             (
                 operation_type_ref(output),
                 output.info.full_name.clone(),
-                resolve_output_annotation(output, api_plan, enums, flags, variants, models),
+                resolve_output_annotation(output, symbols, enums, flags, variants, models),
             )
         }
-        PlannedOperationOutput::Resource { type_name } => {
+        WitOperationOutput::Resource { type_name } => {
             (type_name.clone(), type_name.clone(), type_name.clone())
         }
-        PlannedOperationOutput::None => {
+        WitOperationOutput::None => {
             ("void".to_string(), "void".to_string(), "void".to_string())
         }
     };
@@ -1157,7 +1157,7 @@ fn resolve_operation<'a>(
         input_type_parameters,
         input_annotation,
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
-        input_nexus_type_id: if operation.input.source == PlannedMessageSource::Wit {
+        input_nexus_type_id: if operation.input.source == WitMessageSource::Wit {
             Some(operation.input.info.full_name.clone())
         } else {
             None
@@ -1186,34 +1186,34 @@ fn resolve_operation<'a>(
     })
 }
 
-fn operation_type_ref(message: &PlannedMessageType) -> String {
+fn operation_type_ref(message: &WitMessageType) -> String {
     match message.source {
-        PlannedMessageSource::Proto => message_typescript_interface_ref(&message.info),
-        PlannedMessageSource::Wit => message.model_name.clone(),
+        WitMessageSource::Proto => message_typescript_interface_ref(&message.info),
+        WitMessageSource::Wit => message.model_name.clone(),
     }
 }
 
 fn resolve_output_annotation(
-    message: &PlannedMessageType,
-    api_plan: &WitSymbols,
+    message: &WitMessageType,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> String {
     match message.source {
-        PlannedMessageSource::Proto => message_typescript_interface_ref(&message.info),
-        PlannedMessageSource::Wit => {
+        WitMessageSource::Proto => message_typescript_interface_ref(&message.info),
+        WitMessageSource::Wit => {
             let conversion =
-                resolve_message_value_conversion(message, api_plan, enums, flags, variants, models);
+                resolve_message_value_conversion(message, symbols, enums, flags, variants, models);
             conversion.annotation
         }
     }
 }
 
 fn resolve_message_value_conversion(
-    message: &PlannedMessageType,
-    api_plan: &WitSymbols,
+    message: &WitMessageType,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1243,11 +1243,11 @@ fn resolve_message_value_conversion(
         };
     }
 
-    ensure_rendered_model(message, api_plan, enums, flags, variants, models);
+    ensure_rendered_model(message, symbols, enums, flags, variants, models);
     let rendered_model = models
         .get(&message.info.full_name)
-        .expect("planned model should be rendered");
-    let kind = if message.source == PlannedMessageSource::Wit {
+        .expect("wit model should be rendered");
+    let kind = if message.source == WitMessageSource::Wit {
         MessageValueConversionKind::NativeModel
     } else {
         MessageValueConversionKind::GeneratedModel {
@@ -1261,16 +1261,16 @@ fn resolve_message_value_conversion(
 }
 
 fn ensure_rendered_model(
-    message: &PlannedMessageType,
-    api_plan: &WitSymbols,
+    message: &WitMessageType,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
-    let planned_model = api_plan
+    let wit_model = symbols
         .model(&message.info.full_name)
-        .unwrap_or_else(|| panic!("planned model should exist for {}", message.info.full_name));
+        .unwrap_or_else(|| panic!("wit model should exist for {}", message.info.full_name));
 
     if models.contains_key(&message.info.full_name) {
         return;
@@ -1279,15 +1279,15 @@ fn ensure_rendered_model(
     models.insert(
         message.info.full_name.clone(),
         RenderedModel {
-            name: planned_model.name.clone(),
-            proto_ref: if message.source == PlannedMessageSource::Proto {
-                message_typescript_interface_ref(&planned_model.info)
+            name: wit_model.name.clone(),
+            proto_ref: if message.source == WitMessageSource::Proto {
+                message_typescript_interface_ref(&wit_model.info)
             } else {
-                planned_model.name.clone()
+                wit_model.name.clone()
             },
-            capabilities: planned_model.capabilities,
-            experimental: planned_model.experimental,
-            type_parameters: generated_model_type_parameters(&planned_model.generated_model),
+            capabilities: wit_model.capabilities,
+            experimental: wit_model.experimental,
+            type_parameters: generated_model_type_parameters(&wit_model.generated_model),
             fields: Vec::new(),
             sourced_fields: Vec::new(),
             functions: Vec::new(),
@@ -1295,16 +1295,16 @@ fn ensure_rendered_model(
         },
     );
 
-    let fields = planned_model
+    let fields = wit_model
         .fields
         .iter()
-        .map(|field| build_field(field, api_plan, enums, flags, variants, models))
+        .map(|field| build_field(field, symbols, enums, flags, variants, models))
         .collect();
 
-    let sourced_fields = planned_model
+    let sourced_fields = wit_model
         .sourced_fields
         .iter()
-        .map(|field| build_sourced_field(field, api_plan, enums, flags, variants, models))
+        .map(|field| build_sourced_field(field, symbols, enums, flags, variants, models))
         .collect();
 
     models
@@ -1318,7 +1318,7 @@ fn ensure_rendered_model(
     models
         .get_mut(&message.info.full_name)
         .expect("model should be inserted before recursive field resolution")
-        .functions = Some(&planned_model.generated_model)
+        .functions = Some(&wit_model.generated_model)
         .map(|generated_model| {
             generated_model
                 .functions
@@ -1353,7 +1353,7 @@ fn ensure_rendered_model(
     models
         .get_mut(&message.info.full_name)
         .expect("model should be inserted before recursive field resolution")
-        .with_arguments = Some(&planned_model.generated_model)
+        .with_arguments = Some(&wit_model.generated_model)
         .map(|generated_model| {
             generated_model
                 .functions
@@ -1393,12 +1393,12 @@ fn ensure_rendered_model(
         .unwrap_or_default();
 }
 
-fn ensure_rendered_enum(planned_enum: &PlannedEnum, enums: &mut IndexMap<String, RenderedEnum>) {
+fn ensure_rendered_enum(wit_enum: &WitEnum, enums: &mut IndexMap<String, RenderedEnum>) {
     enums
-        .entry(planned_enum.info.full_name.clone())
+        .entry(wit_enum.info.full_name.clone())
         .or_insert_with(|| RenderedEnum {
-            name: planned_enum.name.clone(),
-            values: planned_enum
+            name: wit_enum.name.clone(),
+            values: wit_enum
                 .values
                 .iter()
                 .map(|value| RenderedEnumValue {
@@ -1410,14 +1410,14 @@ fn ensure_rendered_enum(planned_enum: &PlannedEnum, enums: &mut IndexMap<String,
 }
 
 fn ensure_rendered_flags(
-    planned_flags: &PlannedFlags,
+    wit_flags: &WitFlags,
     flags: &mut IndexMap<String, RenderedFlags>,
 ) {
     flags
-        .entry(planned_flags.info.full_name.clone())
+        .entry(wit_flags.info.full_name.clone())
         .or_insert_with(|| RenderedFlags {
-            name: planned_flags.name.clone(),
-            flags: planned_flags
+            name: wit_flags.name.clone(),
+            flags: wit_flags
                 .flags
                 .iter()
                 .map(|flag| RenderedFlag {
@@ -1429,23 +1429,23 @@ fn ensure_rendered_flags(
 }
 
 fn ensure_rendered_variant(
-    planned_variant: &PlannedVariant,
-    api_plan: &WitSymbols,
+    wit_variant: &WitVariant,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
-    if variants.contains_key(&planned_variant.info.full_name) {
+    if variants.contains_key(&wit_variant.info.full_name) {
         return;
     }
 
-    let cases = planned_variant
+    let cases = wit_variant
         .cases
         .iter()
         .map(|case| {
             let payload = case.payload.as_ref().map(|payload| {
-                resolve_planned_value_type(payload, api_plan, enums, flags, variants, models)
+                resolve_wit_value_type(payload, symbols, enums, flags, variants, models)
             });
             RenderedVariantCase {
                 name: case.name.clone(),
@@ -1458,17 +1458,17 @@ fn ensure_rendered_variant(
         })
         .collect();
     variants.insert(
-        planned_variant.info.full_name.clone(),
+        wit_variant.info.full_name.clone(),
         RenderedVariant {
-            name: planned_variant.name.clone(),
+            name: wit_variant.name.clone(),
             cases,
         },
     );
 }
 
 fn build_field(
-    field: &PlannedField,
-    api_plan: &WitSymbols,
+    field: &WitField,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1482,9 +1482,9 @@ fn build_field(
         .and_then(|doc| doc.for_language(Language::TypeScript))
         .map(str::to_string);
 
-    if let PlannedFieldKind::Map { value, .. } = &field.kind {
+    if let WitFieldKind::Map { value, .. } = &field.kind {
         let value_type =
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         return RenderedField {
             name: generated_field_name.clone(),
             proto_name: proto_field_name.clone(),
@@ -1502,15 +1502,15 @@ fn build_field(
     }
 
     let (resolved_type, repeated) = match &field.kind {
-        PlannedFieldKind::Singular(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Singular(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             false,
         ),
-        PlannedFieldKind::Repeated(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Repeated(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             true,
         ),
-        PlannedFieldKind::Map { .. } => unreachable!("handled above"),
+        WitFieldKind::Map { .. } => unreachable!("handled above"),
     };
     let owner_name = field.owner_name.clone();
 
@@ -1521,7 +1521,7 @@ fn build_field(
             field,
             &generated_field_name,
             &proto_field_name,
-            api_plan,
+            symbols,
             enums,
             flags,
             variants,
@@ -1725,40 +1725,40 @@ fn build_field(
 }
 
 fn build_flattened_message_field(
-    field: &PlannedField,
+    field: &WitField,
     generated_field_name: &str,
     proto_field_name: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> Option<RenderedField> {
-    let PlannedFieldKind::Singular(PlannedValueType::Message(message_type)) = &field.kind else {
+    let WitFieldKind::Singular(WitValueType::Message(message_type)) = &field.kind else {
         return None;
     };
-    let nested_planned_model = api_plan.model(&message_type.info.full_name)?;
-    if !nested_planned_model.flatten_in_api {
+    let nested_wit_model = symbols.model(&message_type.info.full_name)?;
+    if !nested_wit_model.flatten_in_api {
         return None;
     }
 
-    let nested_fields = nested_planned_model.fields.clone();
-    let nested_generated_model = nested_planned_model.generated_model.clone();
-    let nested_model_name = nested_planned_model.name.clone();
+    let nested_fields = nested_wit_model.fields.clone();
+    let nested_generated_model = nested_wit_model.generated_model.clone();
+    let nested_model_name = nested_wit_model.name.clone();
     let mut flattened_fields = Vec::new();
     let mut requirements = TypeScriptRequirements::default();
 
-    for nested_planned_field in nested_fields {
+    for nested_wit_field in nested_fields {
         let nested_rendered_field = build_field(
-            &nested_planned_field,
-            api_plan,
+            &nested_wit_field,
+            symbols,
             enums,
             flags,
             variants,
             models,
         );
         let annotation = nested_generated_model
-            .field_flattened_annotation(&nested_planned_field.proto_name)
+            .field_flattened_annotation(&nested_wit_field.proto_name)
             .and_then(|annotation| annotation.for_language(Language::TypeScript))
             .map(str::to_string)
             .unwrap_or_else(|| nested_rendered_field.annotation.clone());
@@ -1829,8 +1829,8 @@ fn flattened_message_to_proto_expr(required: bool, fields: &[RenderedFlattenedFi
 }
 
 fn build_sourced_field(
-    field: &PlannedSourcedField,
-    api_plan: &WitSymbols,
+    field: &WitSourcedField,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1838,9 +1838,9 @@ fn build_sourced_field(
 ) -> RenderedSourcedField {
     let field_name = typescript_generated_field_name(&field.proto_name);
 
-    if let PlannedFieldKind::Map { value, .. } = &field.kind {
+    if let WitFieldKind::Map { value, .. } = &field.kind {
         let value_type =
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         return RenderedSourcedField {
             name: field_name.clone(),
             to_proto_expr: map_value_to_proto_expr_from_expr(&value_type, &field.source_expr),
@@ -1848,15 +1848,15 @@ fn build_sourced_field(
     }
 
     let (resolved_type, repeated) = match &field.kind {
-        PlannedFieldKind::Singular(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Singular(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             false,
         ),
-        PlannedFieldKind::Repeated(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Repeated(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             true,
         ),
-        PlannedFieldKind::Map { .. } => unreachable!("handled above"),
+        WitFieldKind::Map { .. } => unreachable!("handled above"),
     };
 
     if repeated {
@@ -1872,7 +1872,7 @@ fn build_sourced_field(
     }
 }
 
-fn typescript_field_annotation(field: &PlannedField, default_annotation: String) -> String {
+fn typescript_field_annotation(field: &WitField, default_annotation: String) -> String {
     let annotation = field
         .annotation_override
         .as_ref()
@@ -1889,16 +1889,16 @@ fn typescript_field_annotation(field: &PlannedField, default_annotation: String)
     }
 }
 
-fn resolve_planned_value_type(
-    value_type: &PlannedValueType,
-    api_plan: &WitSymbols,
+fn resolve_wit_value_type(
+    value_type: &WitValueType,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> ResolvedFieldType {
     match value_type {
-        PlannedValueType::Scalar(PlannedScalarType::Float | PlannedScalarType::Int32) => {
+        WitValueType::Scalar(WitScalarType::Float | WitScalarType::Int32) => {
             ResolvedFieldType {
                 annotation: "number".to_string(),
                 kind: ResolvedFieldKind::Scalar,
@@ -1907,35 +1907,35 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Scalar(PlannedScalarType::Int64) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::Int64) => ResolvedFieldType {
             annotation: "Long".to_string(),
             kind: ResolvedFieldKind::Scalar,
             requirements: TypeScriptRequirements { long: true },
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Scalar(PlannedScalarType::Bool) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::Bool) => ResolvedFieldType {
             annotation: "boolean".to_string(),
             kind: ResolvedFieldKind::Scalar,
             requirements: TypeScriptRequirements::default(),
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Scalar(PlannedScalarType::String) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::String) => ResolvedFieldType {
             annotation: "string".to_string(),
             kind: ResolvedFieldKind::Scalar,
             requirements: TypeScriptRequirements::default(),
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Scalar(PlannedScalarType::Bytes) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::Bytes) => ResolvedFieldType {
             annotation: "Uint8Array".to_string(),
             kind: ResolvedFieldKind::Scalar,
             requirements: TypeScriptRequirements::default(),
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Enum(enum_type) => {
+        WitValueType::Enum(enum_type) => {
             if let Some(replacement) = &enum_type.replacement
                 && let Some(type_name) = typescript_replacement_type_name(replacement)
             {
@@ -1950,8 +1950,8 @@ fn resolve_planned_value_type(
                     }),
                 }
             } else if let (Some(info), Some(name)) = (&enum_type.info, &enum_type.name) {
-                if let Some(planned_enum) = api_plan.enum_(&info.full_name) {
-                    ensure_rendered_enum(planned_enum, enums);
+                if let Some(wit_enum) = symbols.enum_(&info.full_name) {
+                    ensure_rendered_enum(wit_enum, enums);
                 }
                 ResolvedFieldType {
                     annotation: name.clone(),
@@ -1970,9 +1970,9 @@ fn resolve_planned_value_type(
                 }
             }
         }
-        PlannedValueType::Flags(flags_type) => {
-            if let Some(planned_flags) = api_plan.flags_(&flags_type.info.full_name) {
-                ensure_rendered_flags(planned_flags, flags);
+        WitValueType::Flags(flags_type) => {
+            if let Some(wit_flags) = symbols.flags_(&flags_type.info.full_name) {
+                ensure_rendered_flags(wit_flags, flags);
             }
             ResolvedFieldType {
                 annotation: flags_type.name.clone(),
@@ -1982,9 +1982,9 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Variant(variant_type) => {
-            if let Some(planned_variant) = api_plan.variant_(&variant_type.info.full_name) {
-                ensure_rendered_variant(planned_variant, api_plan, enums, flags, variants, models);
+        WitValueType::Variant(variant_type) => {
+            if let Some(wit_variant) = symbols.variant_(&variant_type.info.full_name) {
+                ensure_rendered_variant(wit_variant, symbols, enums, flags, variants, models);
             }
             ResolvedFieldType {
                 annotation: variant_type.name.clone(),
@@ -1994,7 +1994,7 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Message(message_type) => {
+        WitValueType::Message(message_type) => {
             let conversion = if let Some(replacement) = &message_type.replacement
                 && let Some(type_name) = typescript_replacement_type_name(replacement)
             {
@@ -2022,10 +2022,10 @@ fn resolve_planned_value_type(
                     },
                 }
             } else {
-                ensure_rendered_model(message_type, api_plan, enums, flags, variants, models);
+                ensure_rendered_model(message_type, symbols, enums, flags, variants, models);
                 let model = models
                     .get(&message_type.info.full_name)
-                    .expect("planned model should be rendered");
+                    .expect("wit model should be rendered");
                 MessageValueConversion {
                     annotation: model.name.clone(),
                     kind: MessageValueConversionKind::GeneratedModel {
@@ -2041,11 +2041,11 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Tuple(items) => {
             let item_types = items
                 .iter()
                 .map(|item| {
-                    resolve_planned_value_type(item, api_plan, enums, flags, variants, models)
+                    resolve_wit_value_type(item, symbols, enums, flags, variants, models)
                 })
                 .collect::<Vec<_>>();
             let mut requirements = TypeScriptRequirements::default();
@@ -2067,12 +2067,12 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             let ok = ok
                 .as_ref()
-                .map(|ok| resolve_planned_value_type(ok, api_plan, enums, flags, variants, models));
+                .map(|ok| resolve_wit_value_type(ok, symbols, enums, flags, variants, models));
             let err = err.as_ref().map(|err| {
-                resolve_planned_value_type(err, api_plan, enums, flags, variants, models)
+                resolve_wit_value_type(err, symbols, enums, flags, variants, models)
             });
             let mut requirements = TypeScriptRequirements::default();
             if let Some(ok) = &ok {
@@ -2092,12 +2092,12 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => {
             let mut resolved =
-                resolve_planned_value_type(fallback, api_plan, enums, flags, variants, models);
+                resolve_wit_value_type(fallback, symbols, enums, flags, variants, models);
             if let Some(annotation) = type_name.for_language(Language::TypeScript) {
                 resolved.annotation = annotation.to_string();
                 if annotation.contains("Long") {
@@ -2106,7 +2106,7 @@ fn resolve_planned_value_type(
             }
             resolved
         }
-        PlannedValueType::Unknown => ResolvedFieldType {
+        WitValueType::Unknown => ResolvedFieldType {
             annotation: "unknown".to_string(),
             kind: ResolvedFieldKind::Unknown,
             requirements: TypeScriptRequirements::default(),
@@ -2199,18 +2199,18 @@ fn required_from_proto_expr(
     owner_name: &str,
     proto_field_name: &str,
     generated_field_name: &str,
-    field: &PlannedField,
+    field: &WitField,
 ) -> String {
     let proto_value_expr = if field.has_presence {
         format!("proto.{proto_field_name}")
     } else if matches!(
         &field.kind,
-        PlannedFieldKind::Singular(PlannedValueType::Scalar(PlannedScalarType::String))
+        WitFieldKind::Singular(WitValueType::Scalar(WitScalarType::String))
     ) {
         format!("proto.{proto_field_name} === '' ? undefined : proto.{proto_field_name}")
     } else if matches!(
         &field.kind,
-        PlannedFieldKind::Singular(PlannedValueType::Scalar(PlannedScalarType::Bytes))
+        WitFieldKind::Singular(WitValueType::Scalar(WitScalarType::Bytes))
     ) {
         format!(
             "proto.{proto_field_name} == null || proto.{proto_field_name}.length === 0 ? undefined : proto.{proto_field_name}"
@@ -2418,7 +2418,7 @@ fn enum_to_proto_expr(resolved_type: &ResolvedFieldType, expr: &str) -> String {
     }
 }
 
-fn message_typescript_interface_ref(type_info: &PlannedTypeInfo) -> String {
+fn message_typescript_interface_ref(type_info: &WitTypeInfo) -> String {
     let relative_name = relative_descriptor_name(&type_info.full_name, &type_info.package);
     let mut parts = relative_name.split('.').collect::<Vec<_>>();
     let leaf = parts
@@ -2464,7 +2464,7 @@ fn collect_typescript_requirements(
                     requirements.merge(&typescript_resource_field_requirements(&param.kind));
                 }
                 if let Some(result) = &method.result
-                    && let PlannedResourceMethodResultKind::Value(kind) = &result.kind
+                    && let WitResourceMethodResultKind::Value(kind) = &result.kind
                 {
                     requirements.merge(&typescript_resource_field_requirements(kind));
                 }
@@ -2485,7 +2485,7 @@ fn render_module_files(
     language_imports: &[LanguageImportSpec],
     support_source: Option<&str>,
     model_registrations: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> GeneratedFiles {
     let support_source = support_source.filter(|source| !source.trim().is_empty());
     let support_exports = support_source.map(support_exports);
@@ -2528,7 +2528,7 @@ fn render_module_files(
                 requirements,
                 language_imports,
                 support_exports.as_ref(),
-                api_plan,
+                symbols,
             ),
         );
     }
@@ -3008,7 +3008,7 @@ fn render_resources_module(
     _requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     support_exports: Option<&SupportExports>,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> String {
     let mut body = String::new();
     for service in services {
@@ -3017,7 +3017,7 @@ fn render_resources_module(
             body.push('\n');
         }
     }
-    render_nexus_type_registrations(&mut body, services, api_plan);
+    render_nexus_type_registrations(&mut body, services, symbols);
     let mut imports = String::new();
     render_typescript_namespace_imports(&mut imports, &body, language_imports, &[]);
     render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
@@ -3212,7 +3212,7 @@ fn render_required_field(output: &mut String, exported: bool) {
 fn render_nexus_type_registrations(
     output: &mut String,
     services: &[RenderedService<'_>],
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) {
     let has_resources = services.iter().any(|service| !service.resources.is_empty());
     if !has_resources {
@@ -3234,7 +3234,7 @@ fn render_nexus_type_registrations(
                 output.push_str(": { wire: ");
                 output.push_str(&typescript_string_literal(&field.name.to_kebab_case()));
                 output.push_str(", schema: ");
-                output.push_str(&typescript_field_kind_schema(&field.kind, api_plan));
+                output.push_str(&typescript_field_kind_schema(&field.kind, symbols));
                 output.push_str(" },\n");
             }
             output.push_str("  },\n");
@@ -3270,16 +3270,16 @@ fn render_nexus_type_registrations(
 /// Renders `registerNexusType` calls for every WIT-native rendered model so
 /// the json/nexus runtime can encode and decode them type-directedly.
 fn render_model_schema_registrations(
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     models: &IndexMap<String, RenderedModel>,
 ) -> String {
     let mut output = String::new();
     for full_name in models.keys() {
-        let Some(planned) = api_plan.model(full_name) else {
+        let Some(wit) = symbols.model(full_name) else {
             continue;
         };
         // Proto-backed models travel as protobuf, not json/nexus.
-        if planned.info.file_name.is_some() {
+        if wit.info.file_name.is_some() {
             continue;
         }
         if !output.is_empty() {
@@ -3289,7 +3289,7 @@ fn render_model_schema_registrations(
         output.push_str(&typescript_string_literal(full_name));
         output.push_str(", {\n");
         output.push_str("  fields: {\n");
-        for field in &planned.fields {
+        for field in &wit.fields {
             output.push_str("    ");
             output.push_str(&typescript_object_key(&typescript_generated_field_name(
                 &field.authored_name,
@@ -3299,7 +3299,7 @@ fn render_model_schema_registrations(
                 &field.authored_name.to_kebab_case(),
             ));
             output.push_str(", schema: ");
-            output.push_str(&typescript_field_kind_schema(&field.kind, api_plan));
+            output.push_str(&typescript_field_kind_schema(&field.kind, symbols));
             output.push_str(" },\n");
         }
         output.push_str("  },\n");
@@ -3308,42 +3308,42 @@ fn render_model_schema_registrations(
     output
 }
 
-/// Renders the wire schema literal for a planned field kind.
-fn typescript_field_kind_schema(kind: &PlannedFieldKind, api_plan: &WitSymbols) -> String {
+/// Renders the wire schema literal for a wit field kind.
+fn typescript_field_kind_schema(kind: &WitFieldKind, symbols: &WitSymbols) -> String {
     match kind {
-        PlannedFieldKind::Singular(value) => typescript_wire_schema(value, api_plan),
-        PlannedFieldKind::Repeated(value) => format!(
+        WitFieldKind::Singular(value) => typescript_wire_schema(value, symbols),
+        WitFieldKind::Repeated(value) => format!(
             "{{ kind: \"list\", element: {} }}",
-            typescript_wire_schema(value, api_plan)
+            typescript_wire_schema(value, symbols)
         ),
-        PlannedFieldKind::Map { value, .. } => format!(
+        WitFieldKind::Map { value, .. } => format!(
             "{{ kind: \"map\", value: {} }}",
-            typescript_wire_schema(value, api_plan)
+            typescript_wire_schema(value, symbols)
         ),
     }
 }
 
-/// Renders the wire schema literal for a planned value type, used by the
+/// Renders the wire schema literal for a wit value type, used by the
 /// json/nexus runtime's type-directed encoder/decoder.
-fn typescript_wire_schema(value: &PlannedValueType, api_plan: &WitSymbols) -> String {
+fn typescript_wire_schema(value: &WitValueType, symbols: &WitSymbols) -> String {
     match value {
-        PlannedValueType::Scalar(PlannedScalarType::Bytes) => "{ kind: \"bytes\" }".to_string(),
+        WitValueType::Scalar(WitScalarType::Bytes) => "{ kind: \"bytes\" }".to_string(),
         // Enums and flags are numbers on the wire.
-        PlannedValueType::Scalar(_) | PlannedValueType::Enum(_) | PlannedValueType::Flags(_) => {
+        WitValueType::Scalar(_) | WitValueType::Enum(_) | WitValueType::Flags(_) => {
             "{ kind: \"scalar\" }".to_string()
         }
-        PlannedValueType::Variant(variant_type) => {
-            let cases = api_plan
+        WitValueType::Variant(variant_type) => {
+            let cases = symbols
                 .variant_(&variant_type.info.full_name)
-                .map(|planned_variant| {
-                    planned_variant
+                .map(|wit_variant| {
+                    wit_variant
                         .cases
                         .iter()
                         .map(|case| {
                             let payload = case
                                 .payload
                                 .as_ref()
-                                .map(|payload| typescript_wire_schema(payload, api_plan))
+                                .map(|payload| typescript_wire_schema(payload, symbols))
                                 .unwrap_or_else(|| "null".to_string());
                             format!("{}: {payload}", typescript_object_key(&case.name))
                         })
@@ -3352,7 +3352,7 @@ fn typescript_wire_schema(value: &PlannedValueType, api_plan: &WitSymbols) -> St
                 .unwrap_or_default();
             format!("{{ kind: \"variant\", cases: {{ {} }} }}", cases.join(", "))
         }
-        PlannedValueType::Message(message) => {
+        WitValueType::Message(message) => {
             if message.replacement.is_some() || message.authored_type.is_some() {
                 "{ kind: \"scalar\" }".to_string()
             } else {
@@ -3362,27 +3362,27 @@ fn typescript_wire_schema(value: &PlannedValueType, api_plan: &WitSymbols) -> St
                 )
             }
         }
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Tuple(items) => {
             let elements = items
                 .iter()
-                .map(|item| typescript_wire_schema(item, api_plan))
+                .map(|item| typescript_wire_schema(item, symbols))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{{ kind: \"tuple\", elements: [{elements}] }}")
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             let ok_schema = ok
                 .as_ref()
-                .map(|payload| typescript_wire_schema(payload, api_plan))
+                .map(|payload| typescript_wire_schema(payload, symbols))
                 .unwrap_or_else(|| "null".to_string());
             let err_schema = err
                 .as_ref()
-                .map(|payload| typescript_wire_schema(payload, api_plan))
+                .map(|payload| typescript_wire_schema(payload, symbols))
                 .unwrap_or_else(|| "null".to_string());
             format!("{{ kind: \"variant\", cases: {{ ok: {ok_schema}, err: {err_schema} }} }}")
         }
-        PlannedValueType::External { fallback, .. } => typescript_wire_schema(fallback, api_plan),
-        PlannedValueType::Unknown => "{ kind: \"scalar\" }".to_string(),
+        WitValueType::External { fallback, .. } => typescript_wire_schema(fallback, symbols),
+        WitValueType::Unknown => "{ kind: \"scalar\" }".to_string(),
     }
 }
 
@@ -4320,12 +4320,12 @@ fn render_service_definition(output: &mut String, service: &RenderedService<'_>)
 
 fn typescript_resource_type_id(
     service: &RenderedService<'_>,
-    resource: &PlannedResource,
+    resource: &WitResource,
 ) -> String {
     format!("{}::resource::{}", service.name, resource.name)
 }
 
-fn render_resource(output: &mut String, resource: &PlannedResource, service: &RenderedService<'_>) {
+fn render_resource(output: &mut String, resource: &WitResource, service: &RenderedService<'_>) {
     output.push_str("export class ");
     output.push_str(&resource.type_name);
     output.push_str(" {\n");
@@ -4372,7 +4372,7 @@ fn render_resource(output: &mut String, resource: &PlannedResource, service: &Re
         output.push_str(&result_annotation);
         output.push_str("> {\n");
         match &method.binding {
-            PlannedResourceMethodBindingSpec::Operation {
+            WitResourceMethodBindingSpec::Operation {
                 operation_name,
                 request_plan,
                 direct_return,
@@ -4404,7 +4404,7 @@ fn render_resource(output: &mut String, resource: &PlannedResource, service: &Re
                     ));
                 }
             }
-            PlannedResourceMethodBindingSpec::Stub => {
+            WitResourceMethodBindingSpec::Stub => {
                 output.push_str("    throw new Error(");
                 output.push_str(&typescript_string_literal(&format!(
                     "{}.{} is not yet implemented",
@@ -4420,13 +4420,13 @@ fn render_resource(output: &mut String, resource: &PlannedResource, service: &Re
     output.push_str("}\n");
 }
 
-fn typescript_resource_method_result_annotation(method: &PlannedResourceMethod) -> String {
+fn typescript_resource_method_result_annotation(method: &WitResourceMethod) -> String {
     let Some(result) = &method.result else {
         return "void".to_string();
     };
     let annotation = match &result.kind {
-        PlannedResourceMethodResultKind::Resource { type_name } => type_name.clone(),
-        PlannedResourceMethodResultKind::Value(kind) => {
+        WitResourceMethodResultKind::Resource { type_name } => type_name.clone(),
+        WitResourceMethodResultKind::Value(kind) => {
             typescript_resource_field_annotation(kind, result.optional, None)
         }
     };
@@ -4438,7 +4438,7 @@ fn typescript_resource_method_result_annotation(method: &PlannedResourceMethod) 
 }
 
 fn typescript_resource_field_annotation(
-    kind: &PlannedFieldKind,
+    kind: &WitFieldKind,
     optional: bool,
     function: Option<&FunctionFieldSpec>,
 ) -> String {
@@ -4453,11 +4453,11 @@ fn typescript_resource_field_annotation(
         )
     } else {
         match kind {
-            PlannedFieldKind::Singular(value) => typescript_resource_value_annotation(value),
-            PlannedFieldKind::Repeated(value) => {
+            WitFieldKind::Singular(value) => typescript_resource_value_annotation(value),
+            WitFieldKind::Repeated(value) => {
                 typescript_array_annotation(&typescript_resource_value_annotation(value))
             }
-            PlannedFieldKind::Map { key, value } => format!(
+            WitFieldKind::Map { key, value } => format!(
                 "Record<{}, {}>",
                 typescript_resource_value_annotation(key),
                 typescript_resource_value_annotation(value)
@@ -4471,29 +4471,29 @@ fn typescript_resource_field_annotation(
     }
 }
 
-fn typescript_resource_value_annotation(value: &PlannedValueType) -> String {
+fn typescript_resource_value_annotation(value: &WitValueType) -> String {
     match value {
-        PlannedValueType::Scalar(PlannedScalarType::Float | PlannedScalarType::Int32) => {
+        WitValueType::Scalar(WitScalarType::Float | WitScalarType::Int32) => {
             "number".to_string()
         }
-        PlannedValueType::Scalar(PlannedScalarType::Int64) => "Long".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Bool) => "boolean".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::String) => "string".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Bytes) => "Uint8Array".to_string(),
-        PlannedValueType::Enum(enum_type) => enum_type
+        WitValueType::Scalar(WitScalarType::Int64) => "Long".to_string(),
+        WitValueType::Scalar(WitScalarType::Bool) => "boolean".to_string(),
+        WitValueType::Scalar(WitScalarType::String) => "string".to_string(),
+        WitValueType::Scalar(WitScalarType::Bytes) => "Uint8Array".to_string(),
+        WitValueType::Enum(enum_type) => enum_type
             .replacement
             .as_ref()
             .and_then(typescript_replacement_type_name)
             .or_else(|| enum_type.name.clone())
             .unwrap_or_else(|| "number".to_string()),
-        PlannedValueType::Flags(flags_type) => flags_type.name.clone(),
-        PlannedValueType::Variant(variant_type) => variant_type.name.clone(),
-        PlannedValueType::Message(message_type) => message_type
+        WitValueType::Flags(flags_type) => flags_type.name.clone(),
+        WitValueType::Variant(variant_type) => variant_type.name.clone(),
+        WitValueType::Message(message_type) => message_type
             .replacement
             .as_ref()
             .and_then(typescript_replacement_type_name)
             .unwrap_or_else(|| message_type.model_name.clone()),
-        PlannedValueType::Tuple(items) => format!(
+        WitValueType::Tuple(items) => format!(
             "[{}]",
             items
                 .iter()
@@ -4501,30 +4501,30 @@ fn typescript_resource_value_annotation(value: &PlannedValueType) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        PlannedValueType::Result { ok, err } => typescript_result_annotation(
+        WitValueType::Result { ok, err } => typescript_result_annotation(
             ok.as_ref()
                 .map(|ok| typescript_resource_value_annotation(ok).to_string()),
             err.as_ref()
                 .map(|err| typescript_resource_value_annotation(err).to_string()),
         ),
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => type_name
             .for_language(Language::TypeScript)
             .map(str::to_string)
             .unwrap_or_else(|| typescript_resource_value_annotation(fallback)),
-        PlannedValueType::Unknown => "unknown".to_string(),
+        WitValueType::Unknown => "unknown".to_string(),
     }
 }
 
-fn typescript_resource_field_requirements(kind: &PlannedFieldKind) -> TypeScriptRequirements {
+fn typescript_resource_field_requirements(kind: &WitFieldKind) -> TypeScriptRequirements {
     let mut requirements = TypeScriptRequirements::default();
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
             collect_typescript_value_requirements(value, &mut requirements);
         }
-        PlannedFieldKind::Map { key, value } => {
+        WitFieldKind::Map { key, value } => {
             collect_typescript_value_requirements(key, &mut requirements);
             collect_typescript_value_requirements(value, &mut requirements);
         }
@@ -4533,19 +4533,19 @@ fn typescript_resource_field_requirements(kind: &PlannedFieldKind) -> TypeScript
 }
 
 fn collect_typescript_value_requirements(
-    value: &PlannedValueType,
+    value: &WitValueType,
     requirements: &mut TypeScriptRequirements,
 ) {
     match value {
-        PlannedValueType::Scalar(PlannedScalarType::Int64) => {
+        WitValueType::Scalar(WitScalarType::Int64) => {
             requirements.long = true;
         }
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Tuple(items) => {
             for item in items {
                 collect_typescript_value_requirements(item, requirements);
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             if let Some(ok) = ok {
                 collect_typescript_value_requirements(ok, requirements);
             }
@@ -4553,7 +4553,7 @@ fn collect_typescript_value_requirements(
                 collect_typescript_value_requirements(err, requirements);
             }
         }
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => {
@@ -4570,7 +4570,7 @@ fn collect_typescript_value_requirements(
 }
 
 fn branchable_request_method_params(
-    method: &PlannedResourceMethod,
+    method: &WitResourceMethod,
     request_plan: &RequestPlan,
     operation: &RenderedOperation<'_>,
 ) -> Vec<String> {
@@ -4697,7 +4697,7 @@ fn render_request_plan_typescript(plan: &RequestPlan) -> String {
 }
 
 fn resource_return_binding_expr_typescript(
-    binding: &PlannedOperationResourceFieldBinding,
+    binding: &WitOperationResourceFieldBinding,
 ) -> String {
     match &binding.source {
         ResolvedResourceBindingSource::RequestField {

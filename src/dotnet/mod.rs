@@ -3,12 +3,12 @@ use std::path::PathBuf;
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 
-use crate::api_plan::{
-    WitSymbols, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFlags, PlannedMessageSource,
-    PlannedMessageType, PlannedModel, PlannedOperation, PlannedOperationOutput,
-    PlannedOperationResourceFieldBinding, PlannedResource, PlannedResourceMethod,
-    PlannedResourceMethodBindingSpec, PlannedResourceMethodResultKind, PlannedScalarType,
-    PlannedService, PlannedTypeInfo, PlannedValueType,
+use crate::wit_symbols::{
+    WitSymbols, WitEnum, WitField, WitFieldKind, WitFlags, WitMessageSource,
+    WitMessageType, WitModel, WitOperation, WitOperationOutput,
+    WitOperationResourceFieldBinding, WitResource, WitResourceMethod,
+    WitResourceMethodBindingSpec, WitResourceMethodResultKind, WitScalarType,
+    WitService, WitTypeInfo, WitValueType,
 };
 use crate::error::{Error, Result};
 use crate::generator::GeneratedFiles;
@@ -24,43 +24,43 @@ const EXPERIMENTAL_WARNING: &str =
     "WARNING: This API is experimental and may change in the future.";
 
 pub(crate) fn generate(
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_fragments: &[SupportFragmentSpec],
 ) -> Result<GeneratedFiles> {
     let support_namespace = dotnet_support_namespace(support_fragments)?;
-    validate_dotnet_support_references(api_plan, support_namespace.as_deref())?;
-    let namespace = dotnet_namespace(api_plan);
+    validate_dotnet_support_references(symbols, support_namespace.as_deref())?;
+    let namespace = dotnet_namespace(symbols);
     let mut files = BTreeMap::<PathBuf, String>::new();
     files.insert(
         "Models.cs".into(),
         render_models_file(
             &namespace,
-            api_plan.enums().collect::<Vec<_>>().as_slice(),
-            api_plan.flags().collect::<Vec<_>>().as_slice(),
-            api_plan.variants().collect::<Vec<_>>().as_slice(),
-            api_plan.models().collect::<Vec<_>>().as_slice(),
-            api_plan,
+            symbols.enums().collect::<Vec<_>>().as_slice(),
+            symbols.flags().collect::<Vec<_>>().as_slice(),
+            symbols.variants().collect::<Vec<_>>().as_slice(),
+            symbols.models().collect::<Vec<_>>().as_slice(),
+            symbols,
             support_namespace.as_deref(),
         ),
     );
     files.insert(
         "Service.cs".into(),
-        render_service_file(&namespace, api_plan),
+        render_service_file(&namespace, symbols),
     );
-    if api_plan.services()
+    if symbols.services()
         .any(|service| !service.operations.is_empty())
     {
         files.insert(
             "Operations.cs".into(),
-            render_operations_file(&namespace, api_plan, support_namespace.as_deref()),
+            render_operations_file(&namespace, symbols, support_namespace.as_deref()),
         );
     }
-    if api_plan.services()
+    if symbols.services()
         .any(|service| !service.resources.is_empty())
     {
         files.insert(
             "Resources.cs".into(),
-            render_resources_file(&namespace, api_plan),
+            render_resources_file(&namespace, symbols),
         );
     }
     for fragment in support_fragments {
@@ -101,10 +101,10 @@ fn dotnet_support_namespace(support_fragments: &[SupportFragmentSpec]) -> Result
 }
 
 fn validate_dotnet_support_references(
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) -> Result<()> {
-    for model in api_plan.models() {
+    for model in symbols.models() {
         for sourced_field in &model.sourced_fields {
             if let Some(reference) = sourced_field.source_expr.strip_suffix("()") {
                 validate_dotnet_support_reference(reference, support_namespace)?;
@@ -136,14 +136,14 @@ fn validate_dotnet_support_references(
 }
 
 fn validate_dotnet_field_kind_support_references(
-    kind: &PlannedFieldKind,
+    kind: &WitFieldKind,
     support_namespace: Option<&str>,
 ) -> Result<()> {
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
             validate_dotnet_value_support_references(value, support_namespace)
         }
-        PlannedFieldKind::Map { key, value } => {
+        WitFieldKind::Map { key, value } => {
             validate_dotnet_value_support_references(key, support_namespace)?;
             validate_dotnet_value_support_references(value, support_namespace)
         }
@@ -151,24 +151,24 @@ fn validate_dotnet_field_kind_support_references(
 }
 
 fn validate_dotnet_value_support_references(
-    value: &PlannedValueType,
+    value: &WitValueType,
     support_namespace: Option<&str>,
 ) -> Result<()> {
     match value {
-        PlannedValueType::Message(message) => {
+        WitValueType::Message(message) => {
             if let Some(reference) = dotnet_to_proto_converter(message) {
                 validate_dotnet_support_reference(reference, support_namespace)?;
             }
         }
-        PlannedValueType::External { fallback, .. } => {
+        WitValueType::External { fallback, .. } => {
             validate_dotnet_value_support_references(fallback, support_namespace)?;
         }
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Tuple(items) => {
             for item in items {
                 validate_dotnet_value_support_references(item, support_namespace)?;
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             if let Some(ok) = ok {
                 validate_dotnet_value_support_references(ok, support_namespace)?;
             }
@@ -234,11 +234,11 @@ fn qualify_dotnet_support_reference(reference: &str, support_namespace: Option<&
 
 fn render_models_file(
     namespace: &str,
-    enums: &[&PlannedEnum],
-    flags: &[&PlannedFlags],
-    variants: &[&crate::api_plan::PlannedVariant],
-    models: &[&PlannedModel],
-    api_plan: &WitSymbols,
+    enums: &[&WitEnum],
+    flags: &[&WitFlags],
+    variants: &[&crate::wit_symbols::WitVariant],
+    models: &[&WitModel],
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) -> String {
     let needs_result = models.iter().any(|model| {
@@ -254,7 +254,7 @@ fn render_models_file(
     ];
     if models
         .iter()
-        .any(|model| model_uses_proto_extensions(model, api_plan))
+        .any(|model| model_uses_proto_extensions(model, symbols))
         && let Some(support_namespace) = support_namespace
     {
         imports.push(support_namespace);
@@ -273,18 +273,18 @@ fn render_models_file(
         render_variant(&mut output, variant);
     }
     for model in models {
-        render_model(&mut output, model, api_plan, support_namespace);
+        render_model(&mut output, model, symbols, support_namespace);
     }
     close_namespace(&mut output);
     output
 }
 
-fn render_service_file(namespace: &str, api_plan: &WitSymbols) -> String {
+fn render_service_file(namespace: &str, symbols: &WitSymbols) -> String {
     let mut output = generated_file_prelude(
         namespace,
         &["System", "System.CodeDom.Compiler", "NexusRpc"],
     );
-    for service in api_plan.services() {
+    for service in symbols.services() {
         render_xml_summary(&mut output, "", None, service.experimental);
         output.push_str(GENERATED_CODE_ATTRIBUTE);
         output.push('\n');
@@ -295,7 +295,7 @@ fn render_service_file(namespace: &str, api_plan: &WitSymbols) -> String {
         output.push_str(&csharp_type_name(&service.name));
         output.push_str("\n{\n");
         for operation in &service.operations {
-            render_service_operation(&mut output, operation, api_plan);
+            render_service_operation(&mut output, operation, symbols);
         }
         output.push_str("}\n\n");
     }
@@ -305,7 +305,7 @@ fn render_service_file(namespace: &str, api_plan: &WitSymbols) -> String {
 
 fn render_operations_file(
     namespace: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) -> String {
     let imports = [
@@ -321,14 +321,14 @@ fn render_operations_file(
         "Temporalio.Workflows",
     ];
     let mut output = generated_file_prelude(namespace, &imports);
-    for service in api_plan.services() {
-        render_operations_class(&mut output, service, api_plan, support_namespace);
+    for service in symbols.services() {
+        render_operations_class(&mut output, service, symbols, support_namespace);
     }
     close_namespace(&mut output);
     output
 }
 
-fn render_resources_file(namespace: &str, api_plan: &WitSymbols) -> String {
+fn render_resources_file(namespace: &str, symbols: &WitSymbols) -> String {
     let mut output = generated_file_prelude(
         namespace,
         &[
@@ -338,9 +338,9 @@ fn render_resources_file(namespace: &str, api_plan: &WitSymbols) -> String {
             "System.Threading.Tasks",
         ],
     );
-    for service in api_plan.services() {
+    for service in symbols.services() {
         for resource in &service.resources {
-            render_resource(&mut output, service, resource, api_plan);
+            render_resource(&mut output, service, resource, symbols);
         }
     }
     close_namespace(&mut output);
@@ -407,14 +407,14 @@ fn dotnet_doc(spec: &crate::spec::LanguageStringSpec) -> Option<&str> {
 fn render_operation_xml_doc(
     output: &mut String,
     indent: &str,
-    operation: &PlannedOperation,
-    api_plan: &WitSymbols,
+    operation: &WitOperation,
+    symbols: &WitSymbols,
 ) {
     let return_doc = match operation.output {
-        PlannedOperationOutput::None => None,
+        WitOperationOutput::None => None,
         _ => dotnet_doc(&operation.return_doc),
     };
-    let request_doc = api_plan.model(&operation.input.info.full_name)
+    let request_doc = symbols.model(&operation.input.info.full_name)
         .and_then(|model| dotnet_doc(model.generated_model.doc()));
     render_xml_doc(
         output,
@@ -431,10 +431,10 @@ fn render_operation_xml_doc(
 fn render_operation_summary_xml_doc(
     output: &mut String,
     indent: &str,
-    operation: &PlannedOperation,
+    operation: &WitOperation,
 ) {
     let return_doc = match operation.output {
-        PlannedOperationOutput::None => None,
+        WitOperationOutput::None => None,
         _ => dotnet_doc(&operation.return_doc),
     };
     render_xml_doc(
@@ -447,7 +447,7 @@ fn render_operation_summary_xml_doc(
     );
 }
 
-fn render_field_xml_doc(output: &mut String, indent: &str, field: &PlannedField) {
+fn render_field_xml_doc(output: &mut String, indent: &str, field: &WitField) {
     render_xml_summary(
         output,
         indent,
@@ -520,7 +520,7 @@ fn xml_doc_escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn render_service_operation(output: &mut String, operation: &PlannedOperation, api_plan: &WitSymbols) {
+fn render_service_operation(output: &mut String, operation: &WitOperation, symbols: &WitSymbols) {
     render_operation_summary_xml_doc(output, "    ", operation);
     output.push_str("    ");
     output.push_str(GENERATED_CODE_ATTRIBUTE);
@@ -533,7 +533,7 @@ fn render_service_operation(output: &mut String, operation: &PlannedOperation, a
     output.push(' ');
     output.push_str(&csharp_type_name(&operation.name));
     output.push('(');
-    if operation_has_input(operation, api_plan) {
+    if operation_has_input(operation, symbols) {
         output.push_str(&operation_raw_input_type(&operation.input));
         output.push_str(" request");
     }
@@ -542,13 +542,13 @@ fn render_service_operation(output: &mut String, operation: &PlannedOperation, a
 
 fn render_operations_class(
     output: &mut String,
-    service: &PlannedService,
-    api_plan: &WitSymbols,
+    service: &WitService,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) {
     let service_type = format!("I{}", csharp_type_name(&service.name));
     for operation in &service.operations {
-        render_operation_options_type(output, operation, api_plan);
+        render_operation_options_type(output, operation, symbols);
     }
     let explicit_operations_class = service
         .operations_class
@@ -577,7 +577,7 @@ fn render_operations_class(
         render_operation_extension(
             output,
             operation,
-            api_plan,
+            symbols,
             &service_type,
             &service_endpoint_constant_name(service),
             support_namespace,
@@ -588,8 +588,8 @@ fn render_operations_class(
 
 fn render_operation_extension(
     output: &mut String,
-    operation: &PlannedOperation,
-    api_plan: &WitSymbols,
+    operation: &WitOperation,
+    symbols: &WitSymbols,
     service_type: &str,
     endpoint_constant_name: &str,
     support_namespace: Option<&str>,
@@ -597,9 +597,9 @@ fn render_operation_extension(
     let method_name = format!("{}Async", csharp_type_name(&operation.name));
     let raw_return = operation_raw_return_type(operation);
     let high_level_return = operation_return_type(operation);
-    let has_input = operation_has_input(operation, api_plan);
+    let has_input = operation_has_input(operation, symbols);
     let raw_input_type = operation_raw_input_type(&operation.input);
-    let high_level_input_type = operation_input_type(&operation.input, api_plan);
+    let high_level_input_type = operation_input_type(&operation.input, symbols);
 
     if high_level_input_type == raw_input_type || !operation_requires_high_level_request(operation)
     {
@@ -614,7 +614,7 @@ fn render_operation_extension(
             &high_level_return,
             RequestArgumentKind::Raw,
             endpoint_constant_name,
-            api_plan,
+            symbols,
         );
     }
 
@@ -630,12 +630,12 @@ fn render_operation_extension(
             &high_level_return,
             RequestArgumentKind::HighLevel,
             endpoint_constant_name,
-            api_plan,
+            symbols,
         );
     }
 
-    if let Some(model) = api_plan.model(&operation.input.info.full_name)
-        && operation_has_flattened_convenience(operation, model, api_plan)
+    if let Some(model) = symbols.model(&operation.input.info.full_name)
+        && operation_has_flattened_convenience(operation, model, symbols)
     {
         render_operation_flattened_extension(
             output,
@@ -644,7 +644,7 @@ fn render_operation_extension(
             model,
             &raw_return,
             &high_level_return,
-            api_plan,
+            symbols,
             support_namespace,
         );
     }
@@ -658,7 +658,7 @@ enum RequestArgumentKind {
 
 fn render_operation_request_extension(
     output: &mut String,
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     service_type: &str,
     method_name: &str,
     has_input: bool,
@@ -667,9 +667,9 @@ fn render_operation_request_extension(
     high_level_return: &str,
     request_kind: RequestArgumentKind,
     endpoint_constant_name: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) {
-    render_operation_xml_doc(output, "    ", operation, api_plan);
+    render_operation_xml_doc(output, "    ", operation, symbols);
     output.push_str("    ");
     output.push_str(GENERATED_CODE_ATTRIBUTE);
     output.push('\n');
@@ -677,7 +677,7 @@ fn render_operation_request_extension(
     output.push_str(operation_request_method_access(
         operation,
         request_kind,
-        api_plan,
+        symbols,
     ));
     output.push_str(" static ");
     if raw_return == "void" {
@@ -731,7 +731,7 @@ fn render_operation_request_extension(
             "request",
             "protoRequest",
             "result",
-            api_plan,
+            symbols,
         ));
         output.push_str(";\n");
     } else {
@@ -741,16 +741,16 @@ fn render_operation_request_extension(
 }
 
 fn operation_request_method_access(
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     request_kind: RequestArgumentKind,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> &'static str {
     let raw_input_type = operation_raw_input_type(&operation.input);
-    let high_level_input_type = operation_input_type(&operation.input, api_plan);
+    let high_level_input_type = operation_input_type(&operation.input, symbols);
     if (matches!(request_kind, RequestArgumentKind::HighLevel)
         || high_level_input_type == raw_input_type)
-        && api_plan.model(&operation.input.info.full_name)
-            .is_some_and(|model| operation_has_flattened_convenience(operation, model, api_plan))
+        && symbols.model(&operation.input.info.full_name)
+            .is_some_and(|model| operation_has_flattened_convenience(operation, model, symbols))
     {
         "private"
     } else {
@@ -758,19 +758,19 @@ fn operation_request_method_access(
     }
 }
 
-fn operation_requires_high_level_request(operation: &PlannedOperation) -> bool {
+fn operation_requires_high_level_request(operation: &WitOperation) -> bool {
     operation.output_transform.is_some() || operation.output_resource_return.is_some()
 }
 
 fn operation_has_flattened_convenience(
-    _operation: &PlannedOperation,
-    model: &PlannedModel,
-    _api_plan: &WitSymbols,
+    _operation: &WitOperation,
+    model: &WitModel,
+    _symbols: &WitSymbols,
 ) -> bool {
     !model.fields.is_empty() && model_function_fields_flattenable(model)
 }
 
-fn model_function_fields_flattenable(model: &PlannedModel) -> bool {
+fn model_function_fields_flattenable(model: &WitModel) -> bool {
     let mut has_function_fields = false;
     for field in &model.fields {
         if let Some(function) = &field.function {
@@ -785,12 +785,12 @@ fn model_function_fields_flattenable(model: &PlannedModel) -> bool {
 
 fn render_operation_flattened_overload(
     output: &mut String,
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     method_name: &str,
-    model: &PlannedModel,
+    model: &WitModel,
     raw_return: &str,
     high_level_return: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
     support_namespace: Option<&str>,
 ) {
@@ -801,14 +801,14 @@ fn render_operation_flattened_overload(
         raw_return,
         high_level_return,
         model,
-        api_plan,
+        symbols,
         overload,
     );
     render_flattened_method_body(
         output,
         operation,
         model,
-        api_plan,
+        symbols,
         overload,
         support_namespace,
     );
@@ -825,7 +825,7 @@ struct FlattenedOverload {
 }
 
 impl FlattenedOverload {
-    fn function_mode(&self, field: &PlannedField) -> FlattenedFunctionMode {
+    fn function_mode(&self, field: &WitField) -> FlattenedFunctionMode {
         self.function_modes
             .iter()
             .find_map(|(field_name, mode)| (field_name == &field.proto_name).then_some(*mode))
@@ -839,7 +839,7 @@ impl FlattenedOverload {
     }
 }
 
-fn flattened_overloads(model: &PlannedModel) -> Vec<FlattenedOverload> {
+fn flattened_overloads(model: &WitModel) -> Vec<FlattenedOverload> {
     let function_fields = model
         .fields
         .iter()
@@ -870,15 +870,15 @@ fn flattened_overloads(model: &PlannedModel) -> Vec<FlattenedOverload> {
 
 fn render_flattened_method_signature(
     output: &mut String,
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     method_name: &str,
     raw_return: &str,
     high_level_return: &str,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
 ) {
-    render_operation_flattened_xml_doc(output, "    ", operation, model, api_plan, overload);
+    render_operation_flattened_xml_doc(output, "    ", operation, model, symbols, overload);
     output.push_str("    ");
     output.push_str(GENERATED_CODE_ATTRIBUTE);
     output.push('\n');
@@ -894,11 +894,11 @@ fn render_flattened_method_signature(
     render_flattened_generic_parameters(output, model, overload);
     output.push('(');
     let mut has_parameters = false;
-    render_flattened_parameters(output, model, api_plan, overload, &mut has_parameters);
-    if model_has_options_fields(model, api_plan) {
+    render_flattened_parameters(output, model, symbols, overload, &mut has_parameters);
+    if model_has_options_fields(model, symbols) {
         render_parameter_separator(output, &mut has_parameters);
         output.push_str(&operation_options_type_name(operation));
-        if model_options_required(model, api_plan) {
+        if model_options_required(model, symbols) {
             output.push_str(" options");
         } else {
             output.push_str("? options = null");
@@ -910,28 +910,28 @@ fn render_flattened_method_signature(
 fn render_operation_flattened_xml_doc(
     output: &mut String,
     indent: &str,
-    operation: &PlannedOperation,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    operation: &WitOperation,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
 ) {
     let return_doc = match operation.output {
-        PlannedOperationOutput::None => None,
+        WitOperationOutput::None => None,
         _ => dotnet_doc(&operation.return_doc),
     };
     render_xml_doc(
         output,
         indent,
         dotnet_doc(&operation.doc),
-        flattened_method_parameter_docs(model, api_plan, overload),
+        flattened_method_parameter_docs(model, symbols, overload),
         return_doc,
         operation.experimental,
     );
 }
 
 fn flattened_method_parameter_docs(
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
 ) -> Vec<(String, String)> {
     let mut params = Vec::new();
@@ -939,7 +939,7 @@ fn flattened_method_parameter_docs(
         if field.function.is_none() {
             continue;
         }
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             for nested_field in &nested_model.fields {
                 if nested_field.function.is_none() {
                     continue;
@@ -953,7 +953,7 @@ fn flattened_method_parameter_docs(
             push_function_args_parameter_docs(&mut params, model, field);
         }
     }
-    if model_has_options_fields(model, api_plan) {
+    if model_has_options_fields(model, symbols) {
         params.push((
             "options".to_string(),
             dotnet_doc(model.generated_model.doc())
@@ -964,7 +964,7 @@ fn flattened_method_parameter_docs(
     params
 }
 
-fn push_field_parameter_doc(params: &mut Vec<(String, String)>, field: &PlannedField) {
+fn push_field_parameter_doc(params: &mut Vec<(String, String)>, field: &WitField) {
     params.push((
         csharp_parameter_name(&field.authored_name),
         field
@@ -976,14 +976,14 @@ fn push_field_parameter_doc(params: &mut Vec<(String, String)>, field: &PlannedF
     ));
 }
 
-fn fallback_parameter_doc(field: &PlannedField) -> String {
+fn fallback_parameter_doc(field: &WitField) -> String {
     format!("The {} value.", csharp_parameter_name(&field.authored_name))
 }
 
 fn push_function_args_parameter_docs(
     params: &mut Vec<(String, String)>,
-    model: &PlannedModel,
-    function_field: &PlannedField,
+    model: &WitModel,
+    function_field: &WitField,
 ) {
     let Some(function) = &function_field.function else {
         return;
@@ -1002,8 +1002,8 @@ fn push_function_args_parameter_docs(
 
 fn render_flattened_parameters(
     output: &mut String,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
     has_parameters: &mut bool,
 ) {
@@ -1011,7 +1011,7 @@ fn render_flattened_parameters(
         if field.function.is_none() {
             continue;
         }
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             for nested_field in &nested_model.fields {
                 if nested_field.function.is_none() {
                     continue;
@@ -1021,7 +1021,7 @@ fn render_flattened_parameters(
                 output.push_str(&flattened_nested_parameter_type(
                     nested_model,
                     nested_field,
-                    api_plan,
+                    symbols,
                 ));
                 output.push(' ');
                 output.push_str(&csharp_parameter_name(&nested_field.authored_name));
@@ -1035,7 +1035,7 @@ fn render_flattened_parameters(
         output.push_str(&flattened_parameter_type(
             model,
             field,
-            api_plan,
+            symbols,
             overload.function_mode(field),
         ));
         output.push(' ');
@@ -1044,16 +1044,16 @@ fn render_flattened_parameters(
             output.push_str(" = null");
         }
         if matches!(overload.function_mode(field), FlattenedFunctionMode::String) {
-            render_function_args_parameters(output, model, field, api_plan, has_parameters);
+            render_function_args_parameters(output, model, field, symbols, has_parameters);
         }
     }
 }
 
 fn render_function_args_parameters(
     output: &mut String,
-    model: &PlannedModel,
-    function_field: &PlannedField,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    function_field: &WitField,
+    symbols: &WitSymbols,
     has_parameters: &mut bool,
 ) {
     let Some(function) = &function_field.function else {
@@ -1071,7 +1071,7 @@ fn render_function_args_parameters(
         output.push_str(&flattened_parameter_type(
             model,
             arg_field,
-            api_plan,
+            symbols,
             FlattenedFunctionMode::String,
         ));
         output.push(' ');
@@ -1089,7 +1089,7 @@ fn render_parameter_separator(output: &mut String, has_parameters: &mut bool) {
 
 fn render_flattened_generic_parameters(
     output: &mut String,
-    model: &PlannedModel,
+    model: &WitModel,
     overload: &FlattenedOverload,
 ) {
     if !overload.has_expression_functions() {
@@ -1114,13 +1114,13 @@ fn render_flattened_generic_parameters(
 
 fn render_flattened_method_body(
     output: &mut String,
-    operation: &PlannedOperation,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    operation: &WitOperation,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
     support_namespace: Option<&str>,
 ) {
-    let options_required = model_options_required(model, api_plan);
+    let options_required = model_options_required(model, symbols);
     for field in &model.fields {
         if field.function.is_some()
             && matches!(
@@ -1162,7 +1162,7 @@ fn render_flattened_method_body(
                 flattened_request_field_expr(
                     field,
                     model,
-                    api_plan,
+                    symbols,
                     overload,
                     support_namespace,
                     options_required,
@@ -1204,14 +1204,14 @@ fn render_flattened_method_body(
 }
 
 fn flattened_request_field_expr(
-    field: &PlannedField,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    field: &WitField,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
     support_namespace: Option<&str>,
     options_required: bool,
 ) -> String {
-    if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+    if let Some(nested_model) = flattened_nested_model(field, symbols) {
         nested_model_init_expr(field, nested_model, options_required)
     } else if field.function.is_some()
         && matches!(
@@ -1245,7 +1245,7 @@ fn flattened_request_field_expr(
     }
 }
 
-fn function_name_expression(field: &PlannedField, support_namespace: Option<&str>) -> String {
+fn function_name_expression(field: &WitField, support_namespace: Option<&str>) -> String {
     let method_var = csharp_parameter_name(&format!("{}Method", field.authored_name));
     let extractor = field
         .function
@@ -1257,8 +1257,8 @@ fn function_name_expression(field: &PlannedField, support_namespace: Option<&str
 }
 
 fn function_args_field_mode(
-    model: &PlannedModel,
-    args_field: &PlannedField,
+    model: &WitModel,
+    args_field: &WitField,
     overload: &FlattenedOverload,
 ) -> Option<FlattenedFunctionMode> {
     model
@@ -1274,26 +1274,26 @@ fn function_args_field_mode(
 }
 
 fn flattened_nested_model<'a>(
-    field: &PlannedField,
-    api_plan: &WitSymbols<'a>,
-) -> Option<&'a PlannedModel> {
-    let PlannedFieldKind::Singular(PlannedValueType::Message(message)) = &field.kind else {
+    field: &WitField,
+    symbols: &WitSymbols<'a>,
+) -> Option<&'a WitModel> {
+    let WitFieldKind::Singular(WitValueType::Message(message)) = &field.kind else {
         return None;
     };
-    let nested_model = api_plan.model(&message.info.full_name)?;
+    let nested_model = symbols.model(&message.info.full_name)?;
     nested_model.flatten_in_api.then_some(nested_model)
 }
 
 fn render_operation_options_type(
     output: &mut String,
-    operation: &PlannedOperation,
-    api_plan: &WitSymbols,
+    operation: &WitOperation,
+    symbols: &WitSymbols,
 ) {
-    let Some(model) = api_plan.model(&operation.input.info.full_name) else {
+    let Some(model) = symbols.model(&operation.input.info.full_name) else {
         return;
     };
-    if !operation_has_flattened_convenience(operation, model, api_plan)
-        || !model_has_options_fields(model, api_plan)
+    if !operation_has_flattened_convenience(operation, model, symbols)
+        || !model_has_options_fields(model, symbols)
     {
         return;
     }
@@ -1310,15 +1310,15 @@ fn render_operation_options_type(
     let options_type_name = operation_options_type_name(operation);
     output.push_str(&options_type_name);
     output.push_str("\n{\n");
-    let mut option_fields = Vec::<(&PlannedField, String, bool)>::new();
+    let mut option_fields = Vec::<(&WitField, String, bool)>::new();
     for field in &model.fields {
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             for nested_field in &nested_model.fields {
                 if !field_is_options_field(nested_field) {
                     continue;
                 }
                 let field_type =
-                    flattened_nested_parameter_type(nested_model, nested_field, api_plan);
+                    flattened_nested_parameter_type(nested_model, nested_field, symbols);
                 option_fields.push((
                     nested_field,
                     field_type,
@@ -1331,7 +1331,7 @@ fn render_operation_options_type(
             continue;
         }
         let field_type =
-            flattened_parameter_type(model, field, api_plan, FlattenedFunctionMode::String);
+            flattened_parameter_type(model, field, symbols, FlattenedFunctionMode::String);
         option_fields.push((field, field_type, field.required));
     }
     render_operation_options_constructor(output, &options_type_name, &option_fields);
@@ -1349,7 +1349,7 @@ fn render_operation_options_type(
 fn render_operation_options_constructor(
     output: &mut String,
     type_name: &str,
-    option_fields: &[(&PlannedField, String, bool)],
+    option_fields: &[(&WitField, String, bool)],
 ) {
     let required_fields = option_fields
         .iter()
@@ -1380,13 +1380,13 @@ fn render_operation_options_constructor(
     output.push_str("    }\n\n");
 }
 
-fn operation_options_type_name(operation: &PlannedOperation) -> String {
+fn operation_options_type_name(operation: &WitOperation) -> String {
     csharp_type_name(&format!("{}Options", operation.name))
 }
 
-fn model_has_options_fields(model: &PlannedModel, api_plan: &WitSymbols) -> bool {
+fn model_has_options_fields(model: &WitModel, symbols: &WitSymbols) -> bool {
     model.fields.iter().any(|field| {
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             nested_model.fields.iter().any(field_is_options_field)
         } else {
             field_is_options_field(field)
@@ -1394,9 +1394,9 @@ fn model_has_options_fields(model: &PlannedModel, api_plan: &WitSymbols) -> bool
     })
 }
 
-fn model_options_required(model: &PlannedModel, api_plan: &WitSymbols) -> bool {
+fn model_options_required(model: &WitModel, symbols: &WitSymbols) -> bool {
     model.fields.iter().any(|field| {
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             field.required
                 && nested_model.fields.iter().any(|nested_field| {
                     nested_field.required && field_is_options_field(nested_field)
@@ -1407,13 +1407,13 @@ fn model_options_required(model: &PlannedModel, api_plan: &WitSymbols) -> bool {
     })
 }
 
-fn field_is_options_field(field: &PlannedField) -> bool {
+fn field_is_options_field(field: &WitField) -> bool {
     field.function.is_none() && !field.function_args
 }
 
 fn nested_model_init_expr(
-    field: &PlannedField,
-    model: &PlannedModel,
+    field: &WitField,
+    model: &WitModel,
     options_required: bool,
 ) -> String {
     let option_fields = model
@@ -1450,7 +1450,7 @@ fn nested_model_init_expr(
     }
 }
 
-fn model_init_expr(type_name: &str, field_exprs: Vec<(&PlannedField, String)>) -> String {
+fn model_init_expr(type_name: &str, field_exprs: Vec<(&WitField, String)>) -> String {
     let constructor_args = field_exprs
         .iter()
         .filter(|(field, _)| field.required)
@@ -1472,7 +1472,7 @@ fn model_init_expr(type_name: &str, field_exprs: Vec<(&PlannedField, String)>) -
     expr
 }
 
-fn option_field_expr(field: &PlannedField, options_required: bool) -> String {
+fn option_field_expr(field: &WitField, options_required: bool) -> String {
     if options_required || field.required {
         format!("options.{}", field_property_name(field))
     } else {
@@ -1481,8 +1481,8 @@ fn option_field_expr(field: &PlannedField, options_required: bool) -> String {
 }
 
 fn option_nested_field_expr(
-    field: &PlannedField,
-    nested_field: &PlannedField,
+    field: &WitField,
+    nested_field: &WitField,
     options_required: bool,
 ) -> String {
     if options_required || (field.required && nested_field.required) {
@@ -1498,12 +1498,12 @@ fn function_has_result_type_parameter(function: &FunctionFieldSpec) -> bool {
 
 fn render_operation_flattened_extension(
     output: &mut String,
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     method_name: &str,
-    model: &PlannedModel,
+    model: &WitModel,
     raw_return: &str,
     high_level_return: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) {
     for overload in flattened_overloads(model) {
@@ -1514,14 +1514,14 @@ fn render_operation_flattened_extension(
             model,
             raw_return,
             high_level_return,
-            api_plan,
+            symbols,
             &overload,
             support_namespace,
         );
     }
 }
 
-fn model_has_extractable_function_fields(model: &PlannedModel) -> bool {
+fn model_has_extractable_function_fields(model: &WitModel) -> bool {
     let mut has_function_fields = false;
     for field in &model.fields {
         if let Some(function) = &field.function {
@@ -1534,7 +1534,7 @@ fn model_has_extractable_function_fields(model: &PlannedModel) -> bool {
     has_function_fields
 }
 
-fn render_enum(output: &mut String, enumeration: &PlannedEnum) {
+fn render_enum(output: &mut String, enumeration: &WitEnum) {
     output.push_str(GENERATED_CODE_ATTRIBUTE);
     output.push('\n');
     output.push_str("public enum ");
@@ -1550,7 +1550,7 @@ fn render_enum(output: &mut String, enumeration: &PlannedEnum) {
     output.push_str("}\n\n");
 }
 
-fn render_flags(output: &mut String, flag_set: &PlannedFlags) {
+fn render_flags(output: &mut String, flag_set: &WitFlags) {
     output.push_str(GENERATED_CODE_ATTRIBUTE);
     output.push('\n');
     output.push_str("[Flags]\n");
@@ -1568,7 +1568,7 @@ fn render_flags(output: &mut String, flag_set: &PlannedFlags) {
     output.push_str("}\n\n");
 }
 
-fn render_variant(output: &mut String, variant: &crate::api_plan::PlannedVariant) {
+fn render_variant(output: &mut String, variant: &crate::wit_symbols::WitVariant) {
     output.push_str(GENERATED_CODE_ATTRIBUTE);
     output.push('\n');
     output.push_str("public abstract record ");
@@ -1603,8 +1603,8 @@ fn render_variant(output: &mut String, variant: &crate::api_plan::PlannedVariant
 
 fn render_model(
     output: &mut String,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) {
     render_xml_summary(
@@ -1615,17 +1615,17 @@ fn render_model(
     );
     output.push_str(GENERATED_CODE_ATTRIBUTE);
     output.push('\n');
-    let access = model_access(model, api_plan);
+    let access = model_access(model, symbols);
     output.push_str(access);
     output.push_str(" class ");
     let type_name = csharp_type_name(&model.name);
     output.push_str(&type_name);
     output.push_str("\n{\n");
-    render_model_constructor(output, access, &type_name, model, api_plan);
+    render_model_constructor(output, access, &type_name, model, symbols);
     for field in &model.fields {
         render_field_xml_doc(output, "    ", field);
         output.push_str("    public ");
-        output.push_str(&model_field_type(model, field, api_plan));
+        output.push_str(&model_field_type(model, field, symbols));
         output.push(' ');
         output.push_str(&field_property_name(field));
         if field.required {
@@ -1638,7 +1638,7 @@ fn render_model(
         if !model.fields.is_empty() {
             output.push('\n');
         }
-        render_model_to_proto_method(output, model, api_plan, support_namespace);
+        render_model_to_proto_method(output, model, symbols, support_namespace);
     }
     output.push_str("}\n\n");
 }
@@ -1647,8 +1647,8 @@ fn render_model_constructor(
     output: &mut String,
     access: &str,
     type_name: &str,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
 ) {
     let required_fields = model
         .fields
@@ -1667,7 +1667,7 @@ fn render_model_constructor(
         if index > 0 {
             output.push_str(", ");
         }
-        output.push_str(&model_field_type(model, field, api_plan));
+        output.push_str(&model_field_type(model, field, symbols));
         output.push(' ');
         output.push_str(&csharp_parameter_name(&field.authored_name));
     }
@@ -1682,33 +1682,33 @@ fn render_model_constructor(
     output.push_str("    }\n\n");
 }
 
-fn model_access(model: &PlannedModel, api_plan: &WitSymbols) -> &'static str {
-    if public_model_names(api_plan).contains(&model.info.full_name) {
+fn model_access(model: &WitModel, symbols: &WitSymbols) -> &'static str {
+    if public_model_names(symbols).contains(&model.info.full_name) {
         "public"
     } else {
         "internal"
     }
 }
 
-fn public_model_names(api_plan: &WitSymbols) -> HashSet<String> {
+fn public_model_names(symbols: &WitSymbols) -> HashSet<String> {
     let mut names = HashSet::new();
-    for service in api_plan.services() {
+    for service in symbols.services() {
         for operation in &service.operations {
-            collect_public_operation_models(&mut names, operation, api_plan);
+            collect_public_operation_models(&mut names, operation, symbols);
         }
         for resource in &service.resources {
-            collect_public_resource_models(&mut names, resource, api_plan);
+            collect_public_resource_models(&mut names, resource, symbols);
         }
     }
 
     loop {
         let before = names.len();
         for name in names.clone() {
-            let Some(model) = api_plan.model(&name) else {
+            let Some(model) = symbols.model(&name) else {
                 continue;
             };
             for field in &model.fields {
-                collect_public_field_kind_models(&mut names, &field.kind, api_plan);
+                collect_public_field_kind_models(&mut names, &field.kind, symbols);
             }
         }
         if names.len() == before {
@@ -1721,72 +1721,72 @@ fn public_model_names(api_plan: &WitSymbols) -> HashSet<String> {
 
 fn collect_public_operation_models(
     names: &mut HashSet<String>,
-    operation: &PlannedOperation,
-    api_plan: &WitSymbols,
+    operation: &WitOperation,
+    symbols: &WitSymbols,
 ) {
     let raw_input_type = operation_raw_input_type(&operation.input);
-    let high_level_input_type = operation_input_type(&operation.input, api_plan);
-    let has_input = operation_has_input(operation, api_plan);
+    let high_level_input_type = operation_input_type(&operation.input, symbols);
+    let has_input = operation_has_input(operation, symbols);
     if has_input
         && (high_level_input_type == raw_input_type
             || !operation_requires_high_level_request(operation))
-        && operation_request_method_access(operation, RequestArgumentKind::Raw, api_plan)
+        && operation_request_method_access(operation, RequestArgumentKind::Raw, symbols)
             == "public"
     {
-        collect_public_operation_input_models(names, &operation.input, &raw_input_type, api_plan);
+        collect_public_operation_input_models(names, &operation.input, &raw_input_type, symbols);
     }
     if has_input
         && high_level_input_type != raw_input_type
-        && operation_request_method_access(operation, RequestArgumentKind::HighLevel, api_plan)
+        && operation_request_method_access(operation, RequestArgumentKind::HighLevel, symbols)
             == "public"
     {
         collect_public_operation_input_models(
             names,
             &operation.input,
             &high_level_input_type,
-            api_plan,
+            symbols,
         );
     }
 
-    if let PlannedOperationOutput::Message(message) = &operation.output
+    if let WitOperationOutput::Message(message) = &operation.output
         && operation.output_transform.is_none()
         && operation.output_resource_return.is_none()
         && operation_return_type(operation) == csharp_type_name(&message.model_name)
     {
-        collect_public_message_models(names, message, api_plan);
+        collect_public_message_models(names, message, symbols);
     }
 
-    let Some(model) = api_plan.model(&operation.input.info.full_name) else {
+    let Some(model) = symbols.model(&operation.input.info.full_name) else {
         return;
     };
-    if !operation_has_flattened_convenience(operation, model, api_plan) {
+    if !operation_has_flattened_convenience(operation, model, symbols) {
         return;
     }
     for overload in flattened_overloads(model) {
-        collect_public_flattened_parameter_models(names, model, api_plan, &overload);
+        collect_public_flattened_parameter_models(names, model, symbols, &overload);
     }
-    collect_public_operation_options_models(names, model, api_plan);
+    collect_public_operation_options_models(names, model, symbols);
 }
 
 fn collect_public_flattened_parameter_models(
     names: &mut HashSet<String>,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
     overload: &FlattenedOverload,
 ) {
     for field in &model.fields {
         if field.function.is_none() {
             continue;
         }
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             for nested_field in &nested_model.fields {
                 if nested_field.function.is_some() {
-                    collect_public_field_kind_models(names, &nested_field.kind, api_plan);
+                    collect_public_field_kind_models(names, &nested_field.kind, symbols);
                 }
             }
             continue;
         }
-        collect_public_field_kind_models(names, &field.kind, api_plan);
+        collect_public_field_kind_models(names, &field.kind, symbols);
         if matches!(overload.function_mode(field), FlattenedFunctionMode::String)
             && let Some(function) = &field.function
         {
@@ -1796,7 +1796,7 @@ fn collect_public_flattened_parameter_models(
                     .iter()
                     .find(|candidate| &candidate.proto_name == arg_field_name)
                 {
-                    collect_public_field_kind_models(names, &arg_field.kind, api_plan);
+                    collect_public_field_kind_models(names, &arg_field.kind, symbols);
                 }
             }
         }
@@ -1805,90 +1805,90 @@ fn collect_public_flattened_parameter_models(
 
 fn collect_public_operation_options_models(
     names: &mut HashSet<String>,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
 ) {
-    if !model_has_options_fields(model, api_plan) {
+    if !model_has_options_fields(model, symbols) {
         return;
     }
     for field in &model.fields {
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
+        if let Some(nested_model) = flattened_nested_model(field, symbols) {
             for nested_field in &nested_model.fields {
                 if field_is_options_field(nested_field) {
-                    collect_public_field_kind_models(names, &nested_field.kind, api_plan);
+                    collect_public_field_kind_models(names, &nested_field.kind, symbols);
                 }
             }
             continue;
         }
         if field_is_options_field(field) {
-            collect_public_field_kind_models(names, &field.kind, api_plan);
+            collect_public_field_kind_models(names, &field.kind, symbols);
         }
     }
 }
 
 fn collect_public_resource_models(
     names: &mut HashSet<String>,
-    resource: &PlannedResource,
-    api_plan: &WitSymbols,
+    resource: &WitResource,
+    symbols: &WitSymbols,
 ) {
     for field in &resource.fields {
-        collect_public_field_kind_models(names, &field.kind, api_plan);
+        collect_public_field_kind_models(names, &field.kind, symbols);
     }
     for method in &resource.methods {
         for param in &method.params {
-            collect_public_field_kind_models(names, &param.kind, api_plan);
+            collect_public_field_kind_models(names, &param.kind, symbols);
         }
         if let Some(result) = &method.result
-            && let PlannedResourceMethodResultKind::Value(kind) = &result.kind
+            && let WitResourceMethodResultKind::Value(kind) = &result.kind
         {
-            collect_public_field_kind_models(names, kind, api_plan);
+            collect_public_field_kind_models(names, kind, symbols);
         }
     }
 }
 
 fn collect_public_field_kind_models(
     names: &mut HashSet<String>,
-    kind: &PlannedFieldKind,
-    api_plan: &WitSymbols,
+    kind: &WitFieldKind,
+    symbols: &WitSymbols,
 ) {
     match kind {
-        PlannedFieldKind::Singular(value) => collect_public_value_models(names, value, api_plan),
-        PlannedFieldKind::Repeated(value) => collect_public_value_models(names, value, api_plan),
-        PlannedFieldKind::Map { key, value } => {
-            collect_public_value_models(names, key, api_plan);
-            collect_public_value_models(names, value, api_plan);
+        WitFieldKind::Singular(value) => collect_public_value_models(names, value, symbols),
+        WitFieldKind::Repeated(value) => collect_public_value_models(names, value, symbols),
+        WitFieldKind::Map { key, value } => {
+            collect_public_value_models(names, key, symbols);
+            collect_public_value_models(names, value, symbols);
         }
     }
 }
 
 fn collect_public_value_models(
     names: &mut HashSet<String>,
-    value: &PlannedValueType,
-    api_plan: &WitSymbols,
+    value: &WitValueType,
+    symbols: &WitSymbols,
 ) {
     match value {
-        PlannedValueType::Message(message) => {
-            collect_public_message_models(names, message, api_plan)
+        WitValueType::Message(message) => {
+            collect_public_message_models(names, message, symbols)
         }
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Tuple(items) => {
             for item in items {
-                collect_public_value_models(names, item, api_plan);
+                collect_public_value_models(names, item, symbols);
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             if let Some(ok) = ok {
-                collect_public_value_models(names, ok, api_plan);
+                collect_public_value_models(names, ok, symbols);
             }
             if let Some(err) = err {
-                collect_public_value_models(names, err, api_plan);
+                collect_public_value_models(names, err, symbols);
             }
         }
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => {
             if type_name.for_language(Language::Dotnet).is_none() {
-                collect_public_value_models(names, fallback, api_plan);
+                collect_public_value_models(names, fallback, symbols);
             }
         }
         _ => {}
@@ -1897,30 +1897,30 @@ fn collect_public_value_models(
 
 fn collect_public_message_models(
     names: &mut HashSet<String>,
-    message: &PlannedMessageType,
-    api_plan: &WitSymbols,
+    message: &WitMessageType,
+    symbols: &WitSymbols,
 ) {
-    if message.replacement.is_none() && api_plan.contains_model(&message.info.full_name) {
+    if message.replacement.is_none() && symbols.contains_model(&message.info.full_name) {
         names.insert(message.info.full_name.clone());
     }
 }
 
 fn collect_public_operation_input_models(
     names: &mut HashSet<String>,
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     input_type: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) {
     if input_type == csharp_type_name(&message.model_name) {
-        collect_public_message_models(names, message, api_plan);
+        collect_public_message_models(names, message, symbols);
     }
 }
 
 fn render_resource(
     output: &mut String,
-    service: &PlannedService,
-    resource: &PlannedResource,
-    api_plan: &WitSymbols,
+    service: &WitService,
+    resource: &WitResource,
+    symbols: &WitSymbols,
 ) {
     let type_name = csharp_type_name(&resource.type_name);
     output.push_str(GENERATED_CODE_ATTRIBUTE);
@@ -1959,16 +1959,16 @@ fn render_resource(
         output.push('\n');
     }
     for method in &resource.methods {
-        render_resource_method(output, service, method, api_plan);
+        render_resource_method(output, service, method, symbols);
     }
     output.push_str("}\n\n");
 }
 
 fn render_resource_method(
     output: &mut String,
-    service: &PlannedService,
-    method: &PlannedResourceMethod,
-    api_plan: &WitSymbols,
+    service: &WitService,
+    method: &WitResourceMethod,
+    symbols: &WitSymbols,
 ) {
     let return_type = resource_method_task_return_type(method);
     output.push_str("    ");
@@ -1990,7 +1990,7 @@ fn render_resource_method(
     }
     output.push(')');
     match &method.binding {
-        PlannedResourceMethodBindingSpec::Operation {
+        WitResourceMethodBindingSpec::Operation {
             operation_name,
             request_plan,
             ..
@@ -2006,11 +2006,11 @@ fn render_resource_method(
                 service,
                 operation,
                 request_plan,
-                api_plan,
+                symbols,
             );
             output.push_str("    }\n\n");
         }
-        PlannedResourceMethodBindingSpec::Stub => {
+        WitResourceMethodBindingSpec::Stub => {
             output.push_str(" => throw new NotSupportedException(\"Resource method is not bound to a Nexus operation.\");\n\n");
         }
     }
@@ -2018,14 +2018,14 @@ fn render_resource_method(
 
 fn render_resource_method_operation_body(
     output: &mut String,
-    service: &PlannedService,
-    operation: &PlannedOperation,
+    service: &WitService,
+    operation: &WitOperation,
     request_plan: &RequestPlan,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) {
     let operation_method_name = format!("{}Async", csharp_type_name(&operation.name));
     let operation_class_name = dotnet_operations_class_name(service);
-    let args = resource_method_operation_call_args(operation, request_plan, api_plan)
+    let args = resource_method_operation_call_args(operation, request_plan, symbols)
         .expect("bound resource operation should have a renderable request plan");
     if args.len() == 1 {
         output.push_str("        var request = ");
@@ -2046,24 +2046,24 @@ fn render_resource_method_operation_body(
 }
 
 fn resource_method_operation_call_args(
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     request_plan: &RequestPlan,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> Option<Vec<String>> {
-    let model = api_plan.model(&operation.input.info.full_name)?;
-    if operation_has_flattened_convenience(operation, model, api_plan) {
+    let model = symbols.model(&operation.input.info.full_name)?;
+    if operation_has_flattened_convenience(operation, model, symbols) {
         if model.fields.iter().any(|field| field.function.is_some()) {
             return resource_method_flattened_operation_call_args(
                 operation,
                 request_plan,
                 model,
-                api_plan,
+                symbols,
             );
         }
-        if model_has_options_fields(model, api_plan)
+        if model_has_options_fields(model, symbols)
             && let Some(expr) = resource_method_request_model_init_expr(
                 request_plan,
-                api_plan,
+                symbols,
                 Some(&operation_options_type_name(operation)),
                 ResourceMethodRequestInitKind::OptionsFields,
             )
@@ -2074,7 +2074,7 @@ fn resource_method_operation_call_args(
 
     resource_method_request_model_init_expr(
         request_plan,
-        api_plan,
+        symbols,
         None,
         ResourceMethodRequestInitKind::AllFields,
     )
@@ -2082,12 +2082,12 @@ fn resource_method_operation_call_args(
 }
 
 fn resource_method_flattened_operation_call_args(
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     request_plan: &RequestPlan,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
 ) -> Option<Vec<String>> {
-    let source_exprs = resource_method_request_field_exprs(request_plan, model, api_plan)?;
+    let source_exprs = resource_method_request_field_exprs(request_plan, model, symbols)?;
     let overload = flattened_overloads(model)
         .into_iter()
         .find(|overload| !overload.has_expression_functions())?;
@@ -2096,7 +2096,7 @@ fn resource_method_flattened_operation_call_args(
         if field.function.is_none() {
             continue;
         }
-        if flattened_nested_model(field, api_plan).is_some() {
+        if flattened_nested_model(field, symbols).is_some() {
             return None;
         }
         args.push(resource_method_request_source_expr(&source_exprs, field)?);
@@ -2115,10 +2115,10 @@ fn resource_method_flattened_operation_call_args(
             }
         }
     }
-    if model_has_options_fields(model, api_plan) {
+    if model_has_options_fields(model, symbols) {
         args.push(resource_method_request_model_init_expr(
             request_plan,
-            api_plan,
+            symbols,
             Some(&operation_options_type_name(operation)),
             ResourceMethodRequestInitKind::OptionsFields,
         )?);
@@ -2134,7 +2134,7 @@ enum ResourceMethodRequestInitKind {
 
 fn resource_method_request_model_init_expr(
     request_plan: &RequestPlan,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     type_name_override: Option<&str>,
     init_kind: ResourceMethodRequestInitKind,
 ) -> Option<String> {
@@ -2145,7 +2145,7 @@ fn resource_method_request_model_init_expr(
     else {
         return None;
     };
-    let model = api_plan.model(message_name)?;
+    let model = symbols.model(message_name)?;
     let mut field_exprs = Vec::new();
     for field in fields {
         let model_field = model.fields.iter().find(|candidate| {
@@ -2158,7 +2158,7 @@ fn resource_method_request_model_init_expr(
         }
         field_exprs.push((
             model_field,
-            resource_method_request_value_expr(&field.value, api_plan)?,
+            resource_method_request_value_expr(&field.value, symbols)?,
         ));
     }
     Some(model_init_expr(
@@ -2169,8 +2169,8 @@ fn resource_method_request_model_init_expr(
 
 fn resource_method_request_field_exprs(
     request_plan: &RequestPlan,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
 ) -> Option<BTreeMap<String, String>> {
     let RequestPlan::Construct { fields, .. } = request_plan else {
         return None;
@@ -2180,7 +2180,7 @@ fn resource_method_request_field_exprs(
         let model_field = model.fields.iter().find(|candidate| {
             candidate.authored_name == field.field_name || candidate.proto_name == field.field_name
         })?;
-        let expr = resource_method_request_value_expr(&field.value, api_plan)?;
+        let expr = resource_method_request_value_expr(&field.value, symbols)?;
         source_exprs.insert(model_field.authored_name.clone(), expr.clone());
         source_exprs.insert(model_field.proto_name.clone(), expr);
     }
@@ -2189,7 +2189,7 @@ fn resource_method_request_field_exprs(
 
 fn resource_method_request_source_expr(
     source_exprs: &BTreeMap<String, String>,
-    field: &PlannedField,
+    field: &WitField,
 ) -> Option<String> {
     source_exprs
         .get(&field.authored_name)
@@ -2199,7 +2199,7 @@ fn resource_method_request_source_expr(
 
 fn resource_method_request_value_expr(
     request_plan: &RequestPlan,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> Option<String> {
     match request_plan {
         RequestPlan::Source(RequestPlanSource::ResourceField(name)) => Some(csharp_type_name(name)),
@@ -2208,7 +2208,7 @@ fn resource_method_request_value_expr(
         }
         RequestPlan::Construct { .. } => resource_method_request_model_init_expr(
             request_plan,
-            api_plan,
+            symbols,
             None,
             ResourceMethodRequestInitKind::AllFields,
         ),
@@ -2229,24 +2229,24 @@ fn render_result_helper(output: &mut String) {
     output.push_str("}\n\n");
 }
 
-fn operation_has_input(operation: &PlannedOperation, api_plan: &WitSymbols) -> bool {
-    api_plan.model(&operation.input.info.full_name)
+fn operation_has_input(operation: &WitOperation, symbols: &WitSymbols) -> bool {
+    symbols.model(&operation.input.info.full_name)
         .is_none_or(|model| {
-            !model.fields.is_empty() || operation.input.source == PlannedMessageSource::Proto
+            !model.fields.is_empty() || operation.input.source == WitMessageSource::Proto
         })
 }
 
-fn operation_input_type(message: &PlannedMessageType, api_plan: &WitSymbols) -> String {
+fn operation_input_type(message: &WitMessageType, symbols: &WitSymbols) -> String {
     if message.replacement.is_some() {
         return dotnet_message_type(message);
     }
-    if api_plan.contains_model(&message.info.full_name) {
+    if symbols.contains_model(&message.info.full_name) {
         return csharp_type_name(&message.model_name);
     }
     dotnet_message_type(message)
 }
 
-fn operation_return_type(operation: &PlannedOperation) -> String {
+fn operation_return_type(operation: &WitOperation) -> String {
     if let Some(transform) = &operation.output_transform
         && let Some(type_name) = transform.type_name.for_language(Language::Dotnet)
     {
@@ -2256,30 +2256,30 @@ fn operation_return_type(operation: &PlannedOperation) -> String {
         return csharp_type_name(&resource.resource_type_name);
     }
     match &operation.output {
-        PlannedOperationOutput::Message(message) => dotnet_message_type(message),
-        PlannedOperationOutput::Resource { type_name } => csharp_type_name(type_name),
-        PlannedOperationOutput::None => "void".to_string(),
+        WitOperationOutput::Message(message) => dotnet_message_type(message),
+        WitOperationOutput::Resource { type_name } => csharp_type_name(type_name),
+        WitOperationOutput::None => "void".to_string(),
     }
 }
 
-fn operation_raw_input_type(message: &PlannedMessageType) -> String {
+fn operation_raw_input_type(message: &WitMessageType) -> String {
     dotnet_message_type(message)
 }
 
-fn operation_raw_return_type(operation: &PlannedOperation) -> String {
+fn operation_raw_return_type(operation: &WitOperation) -> String {
     match &operation.output {
-        PlannedOperationOutput::Message(message) => dotnet_message_type(message),
-        PlannedOperationOutput::Resource { type_name } => csharp_type_name(type_name),
-        PlannedOperationOutput::None => "void".to_string(),
+        WitOperationOutput::Message(message) => dotnet_message_type(message),
+        WitOperationOutput::Resource { type_name } => csharp_type_name(type_name),
+        WitOperationOutput::None => "void".to_string(),
     }
 }
 
 fn operation_transform_expression(
-    operation: &PlannedOperation,
+    operation: &WitOperation,
     request_expr: &str,
     request_proto_expr: &str,
     result_expr: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> String {
     if let Some(transform) = &operation.output_transform
         && let Some(expression) = transform.transform.for_language(Language::Dotnet)
@@ -2299,7 +2299,7 @@ fn operation_transform_expression(
                     request_expr,
                     request_proto_expr,
                     result_expr,
-                    api_plan,
+                    symbols,
                 )
             })
             .collect::<Vec<_>>();
@@ -2313,12 +2313,12 @@ fn operation_transform_expression(
 }
 
 fn resource_return_binding_expr(
-    resource: &crate::api_plan::PlannedOperationResourceReturn,
-    binding: &PlannedOperationResourceFieldBinding,
+    resource: &crate::wit_symbols::WitOperationResourceReturn,
+    binding: &WitOperationResourceFieldBinding,
     request_expr: &str,
     request_proto_expr: &str,
     result_expr: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> String {
     match &binding.source {
         ResolvedResourceBindingSource::RequestField {
@@ -2331,7 +2331,7 @@ fn resource_return_binding_expr(
                     "{request_proto_expr}.{}",
                     csharp_type_name(proto_field_name)
                 );
-                optional_resource_binding_expr(resource, binding, expr, api_plan)
+                optional_resource_binding_expr(resource, binding, expr, symbols)
             } else {
                 format!("{request_expr}.{}", csharp_type_name(field_name))
             }
@@ -2340,18 +2340,18 @@ fn resource_return_binding_expr(
             proto_field_name, ..
         } => {
             let expr = format!("{result_expr}.{}", csharp_type_name(proto_field_name));
-            optional_resource_binding_expr(resource, binding, expr, api_plan)
+            optional_resource_binding_expr(resource, binding, expr, symbols)
         }
     }
 }
 
 fn optional_resource_binding_expr(
-    resource: &crate::api_plan::PlannedOperationResourceReturn,
-    binding: &PlannedOperationResourceFieldBinding,
+    resource: &crate::wit_symbols::WitOperationResourceReturn,
+    binding: &WitOperationResourceFieldBinding,
     expr: String,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> String {
-    if binding.optional && resource_field_is_string(resource, &binding.field_name, api_plan) {
+    if binding.optional && resource_field_is_string(resource, &binding.field_name, symbols) {
         format!("string.IsNullOrEmpty({expr}) ? null : {expr}")
     } else {
         expr
@@ -2359,11 +2359,11 @@ fn optional_resource_binding_expr(
 }
 
 fn resource_field_is_string(
-    resource_return: &crate::api_plan::PlannedOperationResourceReturn,
+    resource_return: &crate::wit_symbols::WitOperationResourceReturn,
     field_name: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> bool {
-    let Some(field_kind) = api_plan.services()
+    let Some(field_kind) = symbols.services()
         .flat_map(|service| &service.resources)
         .find(|resource| {
             resource.type_name == resource_return.resource_type_name
@@ -2381,19 +2381,19 @@ fn resource_field_is_string(
     };
     matches!(
         field_kind,
-        PlannedFieldKind::Singular(PlannedValueType::Scalar(PlannedScalarType::String))
+        WitFieldKind::Singular(WitValueType::Scalar(WitScalarType::String))
     )
 }
 
-fn model_needs_to_proto_method(model: &PlannedModel) -> bool {
+fn model_needs_to_proto_method(model: &WitModel) -> bool {
     !model.info.package.is_empty()
         && dotnet_proto_type_name_for_info(&model.info) != csharp_type_name(&model.name)
 }
 
 fn render_model_to_proto_method(
     output: &mut String,
-    model: &PlannedModel,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) {
     let raw_type = dotnet_proto_type_name_for_info(&model.info);
@@ -2413,13 +2413,13 @@ fn render_model_to_proto_method(
             &sourced_field.kind,
             &source_expr,
             false,
-            api_plan,
+            symbols,
             support_namespace,
         ));
         output.push_str(";\n");
     }
     for field in &model.fields {
-        render_field_to_proto_assignment(output, model, field, api_plan, support_namespace);
+        render_field_to_proto_assignment(output, model, field, symbols, support_namespace);
     }
     output.push_str("        return proto;\n");
     output.push_str("    }\n\n");
@@ -2427,9 +2427,9 @@ fn render_model_to_proto_method(
 
 fn render_field_to_proto_assignment(
     output: &mut String,
-    model: &PlannedModel,
-    field: &PlannedField,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    field: &WitField,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) {
     let property_name = field_property_name(field);
@@ -2443,7 +2443,7 @@ fn render_field_to_proto_assignment(
             model,
             field,
             &source_expr,
-            api_plan,
+            symbols,
             support_namespace,
         ));
         output.push_str(";\n");
@@ -2460,7 +2460,7 @@ fn render_field_to_proto_assignment(
             model,
             field,
             &csharp_parameter_name(&field.authored_name),
-            api_plan,
+            symbols,
             support_namespace,
         ));
         output.push_str(";\n");
@@ -2469,10 +2469,10 @@ fn render_field_to_proto_assignment(
 }
 
 fn field_to_proto_expr(
-    model: &PlannedModel,
-    field: &PlannedField,
+    model: &WitModel,
+    field: &WitField,
     source_expr: &str,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) -> String {
     if function_args_field_uses_logical_storage(model, field) {
@@ -2490,36 +2490,36 @@ fn field_to_proto_expr(
         &field.kind,
         source_expr,
         !field.required,
-        api_plan,
+        symbols,
         support_namespace,
     )
 }
 
 fn field_kind_to_proto_expr(
-    kind: &PlannedFieldKind,
+    kind: &WitFieldKind,
     source_expr: &str,
     optional: bool,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) -> String {
     match kind {
-        PlannedFieldKind::Singular(value) => {
-            value_to_proto_expr(value, source_expr, optional, api_plan, support_namespace)
+        WitFieldKind::Singular(value) => {
+            value_to_proto_expr(value, source_expr, optional, symbols, support_namespace)
         }
         _ => source_expr.to_string(),
     }
 }
 
 fn value_to_proto_expr(
-    value: &PlannedValueType,
+    value: &WitValueType,
     source_expr: &str,
     optional: bool,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_namespace: Option<&str>,
 ) -> String {
     match value {
-        PlannedValueType::Message(message) => {
-            if api_plan.model(&message.info.full_name)
+        WitValueType::Message(message) => {
+            if symbols.model(&message.info.full_name)
                 .is_some_and(|model| model_needs_to_proto_method(model))
             {
                 format!("{source_expr}.ToProto()")
@@ -2527,19 +2527,19 @@ fn value_to_proto_expr(
                 message_to_proto_expr(message, source_expr, support_namespace)
             }
         }
-        PlannedValueType::External { fallback, .. } => {
-            value_to_proto_expr(fallback, source_expr, optional, api_plan, support_namespace)
+        WitValueType::External { fallback, .. } => {
+            value_to_proto_expr(fallback, source_expr, optional, symbols, support_namespace)
         }
         _ => source_expr.to_string(),
     }
 }
 
 fn message_to_proto_expr(
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     source_expr: &str,
     support_namespace: Option<&str>,
 ) -> String {
-    if matches!(message.source, PlannedMessageSource::Proto)
+    if matches!(message.source, WitMessageSource::Proto)
         && dotnet_message_type(message) != dotnet_proto_type_name_for_message(message)
     {
         if let Some(converter) = dotnet_to_proto_converter(message) {
@@ -2552,62 +2552,62 @@ fn message_to_proto_expr(
     }
 }
 
-fn dotnet_to_proto_converter(message: &PlannedMessageType) -> Option<&str> {
+fn dotnet_to_proto_converter(message: &WitMessageType) -> Option<&str> {
     message
         .replacement
         .as_ref()
         .and_then(|replacement| replacement.to_proto.for_language(Language::Dotnet))
 }
 
-fn model_uses_proto_extensions(model: &PlannedModel, api_plan: &WitSymbols) -> bool {
+fn model_uses_proto_extensions(model: &WitModel, symbols: &WitSymbols) -> bool {
     model
         .sourced_fields
         .iter()
-        .any(|field| field_kind_uses_proto_extensions(&field.kind, api_plan))
+        .any(|field| field_kind_uses_proto_extensions(&field.kind, symbols))
         || model.fields.iter().any(|field| {
             function_args_field_uses_logical_storage(model, field)
-                || field_kind_uses_proto_extensions(&field.kind, api_plan)
+                || field_kind_uses_proto_extensions(&field.kind, symbols)
         })
 }
 
-fn field_kind_uses_proto_extensions(kind: &PlannedFieldKind, api_plan: &WitSymbols) -> bool {
+fn field_kind_uses_proto_extensions(kind: &WitFieldKind, symbols: &WitSymbols) -> bool {
     match kind {
-        PlannedFieldKind::Singular(value) => value_uses_proto_extensions(value, api_plan),
-        PlannedFieldKind::Repeated(value) => value_uses_proto_extensions(value, api_plan),
-        PlannedFieldKind::Map { key, value } => {
-            value_uses_proto_extensions(key, api_plan)
-                || value_uses_proto_extensions(value, api_plan)
+        WitFieldKind::Singular(value) => value_uses_proto_extensions(value, symbols),
+        WitFieldKind::Repeated(value) => value_uses_proto_extensions(value, symbols),
+        WitFieldKind::Map { key, value } => {
+            value_uses_proto_extensions(key, symbols)
+                || value_uses_proto_extensions(value, symbols)
         }
     }
 }
 
-fn value_uses_proto_extensions(value: &PlannedValueType, api_plan: &WitSymbols) -> bool {
+fn value_uses_proto_extensions(value: &WitValueType, symbols: &WitSymbols) -> bool {
     match value {
-        PlannedValueType::Message(message) => {
-            api_plan.model(&message.info.full_name)
+        WitValueType::Message(message) => {
+            symbols.model(&message.info.full_name)
                 .is_some_and(|model| model_needs_to_proto_method(model))
-                || (matches!(message.source, PlannedMessageSource::Proto)
+                || (matches!(message.source, WitMessageSource::Proto)
                     && dotnet_message_type(message) != dotnet_proto_type_name_for_message(message))
         }
-        PlannedValueType::External { fallback, .. } => {
-            value_uses_proto_extensions(fallback, api_plan)
+        WitValueType::External { fallback, .. } => {
+            value_uses_proto_extensions(fallback, symbols)
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             ok.as_deref()
-                .is_some_and(|ok| value_uses_proto_extensions(ok, api_plan))
+                .is_some_and(|ok| value_uses_proto_extensions(ok, symbols))
                 || err
                     .as_deref()
-                    .is_some_and(|err| value_uses_proto_extensions(err, api_plan))
+                    .is_some_and(|err| value_uses_proto_extensions(err, symbols))
         }
-        PlannedValueType::Tuple(items) => items
+        WitValueType::Tuple(items) => items
             .iter()
-            .any(|item| value_uses_proto_extensions(item, api_plan)),
+            .any(|item| value_uses_proto_extensions(item, symbols)),
         _ => false,
     }
 }
 
-fn field_type(field: &PlannedField, api_plan: &WitSymbols) -> String {
-    let base = high_level_field_kind_type(&field.kind, api_plan);
+fn field_type(field: &WitField, symbols: &WitSymbols) -> String {
+    let base = high_level_field_kind_type(&field.kind, symbols);
     if field.required {
         base
     } else {
@@ -2615,7 +2615,7 @@ fn field_type(field: &PlannedField, api_plan: &WitSymbols) -> String {
     }
 }
 
-fn model_field_type(model: &PlannedModel, field: &PlannedField, api_plan: &WitSymbols) -> String {
+fn model_field_type(model: &WitModel, field: &WitField, symbols: &WitSymbols) -> String {
     if field.function_args
         && let Some(base) = function_args_parameter_type(model, field)
     {
@@ -2625,27 +2625,27 @@ fn model_field_type(model: &PlannedModel, field: &PlannedField, api_plan: &WitSy
             nullable_type(&base)
         };
     }
-    field_type(field, api_plan)
+    field_type(field, symbols)
 }
 
-fn high_level_field_kind_type(kind: &PlannedFieldKind, api_plan: &WitSymbols) -> String {
+fn high_level_field_kind_type(kind: &WitFieldKind, symbols: &WitSymbols) -> String {
     match kind {
-        PlannedFieldKind::Singular(value) => high_level_value_type(value, api_plan),
-        PlannedFieldKind::Repeated(value) => {
-            format!("IReadOnlyList<{}>", high_level_value_type(value, api_plan))
+        WitFieldKind::Singular(value) => high_level_value_type(value, symbols),
+        WitFieldKind::Repeated(value) => {
+            format!("IReadOnlyList<{}>", high_level_value_type(value, symbols))
         }
-        PlannedFieldKind::Map { key, value } => format!(
+        WitFieldKind::Map { key, value } => format!(
             "IReadOnlyDictionary<{}, {}>",
-            high_level_value_type(key, api_plan),
-            high_level_value_type(value, api_plan)
+            high_level_value_type(key, symbols),
+            high_level_value_type(value, symbols)
         ),
     }
 }
 
-fn high_level_value_type(value: &PlannedValueType, api_plan: &WitSymbols) -> String {
+fn high_level_value_type(value: &WitValueType, symbols: &WitSymbols) -> String {
     match value {
-        PlannedValueType::Message(message)
-            if api_plan.contains_model(&message.info.full_name) =>
+        WitValueType::Message(message)
+            if symbols.contains_model(&message.info.full_name) =>
         {
             csharp_type_name(&message.model_name)
         }
@@ -2654,9 +2654,9 @@ fn high_level_value_type(value: &PlannedValueType, api_plan: &WitSymbols) -> Str
 }
 
 fn flattened_parameter_type(
-    model: &PlannedModel,
-    field: &PlannedField,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    field: &WitField,
+    symbols: &WitSymbols,
     mode: FlattenedFunctionMode,
 ) -> String {
     if matches!(mode, FlattenedFunctionMode::Expression)
@@ -2673,10 +2673,10 @@ fn flattened_parameter_type(
             nullable_type(&base)
         };
     }
-    field_type(field, api_plan)
+    field_type(field, symbols)
 }
 
-fn function_args_parameter_type(model: &PlannedModel, field: &PlannedField) -> Option<String> {
+fn function_args_parameter_type(model: &WitModel, field: &WitField) -> Option<String> {
     let field_wit_type = model
         .generated_model
         .field_wit_type(&field.proto_name)
@@ -2686,9 +2686,9 @@ fn function_args_parameter_type(model: &PlannedModel, field: &PlannedField) -> O
         .map(dotnet_function_args_wit_type)
 }
 
-fn function_args_proto_authored_type(field: &PlannedField) -> Option<&AuthoredFieldTypeSpec> {
+fn function_args_proto_authored_type(field: &WitField) -> Option<&AuthoredFieldTypeSpec> {
     match &field.kind {
-        PlannedFieldKind::Singular(PlannedValueType::Message(message)) => {
+        WitFieldKind::Singular(WitValueType::Message(message)) => {
             message.authored_type.as_ref()
         }
         _ => None,
@@ -2753,23 +2753,23 @@ fn dotnet_authored_type(wit_type: &AuthoredFieldTypeSpec) -> String {
     }
 }
 
-fn function_args_field_stores_proto(field: &PlannedField) -> bool {
+fn function_args_field_stores_proto(field: &WitField) -> bool {
     matches!(
         &field.kind,
-        PlannedFieldKind::Singular(PlannedValueType::Message(message))
-            if matches!(message.source, PlannedMessageSource::Proto)
+        WitFieldKind::Singular(WitValueType::Message(message))
+            if matches!(message.source, WitMessageSource::Proto)
     )
 }
 
-fn function_args_field_uses_logical_storage(model: &PlannedModel, field: &PlannedField) -> bool {
+fn function_args_field_uses_logical_storage(model: &WitModel, field: &WitField) -> bool {
     field.function_args
         && function_args_field_stores_proto(field)
         && function_args_parameter_type(model, field).is_some()
 }
 
-fn function_args_to_proto_converter(field: &PlannedField) -> Option<&str> {
+fn function_args_to_proto_converter(field: &WitField) -> Option<&str> {
     match &field.kind {
-        PlannedFieldKind::Singular(PlannedValueType::Message(message)) => {
+        WitFieldKind::Singular(WitValueType::Message(message)) => {
             dotnet_to_proto_converter(message)
         }
         _ => None,
@@ -2785,9 +2785,9 @@ fn function_expression_type(function: &FunctionFieldSpec) -> String {
 }
 
 fn flattened_nested_parameter_type(
-    model: &PlannedModel,
-    field: &PlannedField,
-    api_plan: &WitSymbols,
+    model: &WitModel,
+    field: &WitField,
+    symbols: &WitSymbols,
 ) -> String {
     if let Some(annotation) = model
         .generated_model
@@ -2800,22 +2800,22 @@ fn flattened_nested_parameter_type(
             nullable_type(annotation)
         }
     } else {
-        field_type(field, api_plan)
+        field_type(field, symbols)
     }
 }
 
-fn resource_field_type(kind: &PlannedFieldKind, optional: bool) -> String {
+fn resource_field_type(kind: &WitFieldKind, optional: bool) -> String {
     let base = dotnet_field_kind_type(kind);
     if optional { nullable_type(&base) } else { base }
 }
 
-fn resource_method_return_type(method: &PlannedResourceMethod) -> String {
+fn resource_method_return_type(method: &WitResourceMethod) -> String {
     let Some(result) = &method.result else {
         return "void".to_string();
     };
     let base = match &result.kind {
-        PlannedResourceMethodResultKind::Resource { type_name } => csharp_type_name(type_name),
-        PlannedResourceMethodResultKind::Value(kind) => dotnet_field_kind_type(kind),
+        WitResourceMethodResultKind::Resource { type_name } => csharp_type_name(type_name),
+        WitResourceMethodResultKind::Value(kind) => dotnet_field_kind_type(kind),
     };
     if result.optional {
         nullable_type(&base)
@@ -2824,7 +2824,7 @@ fn resource_method_return_type(method: &PlannedResourceMethod) -> String {
     }
 }
 
-fn resource_method_task_return_type(method: &PlannedResourceMethod) -> String {
+fn resource_method_task_return_type(method: &WitResourceMethod) -> String {
     let return_type = resource_method_return_type(method);
     if return_type == "void" {
         "Task".to_string()
@@ -2833,11 +2833,11 @@ fn resource_method_task_return_type(method: &PlannedResourceMethod) -> String {
     }
 }
 
-fn dotnet_field_kind_type(kind: &PlannedFieldKind) -> String {
+fn dotnet_field_kind_type(kind: &WitFieldKind) -> String {
     match kind {
-        PlannedFieldKind::Singular(value) => dotnet_value_type(value),
-        PlannedFieldKind::Repeated(value) => format!("IReadOnlyList<{}>", dotnet_value_type(value)),
-        PlannedFieldKind::Map { key, value } => format!(
+        WitFieldKind::Singular(value) => dotnet_value_type(value),
+        WitFieldKind::Repeated(value) => format!("IReadOnlyList<{}>", dotnet_value_type(value)),
+        WitFieldKind::Map { key, value } => format!(
             "IReadOnlyDictionary<{}, {}>",
             dotnet_value_type(key),
             dotnet_value_type(value)
@@ -2845,15 +2845,15 @@ fn dotnet_field_kind_type(kind: &PlannedFieldKind) -> String {
     }
 }
 
-fn dotnet_value_type(value: &PlannedValueType) -> String {
+fn dotnet_value_type(value: &WitValueType) -> String {
     match value {
-        PlannedValueType::Scalar(PlannedScalarType::Float) => "double".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Int32) => "int".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Int64) => "long".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Bool) => "bool".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::String) => "string".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Bytes) => "byte[]".to_string(),
-        PlannedValueType::Enum(enumeration) => {
+        WitValueType::Scalar(WitScalarType::Float) => "double".to_string(),
+        WitValueType::Scalar(WitScalarType::Int32) => "int".to_string(),
+        WitValueType::Scalar(WitScalarType::Int64) => "long".to_string(),
+        WitValueType::Scalar(WitScalarType::Bool) => "bool".to_string(),
+        WitValueType::Scalar(WitScalarType::String) => "string".to_string(),
+        WitValueType::Scalar(WitScalarType::Bytes) => "byte[]".to_string(),
+        WitValueType::Enum(enumeration) => {
             if let Some(replacement) = &enumeration.replacement
                 && let Some(type_name) = dotnet_replacement_type_name(replacement)
             {
@@ -2864,10 +2864,10 @@ fn dotnet_value_type(value: &PlannedValueType) -> String {
                 "int".to_string()
             }
         }
-        PlannedValueType::Flags(flags) => csharp_type_name(&flags.name),
-        PlannedValueType::Variant(variant) => csharp_type_name(&variant.name),
-        PlannedValueType::Message(message) => dotnet_message_type(message),
-        PlannedValueType::Tuple(items) => format!(
+        WitValueType::Flags(flags) => csharp_type_name(&flags.name),
+        WitValueType::Variant(variant) => csharp_type_name(&variant.name),
+        WitValueType::Message(message) => dotnet_message_type(message),
+        WitValueType::Tuple(items) => format!(
             "({})",
             items
                 .iter()
@@ -2875,7 +2875,7 @@ fn dotnet_value_type(value: &PlannedValueType) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        PlannedValueType::Result { ok, err } => format!(
+        WitValueType::Result { ok, err } => format!(
             "NexusResult<{}, {}>",
             ok.as_ref()
                 .map(|ok| dotnet_value_type(ok))
@@ -2884,26 +2884,26 @@ fn dotnet_value_type(value: &PlannedValueType) -> String {
                 .map(|err| dotnet_value_type(err))
                 .unwrap_or_else(|| "object".to_string())
         ),
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => type_name
             .for_language(Language::Dotnet)
             .map(str::to_string)
             .unwrap_or_else(|| dotnet_value_type(fallback)),
-        PlannedValueType::Unknown => "object".to_string(),
+        WitValueType::Unknown => "object".to_string(),
     }
 }
 
-fn dotnet_message_type(message: &PlannedMessageType) -> String {
+fn dotnet_message_type(message: &WitMessageType) -> String {
     if let Some(replacement) = &message.replacement
         && let Some(type_name) = dotnet_replacement_type_name(replacement)
     {
         return type_name;
     }
     match message.source {
-        PlannedMessageSource::Proto => dotnet_proto_type_name_for_message(message),
-        PlannedMessageSource::Wit => csharp_type_name(&message.model_name),
+        WitMessageSource::Proto => dotnet_proto_type_name_for_message(message),
+        WitMessageSource::Wit => csharp_type_name(&message.model_name),
     }
 }
 
@@ -2914,7 +2914,7 @@ fn dotnet_replacement_type_name(replacement: &TypeReplacementSpec) -> Option<Str
         .map(str::to_string)
 }
 
-fn dotnet_proto_or_local_type(info: &PlannedTypeInfo, local_name: Option<&str>) -> String {
+fn dotnet_proto_or_local_type(info: &WitTypeInfo, local_name: Option<&str>) -> String {
     if info.package.is_empty() {
         csharp_type_name(local_name.unwrap_or(&info.full_name))
     } else {
@@ -2922,11 +2922,11 @@ fn dotnet_proto_or_local_type(info: &PlannedTypeInfo, local_name: Option<&str>) 
     }
 }
 
-fn dotnet_proto_type_name_for_message(message: &PlannedMessageType) -> String {
+fn dotnet_proto_type_name_for_message(message: &WitMessageType) -> String {
     dotnet_proto_type_name_for_info(&message.info)
 }
 
-fn dotnet_proto_type_name_for_info(info: &PlannedTypeInfo) -> String {
+fn dotnet_proto_type_name_for_info(info: &WitTypeInfo) -> String {
     info.file_options
         .as_ref()
         .and_then(|options| options.csharp_namespace.as_deref())
@@ -2940,7 +2940,7 @@ fn dotnet_proto_type_name_for_info(info: &PlannedTypeInfo) -> String {
         .unwrap_or_else(|| dotnet_proto_type_name_fallback(&info.full_name))
 }
 
-fn dotnet_proto_relative_type_name(info: &PlannedTypeInfo) -> String {
+fn dotnet_proto_relative_type_name(info: &WitTypeInfo) -> String {
     let relative_name = info
         .full_name
         .strip_prefix(&format!("{}.", info.package))
@@ -2973,20 +2973,20 @@ fn nullable_type(base: &str) -> String {
     }
 }
 
-fn field_kind_uses_result(kind: &PlannedFieldKind) -> bool {
+fn field_kind_uses_result(kind: &WitFieldKind) -> bool {
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
             value_uses_result(value)
         }
-        PlannedFieldKind::Map { key, value } => value_uses_result(key) || value_uses_result(value),
+        WitFieldKind::Map { key, value } => value_uses_result(key) || value_uses_result(value),
     }
 }
 
-fn value_uses_result(value: &PlannedValueType) -> bool {
+fn value_uses_result(value: &WitValueType) -> bool {
     match value {
-        PlannedValueType::Result { .. } => true,
-        PlannedValueType::Tuple(items) => items.iter().any(value_uses_result),
-        PlannedValueType::External { fallback, .. } => value_uses_result(fallback),
+        WitValueType::Result { .. } => true,
+        WitValueType::Tuple(items) => items.iter().any(value_uses_result),
+        WitValueType::External { fallback, .. } => value_uses_result(fallback),
         _ => false,
     }
 }
@@ -3009,18 +3009,18 @@ fn support_fragment_path(fragment: &SupportFragmentSpec) -> Result<PathBuf> {
     Ok(PathBuf::from("Support").join(file_name))
 }
 
-fn dotnet_namespace(api_plan: &WitSymbols) -> String {
-    api_plan.services().next()
+fn dotnet_namespace(symbols: &WitSymbols) -> String {
+    symbols.services().next()
         .and_then(|service| service.namespace.for_language(Language::Dotnet))
         .map(ToOwned::to_owned)
         .or_else(|| {
-            api_plan.services().next()
+            symbols.services().next()
                 .map(|service| format!("NexGen.{}", csharp_type_name(&service.name)))
         })
         .unwrap_or_else(|| "NexGen.Generated".to_string())
 }
 
-fn dotnet_operations_class_name(service: &PlannedService) -> String {
+fn dotnet_operations_class_name(service: &WitService) -> String {
     service
         .operations_class
         .for_language(Language::Dotnet)
@@ -3028,11 +3028,11 @@ fn dotnet_operations_class_name(service: &PlannedService) -> String {
         .unwrap_or_else(|| "Operations".to_string())
 }
 
-fn service_endpoint_constant_name(service: &PlannedService) -> String {
+fn service_endpoint_constant_name(service: &WitService) -> String {
     csharp_type_name(&format!("{}-endpoint", service.name))
 }
 
-fn field_property_name(field: &PlannedField) -> String {
+fn field_property_name(field: &WitField) -> String {
     csharp_type_name(&field.authored_name)
 }
 
@@ -3168,7 +3168,7 @@ mod tests {
     use prost_types::FileOptions;
 
     use super::{dotnet_proto_type_name_fallback, dotnet_proto_type_name_for_info};
-    use crate::api_plan::PlannedTypeInfo;
+    use crate::wit_symbols::WitTypeInfo;
     use crate::Language;
     use crate::spec::LanguageStringSpec;
 
@@ -3186,7 +3186,7 @@ mod tests {
 
     #[test]
     fn proto_type_name_uses_csharp_namespace_file_option() {
-        let info = PlannedTypeInfo {
+        let info = WitTypeInfo {
             full_name: "temporal.api.workflow.v1.VersioningOverride.PinnedOverride".to_string(),
             package: "temporal.api.workflow.v1".to_string(),
             file_name: Some("temporal/api/workflow/v1/message.proto".to_string()),
@@ -3206,7 +3206,7 @@ mod tests {
 
     #[test]
     fn proto_type_name_prefers_csharp_namespace_file_option_over_wit_override() {
-        let info = PlannedTypeInfo {
+        let info = WitTypeInfo {
             full_name: "temporal.api.common.v1.Payload".to_string(),
             package: "temporal.api.common.v1".to_string(),
             file_name: Some("temporal/api/common/v1/message.proto".to_string()),

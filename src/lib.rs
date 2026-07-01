@@ -1,4 +1,4 @@
-mod api_plan;
+mod wit_symbols;
 // The WIT `Loader`: validates inputs and lowers them into `IR<WitSymbolKind>`
 // (+ warnings). Wired into the CLI generation path via the base `Registry`
 // (see `generate_via_registry`).
@@ -151,7 +151,7 @@ fn generate_via_registry(
 ) -> Result<GeneratedFiles> {
     use nex_gen_codegen::{Emitter, Registry, SchemaType};
 
-    use api_plan::WitSymbolKind;
+    use wit_symbols::WitSymbolKind;
     use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
     use wit_loader::WitLoader;
 

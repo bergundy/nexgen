@@ -3,16 +3,16 @@
 //! This is the WIT side of the `Loader` -> `IR` -> `Emitter` pipeline described
 //! in `crates/nex-gen-codegen`. [`WitLoader`] validates its inputs and lowers
 //! them into a [`SymbolTable<WitSymbolKind>`] via
-//! [`build_api_plan`](crate::api_plan::build_api_plan) — that table *is* the WIT
-//! IR (there is no `ApiPlan`). The symbol machinery (`WitSymbolKind`, the
-//! table build, and the [`WitSymbols`](crate::api_plan::WitSymbols) view the
-//! emitters read) lives in `crate::api_plan`.
+//! [`build_wit_symbols`](crate::wit_symbols::build_wit_symbols) — that table *is* the WIT
+//! IR. The symbol machinery (`WitSymbolKind`, the
+//! table build, and the [`WitSymbols`](crate::wit_symbols::WitSymbols) view the
+//! emitters read) lives in `crate::wit_symbols`.
 
 use std::path::PathBuf;
 
 use nex_gen_codegen::{IR, Language, LoadOutput, SchemaType};
 
-use crate::api_plan::{WitSymbolKind, WitSymbols, build_api_plan};
+use crate::wit_symbols::{WitSymbolKind, WitSymbols, build_wit_symbols};
 use crate::descriptors::DescriptorIndex;
 use crate::generator::generation_warnings;
 use crate::resources::ensure_unique_resource_names;
@@ -63,7 +63,7 @@ impl nex_gen_codegen::Loader for WitLoader {
         ensure_unique_resource_names(&spec).map_err(|error| nex_gen_codegen::Error::Load {
             message: error.to_string(),
         })?;
-        let symbols = build_api_plan(&spec, &descriptors).map_err(|error| {
+        let symbols = build_wit_symbols(&spec, &descriptors).map_err(|error| {
             nex_gen_codegen::Error::Load {
                 message: error.to_string(),
             }
@@ -80,7 +80,7 @@ mod tests {
     use prost_types::FileDescriptorSet;
 
     use crate::Language;
-    use crate::api_plan::{WitSymbolKind, build_api_plan};
+    use crate::wit_symbols::{WitSymbolKind, build_wit_symbols};
     use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
 
@@ -116,7 +116,7 @@ interface user-service {
                 .unwrap();
         let descriptors =
             DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap();
-        build_api_plan(&spec, &descriptors).unwrap()
+        build_wit_symbols(&spec, &descriptors).unwrap()
     }
 
     #[test]

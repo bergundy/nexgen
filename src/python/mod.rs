@@ -4,12 +4,12 @@ use std::path::Path;
 use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use indexmap::IndexMap;
 
-use crate::api_plan::{
-    WitSymbols, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFieldRole, PlannedFlags,
-    PlannedMessageSource, PlannedMessageType, PlannedOperation, PlannedOperationOutput,
-    PlannedOperationResourceFieldBinding, PlannedOperationResourceReturn, PlannedResource,
-    PlannedResourceMethod, PlannedResourceMethodBindingSpec, PlannedResourceMethodResultKind,
-    PlannedScalarType, PlannedSourcedField, PlannedTypeInfo, PlannedValueType, PlannedVariant,
+use crate::wit_symbols::{
+    WitSymbols, WitEnum, WitField, WitFieldKind, WitFieldRole, WitFlags,
+    WitMessageSource, WitMessageType, WitOperation, WitOperationOutput,
+    WitOperationResourceFieldBinding, WitOperationResourceReturn, WitResource,
+    WitResourceMethod, WitResourceMethodBindingSpec, WitResourceMethodResultKind,
+    WitScalarType, WitSourcedField, WitTypeInfo, WitValueType, WitVariant,
     message_model_name, relative_descriptor_name,
 };
 use crate::error::{Error, Result};
@@ -27,16 +27,16 @@ const PYTHON_FORMAT_LINE_LENGTH: usize = 88;
 const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to change.";
 
 pub(crate) fn generate(
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     support_fragments: &[SupportFragmentSpec],
 ) -> Result<GeneratedFiles> {
     reject_support_namespaces(Language::Python, support_fragments)?;
-    let language_imports = collect_python_language_imports(api_plan);
+    let language_imports = collect_python_language_imports(symbols);
     let mut enums = IndexMap::new();
     let mut flags = IndexMap::new();
     let mut variants = IndexMap::new();
     let mut models = IndexMap::new();
-    let services = api_plan
+    let services = symbols
         .services()
         .map(|service| {
             let operations = service
@@ -45,7 +45,7 @@ pub(crate) fn generate(
                 .map(|operation| {
                     resolve_operation(
                         operation,
-                        api_plan,
+                        symbols,
                         &mut enums,
                         &mut flags,
                         &mut variants,
@@ -70,7 +70,7 @@ pub(crate) fn generate(
         for resource in &service.resources {
             ensure_resource_field_types(
                 resource,
-                api_plan,
+                symbols,
                 &mut enums,
                 &mut flags,
                 &mut variants,
@@ -90,15 +90,15 @@ pub(crate) fn generate(
     )
 }
 
-fn collect_python_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportSpec> {
+fn collect_python_language_imports(symbols: &WitSymbols) -> Vec<LanguageImportSpec> {
     let mut imports = BTreeSet::new();
-    for enumeration in api_plan.enums() {
+    for enumeration in symbols.enums() {
         collect_type_info_imports(&enumeration.info, &mut imports);
     }
-    for flags in api_plan.flags() {
+    for flags in symbols.flags() {
         collect_type_info_imports(&flags.info, &mut imports);
     }
-    for variant in api_plan.variants() {
+    for variant in symbols.variants() {
         collect_type_info_imports(&variant.info, &mut imports);
         for case in &variant.cases {
             if let Some(payload) = &case.payload {
@@ -106,7 +106,7 @@ fn collect_python_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportS
             }
         }
     }
-    for model in api_plan.models() {
+    for model in symbols.models() {
         collect_type_info_imports(&model.info, &mut imports);
         for annotation in model.generated_model.field_annotations.values() {
             collect_python_import(annotation, &mut imports);
@@ -127,14 +127,14 @@ fn collect_python_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportS
             collect_value_type_imports_from_kind(&sourced_field.kind, &mut imports);
         }
     }
-    for service in api_plan.services() {
+    for service in symbols.services() {
         for operation in &service.operations {
             collect_message_type_imports(&operation.input, &mut imports);
             match &operation.output {
-                PlannedOperationOutput::Message(message) => {
+                WitOperationOutput::Message(message) => {
                     collect_message_type_imports(message, &mut imports);
                 }
-                PlannedOperationOutput::Resource { .. } | PlannedOperationOutput::None => {}
+                WitOperationOutput::Resource { .. } | WitOperationOutput::None => {}
             }
             if let Some(transform) = &operation.output_transform {
                 collect_python_import(&transform.type_name, &mut imports);
@@ -155,7 +155,7 @@ fn collect_python_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportS
                     }
                 }
                 if let Some(result) = &method.result {
-                    if let PlannedResourceMethodResultKind::Value(kind) = &result.kind {
+                    if let WitResourceMethodResultKind::Value(kind) = &result.kind {
                         collect_value_type_imports_from_kind(kind, &mut imports);
                     }
                 }
@@ -166,14 +166,14 @@ fn collect_python_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportS
 }
 
 fn collect_type_info_imports(
-    info: &crate::api_plan::PlannedTypeInfo,
+    info: &crate::wit_symbols::WitTypeInfo,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     collect_python_import(&info.proto_type_name, imports);
 }
 
 fn collect_message_type_imports(
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     collect_type_info_imports(&message.info, imports);
@@ -195,14 +195,14 @@ fn collect_type_replacement_imports(
 }
 
 fn collect_value_type_imports_from_kind(
-    kind: &PlannedFieldKind,
+    kind: &WitFieldKind,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
             collect_value_type_imports(value, imports);
         }
-        PlannedFieldKind::Map { key, value } => {
+        WitFieldKind::Map { key, value } => {
             collect_value_type_imports(key, imports);
             collect_value_type_imports(value, imports);
         }
@@ -210,11 +210,11 @@ fn collect_value_type_imports_from_kind(
 }
 
 fn collect_value_type_imports(
-    value: &PlannedValueType,
+    value: &WitValueType,
     imports: &mut BTreeSet<LanguageImportSpec>,
 ) {
     match value {
-        PlannedValueType::Enum(enumeration) => {
+        WitValueType::Enum(enumeration) => {
             if let Some(info) = &enumeration.info {
                 collect_type_info_imports(info, imports);
             }
@@ -222,15 +222,15 @@ fn collect_value_type_imports(
                 collect_type_replacement_imports(replacement, imports);
             }
         }
-        PlannedValueType::Flags(flags) => collect_type_info_imports(&flags.info, imports),
-        PlannedValueType::Variant(variant) => collect_type_info_imports(&variant.info, imports),
-        PlannedValueType::Message(message) => collect_message_type_imports(message, imports),
-        PlannedValueType::Tuple(items) => {
+        WitValueType::Flags(flags) => collect_type_info_imports(&flags.info, imports),
+        WitValueType::Variant(variant) => collect_type_info_imports(&variant.info, imports),
+        WitValueType::Message(message) => collect_message_type_imports(message, imports),
+        WitValueType::Tuple(items) => {
             for item in items {
                 collect_value_type_imports(item, imports);
             }
         }
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             if let Some(ok) = ok {
                 collect_value_type_imports(ok, imports);
             }
@@ -238,14 +238,14 @@ fn collect_value_type_imports(
                 collect_value_type_imports(err, imports);
             }
         }
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => {
             collect_python_import(type_name, imports);
             collect_value_type_imports(fallback, imports);
         }
-        PlannedValueType::Scalar(_) | PlannedValueType::Unknown => {}
+        WitValueType::Scalar(_) | WitValueType::Unknown => {}
     }
 }
 
@@ -427,38 +427,38 @@ fn reject_support_namespaces(
 }
 
 fn ensure_resource_field_types(
-    resource: &PlannedResource,
-    api_plan: &WitSymbols,
+    resource: &WitResource,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
     for field in &resource.fields {
-        ensure_resource_field_type(&field.kind, api_plan, enums, flags, variants, models);
+        ensure_resource_field_type(&field.kind, symbols, enums, flags, variants, models);
     }
     for method in &resource.methods {
         for param in &method.params {
-            ensure_resource_field_type(&param.kind, api_plan, enums, flags, variants, models);
+            ensure_resource_field_type(&param.kind, symbols, enums, flags, variants, models);
         }
     }
 }
 
 fn ensure_resource_field_type(
-    kind: &PlannedFieldKind,
-    api_plan: &WitSymbols,
+    kind: &WitFieldKind,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
     match kind {
-        PlannedFieldKind::Singular(value) | PlannedFieldKind::Repeated(value) => {
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+        WitFieldKind::Singular(value) | WitFieldKind::Repeated(value) => {
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         }
-        PlannedFieldKind::Map { key, value } => {
-            resolve_planned_value_type(key, api_plan, enums, flags, variants, models);
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+        WitFieldKind::Map { key, value } => {
+            resolve_wit_value_type(key, symbols, enums, flags, variants, models);
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         }
     }
 }
@@ -475,7 +475,7 @@ struct RenderedService<'a> {
     experimental: bool,
     delay_load_temporalio_workflow: bool,
     operations: Vec<RenderedOperation<'a>>,
-    resources: Vec<PlannedResource>,
+    resources: Vec<WitResource>,
 }
 
 #[derive(Debug)]
@@ -497,7 +497,7 @@ struct RenderedOperation<'a> {
     output_type_parameters: BTreeSet<String>,
     output_type_expr: String,
     output_transform_expr: Option<String>,
-    output_resource_return: Option<PlannedOperationResourceReturn>,
+    output_resource_return: Option<WitOperationResourceReturn>,
     output_direct_result: bool,
     output_none: bool,
     unpacked_input: Option<RenderedUnpackedInput>,
@@ -548,7 +548,7 @@ struct RenderedVariantCase {
 struct RenderedModel {
     full_name: String,
     name: String,
-    source: PlannedMessageSource,
+    source: WitMessageSource,
     proto_ref: Option<String>,
     proto_module_path: Option<String>,
     capabilities: ModelCapabilities,
@@ -927,8 +927,8 @@ fn python_result_annotation(ok: Option<String>, err: Option<String>) -> String {
 }
 
 fn resolve_operation<'a>(
-    operation: &'a PlannedOperation,
-    api_plan: &WitSymbols,
+    operation: &'a WitOperation,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -938,7 +938,7 @@ fn resolve_operation<'a>(
     let input_conversion = resolve_message_value_conversion(
         &operation.input,
         None,
-        api_plan,
+        symbols,
         enums,
         flags,
         variants,
@@ -947,26 +947,26 @@ fn resolve_operation<'a>(
     let output_transform = operation.output_transform.as_ref();
     let output_resource_return = operation.output_resource_return.clone();
     let (output_ref, output_module_path, output_annotation_default) = match &operation.output {
-        PlannedOperationOutput::Message(output) => {
+        WitOperationOutput::Message(output) => {
             let (output_ref, output_module_path) = operation_service_ref(output, "models");
             if output_transform.is_none()
                 && output_resource_return.is_none()
                 && !operation.output_direct_result
             {
                 resolve_message_value_conversion(
-                    output, None, api_plan, enums, flags, variants, models,
+                    output, None, symbols, enums, flags, variants, models,
                 );
             }
             let annotation =
-                resolve_output_annotation(output, api_plan, enums, flags, variants, models);
+                resolve_output_annotation(output, symbols, enums, flags, variants, models);
             (output_ref, output_module_path, annotation)
         }
-        PlannedOperationOutput::Resource { type_name } => (
+        WitOperationOutput::Resource { type_name } => (
             type_name.clone(),
             Some("._resources".to_string()),
             type_name.clone(),
         ),
-        PlannedOperationOutput::None => ("None".to_string(), None, "None".to_string()),
+        WitOperationOutput::None => ("None".to_string(), None, "None".to_string()),
     };
     let overload_output_annotation = output_transform
         .and_then(|transform| {
@@ -988,7 +988,7 @@ fn resolve_operation<'a>(
         Some(build_unpacked_input(
             &operation.input.info.full_name,
             models,
-            api_plan,
+            symbols,
         )?)
     } else {
         None
@@ -1037,22 +1037,22 @@ fn resolve_operation<'a>(
         }),
         output_resource_return,
         output_direct_result: operation.output_direct_result,
-        output_none: matches!(operation.output, PlannedOperationOutput::None),
+        output_none: matches!(operation.output, WitOperationOutput::None),
         unpacked_input,
     })
 }
 
 fn operation_service_ref(
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     _native_module: &str,
 ) -> (String, Option<String>) {
     match message.source {
-        PlannedMessageSource::Proto => {
+        WitMessageSource::Proto => {
             let reference = message_python_ref(&message.info)
                 .expect("descriptor messages should have a Python reference");
             (reference.type_ref, Some(reference.module_path))
         }
-        PlannedMessageSource::Wit => (
+        WitMessageSource::Wit => (
             format!("{_native_module}.{}", message.model_name),
             Some(format!(".{_native_module}")),
         ),
@@ -1060,22 +1060,22 @@ fn operation_service_ref(
 }
 
 fn resolve_output_annotation(
-    message: &PlannedMessageType,
-    api_plan: &WitSymbols,
+    message: &WitMessageType,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> String {
     match message.source {
-        PlannedMessageSource::Proto => {
+        WitMessageSource::Proto => {
             message_python_ref(&message.info)
                 .expect("descriptor messages should have a Python reference")
                 .type_ref
         }
-        PlannedMessageSource::Wit => {
+        WitMessageSource::Wit => {
             let conversion = resolve_message_value_conversion(
-                message, None, api_plan, enums, flags, variants, models,
+                message, None, symbols, enums, flags, variants, models,
             );
             conversion.annotation
         }
@@ -1085,23 +1085,23 @@ fn resolve_output_annotation(
 fn build_unpacked_input(
     input_full_name: &str,
     models: &IndexMap<String, RenderedModel>,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> Result<RenderedUnpackedInput> {
     let model = models
         .get(input_full_name)
         .expect("input model should be rendered before building unpacked input");
-    let planned_model = api_plan
+    let wit_model = symbols
         .model(input_full_name)
-        .expect("planned input model should exist");
+        .expect("wit input model should exist");
 
     let mut parameters = Vec::new();
     let mut request_fields = Vec::new();
     let mut flattened_messages = Vec::new();
     let mut parameter_sources = BTreeMap::<String, String>::new();
 
-    for (planned_field, rendered_field) in planned_model.fields.iter().zip(model.fields.iter()) {
+    for (wit_field, rendered_field) in wit_model.fields.iter().zip(model.fields.iter()) {
         if let Some(flattened) =
-            build_flattened_message(planned_field, rendered_field, models, api_plan)
+            build_flattened_message(wit_field, rendered_field, models, symbols)
         {
             request_fields.push(RenderedUnpackedRequestField {
                 attr_name: flattened.local_name.clone(),
@@ -1136,7 +1136,7 @@ fn build_unpacked_input(
             attr_name: rendered_field.attr_name.clone(),
             annotation: rendered_field.annotation.clone(),
             default_kind: rendered_field.default_kind.clone(),
-            doc: planned_field
+            doc: wit_field
                 .doc
                 .as_ref()
                 .and_then(|doc| doc.for_language(Language::Python))
@@ -1154,7 +1154,7 @@ fn build_unpacked_input(
         parameters,
         request_fields,
         flattened_messages,
-        functions: planned_model
+        functions: wit_model
             .generated_model
             .functions
             .iter()
@@ -1173,12 +1173,12 @@ fn build_unpacked_input(
                     .as_ref()
                     .map(python_authored_type_annotation);
                 RenderedFunctionField {
-                    callable_field_name: planned_model
+                    callable_field_name: wit_model
                         .generated_model
                         .field_name_override(field_name)
                         .map(python_field_name)
                         .unwrap_or_else(|| python_field_name(field_name)),
-                    args_field_name: planned_model
+                    args_field_name: wit_model
                         .generated_model
                         .field_name_override(&function.args_field)
                         .map(python_field_name)
@@ -1218,17 +1218,17 @@ fn register_unpacked_parameter_name(
 }
 
 fn build_flattened_message(
-    planned_field: &PlannedField,
+    wit_field: &WitField,
     rendered_field: &RenderedField,
     models: &IndexMap<String, RenderedModel>,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
 ) -> Option<RenderedFlattenedMessage> {
-    let PlannedFieldKind::Singular(PlannedValueType::Message(message_type)) = &planned_field.kind
+    let WitFieldKind::Singular(WitValueType::Message(message_type)) = &wit_field.kind
     else {
         return None;
     };
-    let nested_planned_model = api_plan.model(&message_type.info.full_name)?;
-    if !nested_planned_model.flatten_in_api {
+    let nested_wit_model = symbols.model(&message_type.info.full_name)?;
+    if !nested_wit_model.flatten_in_api {
         return None;
     }
     let nested_rendered_model = models.get(&message_type.info.full_name)?;
@@ -1236,20 +1236,20 @@ fn build_flattened_message(
     Some(RenderedFlattenedMessage {
         local_name: rendered_field.attr_name.clone(),
         model_name: nested_rendered_model.name.clone(),
-        required: planned_field.required,
-        fields: nested_planned_model
+        required: wit_field.required,
+        fields: nested_wit_model
             .fields
             .iter()
             .zip(nested_rendered_model.fields.iter())
             .map(
-                |(nested_planned_field, nested_rendered_field)| RenderedFlattenedMessageField {
+                |(nested_wit_field, nested_rendered_field)| RenderedFlattenedMessageField {
                     attr_name: nested_rendered_field.attr_name.clone(),
-                    annotation: nested_planned_model
+                    annotation: nested_wit_model
                         .generated_model
-                        .field_flattened_annotation(&nested_planned_field.proto_name)
+                        .field_flattened_annotation(&nested_wit_field.proto_name)
                         .and_then(|annotation| annotation.for_language(Language::Python))
                         .map(|annotation| {
-                            if nested_planned_field.required {
+                            if nested_wit_field.required {
                                 annotation.to_string()
                             } else {
                                 format!("{annotation} | None")
@@ -1257,12 +1257,12 @@ fn build_flattened_message(
                         })
                         .unwrap_or_else(|| nested_rendered_field.annotation.clone()),
                     value_expr: nested_rendered_field.attr_name.clone(),
-                    default_kind: if nested_planned_field.required {
+                    default_kind: if nested_wit_field.required {
                         PythonFieldDefaultKind::Required
                     } else {
                         nested_rendered_field.default_kind.clone()
                     },
-                    doc: nested_planned_field
+                    doc: nested_wit_field
                         .doc
                         .as_ref()
                         .and_then(|doc| doc.for_language(Language::Python))
@@ -1274,9 +1274,9 @@ fn build_flattened_message(
 }
 
 fn resolve_message_value_conversion(
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     proto_ref_override: Option<&str>,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1308,13 +1308,13 @@ fn resolve_message_value_conversion(
     ensure_rendered_model(
         message,
         proto_ref_override,
-        api_plan,
+        symbols,
         enums,
         flags,
         variants,
         models,
     );
-    let kind = if message.source == PlannedMessageSource::Wit {
+    let kind = if message.source == WitMessageSource::Wit {
         MessageValueConversionKind::NativeModel
     } else {
         MessageValueConversionKind::GeneratedModel {
@@ -1325,7 +1325,7 @@ fn resolve_message_value_conversion(
     MessageValueConversion {
         annotation: models
             .get(&message.info.full_name)
-            .expect("planned model should be rendered")
+            .expect("wit model should be rendered")
             .name
             .clone(),
         kind,
@@ -1334,17 +1334,17 @@ fn resolve_message_value_conversion(
 }
 
 fn ensure_rendered_model(
-    message: &PlannedMessageType,
+    message: &WitMessageType,
     proto_ref_override: Option<&str>,
-    api_plan: &WitSymbols,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
-    let planned_model = api_plan
+    let wit_model = symbols
         .model(&message.info.full_name)
-        .unwrap_or_else(|| panic!("planned model should exist for {}", message.info.full_name));
+        .unwrap_or_else(|| panic!("wit model should exist for {}", message.info.full_name));
 
     if let Some(existing) = models.get_mut(&message.info.full_name) {
         if let Some(proto_ref) = proto_ref_override {
@@ -1354,13 +1354,13 @@ fn ensure_rendered_model(
         return;
     }
 
-    let (proto_ref, proto_module_path) = if message.source == PlannedMessageSource::Proto {
+    let (proto_ref, proto_module_path) = if message.source == WitMessageSource::Proto {
         (
             Some(
                 proto_ref_override
                     .map(str::to_string)
                     .or_else(|| {
-                        message_python_ref(&planned_model.info).map(|reference| reference.type_ref)
+                        message_python_ref(&wit_model.info).map(|reference| reference.type_ref)
                     })
                     .expect("descriptor messages should have a Python reference"),
             ),
@@ -1369,7 +1369,7 @@ fn ensure_rendered_model(
                     .map(module_path)
                     .map(str::to_string)
                     .or_else(|| {
-                        message_python_ref(&planned_model.info)
+                        message_python_ref(&wit_model.info)
                             .map(|reference| reference.module_path)
                     })
                     .expect("descriptor messages should have a Python module path"),
@@ -1383,27 +1383,27 @@ fn ensure_rendered_model(
         message.info.full_name.clone(),
         RenderedModel {
             full_name: message.info.full_name.clone(),
-            name: planned_model.name.clone(),
+            name: wit_model.name.clone(),
             source: message.source,
             proto_ref,
             proto_module_path,
-            capabilities: planned_model.capabilities,
-            experimental: planned_model.experimental,
+            capabilities: wit_model.capabilities,
+            experimental: wit_model.experimental,
             fields: Vec::new(),
             sourced_fields: Vec::new(),
         },
     );
 
-    let fields = planned_model
+    let fields = wit_model
         .fields
         .iter()
-        .map(|field| build_field(field, api_plan, enums, flags, variants, models))
+        .map(|field| build_field(field, symbols, enums, flags, variants, models))
         .collect();
 
-    let sourced_fields = planned_model
+    let sourced_fields = wit_model
         .sourced_fields
         .iter()
-        .map(|field| build_sourced_field(field, api_plan, enums, flags, variants, models))
+        .map(|field| build_sourced_field(field, symbols, enums, flags, variants, models))
         .collect();
 
     models
@@ -1416,12 +1416,12 @@ fn ensure_rendered_model(
         .sourced_fields = sourced_fields;
 }
 
-fn ensure_rendered_enum(planned_enum: &PlannedEnum, enums: &mut IndexMap<String, RenderedEnum>) {
+fn ensure_rendered_enum(wit_enum: &WitEnum, enums: &mut IndexMap<String, RenderedEnum>) {
     enums
-        .entry(planned_enum.info.full_name.clone())
+        .entry(wit_enum.info.full_name.clone())
         .or_insert_with(|| RenderedEnum {
-            name: planned_enum.name.clone(),
-            values: planned_enum
+            name: wit_enum.name.clone(),
+            values: wit_enum
                 .values
                 .iter()
                 .map(|value| RenderedEnumValue {
@@ -1433,14 +1433,14 @@ fn ensure_rendered_enum(planned_enum: &PlannedEnum, enums: &mut IndexMap<String,
 }
 
 fn ensure_rendered_flags(
-    planned_flags: &PlannedFlags,
+    wit_flags: &WitFlags,
     flags: &mut IndexMap<String, RenderedFlags>,
 ) {
     flags
-        .entry(planned_flags.info.full_name.clone())
+        .entry(wit_flags.info.full_name.clone())
         .or_insert_with(|| RenderedFlags {
-            name: planned_flags.name.clone(),
-            flags: planned_flags
+            name: wit_flags.name.clone(),
+            flags: wit_flags
                 .flags
                 .iter()
                 .map(|flag| RenderedFlag {
@@ -1452,40 +1452,40 @@ fn ensure_rendered_flags(
 }
 
 fn ensure_rendered_variant(
-    planned_variant: &PlannedVariant,
-    api_plan: &WitSymbols,
+    wit_variant: &WitVariant,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
-    if variants.contains_key(&planned_variant.info.full_name) {
+    if variants.contains_key(&wit_variant.info.full_name) {
         return;
     }
 
-    let cases = planned_variant
+    let cases = wit_variant
         .cases
         .iter()
         .map(|case| RenderedVariantCase {
             name: case.name.clone(),
             payload_annotation: case.payload.as_ref().map(|payload| {
-                resolve_planned_value_type(payload, api_plan, enums, flags, variants, models)
+                resolve_wit_value_type(payload, symbols, enums, flags, variants, models)
                     .annotation
             }),
         })
         .collect();
     variants.insert(
-        planned_variant.info.full_name.clone(),
+        wit_variant.info.full_name.clone(),
         RenderedVariant {
-            name: planned_variant.name.clone(),
+            name: wit_variant.name.clone(),
             cases,
         },
     );
 }
 
 fn build_field(
-    field: &PlannedField,
-    api_plan: &WitSymbols,
+    field: &WitField,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1493,10 +1493,10 @@ fn build_field(
 ) -> RenderedField {
     let attr_name = python_field_name(&field.authored_name);
 
-    if let PlannedFieldKind::Map { key, value } = &field.kind {
-        let key_type = resolve_planned_value_type(key, api_plan, enums, flags, variants, models);
+    if let WitFieldKind::Map { key, value } = &field.kind {
+        let key_type = resolve_wit_value_type(key, symbols, enums, flags, variants, models);
         let value_type =
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         let mut imports = key_type.imports.clone();
         imports.extend(&value_type.imports);
         return RenderedField {
@@ -1516,15 +1516,15 @@ fn build_field(
     }
 
     let (resolved_type, repeated) = match &field.kind {
-        PlannedFieldKind::Singular(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Singular(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             false,
         ),
-        PlannedFieldKind::Repeated(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Repeated(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             true,
         ),
-        PlannedFieldKind::Map { .. } => unreachable!("handled above"),
+        WitFieldKind::Map { .. } => unreachable!("handled above"),
     };
     let model_name = field.owner_name.clone();
 
@@ -1579,7 +1579,7 @@ fn build_field(
             ),
             from_proto_expr: attr_name.clone(),
             to_proto_lines: match &field.role {
-                PlannedFieldRole::Function(function_field)
+                WitFieldRole::Function(function_field)
                     if function_field.converter.is_some() =>
                 {
                     required_function_to_proto_lines(
@@ -1606,7 +1606,7 @@ fn build_field(
         from_proto_setup_lines: Vec::new(),
         from_proto_expr: optional_from_proto_expr(&resolved_type, &field.proto_name, field),
         to_proto_lines: match &field.role {
-            PlannedFieldRole::Function(function_field) if function_field.converter.is_some() => {
+            WitFieldRole::Function(function_field) if function_field.converter.is_some() => {
                 optional_function_to_proto_lines(
                     &attr_name,
                     &field.proto_name,
@@ -1624,17 +1624,17 @@ fn build_field(
 }
 
 fn build_sourced_field(
-    field: &PlannedSourcedField,
-    api_plan: &WitSymbols,
+    field: &WitSourcedField,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> RenderedSourcedField {
     let source_expr = field.source_expr.to_string();
-    if let PlannedFieldKind::Map { value, .. } = &field.kind {
+    if let WitFieldKind::Map { value, .. } = &field.kind {
         let value_type =
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models);
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models);
         return RenderedSourcedField {
             to_proto_lines: sourced_map_value_to_proto_lines(
                 &value_type,
@@ -1645,15 +1645,15 @@ fn build_sourced_field(
     }
 
     let (resolved_type, repeated) = match &field.kind {
-        PlannedFieldKind::Singular(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Singular(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             false,
         ),
-        PlannedFieldKind::Repeated(value) => (
-            resolve_planned_value_type(value, api_plan, enums, flags, variants, models),
+        WitFieldKind::Repeated(value) => (
+            resolve_wit_value_type(value, symbols, enums, flags, variants, models),
             true,
         ),
-        PlannedFieldKind::Map { .. } => unreachable!("handled above"),
+        WitFieldKind::Map { .. } => unreachable!("handled above"),
     };
     let source_expr = field.source_expr.to_string();
     if repeated {
@@ -1676,11 +1676,11 @@ fn build_sourced_field(
 }
 
 fn python_field_annotation(
-    field: &PlannedField,
+    field: &WitField,
     default_base_annotation: String,
     is_optional: bool,
 ) -> String {
-    if let PlannedFieldRole::FunctionArgs(function) = &field.role {
+    if let WitFieldRole::FunctionArgs(function) = &field.role {
         let args_annotation = python_function_arg_field_annotation(function, &field.proto_name);
         return if is_optional {
             format!("{args_annotation} | None")
@@ -1695,7 +1695,7 @@ fn python_field_annotation(
         }
     }
 
-    if let PlannedFieldRole::Function(function) = &field.role {
+    if let WitFieldRole::Function(function) = &field.role {
         let result_annotation = erase_python_type_parameters(
             &python_function_result_annotation(&function.result),
             &function
@@ -1767,23 +1767,23 @@ fn python_function_annotation_from_args(
     }
 }
 
-fn resolve_planned_value_type(
-    value_type: &PlannedValueType,
-    api_plan: &WitSymbols,
+fn resolve_wit_value_type(
+    value_type: &WitValueType,
+    symbols: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> ResolvedFieldType {
     match value_type {
-        PlannedValueType::Scalar(PlannedScalarType::Float) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::Float) => ResolvedFieldType {
             annotation: "float".to_string(),
             imports: PythonImports::default(),
             kind: ResolvedFieldKind::Scalar,
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Scalar(PlannedScalarType::Int32 | PlannedScalarType::Int64) => {
+        WitValueType::Scalar(WitScalarType::Int32 | WitScalarType::Int64) => {
             ResolvedFieldType {
                 annotation: "int".to_string(),
                 imports: PythonImports::default(),
@@ -1792,28 +1792,28 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Scalar(PlannedScalarType::Bool) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::Bool) => ResolvedFieldType {
             annotation: "bool".to_string(),
             imports: PythonImports::default(),
             kind: ResolvedFieldKind::Scalar,
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Scalar(PlannedScalarType::String) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::String) => ResolvedFieldType {
             annotation: "str".to_string(),
             imports: PythonImports::default(),
             kind: ResolvedFieldKind::Scalar,
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Scalar(PlannedScalarType::Bytes) => ResolvedFieldType {
+        WitValueType::Scalar(WitScalarType::Bytes) => ResolvedFieldType {
             annotation: "bytes".to_string(),
             imports: PythonImports::default(),
             kind: ResolvedFieldKind::Scalar,
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Enum(enum_type) => {
+        WitValueType::Enum(enum_type) => {
             if let Some(replacement) = &enum_type.replacement
                 && let Some(type_name) = python_replacement_type_name(replacement)
             {
@@ -1828,8 +1828,8 @@ fn resolve_planned_value_type(
                     }),
                 }
             } else if let (Some(info), Some(name)) = (&enum_type.info, &enum_type.name) {
-                if let Some(planned_enum) = api_plan.enum_(&info.full_name) {
-                    ensure_rendered_enum(planned_enum, enums);
+                if let Some(wit_enum) = symbols.enum_(&info.full_name) {
+                    ensure_rendered_enum(wit_enum, enums);
                 }
                 let mut imports = PythonImports::default();
                 if let Some(reference) = enum_python_ref(info) {
@@ -1852,9 +1852,9 @@ fn resolve_planned_value_type(
                 }
             }
         }
-        PlannedValueType::Flags(flags_type) => {
-            if let Some(planned_flags) = api_plan.flags_(&flags_type.info.full_name) {
-                ensure_rendered_flags(planned_flags, flags);
+        WitValueType::Flags(flags_type) => {
+            if let Some(wit_flags) = symbols.flags_(&flags_type.info.full_name) {
+                ensure_rendered_flags(wit_flags, flags);
             }
             ResolvedFieldType {
                 annotation: flags_type.name.clone(),
@@ -1864,9 +1864,9 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Variant(variant_type) => {
-            if let Some(planned_variant) = api_plan.variant_(&variant_type.info.full_name) {
-                ensure_rendered_variant(planned_variant, api_plan, enums, flags, variants, models);
+        WitValueType::Variant(variant_type) => {
+            if let Some(wit_variant) = symbols.variant_(&variant_type.info.full_name) {
+                ensure_rendered_variant(wit_variant, symbols, enums, flags, variants, models);
             }
             ResolvedFieldType {
                 annotation: variant_type.name.clone(),
@@ -1876,7 +1876,7 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Message(message_type) => {
+        WitValueType::Message(message_type) => {
             let conversion = if let Some(replacement) = &message_type.replacement
                 && let Some(type_name) = python_replacement_type_name(replacement)
             {
@@ -1904,10 +1904,10 @@ fn resolve_planned_value_type(
                     imports: PythonImports::default(),
                 }
             } else {
-                ensure_rendered_model(message_type, None, api_plan, enums, flags, variants, models);
+                ensure_rendered_model(message_type, None, symbols, enums, flags, variants, models);
                 let model = models
                     .get(&message_type.info.full_name)
-                    .expect("planned model should be rendered");
+                    .expect("wit model should be rendered");
                 MessageValueConversion {
                     annotation: model.name.clone(),
                     kind: MessageValueConversionKind::GeneratedModel {
@@ -1924,13 +1924,13 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::Tuple(items) => ResolvedFieldType {
+        WitValueType::Tuple(items) => ResolvedFieldType {
             annotation: format!(
                 "tuple[{}]",
                 items
                     .iter()
                     .map(|item| {
-                        resolve_planned_value_type(item, api_plan, enums, flags, variants, models)
+                        resolve_wit_value_type(item, symbols, enums, flags, variants, models)
                             .annotation
                     })
                     .collect::<Vec<_>>()
@@ -1941,12 +1941,12 @@ fn resolve_planned_value_type(
             message_conversion: None,
             enum_conversion: None,
         },
-        PlannedValueType::Result { ok, err } => {
+        WitValueType::Result { ok, err } => {
             let ok = ok
                 .as_ref()
-                .map(|ok| resolve_planned_value_type(ok, api_plan, enums, flags, variants, models));
+                .map(|ok| resolve_wit_value_type(ok, symbols, enums, flags, variants, models));
             let err = err.as_ref().map(|err| {
-                resolve_planned_value_type(err, api_plan, enums, flags, variants, models)
+                resolve_wit_value_type(err, symbols, enums, flags, variants, models)
             });
             let mut imports = PythonImports::default();
             if let Some(ok) = &ok {
@@ -1966,18 +1966,18 @@ fn resolve_planned_value_type(
                 enum_conversion: None,
             }
         }
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => {
             let mut resolved =
-                resolve_planned_value_type(fallback, api_plan, enums, flags, variants, models);
+                resolve_wit_value_type(fallback, symbols, enums, flags, variants, models);
             if let Some(annotation) = type_name.for_language(Language::Python) {
                 resolved.annotation = annotation.to_string();
             }
             resolved
         }
-        PlannedValueType::Unknown => ResolvedFieldType {
+        WitValueType::Unknown => ResolvedFieldType {
             annotation: "object".to_string(),
             imports: PythonImports::default(),
             kind: ResolvedFieldKind::Unknown,
@@ -2108,7 +2108,7 @@ fn required_from_proto_setup_lines(
     model_name: &str,
     attr_name: &str,
     proto_name: &str,
-    field: &PlannedField,
+    field: &WitField,
     resolved_type: &ResolvedFieldType,
 ) -> Vec<String> {
     let error = python_string_literal(&format!("missing required field {model_name}.{attr_name}"));
@@ -2119,8 +2119,8 @@ fn required_from_proto_setup_lines(
         lines.push(format!("    raise ValueError({error})"));
     } else if matches!(
         &field.kind,
-        PlannedFieldKind::Singular(PlannedValueType::Scalar(
-            PlannedScalarType::String | PlannedScalarType::Bytes
+        WitFieldKind::Singular(WitValueType::Scalar(
+            WitScalarType::String | WitScalarType::Bytes
         ))
     ) {
         lines.push(format!("if not proto.{proto_name}:"));
@@ -2190,7 +2190,7 @@ fn required_function_to_proto_lines(
 fn optional_from_proto_expr(
     resolved_type: &ResolvedFieldType,
     proto_name: &str,
-    field: &PlannedField,
+    field: &WitField,
 ) -> String {
     let has_presence = field.has_presence;
     match resolved_type.kind {
@@ -2227,7 +2227,7 @@ fn optional_from_proto_expr(
 fn defaulted_enum_from_proto_expr(
     resolved_type: &ResolvedFieldType,
     proto_name: &str,
-    field: &PlannedField,
+    field: &WitField,
     enum_case: &str,
 ) -> String {
     let default_expr = enum_default_expr(resolved_type, enum_case);
@@ -2402,7 +2402,7 @@ struct PythonReference {
     type_ref: String,
 }
 
-fn message_python_ref(type_info: &PlannedTypeInfo) -> Option<PythonReference> {
+fn message_python_ref(type_info: &WitTypeInfo) -> Option<PythonReference> {
     let module_path =
         python_module_path_for_file_name(type_info.file_name.as_deref(), &type_info.package)?;
     let relative_name = relative_descriptor_name(&type_info.full_name, &type_info.package);
@@ -2412,7 +2412,7 @@ fn message_python_ref(type_info: &PlannedTypeInfo) -> Option<PythonReference> {
     })
 }
 
-fn enum_python_ref(type_info: &PlannedTypeInfo) -> Option<PythonReference> {
+fn enum_python_ref(type_info: &WitTypeInfo) -> Option<PythonReference> {
     let module_path =
         python_module_path_for_file_name(type_info.file_name.as_deref(), &type_info.package)?;
     let relative_name = relative_descriptor_name(&type_info.full_name, &type_info.package);
@@ -2550,11 +2550,11 @@ fn operation_key(service_name: &str, operation_name: &str) -> String {
     format!("{service_name}::{operation_name}")
 }
 
-fn python_resource_type_id(service: &RenderedService<'_>, resource: &PlannedResource) -> String {
+fn python_resource_type_id(service: &RenderedService<'_>, resource: &WitResource) -> String {
     format!("{}::resource::{}", service.name, resource.name)
 }
 
-fn resource_module_name(resource: &PlannedResource) -> String {
+fn resource_module_name(resource: &WitResource) -> String {
     python_ident(&resource.name.to_snake_case())
 }
 
@@ -2564,7 +2564,7 @@ fn resource_operation_owners(services: &[RenderedService<'_>]) -> BTreeMap<Strin
         for resource in &service.resources {
             let resource_module = resource_module_name(resource);
             for method in &resource.methods {
-                if let PlannedResourceMethodBindingSpec::Operation { operation_name, .. } =
+                if let WitResourceMethodBindingSpec::Operation { operation_name, .. } =
                     &method.binding
                 {
                     owners.insert(
@@ -3062,7 +3062,7 @@ fn render_models_module(
     let mut module_imports = BTreeSet::new();
     if models
         .iter()
-        .any(|model| model.source == PlannedMessageSource::Wit)
+        .any(|model| model.source == WitMessageSource::Wit)
     {
         module_imports.insert("nex_gen_runtime".to_string());
     }
@@ -3149,7 +3149,7 @@ fn render_models_module(
 fn render_nexus_type_registrations(output: &mut String, models: &[&RenderedModel]) {
     if !models
         .iter()
-        .any(|model| model.source == PlannedMessageSource::Wit)
+        .any(|model| model.source == WitMessageSource::Wit)
     {
         return;
     }
@@ -3158,7 +3158,7 @@ fn render_nexus_type_registrations(output: &mut String, models: &[&RenderedModel
     }
     for model in models
         .iter()
-        .filter(|model| model.source == PlannedMessageSource::Wit)
+        .filter(|model| model.source == WitMessageSource::Wit)
     {
         output.push_str("nex_gen_runtime.register_nexus_type(");
         output.push_str(&model.name);
@@ -3195,13 +3195,13 @@ fn render_resources_package_init(services: &[RenderedService<'_>]) -> String {
 
 fn resource_bound_operations<'a>(
     service: &'a RenderedService<'a>,
-    resource: &'a PlannedResource,
+    resource: &'a WitResource,
 ) -> Vec<ResourceBoundOperation<'a>> {
     resource
         .methods
         .iter()
         .filter_map(|method| match &method.binding {
-            PlannedResourceMethodBindingSpec::Operation { operation_name, .. } => {
+            WitResourceMethodBindingSpec::Operation { operation_name, .. } => {
                 Some(ResourceBoundOperation {
                     operation: service
                         .operations
@@ -3210,14 +3210,14 @@ fn resource_bound_operations<'a>(
                         .expect("bound resource operation should exist on the service"),
                 })
             }
-            PlannedResourceMethodBindingSpec::Stub => None,
+            WitResourceMethodBindingSpec::Stub => None,
         })
         .collect()
 }
 
 fn render_resource_module_file(
     service: &RenderedService<'_>,
-    resource: &PlannedResource,
+    resource: &WitResource,
     bound_operations: &[ResourceBoundOperation<'_>],
     model_names: &[String],
     resource_names: &[String],
@@ -3900,7 +3900,7 @@ fn model_needs_keyword_only_dataclass(model: &RenderedModel) -> bool {
 
 fn render_resource(
     output: &mut String,
-    resource: &PlannedResource,
+    resource: &WitResource,
     bound_operations: &[ResourceBoundOperation<'_>],
 ) {
     output.push_str("@dataclasses.dataclass\n");
@@ -3932,8 +3932,8 @@ fn render_resource(
 
 fn render_resource_class_method(
     output: &mut String,
-    resource: &PlannedResource,
-    method: &PlannedResourceMethod,
+    resource: &WitResource,
+    method: &WitResourceMethod,
     bound_operations: &[ResourceBoundOperation<'_>],
 ) {
     let result_annotation = python_resource_method_result_annotation(method);
@@ -3960,7 +3960,7 @@ fn render_resource_class_method(
     output.push_str(":\n");
 
     match &method.binding {
-        PlannedResourceMethodBindingSpec::Operation { operation_name, .. } => {
+        WitResourceMethodBindingSpec::Operation { operation_name, .. } => {
             let operation = bound_operations
                 .iter()
                 .find(|bound_operation| bound_operation.operation.name == operation_name)
@@ -3968,7 +3968,7 @@ fn render_resource_class_method(
                 .expect("bound resource operation should be rendered in the same module");
             render_resource_method_operation_body(output, method, operation);
         }
-        PlannedResourceMethodBindingSpec::Stub => {
+        WitResourceMethodBindingSpec::Stub => {
             output.push_str("        raise NotImplementedError(");
             output.push_str(&python_string_literal(&format!(
                 "{}.{} is not yet implemented",
@@ -3982,11 +3982,11 @@ fn render_resource_class_method(
 
 fn render_resource_method_operation_body(
     output: &mut String,
-    method: &PlannedResourceMethod,
+    method: &WitResourceMethod,
     operation: &RenderedOperation<'_>,
 ) {
     let result_annotation = python_resource_method_result_annotation(method);
-    let PlannedResourceMethodBindingSpec::Operation {
+    let WitResourceMethodBindingSpec::Operation {
         request_plan,
         direct_return,
         ..
@@ -4043,13 +4043,13 @@ fn render_resource_method_operation_body(
     }
 }
 
-fn python_resource_method_result_annotation(method: &PlannedResourceMethod) -> String {
+fn python_resource_method_result_annotation(method: &WitResourceMethod) -> String {
     let Some(result) = &method.result else {
         return "None".to_string();
     };
     let annotation = match &result.kind {
-        PlannedResourceMethodResultKind::Resource { type_name } => type_name.clone(),
-        PlannedResourceMethodResultKind::Value(kind) => {
+        WitResourceMethodResultKind::Resource { type_name } => type_name.clone(),
+        WitResourceMethodResultKind::Value(kind) => {
             python_resource_field_annotation(kind, result.optional, None)
         }
     };
@@ -4061,7 +4061,7 @@ fn python_resource_method_result_annotation(method: &PlannedResourceMethod) -> S
 }
 
 fn python_resource_field_annotation(
-    kind: &PlannedFieldKind,
+    kind: &WitFieldKind,
     optional: bool,
     function: Option<&FunctionFieldSpec>,
 ) -> String {
@@ -4075,14 +4075,14 @@ fn python_resource_field_annotation(
         )
     } else {
         match kind {
-            PlannedFieldKind::Singular(value) => python_resource_value_annotation(value),
-            PlannedFieldKind::Repeated(value) => {
+            WitFieldKind::Singular(value) => python_resource_value_annotation(value),
+            WitFieldKind::Repeated(value) => {
                 format!(
                     "collections.abc.Sequence[{}]",
                     python_resource_value_annotation(value)
                 )
             }
-            PlannedFieldKind::Map { key, value } => format!(
+            WitFieldKind::Map { key, value } => format!(
                 "collections.abc.Mapping[{}, {}]",
                 python_resource_value_annotation(key),
                 python_resource_value_annotation(value)
@@ -4096,29 +4096,29 @@ fn python_resource_field_annotation(
     }
 }
 
-fn python_resource_value_annotation(value: &PlannedValueType) -> String {
+fn python_resource_value_annotation(value: &WitValueType) -> String {
     match value {
-        PlannedValueType::Scalar(PlannedScalarType::Float) => "float".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Int32 | PlannedScalarType::Int64) => {
+        WitValueType::Scalar(WitScalarType::Float) => "float".to_string(),
+        WitValueType::Scalar(WitScalarType::Int32 | WitScalarType::Int64) => {
             "int".to_string()
         }
-        PlannedValueType::Scalar(PlannedScalarType::Bool) => "bool".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::String) => "str".to_string(),
-        PlannedValueType::Scalar(PlannedScalarType::Bytes) => "bytes".to_string(),
-        PlannedValueType::Enum(enum_type) => enum_type
+        WitValueType::Scalar(WitScalarType::Bool) => "bool".to_string(),
+        WitValueType::Scalar(WitScalarType::String) => "str".to_string(),
+        WitValueType::Scalar(WitScalarType::Bytes) => "bytes".to_string(),
+        WitValueType::Enum(enum_type) => enum_type
             .replacement
             .as_ref()
             .and_then(python_replacement_type_name)
             .or_else(|| enum_type.name.clone())
             .unwrap_or_else(|| "int".to_string()),
-        PlannedValueType::Flags(flags_type) => flags_type.name.clone(),
-        PlannedValueType::Variant(variant_type) => variant_type.name.clone(),
-        PlannedValueType::Message(message_type) => message_type
+        WitValueType::Flags(flags_type) => flags_type.name.clone(),
+        WitValueType::Variant(variant_type) => variant_type.name.clone(),
+        WitValueType::Message(message_type) => message_type
             .replacement
             .as_ref()
             .and_then(python_replacement_type_name)
             .unwrap_or_else(|| message_type.model_name.clone()),
-        PlannedValueType::Tuple(items) => format!(
+        WitValueType::Tuple(items) => format!(
             "tuple[{}]",
             items
                 .iter()
@@ -4126,20 +4126,20 @@ fn python_resource_value_annotation(value: &PlannedValueType) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        PlannedValueType::Result { ok, err } => python_result_annotation(
+        WitValueType::Result { ok, err } => python_result_annotation(
             ok.as_ref()
                 .map(|ok| python_resource_value_annotation(ok).to_string()),
             err.as_ref()
                 .map(|err| python_resource_value_annotation(err).to_string()),
         ),
-        PlannedValueType::External {
+        WitValueType::External {
             type_name,
             fallback,
         } => type_name
             .for_language(Language::Python)
             .map(str::to_string)
             .unwrap_or_else(|| python_resource_value_annotation(fallback)),
-        PlannedValueType::Unknown => "object".to_string(),
+        WitValueType::Unknown => "object".to_string(),
     }
 }
 
@@ -4161,7 +4161,7 @@ fn render_request_plan_python(plan: &RequestPlan) -> String {
     )
 }
 
-fn resource_return_binding_expr_python(binding: &PlannedOperationResourceFieldBinding) -> String {
+fn resource_return_binding_expr_python(binding: &WitOperationResourceFieldBinding) -> String {
     match &binding.source {
         ResolvedResourceBindingSource::RequestField {
             field_name,
