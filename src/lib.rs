@@ -1,4 +1,9 @@
 mod api_plan;
+// This add-only module (Step 2) introduces the WIT symbol-table loader. It is
+// not yet wired into the generation pipeline, so its items read as dead code
+// until a later step consumes it; the tests exercise `plan_to_symbols`.
+#[allow(dead_code)]
+mod wit_loader;
 
 pub mod add_rpc;
 pub mod descriptors;

@@ -9,7 +9,6 @@
 //! closure — the frontend kind `K` never escapes it.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::assemble::assemble;
@@ -19,8 +18,10 @@ use crate::output::GeneratedFiles;
 use crate::schema_type::SchemaType;
 use crate::traits::{Emitter, Loader};
 
-/// A type-erased pipeline: `inputs -> load -> assemble -> GeneratedFiles`.
-type Runner = Box<dyn Fn(&[PathBuf]) -> Result<GeneratedFiles>>;
+/// A type-erased pipeline: `load(language) -> assemble -> GeneratedFiles`. The
+/// loader holds its own inputs (frontend-constructed), so the runner takes no
+/// arguments.
+type Runner = Box<dyn Fn() -> Result<GeneratedFiles>>;
 
 /// A registry of `(language, schema_type)` pipelines.
 #[derive(Default)]
@@ -52,9 +53,10 @@ impl Registry {
         let loader = Rc::new(loader);
         for emitter in emitters {
             let loader = Rc::clone(&loader);
-            let key = (emitter.language(), emitter.schema_type());
-            let runner: Runner = Box::new(move |inputs| {
-                let ir = loader.load(inputs)?;
+            let language = emitter.language();
+            let key = (language, emitter.schema_type());
+            let runner: Runner = Box::new(move || {
+                let ir = loader.load(language)?;
                 assemble(&ir, emitter.as_ref())
             });
             self.runners.insert(key, runner);
@@ -67,10 +69,9 @@ impl Registry {
         &self,
         language: Language,
         schema_type: SchemaType,
-        inputs: &[PathBuf],
     ) -> Option<Result<GeneratedFiles>> {
         self.runners
             .get(&(language, schema_type))
-            .map(|runner| runner(inputs))
+            .map(|runner| runner())
     }
 }

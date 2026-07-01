@@ -6,8 +6,6 @@
 //! frontend's open kind type `K`; the emitter renders straight from the
 //! loader's `IR<K>` (no private side table) and produces the files itself.
 
-use std::path::PathBuf;
-
 use crate::emit::EmittedFile;
 use crate::error::Result;
 use crate::ir::IR;
@@ -23,6 +21,11 @@ use crate::schema_type::SchemaType;
 /// (`IR<Self::Kind>`) whose symbols carry all the data their emitter needs —
 /// there is no private side table.
 ///
+/// The loader instance is **constructed by the frontend**, holding its own
+/// inputs/config (input paths, descriptor paths, …). `language` is supplied per
+/// call — one loader backs every language emitter for its schema_type, and some
+/// frontends (WIT) resolve types per-language at parse time.
+///
 /// [`SymbolTable`]: crate::SymbolTable
 pub trait Loader {
     /// The frontend's open symbol-kind type (e.g. `WitSymbolKind`).
@@ -31,8 +34,8 @@ pub trait Loader {
     /// The schema_type this loader handles. Used as the registry key.
     fn schema_type(&self) -> SchemaType;
 
-    /// Validate `inputs` and lower them into the IR.
-    fn load(&self, inputs: &[PathBuf]) -> Result<IR<Self::Kind>>;
+    /// Validate the loader's inputs and lower them into the IR for `language`.
+    fn load(&self, language: Language) -> Result<IR<Self::Kind>>;
 }
 
 /// Renders symbols for one `(language, schema_type)` pair, owning file layout.
