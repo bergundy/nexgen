@@ -154,7 +154,7 @@ impl Emitter<TestKind> for TestEmitter {
         SchemaType::Wit
     }
 
-    fn emit(&self, ir: &IR<TestKind>) -> Vec<EmittedFile> {
+    fn emit(&self, ir: &IR<TestKind>) -> nex_gen_codegen::Result<Vec<EmittedFile>> {
         // models.ts: the two model types. GetUserRequest references Extra
         // (same module) and Extra references nothing -> no cross-module refs.
         let models = EmittedFile {
@@ -204,7 +204,7 @@ impl Emitter<TestKind> for TestEmitter {
             body,
         };
 
-        vec![models, service]
+        Ok(vec![models, service])
     }
 
     fn resolver(&self) -> &dyn NameResolver {

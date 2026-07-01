@@ -196,6 +196,42 @@ pub(crate) fn plan_to_symbols(plan: ApiPlan) -> SymbolTable<WitSymbolKind> {
     table
 }
 
+/// Reconstruct the [`ApiPlan`] from a symbol table — the inverse of
+/// [`plan_to_symbols`].
+///
+/// [`plan_to_symbols`] moves each `Planned*` intact into a symbol's `kind` and
+/// allocates ids in the fixed order services -> models -> enums -> flags ->
+/// variants, each group in its source [`IndexMap`] order. Iterating the table
+/// in id order (`SymbolTable::iter`) therefore replays that order, and each
+/// collection's [`IndexMap`] key is the item's own `info.full_name` (the key
+/// the plan was built with — see `build_api_plan`). So this round-trips the
+/// plan exactly: the WIT emitter reconstructs the plan it needs straight from
+/// the IR, and the base never sees an `ApiPlan`.
+pub(crate) fn symbols_to_plan(ir: &IR<WitSymbolKind>) -> ApiPlan {
+    let mut plan = ApiPlan::default();
+    for symbol in ir.symbols.iter() {
+        match &symbol.kind {
+            WitSymbolKind::Service(service) => plan.services.push(service.clone()),
+            WitSymbolKind::Model(model) => {
+                plan.models.insert(model.info.full_name.clone(), model.clone());
+            }
+            WitSymbolKind::Enum(enumeration) => {
+                plan.enums
+                    .insert(enumeration.info.full_name.clone(), enumeration.clone());
+            }
+            WitSymbolKind::Flags(flag_set) => {
+                plan.flags
+                    .insert(flag_set.info.full_name.clone(), flag_set.clone());
+            }
+            WitSymbolKind::Variant(variant) => {
+                plan.variants
+                    .insert(variant.info.full_name.clone(), variant.clone());
+            }
+        }
+    }
+    plan
+}
+
 /// Push `id` onto `out` only if it is not already present (dedup preserving
 /// first-seen order).
 fn push_unique(out: &mut Vec<SymbolId>, id: SymbolId) {

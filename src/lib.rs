@@ -4,6 +4,11 @@ mod api_plan;
 // until a later step consumes it; the tests exercise `plan_to_symbols`.
 #[allow(dead_code)]
 mod wit_loader;
+// The WIT emitters (Step 3): render straight from `IR<WitSymbolKind>` through
+// the base `assemble` pipeline. Not yet wired into the pipeline (Step 4 does
+// that); the tests assert byte-identity with the legacy `generate` path.
+#[allow(dead_code)]
+mod wit_emitters;
 
 pub mod add_rpc;
 pub mod descriptors;

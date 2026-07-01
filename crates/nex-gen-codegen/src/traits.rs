@@ -58,7 +58,10 @@ pub trait Emitter<K> {
     /// Each [`EmittedFile`] declares the symbols it references (`refs`) and any
     /// non-symbol runtime imports; the base resolves them into the import block
     /// during [`assemble`](crate::assemble) using [`resolver`](Emitter::resolver).
-    fn emit(&self, ir: &IR<K>) -> Vec<EmittedFile>;
+    ///
+    /// Fallible: rendering may resolve types that fail validation (e.g. an
+    /// unresolvable I/O type), so the error surfaces here rather than panicking.
+    fn emit(&self, ir: &IR<K>) -> Result<Vec<EmittedFile>>;
 
     /// How the base names and locates referenced symbols for this emitter.
     ///

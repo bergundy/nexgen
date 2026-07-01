@@ -31,7 +31,7 @@ pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFile
 
     // 1. Emit. The emitter owns layout and produces bodies without import
     //    blocks, declaring per-file `refs` + `runtime_imports`.
-    let emitted: Vec<EmittedFile> = emitter.emit(ir);
+    let emitted: Vec<EmittedFile> = emitter.emit(ir)?;
 
     // 2. For each file, resolve + render its import block and stitch it on.
     //    Resolution is base-owned: walk `refs` through the resolver, drop
