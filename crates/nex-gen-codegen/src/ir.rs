@@ -1,14 +1,20 @@
 //! The base intermediate representation.
 //!
-//! `Symbol` is the core IR primitive: a **service** and a **type** are both
-//! kinds of symbol, so placement, import resolution, reachability, and dedup
-//! are one algorithm over [`Symbol::refs`] + the emitter-computed `module`,
-//! with no schema-specific knowledge in the base.
+//! `Symbol<K>` is the core IR primitive. Its `kind: K` is **frontend-defined
+//! and open** — the base is compile-time-agnostic to `K` and only ever touches
+//! `id` / `name` / `refs` (plus the emitter's [`NameResolver`](crate::NameResolver)).
+//! A WIT record, enum, variant, resource, proto-ref, and service are all
+//! `WitSymbolKind` variants the WIT crate owns; the JSON crate defines its own.
 //!
-//! This is the **IR tier** of the two-tier common contract (`id`, `name`,
-//! `kind`, `refs`) — produced by a [`Loader`](crate::Loader). The **emit
-//! tier** (`module`, `type_ref`, `import_binding`, `body`) is computed later by
-//! an [`Emitter`](crate::Emitter).
+//! Because `refs` are explicit on every symbol, placement, import resolution,
+//! reachability, and dedup are one algorithm over `refs` + the emitter-computed
+//! `module`, with no schema-specific knowledge in the base.
+//!
+//! Services stay a base concept (they are well-defined across all frontends):
+//! the base provides the [`Service`] / [`Operation`] data structs and the
+//! [`render_service`](crate::render_service) utility. A frontend kind simply
+//! *wraps* a [`Service`], and its emitter calls `render_service` when it renders
+//! that symbol — the base never matches on `K`.
 
 use std::collections::BTreeMap;
 
@@ -33,38 +39,28 @@ impl Name {
     }
 }
 
-/// The core IR primitive. Services and types are both symbols.
+/// The core IR primitive, generic over the frontend's open symbol-kind type `K`.
+///
+/// The base treats `kind` opaquely; it only reasons over `id`, `name`, and
+/// `refs`. The frontend's emitter matches on `kind` to render each symbol.
 #[derive(Clone, Debug)]
-pub struct Symbol {
+pub struct Symbol<K> {
     /// Stable identity, unique in the table.
     pub id: SymbolId,
     /// Canonical name (language mapping applied later, at emit time).
     pub name: Name,
-    /// What kind of symbol this is, with its base data.
-    pub kind: SymbolKind,
     /// Symbols this one references (service I/O, type fields). Drives
     /// reachability, placement, and import resolution in the base.
     pub refs: Vec<SymbolId>,
-}
-
-/// The kind of a [`Symbol`], with whatever base data is frontend-independent.
-#[derive(Clone, Debug)]
-pub enum SymbolKind {
-    /// A Nexus service. `Service` is base data (services are
-    /// frontend-independent).
-    Service(Service),
-    /// A type. Carries **nothing** schema-specific here; its definition data
-    /// lives in the schema_type's PRIVATE side table, keyed by [`Symbol::id`],
-    /// so the base IR stays pure (no generics, no erased payloads). A
-    /// **foreign** reference (protoc / ts-proto) is a `Type` symbol whose
-    /// emit-time `module` is the foreign module and whose `body` is empty.
-    Type,
+    /// Frontend-defined kind + its data. Opaque to the base.
+    pub kind: K,
 }
 
 /// Base data for a service symbol: operations, wire names, docs.
 ///
-/// All fields are Nexus service properties that any front-end (WIT, JSON
-/// Schema, ...) carries — none of them leak proto/WIT specifics.
+/// Services are frontend-independent, so this is base data a frontend kind
+/// wraps (e.g. `WitSymbolKind::Service(Service)`); it never leaks proto/WIT
+/// specifics. Rendered by [`render_service`](crate::render_service).
 #[derive(Clone, Debug)]
 pub struct Service {
     /// Canonical service name.
@@ -102,24 +98,33 @@ pub struct Operation {
     pub docs: Option<String>,
 }
 
-/// The pure, schema-agnostic symbol table produced by a loader.
+/// The symbol table produced by a loader, generic over the frontend kind `K`.
 ///
-/// Keyed by [`SymbolId`]. The schema_type's private type-data side table is
-/// held by the schema_type crate (correlated by `SymbolId`), **not** here, so
-/// the base table stays free of erased payloads.
-#[derive(Clone, Debug, Default)]
-pub struct SymbolTable {
-    symbols: BTreeMap<SymbolId, Symbol>,
+/// Keyed by [`SymbolId`]. Everything a symbol needs to render lives *in the
+/// symbol* (in `kind`) — there is no private side table.
+#[derive(Clone, Debug)]
+pub struct SymbolTable<K> {
+    symbols: BTreeMap<SymbolId, Symbol<K>>,
     next_id: u32,
 }
 
-impl SymbolTable {
+impl<K> Default for SymbolTable<K> {
+    fn default() -> Self {
+        Self {
+            symbols: BTreeMap::new(),
+            next_id: 0,
+        }
+    }
+}
+
+impl<K> SymbolTable<K> {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Allocate the next unused [`SymbolId`]. Loaders use this to mint ids
-    /// before correlating private type data against them.
+    /// before inserting (e.g. to record a symbol's `refs` to not-yet-inserted
+    /// symbols).
     pub fn alloc_id(&mut self) -> SymbolId {
         let id = SymbolId(self.next_id);
         self.next_id += 1;
@@ -128,19 +133,19 @@ impl SymbolTable {
 
     /// Insert a symbol, returning its id. The symbol's `id` must already be set
     /// (typically via [`SymbolTable::alloc_id`]).
-    pub fn insert(&mut self, symbol: Symbol) -> SymbolId {
+    pub fn insert(&mut self, symbol: Symbol<K>) -> SymbolId {
         let id = symbol.id;
         self.symbols.insert(id, symbol);
         id
     }
 
     /// Look up a symbol by id.
-    pub fn get(&self, id: SymbolId) -> Option<&Symbol> {
+    pub fn get(&self, id: SymbolId) -> Option<&Symbol<K>> {
         self.symbols.get(&id)
     }
 
     /// Iterate over all symbols in id order.
-    pub fn iter(&self) -> impl Iterator<Item = &Symbol> {
+    pub fn iter(&self) -> impl Iterator<Item = &Symbol<K>> {
         self.symbols.values()
     }
 
@@ -154,15 +159,15 @@ impl SymbolTable {
     }
 }
 
-/// What a [`Loader`](crate::Loader) produces.
-///
-/// Holds the base, pure [`SymbolTable`]. The schema_type's private side table
-/// (`SymbolId` -> its type data) is held by the schema_type crate and surfaced
-/// only to its own emitters — never to the base — so no `Ir` generic and no
-/// erased payload appear here.
-pub struct IR {
-    pub symbols: SymbolTable,
-    // NOTE: the schema_type's private type-data side table (SymbolId -> schema
-    // type data) is intentionally NOT a field here. It is held by the
-    // schema_type crate and passed to its own emitters; the base never sees it.
+/// What a [`Loader`](crate::Loader) produces: the base [`SymbolTable`] for the
+/// frontend kind `K`. The emitter receives `&IR<K>` and works only from it.
+#[derive(Clone, Debug)]
+pub struct IR<K> {
+    pub symbols: SymbolTable<K>,
+}
+
+impl<K> IR<K> {
+    pub fn new(symbols: SymbolTable<K>) -> Self {
+        Self { symbols }
+    }
 }

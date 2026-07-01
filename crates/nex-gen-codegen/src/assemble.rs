@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::emit::{EmittedFile, Import};
 use crate::error::Result;
-use crate::ir::SymbolTable;
+use crate::ir::IR;
 use crate::output::GeneratedFiles;
 use crate::render::{NameResolver, render_imports};
 use crate::traits::Emitter;
@@ -25,13 +25,13 @@ use crate::traits::Emitter;
 /// with the file's `runtime_imports`, deduped; render the import block via
 /// [`render_imports`] and stitch it onto the body; collect into
 /// [`GeneratedFiles`], choosing the layout from the set of distinct paths.
-pub fn assemble(symbols: &SymbolTable, emitter: &dyn Emitter) -> Result<GeneratedFiles> {
+pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFiles> {
     let language = emitter.language();
     let resolver = emitter.resolver();
 
     // 1. Emit. The emitter owns layout and produces bodies without import
     //    blocks, declaring per-file `refs` + `runtime_imports`.
-    let emitted: Vec<EmittedFile> = emitter.emit(symbols);
+    let emitted: Vec<EmittedFile> = emitter.emit(ir);
 
     // 2. For each file, resolve + render its import block and stitch it on.
     //    Resolution is base-owned: walk `refs` through the resolver, drop

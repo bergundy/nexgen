@@ -10,23 +10,22 @@
 //! The pipeline is **loader -> IR -> emitter**:
 //!
 //! ```text
-//! inputs --Loader[schema_type]--> IR (SymbolTable + private side table)
+//! inputs --Loader[schema_type]--> IR<K> (SymbolTable<K>; K = frontend kind)
 //!        --Emitter[(lang, schema_type)]--> Vec<EmittedFile>
 //!        --assemble: group by module -> resolve imports -> render -> write/format
 //!        --> GeneratedFiles
 //! ```
 //!
-//! It is **schema_type-agnostic**: the base reasons over symbols (`id`, `name`,
-//! `kind`, `refs`) and emit-tier data (`module`, `type_ref`, `import_binding`,
-//! `body`) uniformly, and never inspects a schema_type's private type data.
+//! It is **schema_type-agnostic**: symbol kinds are frontend-defined (the
+//! generic `K`), and the base reasons only over `id` / `name` / `refs` plus
+//! emit-tier data (`module`, `type_ref`, `import_binding`, `body`) — it never
+//! inspects `K`. Services stay a base concept ([`Service`] + [`render_service`]),
+//! which a frontend kind wraps.
 //!
-//! The import-resolution + assembly path is implemented end-to-end: the
-//! [`Module`] / [`Import`] / [`ImportBinding`] shapes are concrete,
+//! The import-resolution + assembly path is implemented end-to-end:
 //! [`assemble`] resolves each [`EmittedFile`]'s `refs` to cross-module imports
 //! (dropping same-module refs, unioning runtime imports, deduping) and
-//! [`render_imports`] renders them for Python and TypeScript. Bodies still
-//! deferred to later phases are marked `// TODO(prototype): ...` (the
-//! per-language [`render_service`], and the registry emitter-factory).
+//! [`render_imports`] renders them for Python and TypeScript.
 
 pub mod assemble;
 pub mod emit;
@@ -42,7 +41,7 @@ pub mod traits;
 pub use assemble::assemble;
 pub use emit::{EmittedFile, Import, ImportBinding, Module};
 pub use error::{Error, Result};
-pub use ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolKind, SymbolTable};
+pub use ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
 pub use language::Language;
 pub use output::{
     GeneratedFiles, GeneratedOutputLayout, format_generated_file, formatter_command,

@@ -1,25 +1,31 @@
-//! The loader + emitter registry.
+//! The pipeline registry.
 //!
-//! Keys are **inferred**, not passed: a [`Loader`] reports its
-//! [`schema_type()`](Loader::schema_type), and an [`Emitter`] reports its
-//! [`language()`](Emitter::language) + [`schema_type()`](Emitter::schema_type),
-//! so registration takes only the value. The library/CLI entry resolves
-//! `(lang, schema_type)` -> loader + emitter, loads inputs, constructs the
-//! emitter over the loaded private data, and calls
-//! [`assemble`](crate::assemble).
+//! A loader is registered together with its emitters — one loader per
+//! schema_type, shared by every language emitter for that schema_type. The
+//! keys are **inferred** from [`Emitter::language`] + [`Emitter::schema_type`],
+//! not passed. Because each emitter renders straight from the loader's `IR<K>`
+//! (no private side table, no construction-over-private-data factory), the
+//! registry pairs the loader with each emitter behind a **type-erased runner**
+//! closure — the frontend kind `K` never escapes it.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
 
+use crate::assemble::assemble;
+use crate::error::Result;
 use crate::language::Language;
+use crate::output::GeneratedFiles;
 use crate::schema_type::SchemaType;
 use crate::traits::{Emitter, Loader};
 
-/// A registry of loaders (keyed by schema_type) and emitters (keyed by
-/// `(language, schema_type)`).
+/// A type-erased pipeline: `inputs -> load -> assemble -> GeneratedFiles`.
+type Runner = Box<dyn Fn(&[PathBuf]) -> Result<GeneratedFiles>>;
+
+/// A registry of `(language, schema_type)` pipelines.
 #[derive(Default)]
 pub struct Registry {
-    loaders: HashMap<SchemaType, Box<dyn Loader>>,
-    emitters: HashMap<(Language, SchemaType), Box<dyn Emitter>>,
+    runners: HashMap<(Language, SchemaType), Runner>,
 }
 
 impl Registry {
@@ -27,36 +33,44 @@ impl Registry {
         Self::default()
     }
 
-    /// Register a loader. The key is inferred from
-    /// [`Loader::schema_type`] — no key argument.
-    pub fn register_loader(&mut self, loader: impl Loader + 'static) {
-        let key = loader.schema_type();
-        self.loaders.insert(key, Box::new(loader));
+    /// Register a `loader` together with its `emitters` (one per language for
+    /// that schema_type). Each `(loader, emitter)` becomes a runner keyed by
+    /// [`Emitter::language`] + [`Emitter::schema_type`] — no key argument. The
+    /// loader is shared across the per-language runners; the loader's `Kind` and
+    /// every emitter's `K` must match.
+    ///
+    /// `emitters` is any iterable of boxed emitters, e.g. an array literal:
+    /// `registry.register(WitLoader::new(), [Box::new(py), Box::new(ts)])`.
+    pub fn register<K, L>(
+        &mut self,
+        loader: L,
+        emitters: impl IntoIterator<Item = Box<dyn Emitter<K>>>,
+    ) where
+        K: 'static,
+        L: Loader<Kind = K> + 'static,
+    {
+        let loader = Rc::new(loader);
+        for emitter in emitters {
+            let loader = Rc::clone(&loader);
+            let key = (emitter.language(), emitter.schema_type());
+            let runner: Runner = Box::new(move |inputs| {
+                let ir = loader.load(inputs)?;
+                assemble(&ir, emitter.as_ref())
+            });
+            self.runners.insert(key, runner);
+        }
     }
 
-    /// Register an emitter. The key is inferred from
-    /// [`Emitter::language`] + [`Emitter::schema_type`] — no key argument.
-    //
-    // TODO(prototype): emitter construction over private data — in the real
-    // pipeline the registry entry for a (lang, schema_type) pair builds the
-    // emitter from the loader's private side table, so this likely stores an
-    // emitter *factory* (a fn over that private data) rather than a constructed
-    // emitter. Settle the exact signature in the prototype. See
-    // json-schema/integration-plan.md "Open items".
-    pub fn register_emitter(&mut self, emitter: impl Emitter + 'static) {
-        let key = (emitter.language(), emitter.schema_type());
-        self.emitters.insert(key, Box::new(emitter));
-    }
-
-    /// Look up the loader for a schema_type.
-    pub fn loader(&self, schema_type: SchemaType) -> Option<&dyn Loader> {
-        self.loaders.get(&schema_type).map(Box::as_ref)
-    }
-
-    /// Look up the emitter for a `(language, schema_type)` pair.
-    pub fn emitter(&self, language: Language, schema_type: SchemaType) -> Option<&dyn Emitter> {
-        self.emitters
+    /// Run the pipeline registered for `(language, schema_type)`, or `None` if
+    /// no pipeline is registered for that pair.
+    pub fn generate(
+        &self,
+        language: Language,
+        schema_type: SchemaType,
+        inputs: &[PathBuf],
+    ) -> Option<Result<GeneratedFiles>> {
+        self.runners
             .get(&(language, schema_type))
-            .map(Box::as_ref)
+            .map(|runner| runner(inputs))
     }
 }

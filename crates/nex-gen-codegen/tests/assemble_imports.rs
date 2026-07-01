@@ -14,13 +14,19 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use nex_gen_codegen::emit::{EmittedFile, Import, ImportBinding, Module};
-use nex_gen_codegen::ir::{
-    Name, Operation, Service, Symbol, SymbolId, SymbolKind, SymbolTable,
-};
+use nex_gen_codegen::ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
 use nex_gen_codegen::{
     GeneratedOutputLayout, Language, NameResolver, SchemaType, assemble, render_imports,
     traits::Emitter,
 };
+
+/// A local, minimal frontend kind for this test — symbol kinds are
+/// frontend-defined, so the base crate's own tests define their own. A service
+/// wraps the base [`Service`]; a type carries nothing here.
+enum TestKind {
+    Service(Service),
+    Type,
+}
 
 const MODELS_MODULE: &str = "./models.ts";
 const SERVICE_MODULE: &str = "./service.ts";
@@ -30,7 +36,7 @@ const PROTO_MODULE: &str = "@temporalio/proto";
 /// `GetUserRequest` (models) and returning `User` (a foreign proto type), plus
 /// a second `models` type `Extra` referenced by `GetUserRequest` (same-module
 /// from the models file's perspective).
-fn build_table() -> (SymbolTable, SymbolId, SymbolId, SymbolId, SymbolId) {
+fn build_table() -> (SymbolTable<TestKind>, SymbolId, SymbolId, SymbolId, SymbolId) {
     let mut table = SymbolTable::new();
 
     let req = table.alloc_id();
@@ -42,27 +48,27 @@ fn build_table() -> (SymbolTable, SymbolId, SymbolId, SymbolId, SymbolId) {
     table.insert(Symbol {
         id: req,
         name: Name::new("GetUserRequest"),
-        kind: SymbolKind::Type,
+        kind: TestKind::Type,
         refs: vec![extra],
     });
     table.insert(Symbol {
         id: extra,
         name: Name::new("Extra"),
-        kind: SymbolKind::Type,
+        kind: TestKind::Type,
         refs: vec![],
     });
     // foreign proto type (its module is the foreign package; empty body).
     table.insert(Symbol {
         id: user,
         name: Name::new("User"),
-        kind: SymbolKind::Type,
+        kind: TestKind::Type,
         refs: vec![],
     });
     // service: operation in I/O -> req (models), out -> user (foreign).
     table.insert(Symbol {
         id: svc,
         name: Name::new("UserService"),
-        kind: SymbolKind::Service(Service {
+        kind: TestKind::Service(Service {
             name: Name::new("UserService"),
             wire_name: "UserService".to_string(),
             experimental: false,
@@ -139,7 +145,7 @@ struct TestEmitter {
     user: SymbolId,
 }
 
-impl Emitter for TestEmitter {
+impl Emitter<TestKind> for TestEmitter {
     fn language(&self) -> Language {
         Language::TypeScript
     }
@@ -148,7 +154,7 @@ impl Emitter for TestEmitter {
         SchemaType::Wit
     }
 
-    fn emit(&self, symbols: &SymbolTable) -> Vec<EmittedFile> {
+    fn emit(&self, ir: &IR<TestKind>) -> Vec<EmittedFile> {
         // models.ts: the two model types. GetUserRequest references Extra
         // (same module) and Extra references nothing -> no cross-module refs.
         let models = EmittedFile {
@@ -164,8 +170,8 @@ impl Emitter for TestEmitter {
         // service.ts: inline-rendered service body (NOT via render_service).
         // It references its I/O types: GetUserRequest (models) + User (proto).
         let mut body = String::new();
-        for symbol in symbols.iter() {
-            if let SymbolKind::Service(def) = &symbol.kind {
+        for symbol in ir.symbols.iter() {
+            if let TestKind::Service(def) = &symbol.kind {
                 body.push_str(&format!("export const {} = {{\n", def.name.as_str()));
                 for op in &def.operations {
                     let input = op
@@ -216,7 +222,8 @@ fn assemble_resolves_cross_module_and_foreign_imports() {
         user,
     };
 
-    let generated = assemble(&table, &emitter).expect("assemble");
+    let ir = IR::new(table);
+    let generated = assemble(&ir, &emitter).expect("assemble");
 
     // Two distinct paths -> directory layout (driven by emitter output, not a
     // content guess).
