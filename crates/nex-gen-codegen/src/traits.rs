@@ -27,8 +27,9 @@ use crate::render::NameResolver;
 ///
 /// [`SymbolTable`]: crate::SymbolTable
 pub trait Loader {
-    /// The frontend's open symbol-kind type (e.g. `WitSymbolKind`). The registry
-    /// is keyed by this kind: emitters are paired with a loader that shares it.
+    /// The frontend's open symbol-kind type (e.g. `WitSymbolKind`). The
+    /// generator is fixed to this kind: emitters are paired with a loader that
+    /// shares it.
     type Kind;
 
     /// Validate the loader's inputs and lower them into the IR for `language`,
@@ -45,7 +46,7 @@ pub trait Loader {
 /// [`render_imports`](crate::render_imports) (not an emitter method) and
 /// stitched in during [`assemble`](crate::assemble).
 pub trait Emitter<K> {
-    /// The target language. The registry key.
+    /// The target language. The generator keys its emitters by this.
     fn language(&self) -> Language;
 
     /// Render the IR into a set of files (bodies without import blocks).

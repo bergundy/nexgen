@@ -19,7 +19,7 @@ pub enum Language {
 }
 
 impl Language {
-    /// Stable, lowercase identifier used in paths, CLI flags, and registry keys.
+    /// Stable, lowercase identifier used in paths, CLI flags, and emitter keys.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Dotnet => "dotnet",

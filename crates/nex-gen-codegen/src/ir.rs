@@ -178,8 +178,8 @@ impl<K> IR<K> {
 /// Warnings are frontend diagnostics that are **not** symbols and place no code
 /// (e.g. "resource method generated as a stub"). They are derived from the
 /// inputs during load, so they travel alongside the IR rather than living in it;
-/// [`assemble`](crate::assemble) copies them onto the resulting
-/// [`GeneratedFiles`](crate::GeneratedFiles) via the [`Registry`](crate::Registry).
+/// the [`Generator`](crate::Generator) copies them onto the resulting
+/// [`GeneratedFiles`](crate::GeneratedFiles) after [`assemble`](crate::assemble).
 #[derive(Clone, Debug)]
 pub struct LoadOutput<K> {
     /// The lowered IR.

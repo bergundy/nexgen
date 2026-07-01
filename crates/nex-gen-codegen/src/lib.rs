@@ -3,7 +3,7 @@
 //! This crate is the base described in `json-schema/integration-plan.md`: the
 //! `Symbol`-centric IR, the [`Loader`] / [`Emitter`] traits, the per-language
 //! [`render_service`] / [`render_imports`] utilities, the [`assemble`]
-//! pipeline (placement + import resolution), the [`Registry`], and the output
+//! pipeline (placement + import resolution), the [`Generator`], and the output
 //! plumbing ([`GeneratedFiles`], [`write_generated_files`],
 //! [`format_generated_file`]).
 //!
@@ -30,22 +30,22 @@
 pub mod assemble;
 pub mod emit;
 pub mod error;
+pub mod generator;
 pub mod ir;
 pub mod language;
 pub mod output;
-pub mod registry;
 pub mod render;
 pub mod traits;
 
 pub use assemble::assemble;
 pub use emit::{EmittedFile, Import, ImportBinding, Module};
 pub use error::{Error, Result};
+pub use generator::Generator;
 pub use ir::{IR, LoadOutput, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
 pub use language::Language;
 pub use output::{
     GeneratedFiles, GeneratedOutputLayout, format_generated_file, formatter_command,
     write_generated_files,
 };
-pub use registry::Registry;
 pub use render::{NameResolver, render_imports, render_service};
 pub use traits::{Emitter, Loader};

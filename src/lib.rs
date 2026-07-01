@@ -1,10 +1,10 @@
 mod wit_symbols;
 // The WIT `Loader`: validates inputs and lowers them into `IR<WitSymbolKind>`
-// (+ warnings). Wired into the CLI generation path via the base `Registry`
-// (see `generate_via_registry`).
+// (+ warnings). Wired into the CLI generation path via the base `Generator`
+// (see `generate_via_generator`).
 mod wit_loader;
 // The WIT emitters: render straight from `IR<WitSymbolKind>` through the base
-// `assemble` pipeline. Wired into the CLI generation path via the `Registry`;
+// `assemble` pipeline. Wired into the CLI generation path via the `Generator`;
 // the tests assert byte-identity with the direct `generate` path.
 mod wit_emitters;
 
@@ -90,7 +90,7 @@ pub fn generate_to_string_with_inputs_and_support(
     support_paths: &[PathBuf],
 ) -> Result<String> {
     let fragments = resolve_support_fragments(language, input_paths, support_paths)?;
-    let generated = generate_via_registry(language, input_paths, descriptor_paths, fragments)?;
+    let generated = generate_via_generator(language, input_paths, descriptor_paths, fragments)?;
     print_warnings(&generated);
     Ok(match generated.layout {
         GeneratedOutputLayout::SingleFile => generated
@@ -107,7 +107,7 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
         &request.input_paths,
         &request.support_paths,
     )?;
-    let generated = generate_via_registry(
+    let generated = generate_via_generator(
         request.language,
         &request.input_paths,
         &request.descriptor_paths,
@@ -139,17 +139,17 @@ fn resolve_support_fragments(
     Ok(load_support_files(language, &spec, support_paths)?.fragments)
 }
 
-/// Run the WIT generation pipeline through the base [`Registry`]: the
+/// Run the WIT generation pipeline through the base [`Generator`]: the
 /// [`WitLoader`](wit_loader::WitLoader) lowers the inputs to `IR<WitSymbolKind>`
 /// (+ warnings) and the language emitter renders it through
 /// [`assemble`](nex_gen_codegen::assemble).
-fn generate_via_registry(
+fn generate_via_generator(
     language: Language,
     input_paths: &[PathBuf],
     descriptor_paths: &[PathBuf],
     fragments: Vec<SupportFragmentSpec>,
 ) -> Result<GeneratedFiles> {
-    use nex_gen_codegen::{Emitter, Registry};
+    use nex_gen_codegen::{Emitter, Generator};
 
     use wit_symbols::WitSymbolKind;
     use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
@@ -162,15 +162,14 @@ fn generate_via_registry(
         language => return Err(error::Error::UnsupportedLanguage { language }),
     };
 
-    let mut registry = Registry::new();
-    registry.register(
+    let generator = Generator::new(
         WitLoader::new(input_paths.to_vec(), descriptor_paths.to_vec()),
         [emitter],
     );
 
-    registry
+    generator
         .generate(language)
-        .expect("pipeline registered above")
+        .expect("emitter registered above")
         .map_err(error::Error::from)
 }
 
