@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::SupportFiles;
-use crate::api_plan::build_api_plan;
+use crate::api_plan::{WitSymbols, build_api_plan};
 use crate::descriptors::DescriptorIndex;
 use crate::dotnet;
 use crate::error::{Error, Result};
@@ -82,7 +82,8 @@ pub fn generate_files(
 ) -> Result<GeneratedFiles> {
     validate_type_overrides(spec, descriptors, language)?;
     ensure_unique_resource_names(spec)?;
-    let plan = build_api_plan(spec, descriptors)?;
+    let symbols = build_api_plan(spec, descriptors)?;
+    let plan = WitSymbols::new(&symbols);
     let warnings = generation_warnings(&plan);
     let support_fragments = if support.fragments.is_empty() {
         spec.support.fragments_for_language(language)
@@ -121,9 +122,8 @@ pub fn generate_source(
     })
 }
 
-fn generation_warnings(plan: &crate::api_plan::ApiPlan) -> Vec<String> {
-    plan.services
-        .iter()
+fn generation_warnings(plan: &WitSymbols) -> Vec<String> {
+    plan.services()
         .flat_map(|service| {
             service.resources.iter().flat_map(|resource| {
                 resource.methods.iter().filter_map(|method| {

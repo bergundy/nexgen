@@ -1,9 +1,8 @@
 //! WIT front-end emitters that render straight from `IR<WitSymbolKind>`.
 //!
-//! Each emitter reconstructs the WIT-internal [`ApiPlan`](crate::api_plan::ApiPlan)
-//! from the symbol table (via [`symbols_to_plan`]) and runs the existing
-//! per-language renderers, then routes the result through the base
-//! [`assemble`](nex_gen_codegen::assemble) pipeline. The base never sees an
+//! Each emitter builds a borrowing [`WitSymbols`] view over the symbol table
+//! and runs the existing per-language renderers, then routes the result through
+//! the base [`assemble`](nex_gen_codegen::assemble) pipeline. There is no
 //! `ApiPlan`: the emitter derives everything it needs from the IR, satisfying
 //! the "emitter works only from the IR" contract.
 //!
@@ -19,9 +18,9 @@ use nex_gen_codegen::{
     SymbolId, IR,
 };
 
+use crate::api_plan::{WitSymbolKind, WitSymbols};
 use crate::generator::GeneratedFiles;
 use crate::spec::SupportFragmentSpec;
-use crate::wit_loader::{symbols_to_plan, WitSymbolKind};
 
 /// A resolver that is never consulted.
 ///
@@ -91,8 +90,8 @@ impl Emitter<WitSymbolKind> for PythonEmitter {
     }
 
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
-        let plan = symbols_to_plan(ir);
-        let generated = crate::python::generate(&plan, &self.support_fragments)
+        let symbols = WitSymbols::new(&ir.symbols);
+        let generated = crate::python::generate(&symbols, &self.support_fragments)
             .map_err(|error| Error::Load {
                 message: error.to_string(),
             })?;
@@ -129,8 +128,8 @@ impl Emitter<WitSymbolKind> for TypeScriptEmitter {
     }
 
     fn emit(&self, ir: &IR<WitSymbolKind>) -> Result<Vec<EmittedFile>> {
-        let plan = symbols_to_plan(ir);
-        let generated = crate::typescript::generate(&plan, &self.support_fragments)
+        let symbols = WitSymbols::new(&ir.symbols);
+        let generated = crate::typescript::generate(&symbols, &self.support_fragments)
             .map_err(|error| Error::Load {
                 message: error.to_string(),
             })?;
@@ -150,10 +149,9 @@ mod tests {
     use prost_types::FileDescriptorSet;
 
     use super::{PythonEmitter, TypeScriptEmitter};
-    use crate::api_plan::build_api_plan;
+    use crate::api_plan::{build_api_plan, WitSymbolKind, WitSymbols};
     use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
-    use crate::wit_loader::plan_to_symbols;
     use crate::Language;
 
     const INLINE_WIT: &str = r#"
@@ -184,33 +182,28 @@ interface user-service {
 }
 "#;
 
-    /// Build the IR the WIT loader would produce for the inline schema, plus the
-    /// plan the legacy path would build, from the *same* spec + descriptors.
-    fn build_plan_and_ir(
-        language: Language,
-    ) -> (crate::api_plan::ApiPlan, IR<super::WitSymbolKind>) {
+    /// Build the IR the WIT loader would produce for the inline schema.
+    fn build_ir(language: Language) -> IR<WitSymbolKind> {
         let spec =
             ApiSpec::parse_for_language(language, INLINE_WIT, PathBuf::from("inline.wit")).unwrap();
         let descriptors =
             DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap();
-        let plan = build_api_plan(&spec, &descriptors).unwrap();
-        let ir = IR::new(plan_to_symbols(plan.clone()));
-        (plan, ir)
+        IR::new(build_api_plan(&spec, &descriptors).unwrap())
     }
 
     #[test]
-    fn python_emitter_matches_legacy_generate() {
-        let (plan, ir) = build_plan_and_ir(Language::Python);
-        let expected = crate::python::generate(&plan, &[]).unwrap();
+    fn python_emitter_matches_direct_generate() {
+        let ir = build_ir(Language::Python);
+        let expected = crate::python::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
         let emitter = PythonEmitter::new(Vec::new());
         let assembled = assemble(&ir, &emitter).unwrap();
         assert_eq!(assembled.files, expected.files);
     }
 
     #[test]
-    fn typescript_emitter_matches_legacy_generate() {
-        let (plan, ir) = build_plan_and_ir(Language::TypeScript);
-        let expected = crate::typescript::generate(&plan, &[]).unwrap();
+    fn typescript_emitter_matches_direct_generate() {
+        let ir = build_ir(Language::TypeScript);
+        let expected = crate::typescript::generate(&WitSymbols::new(&ir.symbols), &[]).unwrap();
         let emitter = TypeScriptEmitter::new(Vec::new());
         let assembled = assemble(&ir, &emitter).unwrap();
         assert_eq!(assembled.files, expected.files);

@@ -1,37 +1,22 @@
 //! WIT front-end loader lowering WIT inputs into the shared base IR.
 //!
 //! This is the WIT side of the `Loader` -> `IR` -> `Emitter` pipeline described
-//! in `crates/nex-gen-codegen`. [`WitLoader`] reuses the existing WIT lowering
-//! ([`build_api_plan`](crate::api_plan::build_api_plan)) to produce an
-//! [`ApiPlan`], then **explodes** that plan into a
-//! [`SymbolTable<WitSymbolKind>`] via [`plan_to_symbols`]. The old generation
-//! path is untouched; this module only adds the symbol-table lowering.
+//! in `crates/nex-gen-codegen`. [`WitLoader`] validates its inputs and lowers
+//! them into a [`SymbolTable<WitSymbolKind>`] via
+//! [`build_api_plan`](crate::api_plan::build_api_plan) — that table *is* the WIT
+//! IR (there is no `ApiPlan`). The symbol machinery (`WitSymbolKind`, the
+//! table build, and the [`WitSymbols`](crate::api_plan::WitSymbols) view the
+//! emitters read) lives in `crate::api_plan`.
 
 use std::path::PathBuf;
 
-use nex_gen_codegen::{IR, Language, Name, SchemaType, Symbol, SymbolId, SymbolTable};
+use nex_gen_codegen::{IR, Language, SchemaType};
 
-use crate::api_plan::{
-    ApiPlan, PlannedEnum, PlannedFieldKind, PlannedFlags, PlannedModel, PlannedOperationOutput,
-    PlannedService, PlannedValueType, PlannedVariant, build_api_plan,
-};
+use crate::api_plan::{WitSymbolKind, build_api_plan};
 use crate::descriptors::DescriptorIndex;
 use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
 use crate::validation::validate_type_overrides;
-
-/// The WIT front-end's open symbol-kind: one variant per planned type/service.
-///
-/// Each variant owns the corresponding `ApiPlan` item so the (future) WIT
-/// emitter renders straight from the symbol without a private side table.
-#[derive(Debug, Clone)]
-pub(crate) enum WitSymbolKind {
-    Service(PlannedService),
-    Model(PlannedModel),
-    Enum(PlannedEnum),
-    Flags(PlannedFlags),
-    Variant(PlannedVariant),
-}
 
 /// Loads WIT inputs (plus proto descriptors) into the base IR.
 ///
@@ -77,282 +62,13 @@ impl nex_gen_codegen::Loader for WitLoader {
         ensure_unique_resource_names(&spec).map_err(|error| nex_gen_codegen::Error::Load {
             message: error.to_string(),
         })?;
-        let plan = build_api_plan(&spec, &descriptors).map_err(|error| {
+        let symbols = build_api_plan(&spec, &descriptors).map_err(|error| {
             nex_gen_codegen::Error::Load {
                 message: error.to_string(),
             }
         })?;
-        Ok(IR::new(plan_to_symbols(plan)))
+        Ok(IR::new(symbols))
     }
-}
-
-/// Explode an [`ApiPlan`] into a [`SymbolTable`], resolving cross-type
-/// references to [`SymbolId`]s.
-///
-/// Runs in two passes so a symbol's `refs` can point at not-yet-inserted
-/// symbols: pass 1 allocates ids and builds a `full_name -> SymbolId` index;
-/// pass 2 computes each symbol's `refs` from that index and inserts it.
-pub(crate) fn plan_to_symbols(plan: ApiPlan) -> SymbolTable<WitSymbolKind> {
-    use std::collections::BTreeMap;
-
-    let ApiPlan {
-        services,
-        enums,
-        flags,
-        variants,
-        models,
-    } = plan;
-
-    let mut table = SymbolTable::new();
-
-    // Owned, id-tagged items in the fixed insertion order:
-    // services, models, enums, flags, variants.
-    let mut planned_services: Vec<(SymbolId, PlannedService)> = Vec::new();
-    let mut planned_models: Vec<(SymbolId, PlannedModel)> = Vec::new();
-    let mut planned_enums: Vec<(SymbolId, PlannedEnum)> = Vec::new();
-    let mut planned_flags: Vec<(SymbolId, PlannedFlags)> = Vec::new();
-    let mut planned_variants: Vec<(SymbolId, PlannedVariant)> = Vec::new();
-
-    // Maps a type's `full_name` (the IndexMap key) to its allocated `SymbolId`.
-    // Services are not referenced by full_name, so they are not indexed.
-    let mut full_name_to_id: BTreeMap<String, SymbolId> = BTreeMap::new();
-
-    // Pass 1: allocate + index (services, models, enums, flags, variants).
-    for service in services {
-        let id = table.alloc_id();
-        planned_services.push((id, service));
-    }
-    for (full_name, model) in models {
-        let id = table.alloc_id();
-        full_name_to_id.insert(full_name, id);
-        planned_models.push((id, model));
-    }
-    for (full_name, enumeration) in enums {
-        let id = table.alloc_id();
-        full_name_to_id.insert(full_name, id);
-        planned_enums.push((id, enumeration));
-    }
-    for (full_name, flag_set) in flags {
-        let id = table.alloc_id();
-        full_name_to_id.insert(full_name, id);
-        planned_flags.push((id, flag_set));
-    }
-    for (full_name, variant) in variants {
-        let id = table.alloc_id();
-        full_name_to_id.insert(full_name, id);
-        planned_variants.push((id, variant));
-    }
-
-    // Pass 2: compute refs + insert.
-    for (id, service) in planned_services {
-        let refs = service_refs(&service, &full_name_to_id);
-        let name = Name::new(&service.name);
-        table.insert(Symbol {
-            id,
-            name,
-            refs,
-            kind: WitSymbolKind::Service(service),
-        });
-    }
-    for (id, model) in planned_models {
-        let refs = model_refs(&model, &full_name_to_id);
-        let name = Name::new(&model.name);
-        table.insert(Symbol {
-            id,
-            name,
-            refs,
-            kind: WitSymbolKind::Model(model),
-        });
-    }
-    for (id, enumeration) in planned_enums {
-        let name = Name::new(&enumeration.name);
-        table.insert(Symbol {
-            id,
-            name,
-            refs: Vec::new(),
-            kind: WitSymbolKind::Enum(enumeration),
-        });
-    }
-    for (id, flag_set) in planned_flags {
-        let name = Name::new(&flag_set.name);
-        table.insert(Symbol {
-            id,
-            name,
-            refs: Vec::new(),
-            kind: WitSymbolKind::Flags(flag_set),
-        });
-    }
-    for (id, variant) in planned_variants {
-        let refs = variant_refs(&variant, &full_name_to_id);
-        let name = Name::new(&variant.name);
-        table.insert(Symbol {
-            id,
-            name,
-            refs,
-            kind: WitSymbolKind::Variant(variant),
-        });
-    }
-
-    table
-}
-
-/// Reconstruct the [`ApiPlan`] from a symbol table — the inverse of
-/// [`plan_to_symbols`].
-///
-/// [`plan_to_symbols`] moves each `Planned*` intact into a symbol's `kind` and
-/// allocates ids in the fixed order services -> models -> enums -> flags ->
-/// variants, each group in its source [`IndexMap`] order. Iterating the table
-/// in id order (`SymbolTable::iter`) therefore replays that order, and each
-/// collection's [`IndexMap`] key is the item's own `info.full_name` (the key
-/// the plan was built with — see `build_api_plan`). So this round-trips the
-/// plan exactly: the WIT emitter reconstructs the plan it needs straight from
-/// the IR, and the base never sees an `ApiPlan`.
-pub(crate) fn symbols_to_plan(ir: &IR<WitSymbolKind>) -> ApiPlan {
-    let mut plan = ApiPlan::default();
-    for symbol in ir.symbols.iter() {
-        match &symbol.kind {
-            WitSymbolKind::Service(service) => plan.services.push(service.clone()),
-            WitSymbolKind::Model(model) => {
-                plan.models.insert(model.info.full_name.clone(), model.clone());
-            }
-            WitSymbolKind::Enum(enumeration) => {
-                plan.enums
-                    .insert(enumeration.info.full_name.clone(), enumeration.clone());
-            }
-            WitSymbolKind::Flags(flag_set) => {
-                plan.flags
-                    .insert(flag_set.info.full_name.clone(), flag_set.clone());
-            }
-            WitSymbolKind::Variant(variant) => {
-                plan.variants
-                    .insert(variant.info.full_name.clone(), variant.clone());
-            }
-        }
-    }
-    plan
-}
-
-/// Push `id` onto `out` only if it is not already present (dedup preserving
-/// first-seen order).
-fn push_unique(out: &mut Vec<SymbolId>, id: SymbolId) {
-    if !out.contains(&id) {
-        out.push(id);
-    }
-}
-
-/// Resolve `full_name` to a `SymbolId` (if present in `map`) and push it.
-///
-/// References whose `full_name` is not in the table (replacements, externals,
-/// unknown/proto types not planned) are silently skipped.
-fn push_full_name(
-    map: &std::collections::BTreeMap<String, SymbolId>,
-    full_name: &str,
-    out: &mut Vec<SymbolId>,
-) {
-    if let Some(id) = map.get(full_name) {
-        push_unique(out, *id);
-    }
-}
-
-fn value_type_refs(
-    value_type: &PlannedValueType,
-    map: &std::collections::BTreeMap<String, SymbolId>,
-    out: &mut Vec<SymbolId>,
-) {
-    match value_type {
-        PlannedValueType::Message(message) => {
-            push_full_name(map, &message.info.full_name, out);
-        }
-        PlannedValueType::Enum(enum_type) => {
-            if let Some(info) = &enum_type.info {
-                push_full_name(map, &info.full_name, out);
-            }
-        }
-        PlannedValueType::Flags(flags_type) => {
-            push_full_name(map, &flags_type.info.full_name, out);
-        }
-        PlannedValueType::Variant(variant_type) => {
-            push_full_name(map, &variant_type.info.full_name, out);
-        }
-        PlannedValueType::Tuple(items) => {
-            for item in items {
-                value_type_refs(item, map, out);
-            }
-        }
-        PlannedValueType::Result { ok, err } => {
-            if let Some(ok) = ok {
-                value_type_refs(ok, map, out);
-            }
-            if let Some(err) = err {
-                value_type_refs(err, map, out);
-            }
-        }
-        PlannedValueType::External { fallback, .. } => {
-            value_type_refs(fallback, map, out);
-        }
-        PlannedValueType::Scalar(_) | PlannedValueType::Unknown => {}
-    }
-}
-
-fn field_kind_refs(
-    kind: &PlannedFieldKind,
-    map: &std::collections::BTreeMap<String, SymbolId>,
-    out: &mut Vec<SymbolId>,
-) {
-    match kind {
-        PlannedFieldKind::Singular(value_type) | PlannedFieldKind::Repeated(value_type) => {
-            value_type_refs(value_type, map, out);
-        }
-        PlannedFieldKind::Map { key, value } => {
-            value_type_refs(key, map, out);
-            value_type_refs(value, map, out);
-        }
-    }
-}
-
-fn model_refs(
-    model: &PlannedModel,
-    map: &std::collections::BTreeMap<String, SymbolId>,
-) -> Vec<SymbolId> {
-    let mut refs = Vec::new();
-    for field in &model.fields {
-        field_kind_refs(&field.kind, map, &mut refs);
-    }
-    for field in &model.sourced_fields {
-        field_kind_refs(&field.kind, map, &mut refs);
-    }
-    refs
-}
-
-fn service_refs(
-    service: &PlannedService,
-    map: &std::collections::BTreeMap<String, SymbolId>,
-) -> Vec<SymbolId> {
-    let mut refs = Vec::new();
-    for operation in &service.operations {
-        push_full_name(map, &operation.input.info.full_name, &mut refs);
-        match &operation.output {
-            PlannedOperationOutput::Message(message) => {
-                push_full_name(map, &message.info.full_name, &mut refs);
-            }
-            // TODO: resource refs when resources become symbols
-            PlannedOperationOutput::Resource { .. } | PlannedOperationOutput::None => {}
-        }
-    }
-    refs
-}
-
-fn variant_refs(
-    variant: &PlannedVariant,
-    map: &std::collections::BTreeMap<String, SymbolId>,
-) -> Vec<SymbolId> {
-    let mut refs = Vec::new();
-    for case in &variant.cases {
-        if let Some(payload) = &case.payload {
-            value_type_refs(payload, map, &mut refs);
-        }
-    }
-    refs
 }
 
 #[cfg(test)]
@@ -361,10 +77,9 @@ mod tests {
 
     use prost_types::FileDescriptorSet;
 
-    use super::{WitSymbolKind, plan_to_symbols};
-    use crate::api_plan::build_api_plan;
-    use crate::descriptors::DescriptorIndex;
     use crate::Language;
+    use crate::api_plan::{WitSymbolKind, build_api_plan};
+    use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
 
     const INLINE_WIT: &str = r#"
@@ -399,8 +114,7 @@ interface user-service {
                 .unwrap();
         let descriptors =
             DescriptorIndex::from_descriptor_set(FileDescriptorSet { file: Vec::new() }).unwrap();
-        let plan = build_api_plan(&spec, &descriptors).unwrap();
-        plan_to_symbols(plan)
+        build_api_plan(&spec, &descriptors).unwrap()
     }
 
     #[test]

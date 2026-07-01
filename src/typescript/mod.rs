@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use prost_types::FieldDescriptorProto;
 
 use crate::api_plan::{
-    ApiPlan, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFlags, PlannedMessageSource,
+    WitSymbols, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFlags, PlannedMessageSource,
     PlannedMessageType, PlannedOperation, PlannedOperationOutput,
     PlannedOperationResourceFieldBinding, PlannedOperationResourceReturn, PlannedResource,
     PlannedResourceMethod, PlannedResourceMethodBindingSpec, PlannedResourceMethodResultKind,
@@ -31,7 +31,7 @@ const TYPESCRIPT_FORMAT_LINE_LENGTH: usize = 88;
 const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to change.";
 
 pub(crate) fn generate(
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     support_fragments: &[SupportFragmentSpec],
 ) -> Result<GeneratedFiles> {
     reject_support_namespaces(Language::TypeScript, support_fragments)?;
@@ -41,8 +41,7 @@ pub(crate) fn generate(
     let mut variants = IndexMap::new();
     let mut models = IndexMap::new();
     let services = api_plan
-        .services
-        .iter()
+        .services()
         .map(|service| {
             let operations = service
                 .operations
@@ -107,15 +106,15 @@ pub(crate) fn generate(
     ))
 }
 
-fn collect_typescript_language_imports(api_plan: &ApiPlan) -> Vec<LanguageImportSpec> {
+fn collect_typescript_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportSpec> {
     let mut imports = BTreeSet::new();
-    for enumeration in api_plan.enums.values() {
+    for enumeration in api_plan.enums() {
         collect_type_info_imports(&enumeration.info, &mut imports);
     }
-    for flags in api_plan.flags.values() {
+    for flags in api_plan.flags() {
         collect_type_info_imports(&flags.info, &mut imports);
     }
-    for variant in api_plan.variants.values() {
+    for variant in api_plan.variants() {
         collect_type_info_imports(&variant.info, &mut imports);
         for case in &variant.cases {
             if let Some(payload) = &case.payload {
@@ -123,7 +122,7 @@ fn collect_typescript_language_imports(api_plan: &ApiPlan) -> Vec<LanguageImport
             }
         }
     }
-    for model in api_plan.models.values() {
+    for model in api_plan.models() {
         collect_type_info_imports(&model.info, &mut imports);
         for annotation in model.generated_model.field_annotations.values() {
             collect_typescript_import(annotation, true, false, &mut imports);
@@ -144,7 +143,7 @@ fn collect_typescript_language_imports(api_plan: &ApiPlan) -> Vec<LanguageImport
             collect_value_type_imports_from_kind(&sourced_field.kind, &mut imports);
         }
     }
-    for service in &api_plan.services {
+    for service in api_plan.services() {
         for operation in &service.operations {
             collect_message_type_imports(&operation.input, &mut imports);
             match &operation.output {
@@ -425,7 +424,7 @@ fn reject_support_namespaces(
 
 fn ensure_resource_field_types(
     resource: &PlannedResource,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -443,7 +442,7 @@ fn ensure_resource_field_types(
 
 fn ensure_resource_field_type(
     kind: &PlannedFieldKind,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1077,7 +1076,7 @@ fn typescript_to_proto_converter(name: &str, replacement: &TypeReplacementSpec) 
 
 fn resolve_operation<'a>(
     operation: &'a PlannedOperation,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1196,7 +1195,7 @@ fn operation_type_ref(message: &PlannedMessageType) -> String {
 
 fn resolve_output_annotation(
     message: &PlannedMessageType,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1214,7 +1213,7 @@ fn resolve_output_annotation(
 
 fn resolve_message_value_conversion(
     message: &PlannedMessageType,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1263,15 +1262,14 @@ fn resolve_message_value_conversion(
 
 fn ensure_rendered_model(
     message: &PlannedMessageType,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
     let planned_model = api_plan
-        .models
-        .get(&message.info.full_name)
+        .model(&message.info.full_name)
         .unwrap_or_else(|| panic!("planned model should exist for {}", message.info.full_name));
 
     if models.contains_key(&message.info.full_name) {
@@ -1432,7 +1430,7 @@ fn ensure_rendered_flags(
 
 fn ensure_rendered_variant(
     planned_variant: &PlannedVariant,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1470,7 +1468,7 @@ fn ensure_rendered_variant(
 
 fn build_field(
     field: &PlannedField,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1730,7 +1728,7 @@ fn build_flattened_message_field(
     field: &PlannedField,
     generated_field_name: &str,
     proto_field_name: &str,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1739,7 +1737,7 @@ fn build_flattened_message_field(
     let PlannedFieldKind::Singular(PlannedValueType::Message(message_type)) = &field.kind else {
         return None;
     };
-    let nested_planned_model = api_plan.models.get(&message_type.info.full_name)?;
+    let nested_planned_model = api_plan.model(&message_type.info.full_name)?;
     if !nested_planned_model.flatten_in_api {
         return None;
     }
@@ -1832,7 +1830,7 @@ fn flattened_message_to_proto_expr(required: bool, fields: &[RenderedFlattenedFi
 
 fn build_sourced_field(
     field: &PlannedSourcedField,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1893,7 +1891,7 @@ fn typescript_field_annotation(field: &PlannedField, default_annotation: String)
 
 fn resolve_planned_value_type(
     value_type: &PlannedValueType,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1952,7 +1950,7 @@ fn resolve_planned_value_type(
                     }),
                 }
             } else if let (Some(info), Some(name)) = (&enum_type.info, &enum_type.name) {
-                if let Some(planned_enum) = api_plan.enums.get(&info.full_name) {
+                if let Some(planned_enum) = api_plan.enum_(&info.full_name) {
                     ensure_rendered_enum(planned_enum, enums);
                 }
                 ResolvedFieldType {
@@ -1973,7 +1971,7 @@ fn resolve_planned_value_type(
             }
         }
         PlannedValueType::Flags(flags_type) => {
-            if let Some(planned_flags) = api_plan.flags.get(&flags_type.info.full_name) {
+            if let Some(planned_flags) = api_plan.flags_(&flags_type.info.full_name) {
                 ensure_rendered_flags(planned_flags, flags);
             }
             ResolvedFieldType {
@@ -1985,7 +1983,7 @@ fn resolve_planned_value_type(
             }
         }
         PlannedValueType::Variant(variant_type) => {
-            if let Some(planned_variant) = api_plan.variants.get(&variant_type.info.full_name) {
+            if let Some(planned_variant) = api_plan.variant_(&variant_type.info.full_name) {
                 ensure_rendered_variant(planned_variant, api_plan, enums, flags, variants, models);
             }
             ResolvedFieldType {
@@ -2487,7 +2485,7 @@ fn render_module_files(
     language_imports: &[LanguageImportSpec],
     support_source: Option<&str>,
     model_registrations: &str,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
 ) -> GeneratedFiles {
     let support_source = support_source.filter(|source| !source.trim().is_empty());
     let support_exports = support_source.map(support_exports);
@@ -3010,7 +3008,7 @@ fn render_resources_module(
     _requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     support_exports: Option<&SupportExports>,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
 ) -> String {
     let mut body = String::new();
     for service in services {
@@ -3214,7 +3212,7 @@ fn render_required_field(output: &mut String, exported: bool) {
 fn render_nexus_type_registrations(
     output: &mut String,
     services: &[RenderedService<'_>],
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
 ) {
     let has_resources = services.iter().any(|service| !service.resources.is_empty());
     if !has_resources {
@@ -3272,12 +3270,12 @@ fn render_nexus_type_registrations(
 /// Renders `registerNexusType` calls for every WIT-native rendered model so
 /// the json/nexus runtime can encode and decode them type-directedly.
 fn render_model_schema_registrations(
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     models: &IndexMap<String, RenderedModel>,
 ) -> String {
     let mut output = String::new();
     for full_name in models.keys() {
-        let Some(planned) = api_plan.models.get(full_name) else {
+        let Some(planned) = api_plan.model(full_name) else {
             continue;
         };
         // Proto-backed models travel as protobuf, not json/nexus.
@@ -3311,7 +3309,7 @@ fn render_model_schema_registrations(
 }
 
 /// Renders the wire schema literal for a planned field kind.
-fn typescript_field_kind_schema(kind: &PlannedFieldKind, api_plan: &ApiPlan) -> String {
+fn typescript_field_kind_schema(kind: &PlannedFieldKind, api_plan: &WitSymbols) -> String {
     match kind {
         PlannedFieldKind::Singular(value) => typescript_wire_schema(value, api_plan),
         PlannedFieldKind::Repeated(value) => format!(
@@ -3327,7 +3325,7 @@ fn typescript_field_kind_schema(kind: &PlannedFieldKind, api_plan: &ApiPlan) -> 
 
 /// Renders the wire schema literal for a planned value type, used by the
 /// json/nexus runtime's type-directed encoder/decoder.
-fn typescript_wire_schema(value: &PlannedValueType, api_plan: &ApiPlan) -> String {
+fn typescript_wire_schema(value: &PlannedValueType, api_plan: &WitSymbols) -> String {
     match value {
         PlannedValueType::Scalar(PlannedScalarType::Bytes) => "{ kind: \"bytes\" }".to_string(),
         // Enums and flags are numbers on the wire.
@@ -3336,8 +3334,7 @@ fn typescript_wire_schema(value: &PlannedValueType, api_plan: &ApiPlan) -> Strin
         }
         PlannedValueType::Variant(variant_type) => {
             let cases = api_plan
-                .variants
-                .get(&variant_type.info.full_name)
+                .variant_(&variant_type.info.full_name)
                 .map(|planned_variant| {
                     planned_variant
                         .cases

@@ -5,7 +5,7 @@ use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use indexmap::IndexMap;
 
 use crate::api_plan::{
-    ApiPlan, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFieldRole, PlannedFlags,
+    WitSymbols, PlannedEnum, PlannedField, PlannedFieldKind, PlannedFieldRole, PlannedFlags,
     PlannedMessageSource, PlannedMessageType, PlannedOperation, PlannedOperationOutput,
     PlannedOperationResourceFieldBinding, PlannedOperationResourceReturn, PlannedResource,
     PlannedResourceMethod, PlannedResourceMethodBindingSpec, PlannedResourceMethodResultKind,
@@ -27,7 +27,7 @@ const PYTHON_FORMAT_LINE_LENGTH: usize = 88;
 const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to change.";
 
 pub(crate) fn generate(
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     support_fragments: &[SupportFragmentSpec],
 ) -> Result<GeneratedFiles> {
     reject_support_namespaces(Language::Python, support_fragments)?;
@@ -37,8 +37,7 @@ pub(crate) fn generate(
     let mut variants = IndexMap::new();
     let mut models = IndexMap::new();
     let services = api_plan
-        .services
-        .iter()
+        .services()
         .map(|service| {
             let operations = service
                 .operations
@@ -91,15 +90,15 @@ pub(crate) fn generate(
     )
 }
 
-fn collect_python_language_imports(api_plan: &ApiPlan) -> Vec<LanguageImportSpec> {
+fn collect_python_language_imports(api_plan: &WitSymbols) -> Vec<LanguageImportSpec> {
     let mut imports = BTreeSet::new();
-    for enumeration in api_plan.enums.values() {
+    for enumeration in api_plan.enums() {
         collect_type_info_imports(&enumeration.info, &mut imports);
     }
-    for flags in api_plan.flags.values() {
+    for flags in api_plan.flags() {
         collect_type_info_imports(&flags.info, &mut imports);
     }
-    for variant in api_plan.variants.values() {
+    for variant in api_plan.variants() {
         collect_type_info_imports(&variant.info, &mut imports);
         for case in &variant.cases {
             if let Some(payload) = &case.payload {
@@ -107,7 +106,7 @@ fn collect_python_language_imports(api_plan: &ApiPlan) -> Vec<LanguageImportSpec
             }
         }
     }
-    for model in api_plan.models.values() {
+    for model in api_plan.models() {
         collect_type_info_imports(&model.info, &mut imports);
         for annotation in model.generated_model.field_annotations.values() {
             collect_python_import(annotation, &mut imports);
@@ -128,7 +127,7 @@ fn collect_python_language_imports(api_plan: &ApiPlan) -> Vec<LanguageImportSpec
             collect_value_type_imports_from_kind(&sourced_field.kind, &mut imports);
         }
     }
-    for service in &api_plan.services {
+    for service in api_plan.services() {
         for operation in &service.operations {
             collect_message_type_imports(&operation.input, &mut imports);
             match &operation.output {
@@ -429,7 +428,7 @@ fn reject_support_namespaces(
 
 fn ensure_resource_field_types(
     resource: &PlannedResource,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -447,7 +446,7 @@ fn ensure_resource_field_types(
 
 fn ensure_resource_field_type(
     kind: &PlannedFieldKind,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -929,7 +928,7 @@ fn python_result_annotation(ok: Option<String>, err: Option<String>) -> String {
 
 fn resolve_operation<'a>(
     operation: &'a PlannedOperation,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1062,7 +1061,7 @@ fn operation_service_ref(
 
 fn resolve_output_annotation(
     message: &PlannedMessageType,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1086,14 +1085,13 @@ fn resolve_output_annotation(
 fn build_unpacked_input(
     input_full_name: &str,
     models: &IndexMap<String, RenderedModel>,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
 ) -> Result<RenderedUnpackedInput> {
     let model = models
         .get(input_full_name)
         .expect("input model should be rendered before building unpacked input");
     let planned_model = api_plan
-        .models
-        .get(input_full_name)
+        .model(input_full_name)
         .expect("planned input model should exist");
 
     let mut parameters = Vec::new();
@@ -1223,13 +1221,13 @@ fn build_flattened_message(
     planned_field: &PlannedField,
     rendered_field: &RenderedField,
     models: &IndexMap<String, RenderedModel>,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
 ) -> Option<RenderedFlattenedMessage> {
     let PlannedFieldKind::Singular(PlannedValueType::Message(message_type)) = &planned_field.kind
     else {
         return None;
     };
-    let nested_planned_model = api_plan.models.get(&message_type.info.full_name)?;
+    let nested_planned_model = api_plan.model(&message_type.info.full_name)?;
     if !nested_planned_model.flatten_in_api {
         return None;
     }
@@ -1278,7 +1276,7 @@ fn build_flattened_message(
 fn resolve_message_value_conversion(
     message: &PlannedMessageType,
     proto_ref_override: Option<&str>,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1338,15 +1336,14 @@ fn resolve_message_value_conversion(
 fn ensure_rendered_model(
     message: &PlannedMessageType,
     proto_ref_override: Option<&str>,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) {
     let planned_model = api_plan
-        .models
-        .get(&message.info.full_name)
+        .model(&message.info.full_name)
         .unwrap_or_else(|| panic!("planned model should exist for {}", message.info.full_name));
 
     if let Some(existing) = models.get_mut(&message.info.full_name) {
@@ -1456,7 +1453,7 @@ fn ensure_rendered_flags(
 
 fn ensure_rendered_variant(
     planned_variant: &PlannedVariant,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1488,7 +1485,7 @@ fn ensure_rendered_variant(
 
 fn build_field(
     field: &PlannedField,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1628,7 +1625,7 @@ fn build_field(
 
 fn build_sourced_field(
     field: &PlannedSourcedField,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1772,7 +1769,7 @@ fn python_function_annotation_from_args(
 
 fn resolve_planned_value_type(
     value_type: &PlannedValueType,
-    api_plan: &ApiPlan,
+    api_plan: &WitSymbols,
     enums: &mut IndexMap<String, RenderedEnum>,
     flags: &mut IndexMap<String, RenderedFlags>,
     variants: &mut IndexMap<String, RenderedVariant>,
@@ -1831,7 +1828,7 @@ fn resolve_planned_value_type(
                     }),
                 }
             } else if let (Some(info), Some(name)) = (&enum_type.info, &enum_type.name) {
-                if let Some(planned_enum) = api_plan.enums.get(&info.full_name) {
+                if let Some(planned_enum) = api_plan.enum_(&info.full_name) {
                     ensure_rendered_enum(planned_enum, enums);
                 }
                 let mut imports = PythonImports::default();
@@ -1856,7 +1853,7 @@ fn resolve_planned_value_type(
             }
         }
         PlannedValueType::Flags(flags_type) => {
-            if let Some(planned_flags) = api_plan.flags.get(&flags_type.info.full_name) {
+            if let Some(planned_flags) = api_plan.flags_(&flags_type.info.full_name) {
                 ensure_rendered_flags(planned_flags, flags);
             }
             ResolvedFieldType {
@@ -1868,7 +1865,7 @@ fn resolve_planned_value_type(
             }
         }
         PlannedValueType::Variant(variant_type) => {
-            if let Some(planned_variant) = api_plan.variants.get(&variant_type.info.full_name) {
+            if let Some(planned_variant) = api_plan.variant_(&variant_type.info.full_name) {
                 ensure_rendered_variant(planned_variant, api_plan, enums, flags, variants, models);
             }
             ResolvedFieldType {

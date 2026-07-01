@@ -1,7 +1,8 @@
 mod api_plan;
-// This add-only module (Step 2) introduces the WIT symbol-table loader. It is
-// not yet wired into the generation pipeline, so its items read as dead code
-// until a later step consumes it; the tests exercise `plan_to_symbols`.
+// The WIT `Loader` (Step 2). `build_api_plan` (the symbol-table lowering it
+// wraps) is already on the production path via `generator`, but the `WitLoader`
+// type itself is not yet wired into the pipeline (Step 4 does that), so it reads
+// as dead code until then; the tests exercise the symbol lowering.
 #[allow(dead_code)]
 mod wit_loader;
 // The WIT emitters (Step 3): render straight from `IR<WitSymbolKind>` through
