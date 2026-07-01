@@ -216,13 +216,13 @@ fn cli_generates_typescript_support_file_from_parameter() {
 fn typescript_rejects_support_namespace() {
     let root = project_root();
     let spec = nex_gen::spec::ApiSpec::load_for_language_with_inputs(
-        nex_gen::language::Language::TypeScript,
+        nex_gen::Language::TypeScript,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
     )
     .unwrap();
     let descriptors = nex_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
     let err = generate_files(
-        nex_gen::language::Language::TypeScript,
+        nex_gen::Language::TypeScript,
         &spec,
         &descriptors,
         &SupportFiles {
@@ -262,7 +262,7 @@ fn typescript_example_suite_typechecks_and_tests() {
 fn typescript_renders_required_fields_and_custom_message_types() {
     let root = project_root();
     let rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::TypeScript,
+        nex_gen::Language::TypeScript,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
@@ -435,7 +435,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!rendered.contains("from './temporal_model_converters.ts'"));
 
     let start_workflow_rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::TypeScript,
+        nex_gen::Language::TypeScript,
         &example_input_paths(&root, START_WORKFLOW_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
@@ -447,7 +447,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!start_workflow_rendered.contains("export interface CancelWorkflowResponse {}"));
 
     let type_roundtrip_rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::TypeScript,
+        nex_gen::Language::TypeScript,
         &example_input_paths(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )

@@ -16,7 +16,7 @@ use crate::api_plan::{
 };
 use crate::error::{Error, Result};
 use crate::generator::{GeneratedFiles, ModelCapabilities};
-use crate::language::Language;
+use crate::Language;
 use crate::resources::{
     RequestPlan, RequestPlanSource, ResolvedResourceBindingSource, render_request_plan,
 };
@@ -4971,7 +4971,7 @@ mod tests {
     use crate::SupportFiles;
     use crate::descriptors::DescriptorIndex;
     use crate::generator::{GeneratedOutputLayout, generate_files, generate_source};
-    use crate::language::Language;
+    use crate::Language;
     use crate::spec::{ApiSpec, SupportFragmentSpec};
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {

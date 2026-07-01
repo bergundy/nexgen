@@ -12,7 +12,7 @@ use crate::api_plan::{
 };
 use crate::error::{Error, Result};
 use crate::generator::GeneratedFiles;
-use crate::language::Language;
+use crate::Language;
 use crate::resources::{RequestPlan, RequestPlanSource, ResolvedResourceBindingSource};
 use crate::spec::{
     AuthoredFieldTypeSpec, FunctionFieldSpec, SupportFragmentSpec, TypeReplacementSpec,
@@ -3189,7 +3189,7 @@ mod tests {
 
     use super::{dotnet_proto_type_name_fallback, dotnet_proto_type_name_for_info};
     use crate::api_plan::PlannedTypeInfo;
-    use crate::language::Language;
+    use crate::Language;
     use crate::spec::LanguageStringSpec;
 
     #[test]

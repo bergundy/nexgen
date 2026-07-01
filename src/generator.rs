@@ -6,7 +6,7 @@ use crate::api_plan::build_api_plan;
 use crate::descriptors::DescriptorIndex;
 use crate::dotnet;
 use crate::error::{Error, Result};
-use crate::language::Language;
+use crate::Language;
 use crate::python;
 use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
@@ -151,7 +151,7 @@ mod tests {
 
     use crate::SupportFiles;
     use crate::descriptors::DescriptorIndex;
-    use crate::language::Language;
+    use crate::Language;
     use crate::spec::ApiSpec;
 
     use super::generate_files;

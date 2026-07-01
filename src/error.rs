@@ -4,7 +4,7 @@ use std::process::ExitStatus;
 
 use thiserror::Error;
 
-use crate::language::Language;
+use crate::Language;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

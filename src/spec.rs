@@ -11,7 +11,7 @@ use wit_parser::{
 };
 
 use crate::error::{Error, Result};
-use crate::language::Language;
+use crate::Language;
 
 type PackageOrigins = BTreeMap<PackageId, PathBuf>;
 
@@ -4055,7 +4055,7 @@ mod tests {
 
     use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
-    use crate::language::Language;
+    use crate::Language;
 
     use super::{
         ApiSpec, AuthoredFieldTypeSpec, FunctionArgSpec, FunctionArgsSpec, directive,

@@ -10,7 +10,6 @@ pub mod descriptors;
 pub mod dotnet;
 pub mod error;
 pub mod generator;
-pub mod language;
 pub mod python;
 pub mod resources;
 pub mod spec;
@@ -26,8 +25,9 @@ use descriptors::DescriptorIndex;
 use error::Result;
 use generator::{GeneratedFiles, GeneratedOutputLayout, generate_files};
 use heck::ToSnakeCase;
-use language::Language;
 use spec::{ApiSpec, SupportFragmentSpec, write_prepared_wit_directory};
+
+pub use nex_gen_codegen::Language;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SupportFiles {
@@ -627,7 +627,7 @@ mod tests {
     use std::path::Path;
 
     use super::{format_formatter_command, formatter_command, infer_dotnet_namespace};
-    use crate::language::Language;
+    use crate::Language;
 
     #[test]
     fn chooses_python_formatter_command() {

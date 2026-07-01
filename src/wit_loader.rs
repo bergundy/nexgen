@@ -9,14 +9,13 @@
 
 use std::path::PathBuf;
 
-use nex_gen_codegen::{IR, Language as BaseLanguage, Name, SchemaType, Symbol, SymbolId, SymbolTable};
+use nex_gen_codegen::{IR, Language, Name, SchemaType, Symbol, SymbolId, SymbolTable};
 
 use crate::api_plan::{
     ApiPlan, PlannedEnum, PlannedFieldKind, PlannedFlags, PlannedModel, PlannedOperationOutput,
     PlannedService, PlannedValueType, PlannedVariant, build_api_plan,
 };
 use crate::descriptors::DescriptorIndex;
-use crate::language::Language;
 use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
 use crate::validation::validate_type_overrides;
@@ -53,21 +52,6 @@ impl WitLoader {
     }
 }
 
-/// Map the base crate's `Language` onto this crate's `Language`.
-///
-/// The two enums are distinct types (the base re-declares its own copy — see
-/// `crates/nex-gen-codegen/src/language.rs`), so we convert explicitly.
-fn to_crate_language(language: BaseLanguage) -> Language {
-    match language {
-        BaseLanguage::Dotnet => Language::Dotnet,
-        BaseLanguage::Go => Language::Go,
-        BaseLanguage::Java => Language::Java,
-        BaseLanguage::Python => Language::Python,
-        BaseLanguage::Ruby => Language::Ruby,
-        BaseLanguage::TypeScript => Language::TypeScript,
-    }
-}
-
 impl nex_gen_codegen::Loader for WitLoader {
     type Kind = WitSymbolKind;
 
@@ -75,8 +59,7 @@ impl nex_gen_codegen::Loader for WitLoader {
         SchemaType::Wit
     }
 
-    fn load(&self, language: BaseLanguage) -> nex_gen_codegen::Result<IR<WitSymbolKind>> {
-        let language = to_crate_language(language);
+    fn load(&self, language: Language) -> nex_gen_codegen::Result<IR<WitSymbolKind>> {
         let spec = ApiSpec::load_for_language_with_inputs(language, &self.input_paths)
             .map_err(|error| nex_gen_codegen::Error::Load {
                 message: error.to_string(),
@@ -345,7 +328,7 @@ mod tests {
     use super::{WitSymbolKind, plan_to_symbols};
     use crate::api_plan::build_api_plan;
     use crate::descriptors::DescriptorIndex;
-    use crate::language::Language;
+    use crate::Language;
     use crate::spec::ApiSpec;
 
     const INLINE_WIT: &str = r#"

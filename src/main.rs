@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use nex_gen::language::Language;
+use nex_gen::Language;
 use nex_gen::{
     AddRpcRequest, BuildExamplesRequest, DebugWitDirRequest, GenerateRequest, add_rpc_to_file,
     build_examples, debug_wit_dir_to_file, generate_to_file,

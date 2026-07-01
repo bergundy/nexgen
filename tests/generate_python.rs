@@ -287,13 +287,13 @@ fn python_example_suite_type_checks_and_runs() {
 fn python_request_models_are_write_only() {
     let root = project_root();
     let spec = nex_gen::spec::ApiSpec::load_for_language_with_inputs(
-        nex_gen::language::Language::Python,
+        nex_gen::Language::Python,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
     )
     .unwrap();
     let descriptors = nex_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
     let generated = generate_files(
-        nex_gen::language::Language::Python,
+        nex_gen::Language::Python,
         &spec,
         &descriptors,
         &nex_gen::SupportFiles::default(),
@@ -305,7 +305,7 @@ fn python_request_models_are_write_only() {
         .get(&PathBuf::from("models.py"))
         .expect("Python package should include models.py");
     let rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::Python,
+        nex_gen::Language::Python,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
@@ -431,7 +431,7 @@ fn python_request_models_are_write_only() {
     assert!(models.contains("retry_policy_to_proto,"));
 
     let type_roundtrip_rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::Python,
+        nex_gen::Language::Python,
         &example_input_paths(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
@@ -446,13 +446,13 @@ fn python_request_models_are_write_only() {
 fn python_rejects_support_namespace() {
     let root = project_root();
     let spec = nex_gen::spec::ApiSpec::load_for_language_with_inputs(
-        nex_gen::language::Language::Python,
+        nex_gen::Language::Python,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
     )
     .unwrap();
     let descriptors = nex_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
     let err = generate_files(
-        nex_gen::language::Language::Python,
+        nex_gen::Language::Python,
         &spec,
         &descriptors,
         &SupportFiles {

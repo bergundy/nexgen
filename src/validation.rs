@@ -5,7 +5,7 @@ use prost_types::field_descriptor_proto::{Label, Type};
 
 use crate::descriptors::{DescriptorIndex, MessageMetadata};
 use crate::error::{Error, Result};
-use crate::language::Language;
+use crate::Language;
 use crate::python;
 use crate::spec::{
     ApiSpec, AuthoredFieldTypeSpec, GeneratedModelSpec, LanguageStringSpec, TypeOverrideSpec,

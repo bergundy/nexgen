@@ -226,7 +226,7 @@ fn dotnet_example_project_builds() {
 fn dotnet_renders_nexus_service_interface_and_resources() {
     let root = project_root();
     let rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::Dotnet,
+        nex_gen::Language::Dotnet,
         &example_input_paths(&root, TYPE_SHOWCASE_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
@@ -275,7 +275,7 @@ fn dotnet_renders_nexus_service_interface_and_resources() {
 fn dotnet_renders_proto_backed_temporal_types() {
     let root = project_root();
     let rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::Dotnet,
+        nex_gen::Language::Dotnet,
         &example_input_paths(&root, WORKFLOW_SERVICE_EXAMPLE_ID),
         &[descriptor_path(&root)],
     )
@@ -495,7 +495,7 @@ interface workflow-service {
 
     let input_paths = vec![input_path];
     let rendered =
-        generate_to_string_with_inputs(nex_gen::language::Language::Dotnet, &input_paths, &[])
+        generate_to_string_with_inputs(nex_gen::Language::Dotnet, &input_paths, &[])
             .unwrap();
 
     assert!(rendered.contains("namespace Temporalio.Workflows\n{"));

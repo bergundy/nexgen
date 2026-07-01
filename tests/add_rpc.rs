@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nex_gen::add_rpc_to_string;
-use nex_gen::language::Language;
+use nex_gen::Language;
 use nex_gen::spec::ApiSpec;
 
 const PRIMARY_EXAMPLE_PATH: &str = "examples/inputs/workflow-service.wit";

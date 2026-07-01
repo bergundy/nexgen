@@ -14,7 +14,7 @@ use crate::api_plan::{
 };
 use crate::error::{Error, Result};
 use crate::generator::{GeneratedFiles, ModelCapabilities};
-use crate::language::Language;
+use crate::Language;
 use crate::resources::{RequestPlan, ResolvedResourceBindingSource, render_request_plan};
 use crate::spec::{
     AuthoredFieldTypeSpec, FunctionArgsSpec, FunctionFieldSpec, FunctionResultSpec,
@@ -767,7 +767,7 @@ fn python_default_to_proto_name(name: &str) -> String {
 fn python_from_proto_converter(name: &str, replacement: &TypeReplacementSpec) -> String {
     replacement
         .from_proto
-        .for_language(crate::language::Language::Python)
+        .for_language(crate::Language::Python)
         .map(str::to_string)
         .unwrap_or_else(|| python_default_from_proto_name(name))
 }
@@ -775,7 +775,7 @@ fn python_from_proto_converter(name: &str, replacement: &TypeReplacementSpec) ->
 fn python_to_proto_converter(name: &str, replacement: &TypeReplacementSpec) -> String {
     replacement
         .to_proto
-        .for_language(crate::language::Language::Python)
+        .for_language(crate::Language::Python)
         .map(str::to_string)
         .unwrap_or_else(|| python_default_to_proto_name(name))
 }
@@ -973,7 +973,7 @@ fn resolve_operation<'a>(
         .and_then(|transform| {
             transform
                 .type_name
-                .for_language(crate::language::Language::Python)
+                .for_language(crate::Language::Python)
                 .map(str::to_string)
         })
         .or_else(|| {
@@ -1033,7 +1033,7 @@ fn resolve_operation<'a>(
         output_transform_expr: output_transform.and_then(|transform| {
             transform
                 .transform
-                .for_language(crate::language::Language::Python)
+                .for_language(crate::Language::Python)
                 .map(str::to_string)
         }),
         output_resource_return,
@@ -6089,7 +6089,7 @@ mod tests {
     use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
     use crate::generator::{GeneratedOutputLayout, generate_files, generate_source};
-    use crate::language::Language;
+    use crate::Language;
     use crate::spec::{ApiSpec, LanguageImportSpec, LanguageImportStyle};
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {
