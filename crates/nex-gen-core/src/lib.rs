@@ -38,7 +38,7 @@ pub mod render;
 pub mod traits;
 
 pub use assemble::assemble;
-pub use emit::{EmittedFile, Module};
+pub use emit::EmittedFile;
 pub use error::{Error, Result};
 pub use generator::Generator;
 pub use ir::{IR, LoadOutput, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
