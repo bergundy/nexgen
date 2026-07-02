@@ -1,7 +1,7 @@
 mod wit_symbols;
 // The WIT `Loader`: validates inputs and lowers them into `IR<WitSymbolKind>`
 // (+ warnings). Wired into the CLI generation path via the base `Generator`
-// (see `generate_via_generator`).
+// (see `generate`).
 mod wit_loader;
 // The WIT emitters: render straight from `IR<WitSymbolKind>` through the base
 // `assemble` pipeline. Wired into the CLI generation path via the `Generator`;
@@ -90,7 +90,7 @@ pub fn generate_to_string_with_inputs_and_support(
     support_paths: &[PathBuf],
 ) -> Result<String> {
     let generated =
-        generate_via_generator(language, input_paths, descriptor_paths, support_paths)?;
+        generate(language, input_paths, descriptor_paths, support_paths)?;
     print_warnings(&generated);
     Ok(match generated.layout {
         GeneratedOutputLayout::SingleFile => generated
@@ -102,7 +102,7 @@ pub fn generate_to_string_with_inputs_and_support(
 }
 
 pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
-    let generated = generate_via_generator(
+    let generated = generate(
         request.language,
         &request.input_paths,
         &request.descriptor_paths,
@@ -124,7 +124,7 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
 /// the type symbols and the support-fragment symbols (spec-embedded plus any
 /// external `--support` files), and the language emitter renders the resulting
 /// `IR<WitSymbolKind>` through [`assemble`](nex_gen_codegen::assemble).
-fn generate_via_generator(
+fn generate(
     language: Language,
     input_paths: &[PathBuf],
     descriptor_paths: &[PathBuf],
@@ -136,12 +136,11 @@ fn generate_via_generator(
     use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
     use wit_loader::WitLoader;
 
-    let emitter: Box<dyn Emitter<WitSymbolKind>> = match language {
-        Language::Python => Box::new(PythonEmitter::new()),
-        Language::TypeScript => Box::new(TypeScriptEmitter::new()),
-        Language::Dotnet => Box::new(DotnetEmitter::new()),
-        language => return Err(error::Error::UnsupportedLanguage { language }),
-    };
+    let emitters: [Box<dyn Emitter<WitSymbolKind>>; 3] = [
+        Box::new(PythonEmitter::new()),
+        Box::new(TypeScriptEmitter::new()),
+        Box::new(DotnetEmitter::new()),
+    ];
 
     let generator = Generator::new(
         WitLoader::new(
@@ -149,13 +148,10 @@ fn generate_via_generator(
             descriptor_paths.to_vec(),
             support_paths.to_vec(),
         ),
-        [emitter],
+        emitters,
     );
 
-    generator
-        .generate(language)
-        .expect("emitter registered above")
-        .map_err(error::Error::from)
+    generator.generate(language).map_err(error::Error::from)
 }
 
 pub fn add_rpc_to_string(

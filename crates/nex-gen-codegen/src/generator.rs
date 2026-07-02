@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use crate::assemble::assemble;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::language::Language;
 use crate::output::GeneratedFiles;
 use crate::traits::{Emitter, Loader};
@@ -44,16 +44,18 @@ impl<L: Loader> Generator<L> {
         Self { loader, emitters }
     }
 
-    /// Run the pipeline for `language`, or `None` if no emitter is registered
-    /// for it: load the IR (with warnings), assemble the emitter's files, and
-    /// carry the loader's warnings onto the result.
-    pub fn generate(&self, language: Language) -> Option<Result<GeneratedFiles>> {
-        let emitter = self.emitters.get(&language)?;
-        Some((|| {
-            let loaded = self.loader.load(language)?;
-            let mut generated = assemble(&loaded.ir, emitter.as_ref())?;
-            generated.warnings = loaded.warnings;
-            Ok(generated)
-        })())
+    /// Run the pipeline for `language`: load the IR (with warnings), assemble
+    /// the emitter's files, and carry the loader's warnings onto the result.
+    /// Returns [`Error::UnsupportedLanguage`] if no emitter is registered for
+    /// `language`.
+    pub fn generate(&self, language: Language) -> Result<GeneratedFiles> {
+        let emitter = self
+            .emitters
+            .get(&language)
+            .ok_or(Error::UnsupportedLanguage { language })?;
+        let loaded = self.loader.load(language)?;
+        let mut generated = assemble(&loaded.ir, emitter.as_ref())?;
+        generated.warnings = loaded.warnings;
+        Ok(generated)
     }
 }
