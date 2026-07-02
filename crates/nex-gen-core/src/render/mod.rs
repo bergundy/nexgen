@@ -1,105 +1,41 @@
-//! Core per-language rendering utilities, reused by every emitter.
+//! Per-language rendering utilities, reused by every emitter.
 //!
-//! Two entry points, symmetric with each other: [`render_service`] renders a
-//! service binding (structural logic + per-language formatting), naming I/O
-//! types via a [`NameResolver`] the emitter supplies; [`render_imports`] renders
-//! a file's import block. Both dispatch on [`Language`] into the per-language
-//! submodules ([`python`], [`typescript`], [`dotnet`]). Only **type** rendering
-//! is per-frontend and stays in the front-end crate — service and import
-//! rendering are written once per language here.
+//! Rendering is per-language: each submodule ([`python`], [`typescript`],
+//! [`dotnet`]) exposes its own `render_service` / `render_imports` plus the
+//! minimal `Import` type that language needs, and front-ends call them directly
+//! (there is no cross-language dispatcher — the caller already knows its
+//! language). Service rendering names each operation's I/O type through a
+//! [`NameResolver`] the emitter supplies; type rendering itself stays in the
+//! front-end crate.
 
-mod dotnet;
-mod python;
-mod typescript;
+pub mod dotnet;
+pub mod python;
+pub mod typescript;
 
-use crate::emit::{Import, Module};
-use crate::ir::{Service, SymbolId};
-use crate::language::Language;
+use crate::ir::SymbolId;
 
-/// How the core names and locates a referenced symbol, supplied by the emitter.
+/// How a referrer names a referenced symbol in source, supplied by the emitter.
 ///
-/// The core never inspects the frontend's private type data, so when it
-/// renders a service it asks the emitter (via this resolver) how to name and
-/// import each operation's I/O type by [`SymbolId`].
+/// The core reasons over [`SymbolId`]s, but a front-end that renders a service
+/// already holds each operation's I/O type as a resolved source string. It
+/// keeps those strings on its own per-service model and passes them here so the
+/// per-language `render_service` can name I/O types without inspecting the
+/// front-end's private type data.
 pub trait NameResolver {
     /// How a referrer names the symbol in source (its emit-tier `type_ref`),
     /// e.g. the local or qualified type name.
     fn type_ref(&self, id: SymbolId) -> String;
-
-    /// The module the symbol is placed in (its emit-tier `module`). Used to
-    /// decide same-module vs. cross-module.
-    fn module_of(&self, id: SymbolId) -> Module;
-
-    /// How to import the symbol cross-module (its emit-tier `import_binding`).
-    fn import_binding(&self, id: SymbolId) -> Import;
 }
 
 /// A [`NameResolver`] backed by a service's I/O type-reference names, indexed by
-/// the per-service [`SymbolId`] the front-end assigned them.
-///
-/// The core reasons over [`SymbolId`]s, but a front-end that renders a service
-/// already holds each operation's I/O type as a resolved source string rather
-/// than as a symbol-graph node. It keeps those strings on its own per-service
-/// model — one per id it handed out, in id order — and passes the list here as
-/// the resolver. Only `type_ref` is ever consulted during service rendering;
-/// `module_of` / `import_binding` are unreachable.
+/// the per-service [`SymbolId`] the front-end assigned them: one resolved source
+/// string per id it handed out, in id order.
 impl NameResolver for Vec<String> {
     fn type_ref(&self, id: SymbolId) -> String {
         self[id.0 as usize].clone()
-    }
-
-    fn module_of(&self, _id: SymbolId) -> Module {
-        unreachable!("render_service only resolves type_ref, never module_of")
-    }
-
-    fn import_binding(&self, _id: SymbolId) -> Import {
-        unreachable!("render_service only resolves type_ref, never import_binding")
     }
 }
 
 /// The experimental-warning text emitted as the `@experimental` doc tag. Shared
 /// by the per-language submodules.
 const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to change.";
-
-/// Render a single service binding for `lang`.
-///
-/// Structural logic (operations, wire names, docs) is language-agnostic;
-/// per-language formatting lives in the language submodule. I/O type names come
-/// from `names`. Type rendering, foreign-type conversion, and resources stay in
-/// the front-end crate; only the service/operation binding is rendered here.
-pub fn render_service(lang: Language, svc: &Service, names: &dyn NameResolver) -> String {
-    match lang {
-        Language::TypeScript => typescript::render_service(svc, names),
-        Language::Python => python::render_service(svc, names),
-        Language::Dotnet => dotnet::render_service(svc, names),
-        _ => todo!("service rendering for {lang} is not implemented yet"),
-    }
-}
-
-/// Render the import block for a file, given its resolved [`Import`]s.
-///
-/// Symmetric with [`render_service`]: structural over `imports`, formatted per
-/// `lang` in the language submodule. This is a core utility, **not** an emitter
-/// method — the emitter produces structured imports on its
-/// [`EmittedFile`](crate::EmittedFile)s and the core renders + stitches the
-/// block in [`assemble`](crate::assemble).
-///
-/// Output is canonical (sorted, grouped); the per-language formatter
-/// (`ruff` / `prettier`) reflows it afterwards. [`ImportBinding::Named`]
-/// imports to the same module are merged into one statement.
-///
-/// [`ImportBinding::Named`]: crate::emit::ImportBinding::Named
-pub fn render_imports(lang: Language, imports: &[Import]) -> String {
-    // No imports to render is an empty block in every language — short-circuit
-    // before the per-language rendering so emitters that inline their own
-    // imports (and declare no refs) never require language-specific support.
-    if imports.is_empty() {
-        return String::new();
-    }
-    match lang {
-        Language::Python => python::render_imports(imports),
-        Language::TypeScript => typescript::render_imports(imports),
-        Language::Dotnet => dotnet::render_imports(imports),
-        _ => todo!("import rendering for {lang} is not implemented yet"),
-    }
-}

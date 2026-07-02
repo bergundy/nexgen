@@ -10,7 +10,6 @@ use crate::emit::EmittedFile;
 use crate::error::Result;
 use crate::ir::{LoadOutput, IR};
 use crate::language::Language;
-use crate::render::NameResolver;
 
 /// Validates input files for one frontend and produces the core IR.
 ///
@@ -38,31 +37,18 @@ pub trait Loader {
 /// Renders symbols for one language, owning file layout.
 ///
 /// Type symbols are rendered by the emitter (reading its private data by id);
-/// service symbols are rendered by the core
-/// [`render_service`](crate::render_service) utility, which the emitter calls.
-/// Import blocks are rendered by the core
-/// [`render_imports`](crate::render_imports) (not an emitter method) and
-/// stitched in during [`assemble`](crate::assemble).
+/// service symbols and import blocks are rendered via the per-language
+/// [`render`](crate::render) helpers, which the emitter calls directly. Each
+/// [`EmittedFile`] carries a complete body (import block included);
+/// [`assemble`](crate::assemble) only collects and lays them out.
 pub trait Emitter<K> {
     /// The target language. The generator keys its emitters by this.
     fn language(&self) -> Language;
 
-    /// Render the IR into a set of files (bodies without import blocks).
-    ///
-    /// Each [`EmittedFile`] declares the symbols it references (`refs`) and any
-    /// non-symbol runtime imports; the core resolves them into the import block
-    /// during [`assemble`](crate::assemble) using [`resolver`](Emitter::resolver).
+    /// Render the IR into a set of files, each with its body rendered in full
+    /// (import block included).
     ///
     /// Fallible: rendering may resolve types that fail validation (e.g. an
     /// unresolvable I/O type), so the error surfaces here rather than panicking.
     fn emit(&self, ir: &IR<K>) -> Result<Vec<EmittedFile>>;
-
-    /// How the core names and locates referenced symbols for this emitter.
-    ///
-    /// Used by [`assemble`](crate::assemble) to resolve each
-    /// [`EmittedFile`](crate::EmittedFile)'s `refs` into cross-module imports,
-    /// and by [`render_service`](crate::render_service) to name operation I/O
-    /// types. Resolution stays out of the emitter's `emit` body: the emitter
-    /// only declares `refs`, the core resolves them through this resolver.
-    fn resolver(&self) -> &dyn NameResolver;
 }

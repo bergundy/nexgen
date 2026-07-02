@@ -1,79 +1,41 @@
 //! WIT front-end emitters that render straight from `IR<WitSymbolKind>`.
 //!
 //! Each emitter builds a borrowing [`WitSymbols`] view over the symbol table
-//! and runs the existing per-language renderers, then routes the result through
-//! the core [`assemble`](nex_gen_core::assemble) pipeline. The emitter
-//! derives everything it needs from the IR, satisfying the "emitter works only
-//! from the IR" contract.
+//! and runs the per-language renderers (which render each file's body in full,
+//! import block included), then routes the result through the core
+//! [`assemble`](nex_gen_core::assemble) pipeline. The emitter derives everything
+//! it needs from the IR, satisfying the "emitter works only from the IR"
+//! contract.
 //!
-//! These emitters currently keep their import blocks inlined in each file's
-//! body and declare no `refs`, so `assemble` runs as a stitch/layout pass and
-//! the output is byte-identical to the legacy `generate_files` path (guarded by
-//! the equivalence tests below and the checked-in example suites). Moving
-//! import resolution itself into the core (populating `refs` + `render_imports`)
-//! is a follow-up that requires extending the core import model.
+//! `assemble` collects the files by path and picks the layout, so the output is
+//! byte-identical to the legacy `generate_files` path (guarded by the
+//! equivalence tests below and the checked-in example suites).
 
-use nex_gen_core::{
-    Emitter, EmittedFile, Error, Import, Language, Module, NameResolver, Result, SymbolId, IR,
-};
+use nex_gen_core::{Emitter, EmittedFile, Error, Language, Result, IR};
 
 use crate::wit_symbols::{WitSymbolKind, WitSymbols};
 use crate::generator::GeneratedFiles;
 
-/// A resolver that is never consulted.
-///
-/// These emitters render each file's imports inline and declare no `refs`, so
-/// [`assemble`](nex_gen_core::assemble) never resolves a symbol through the
-/// resolver. It exists only to satisfy the [`Emitter::resolver`] contract; if a
-/// method is ever called it is a bug (a `ref` leaked without matching wiring).
-struct UnusedResolver;
-
-impl NameResolver for UnusedResolver {
-    fn type_ref(&self, id: SymbolId) -> String {
-        unreachable!("resolver consulted for {id:?} but these emitters declare no refs")
-    }
-
-    fn module_of(&self, id: SymbolId) -> Module {
-        unreachable!("resolver consulted for {id:?} but these emitters declare no refs")
-    }
-
-    fn import_binding(&self, id: SymbolId) -> Import {
-        unreachable!("resolver consulted for {id:?} but these emitters declare no refs")
-    }
-}
-
 /// Wrap a legacy [`GeneratedFiles`] map into core [`EmittedFile`]s.
 ///
-/// Each file's body already contains its import block, so it carries no `refs`
-/// and no `runtime_imports`; `module` is set to the path so it is stable but is
-/// never used (there are no cross-module refs to resolve). `assemble` renders an
-/// empty import block for each and stitches it (a no-op), reproducing the map.
+/// Each file's body already contains its import block, so assembly is a pure
+/// collect + layout pass that reproduces the map.
 fn into_emitted_files(generated: GeneratedFiles) -> Vec<EmittedFile> {
     generated
         .files
         .into_iter()
-        .map(|(path, body)| EmittedFile {
-            module: Module::new(path.to_string_lossy().into_owned()),
-            path,
-            refs: Vec::new(),
-            runtime_imports: Vec::new(),
-            body,
-        })
+        .map(|(path, body)| EmittedFile { path, body })
         .collect()
 }
 
-/// The Python WIT emitter. Support fragments now travel through the IR as
+/// The Python WIT emitter. Support fragments travel through the IR as
 /// [`Fragment`](crate::wit_symbols::WitSymbolKind::Fragment) symbols, so the
-/// emitter is stateless apart from its (unused) resolver.
-pub(crate) struct PythonEmitter {
-    resolver: UnusedResolver,
-}
+/// emitter is stateless.
+pub(crate) struct PythonEmitter;
 
 impl PythonEmitter {
     pub(crate) fn new() -> Self {
-        Self {
-            resolver: UnusedResolver,
-        }
+        Self
     }
 }
 
@@ -89,22 +51,14 @@ impl Emitter<WitSymbolKind> for PythonEmitter {
         })?;
         Ok(into_emitted_files(generated))
     }
-
-    fn resolver(&self) -> &dyn NameResolver {
-        &self.resolver
-    }
 }
 
 /// The TypeScript WIT emitter.
-pub(crate) struct TypeScriptEmitter {
-    resolver: UnusedResolver,
-}
+pub(crate) struct TypeScriptEmitter;
 
 impl TypeScriptEmitter {
     pub(crate) fn new() -> Self {
-        Self {
-            resolver: UnusedResolver,
-        }
+        Self
     }
 }
 
@@ -120,22 +74,14 @@ impl Emitter<WitSymbolKind> for TypeScriptEmitter {
         })?;
         Ok(into_emitted_files(generated))
     }
-
-    fn resolver(&self) -> &dyn NameResolver {
-        &self.resolver
-    }
 }
 
 /// The .NET WIT emitter.
-pub(crate) struct DotnetEmitter {
-    resolver: UnusedResolver,
-}
+pub(crate) struct DotnetEmitter;
 
 impl DotnetEmitter {
     pub(crate) fn new() -> Self {
-        Self {
-            resolver: UnusedResolver,
-        }
+        Self
     }
 }
 
@@ -150,10 +96,6 @@ impl Emitter<WitSymbolKind> for DotnetEmitter {
             message: error.to_string(),
         })?;
         Ok(into_emitted_files(generated))
-    }
-
-    fn resolver(&self) -> &dyn NameResolver {
-        &self.resolver
     }
 }
 

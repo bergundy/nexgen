@@ -1,53 +1,31 @@
-//! Final assembly: emit -> group by module -> resolve imports -> render -> stitch.
+//! Final assembly: emit -> collect by path -> choose layout.
 //!
-//! Because `refs` are explicit on every emitted file and `module` is computed
-//! per symbol by the emitter (surfaced through its
-//! [`NameResolver`](crate::NameResolver)), **reachability, placement, import
-//! resolution, and dedup are core-owned**: `module` comparison drives both
-//! which file a symbol lands in and whether a cross-module reference needs an
-//! import (same module => none). Foreign references and same-module exclusion
-//! fall out uniformly.
+//! Each emitter renders complete file bodies (including import blocks) via the
+//! per-language [`render`](crate::render) helpers, so assembly is purely
+//! structural: collect the emitted files by path and pick the output layout.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use crate::emit::{EmittedFile, Import, Module};
+use crate::emit::EmittedFile;
 use crate::error::Result;
-use crate::ir::{SymbolId, IR};
+use crate::ir::IR;
 use crate::output::GeneratedFiles;
-use crate::render::{NameResolver, render_imports};
 use crate::traits::Emitter;
 
 /// Drive an emitter to a [`GeneratedFiles`] result.
 ///
-/// Steps: ask the emitter to [`emit`](Emitter::emit) files; for each file
-/// resolve its cross-module imports from its `refs` (via the emitter's
-/// [`NameResolver`](crate::NameResolver), with same-module exclusion) unioned
-/// with the file's `runtime_imports`, deduped; render the import block via
-/// [`render_imports`] and stitch it onto the body; collect into
-/// [`GeneratedFiles`], choosing the layout from the set of distinct paths.
+/// Ask the emitter to [`emit`](Emitter::emit) its files (bodies rendered in
+/// full, including import blocks), collect them by path, and choose the layout
+/// from the set of distinct paths: a single path is a single-file generation,
+/// anything else is a directory tree.
 pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFiles> {
-    let language = emitter.language();
-    let resolver = emitter.resolver();
-
-    // 1. Emit. The emitter owns layout and produces bodies without import
-    //    blocks, declaring per-file `refs` + `runtime_imports`.
     let emitted: Vec<EmittedFile> = emitter.emit(ir)?;
 
-    // 2. For each file, resolve + render its import block and stitch it on.
-    //    Resolution is core-owned: walk `refs` through the resolver, drop
-    //    same-module refs, union with runtime imports, and dedup.
     let mut files: BTreeMap<std::path::PathBuf, String> = BTreeMap::new();
     for file in emitted {
-        let imports = resolve_imports(resolver, &file.module, &file.refs, &file.runtime_imports);
-        let import_block = render_imports(language, &imports);
-        let stitched = stitch(&import_block, &file.body);
-        files.insert(file.path.clone(), stitched);
+        files.insert(file.path, file.body);
     }
 
-    // 3. Choose the layout from the distinct output paths the emitter produced:
-    //    a single distinct path is a single-file generation, anything else is a
-    //    directory tree. This is driven by the emitter's layout, not a guess
-    //    about content.
     let generated = if files.len() == 1 {
         let body = files.into_values().next().expect("one file");
         GeneratedFiles::single_file(body)
@@ -56,60 +34,4 @@ pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFile
     };
 
     Ok(generated)
-}
-
-/// Resolve the cross-module imports a file needs from its `module`, `refs`, and
-/// non-symbol `runtime_imports` — the [`EmittedFile`] fields a caller passes in.
-///
-/// Driven by `refs` + `module` comparison: each referenced symbol is located
-/// via the [`NameResolver`]; a ref placed in the file's *own* module yields no
-/// import (same-module exclusion), a ref in a *different* module resolves to
-/// the symbol's [`Import`]. Foreign references are just `Type` symbols in a
-/// foreign module, so they resolve through the same path. The file's
-/// non-symbol `runtime_imports` are unioned in. Dedup is by the structured
-/// [`Import`], preserving a stable (insertion) order.
-///
-/// Exported so a per-language `emit` can resolve its own files' imports and
-/// render them via [`render_imports`](crate::render_imports) directly, without
-/// routing through [`assemble`] (which calls this for every file).
-pub fn resolve_imports(
-    resolver: &dyn NameResolver,
-    module: &Module,
-    refs: &[SymbolId],
-    runtime_imports: &[Import],
-) -> Vec<Import> {
-    let mut seen: BTreeSet<Import> = BTreeSet::new();
-    let mut imports: Vec<Import> = Vec::new();
-
-    // Cross-module symbol refs.
-    for &id in refs {
-        if resolver.module_of(id) == *module {
-            continue; // same-module exclusion
-        }
-        let import = resolver.import_binding(id);
-        if seen.insert(import.clone()) {
-            imports.push(import);
-        }
-    }
-
-    // Non-symbol runtime imports (already module-relative; never same-module).
-    for import in runtime_imports {
-        if import.module == *module {
-            continue;
-        }
-        if seen.insert(import.clone()) {
-            imports.push(import.clone());
-        }
-    }
-
-    imports
-}
-
-/// Stitch a rendered import block in front of a body.
-fn stitch(import_block: &str, body: &str) -> String {
-    if import_block.is_empty() {
-        body.to_string()
-    } else {
-        format!("{import_block}\n\n{body}")
-    }
 }

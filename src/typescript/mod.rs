@@ -4307,14 +4307,14 @@ impl<'a> From<&RenderedService<'a>> for nex_gen_core::Service {
 }
 
 fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    use nex_gen_core::{Language as CoreLanguage, Service};
+    use nex_gen_core::Service;
 
     // Lower the per-language model into the core service binding, then delegate
-    // to the core `render_service` utility, resolving I/O type names through the
-    // service's own `io_type_refs`. Resources and proto-conversion stay here.
+    // to the TypeScript `render_service` utility, resolving I/O type names
+    // through the service's own `io_type_refs`. Resources and proto-conversion
+    // stay here.
     let service_def = Service::from(service);
-    output.push_str(&nex_gen_core::render_service(
-        CoreLanguage::TypeScript,
+    output.push_str(&nex_gen_core::render::typescript::render_service(
         &service_def,
         &service.io_type_refs,
     ));

@@ -2720,19 +2720,13 @@ fn render_python_module_imports_with_indent(
     if module_imports.is_empty() {
         return;
     }
-    let imports: Vec<nex_gen_core::Import> = module_imports
+    let imports: Vec<nex_gen_core::render::python::Import> = module_imports
         .iter()
-        .map(|module| nex_gen_core::Import {
-            module: nex_gen_core::Module::new(module),
-            name: None,
-            binding: nex_gen_core::ImportBinding::Module,
-            type_only: false,
+        .map(|module| nex_gen_core::render::python::Import::Module {
+            module: module.clone(),
         })
         .collect();
-    output.push_str(&nex_gen_core::render_imports(
-        nex_gen_core::Language::Python,
-        &imports,
-    ));
+    output.push_str(&nex_gen_core::render::python::render_imports(&imports));
     output.push('\n');
 }
 
@@ -2793,19 +2787,14 @@ fn render_named_python_import_with_indent(
     // the byte output is unchanged. The indented form (a `TYPE_CHECKING` block)
     // has no core equivalent, so it keeps the manual rendering below.
     if indent.is_empty() {
-        let imports: Vec<nex_gen_core::Import> = names
+        let imports: Vec<nex_gen_core::render::python::Import> = names
             .iter()
-            .map(|name| nex_gen_core::Import {
-                module: nex_gen_core::Module::new(module),
-                name: Some(name.clone()),
-                binding: nex_gen_core::ImportBinding::Named,
-                type_only: false,
+            .map(|name| nex_gen_core::render::python::Import::Named {
+                module: module.to_string(),
+                name: name.clone(),
             })
             .collect();
-        output.push_str(&nex_gen_core::render_imports(
-            nex_gen_core::Language::Python,
-            &imports,
-        ));
+        output.push_str(&nex_gen_core::render::python::render_imports(&imports));
         output.push('\n');
         return;
     }
@@ -3698,14 +3687,13 @@ impl<'a> From<&RenderedService<'a>> for nex_gen_core::Service {
 }
 
 fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    use nex_gen_core::{Language as CoreLanguage, Service};
+    use nex_gen_core::Service;
 
     // Lower the per-language model into the core service binding, then delegate
-    // to the core `render_service` utility, resolving I/O type names through the
-    // service's own `io_type_refs`. Resources and proto-conversion stay here.
+    // to the Python `render_service` utility, resolving I/O type names through
+    // the service's own `io_type_refs`. Resources and proto-conversion stay here.
     let service_def = Service::from(service);
-    output.push_str(&nex_gen_core::render_service(
-        CoreLanguage::Python,
+    output.push_str(&nex_gen_core::render::python::render_service(
         &service_def,
         &service.io_type_refs,
     ));

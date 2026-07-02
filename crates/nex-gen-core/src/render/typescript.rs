@@ -1,14 +1,35 @@
-//! TypeScript service and import rendering. Reached through the
-//! [`render_service`](super::render_service) / [`render_imports`](super::render_imports)
-//! dispatchers, so callers use the `typescript::` prefix.
+//! TypeScript service and import rendering.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToLowerCamelCase;
 
 use super::{EXPERIMENTAL_WARNING, NameResolver};
-use crate::emit::{Import, ImportBinding};
 use crate::ir::{Service, SymbolId};
+
+/// A resolved TypeScript import.
+///
+/// TypeScript has two shapes, either of which can be type-only (`import type`):
+///
+/// - [`Star`](Import::Star) — `import [type] * as <alias> from "<module>"`
+///   (whole-module or namespace-head; referrers qualify through `alias`).
+/// - [`Named`](Import::Named) — `import [type] { <name> } from "<module>"`,
+///   merged per `(module, type_only)`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Import {
+    /// `import [type] * as <alias> from "<module>"`.
+    Star {
+        module: String,
+        alias: String,
+        type_only: bool,
+    },
+    /// `import [type] { <name> } from "<module>"`, merged per `(module, type_only)`.
+    Named {
+        module: String,
+        name: String,
+        type_only: bool,
+    },
+}
 
 /// TypeScript output line length used for doc-comment wrapping. Mirrors the
 /// front-end crate's `TYPESCRIPT_FORMAT_LINE_LENGTH`.
@@ -19,7 +40,7 @@ const FORMAT_LINE_LENGTH: usize = 88;
 ///
 /// Operation I/O type names come from `names` (`type_ref`), never from
 /// frontend-specific knowledge.
-pub(super) fn render_service(svc: &Service, names: &dyn NameResolver) -> String {
+pub fn render_service(svc: &Service, names: &dyn NameResolver) -> String {
     let mut output = String::new();
     let service_doc_tags = experimental_doc_tag(svc.experimental);
     render_doc_comment(&mut output, "", None, &service_doc_tags);
@@ -229,40 +250,42 @@ fn push_wrapped_doc_line(
 
 /// Render a TypeScript import block.
 ///
-/// - [`ImportBinding::Module`] / [`ImportBinding::Namespace`] =>
-///   `import [type] * as <alias> from "<mod>"` (alias from [`Import::name`],
-///   defaulting to the module string when absent).
-/// - [`ImportBinding::Named`] => `import [type] { X, Y } from "<mod>"`, names
-///   merged per module and sorted. A namespace-head import is a `Named`
-///   import whose single name is the namespace head (e.g. `root`).
+/// - [`Import::Star`] => `import [type] * as <alias> from "<mod>"`.
+/// - [`Import::Named`] => `import [type] { X, Y } from "<mod>"`, names merged
+///   per `(module, type_only)` and sorted.
 ///
 /// `type_only` selects `import type`; type-only and value imports for the same
 /// module render as separate statements (they cannot merge).
-pub(super) fn render_imports(imports: &[Import]) -> String {
+pub fn render_imports(imports: &[Import]) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    // Module / Namespace: one statement each, kept in input order's sorted
-    // form via a set keyed by the rendered line.
+    // Star imports: one statement each, kept in input order's sorted form via a
+    // set keyed by the rendered line.
     let mut star_lines: BTreeSet<String> = BTreeSet::new();
     // Named, merged per (module, type_only).
     let mut named: BTreeMap<(String, bool), BTreeSet<String>> = BTreeMap::new();
 
     for import in imports {
-        let module = import.module.as_str();
-        match import.binding {
-            ImportBinding::Module | ImportBinding::Namespace => {
-                let alias = import.name.as_deref().unwrap_or(module);
-                let type_kw = if import.type_only { "type " } else { "" };
+        match import {
+            Import::Star {
+                module,
+                alias,
+                type_only,
+            } => {
+                let type_kw = if *type_only { "type " } else { "" };
                 star_lines.insert(format!(
                     "import {type_kw}* as {alias} from \"{module}\";"
                 ));
             }
-            ImportBinding::Named => {
-                let name = import.name.clone().unwrap_or_else(|| module.to_string());
+            Import::Named {
+                module,
+                name,
+                type_only,
+            } => {
                 named
-                    .entry((module.to_string(), import.type_only))
+                    .entry((module.clone(), *type_only))
                     .or_default()
-                    .insert(name);
+                    .insert(name.clone());
             }
         }
     }

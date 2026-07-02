@@ -1,14 +1,26 @@
-//! Python service and import rendering. Reached through the
-//! [`render_service`](super::render_service) / [`render_imports`](super::render_imports)
-//! dispatchers, so callers use the `python::` prefix.
+//! Python service and import rendering.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToSnakeCase;
 
 use super::{EXPERIMENTAL_WARNING, NameResolver};
-use crate::emit::{Import, ImportBinding};
 use crate::ir::{Service, SymbolId};
+
+/// A resolved Python import.
+///
+/// Python has only two shapes, and no type-only imports:
+///
+/// - [`Module`](Import::Module) — `import <module>` (whole-module import; uses
+///   are qualified through the module path).
+/// - [`Named`](Import::Named) — `from <module> import <name>`, merged per module.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Import {
+    /// `import <module>`.
+    Module { module: String },
+    /// `from <module> import <name>`, merged per module.
+    Named { module: String, name: String },
+}
 
 /// Python output line length used for docstring wrapping. Mirrors the
 /// front-end crate's `PYTHON_FORMAT_LINE_LENGTH`.
@@ -19,7 +31,7 @@ const FORMAT_LINE_LENGTH: usize = 88;
 ///
 /// Operation I/O type names come from `names` (`type_ref`); the front-end
 /// adapter passes already-resolved (and Python-placement-stripped) refs.
-pub(super) fn render_service(svc: &Service, names: &dyn NameResolver) -> String {
+pub fn render_service(svc: &Service, names: &dyn NameResolver) -> String {
     let mut output = String::new();
     if svc.wire_name == svc.name.as_str() {
         output.push_str("@service\n");
@@ -314,30 +326,20 @@ fn docstring_literal_text(value: &str) -> String {
 
 /// Render a Python import block.
 ///
-/// - [`ImportBinding::Module`] / [`ImportBinding::Namespace`] => `import <mod>`
-///   (Python imports the whole module path; the alias/name is unused — uses are
-///   already qualified through the module path).
-/// - [`ImportBinding::Named`] => `from <mod> import (X, Y, ...)`, names merged
-///   per module and sorted. (Python has no `import type`, so `type_only` does
-///   not change the rendering.)
-pub(super) fn render_imports(imports: &[Import]) -> String {
+/// - [`Import::Module`] => `import <mod>` (Python imports the whole module path).
+/// - [`Import::Named`] => `from <mod> import (X, Y, ...)`, names merged per
+///   module and sorted.
+pub fn render_imports(imports: &[Import]) -> String {
     let mut module_imports: BTreeSet<String> = BTreeSet::new();
     let mut named: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for import in imports {
-        match import.binding {
-            ImportBinding::Module | ImportBinding::Namespace => {
-                module_imports.insert(import.module.as_str().to_string());
+        match import {
+            Import::Module { module } => {
+                module_imports.insert(module.clone());
             }
-            ImportBinding::Named => {
-                let name = import
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| import.module.as_str().to_string());
-                named
-                    .entry(import.module.as_str().to_string())
-                    .or_default()
-                    .insert(name);
+            Import::Named { module, name } => {
+                named.entry(module.clone()).or_default().insert(name.clone());
             }
         }
     }

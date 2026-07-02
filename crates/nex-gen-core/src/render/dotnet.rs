@@ -1,25 +1,29 @@
-//! .NET (C#) service and import rendering. Reached through the
-//! [`render_service`](super::render_service) / [`render_imports`](super::render_imports)
-//! dispatchers, so callers use the `dotnet::` prefix.
+//! .NET (C#) service and import rendering.
 
 use heck::ToUpperCamelCase;
 
 use super::NameResolver;
-use crate::emit::Import;
 use crate::ir::{Operation, Service, SymbolId};
 
-/// Render a .NET `using` block for a file's resolved [`Import`]s.
+/// A resolved .NET import: a whole-namespace `using <module>;`.
 ///
-/// Every .NET import is a whole-namespace `using <module>;` (C# has no named or
-/// aliased import in generated code here), so [`Import::name`] / `binding` /
-/// `type_only` are unused. Order is preserved from `imports` — the front-end
-/// supplies its `using`s in dependency order, and unlike Python/TypeScript the
-/// .NET output is not run through a formatter, so it is not re-sorted here.
-/// Dedup is already done by [`resolve_imports`](crate::resolve_imports).
-pub(super) fn render_imports(imports: &[Import]) -> String {
+/// C# generated code has no named or aliased import and no type-only import, so
+/// the module namespace is all that is needed.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct Import {
+    /// The namespace being imported (`using <module>;`).
+    pub module: String,
+}
+
+/// Render a .NET `using` block for a file's [`Import`]s.
+///
+/// Order is preserved from `imports` — the front-end supplies its `using`s in
+/// dependency order, and unlike Python/TypeScript the .NET output is not run
+/// through a formatter, so it is not re-sorted (or deduped) here.
+pub fn render_imports(imports: &[Import]) -> String {
     imports
         .iter()
-        .map(|import| format!("using {};", import.module.as_str()))
+        .map(|import| format!("using {};", import.module))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -41,7 +45,7 @@ const EXPERIMENTAL_WARNING: &str =
 /// Operation I/O type names come from `names` (`type_ref`); the front-end
 /// adapter registers the already-resolved C# type strings. The file prelude,
 /// `using` block, and namespace wrapping stay in the front-end.
-pub(super) fn render_service(svc: &Service, names: &dyn NameResolver) -> String {
+pub fn render_service(svc: &Service, names: &dyn NameResolver) -> String {
     let mut output = String::new();
     render_xml_summary(&mut output, "", svc.docs.as_deref(), svc.experimental);
     output.push_str(GENERATED_CODE_ATTRIBUTE);
