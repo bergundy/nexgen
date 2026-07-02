@@ -8,7 +8,7 @@
 
 use crate::emit::EmittedFile;
 use crate::error::Result;
-use crate::ir::{LoadOutput, IR};
+use crate::ir::{IR, LoadOutput};
 use crate::language::Language;
 
 /// Validates input files for one frontend and produces the core IR.

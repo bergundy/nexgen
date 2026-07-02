@@ -223,22 +223,10 @@ fn render_docstring(
         lines.push("Returns:".to_string());
         let mut return_lines = returns.lines();
         if let Some(first) = return_lines.next() {
-            push_wrapped_docstring_line(
-                &mut lines,
-                "    ",
-                "    ",
-                first.trim(),
-                docstring_width,
-            );
+            push_wrapped_docstring_line(&mut lines, "    ", "    ", first.trim(), docstring_width);
         }
         for line in return_lines {
-            push_wrapped_docstring_line(
-                &mut lines,
-                "    ",
-                "    ",
-                line.trim(),
-                docstring_width,
-            );
+            push_wrapped_docstring_line(&mut lines, "    ", "    ", line.trim(), docstring_width);
         }
     }
     if lines.is_empty() {
@@ -339,7 +327,10 @@ pub fn render_imports(imports: &[Import]) -> String {
                 module_imports.insert(module.clone());
             }
             Import::Named { module, name } => {
-                named.entry(module.clone()).or_default().insert(name.clone());
+                named
+                    .entry(module.clone())
+                    .or_default()
+                    .insert(name.clone());
             }
         }
     }

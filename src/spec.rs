@@ -10,8 +10,8 @@ use wit_parser::{
     TypeDefKind, TypeId, TypeOwner, WorldItem, WorldKey,
 };
 
-use crate::error::{Error, Result};
 use crate::Language;
+use crate::error::{Error, Result};
 
 type PackageOrigins = BTreeMap<PackageId, PathBuf>;
 
@@ -4053,9 +4053,9 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::Language;
     use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
-    use crate::Language;
 
     use super::{
         ApiSpec, AuthoredFieldTypeSpec, FunctionArgSpec, FunctionArgsSpec, directive,

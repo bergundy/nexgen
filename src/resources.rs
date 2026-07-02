@@ -716,8 +716,8 @@ mod tests {
 
     use prost_types::FileDescriptorSet;
 
-    use crate::descriptors::DescriptorIndex;
     use crate::Language;
+    use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
 
     use super::{

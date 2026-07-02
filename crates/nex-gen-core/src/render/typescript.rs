@@ -273,9 +273,7 @@ pub fn render_imports(imports: &[Import]) -> String {
                 type_only,
             } => {
                 let type_kw = if *type_only { "type " } else { "" };
-                star_lines.insert(format!(
-                    "import {type_kw}* as {alias} from \"{module}\";"
-                ));
+                star_lines.insert(format!("import {type_kw}* as {alias} from \"{module}\";"));
             }
             Import::Named {
                 module,
@@ -298,9 +296,7 @@ pub fn render_imports(imports: &[Import]) -> String {
             .map(String::as_str)
             .collect::<Vec<_>>()
             .join(", ");
-        lines.push(format!(
-            "import {type_kw}{{ {joined} }} from \"{module}\";"
-        ));
+        lines.push(format!("import {type_kw}{{ {joined} }} from \"{module}\";"));
     }
     lines.join("\n")
 }

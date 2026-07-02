@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use prost_types::FieldDescriptorProto;
 use prost_types::field_descriptor_proto::{Label, Type};
 
+use crate::Language;
 use crate::descriptors::{DescriptorIndex, MessageMetadata};
 use crate::error::{Error, Result};
-use crate::Language;
 use crate::python;
 use crate::spec::{
     ApiSpec, AuthoredFieldTypeSpec, GeneratedModelSpec, LanguageStringSpec, TypeOverrideSpec,

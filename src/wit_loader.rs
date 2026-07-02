@@ -12,12 +12,12 @@ use std::path::PathBuf;
 
 use nex_gen_core::{IR, Language, LoadOutput};
 
-use crate::wit_symbols::{WitSymbolKind, WitSymbols, build_wit_symbols};
 use crate::descriptors::DescriptorIndex;
 use crate::generator::generation_warnings;
 use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
 use crate::validation::validate_type_overrides;
+use crate::wit_symbols::{WitSymbolKind, WitSymbols, build_wit_symbols};
 
 /// Loads WIT inputs (plus proto descriptors and support files) into the core IR.
 ///
@@ -53,10 +53,11 @@ impl nex_gen_core::Loader for WitLoader {
     type Kind = WitSymbolKind;
 
     fn load(&self, language: Language) -> nex_gen_core::Result<LoadOutput<WitSymbolKind>> {
-        let spec = ApiSpec::load_for_language_with_inputs(language, &self.input_paths)
-            .map_err(|error| nex_gen_core::Error::Load {
+        let spec = ApiSpec::load_for_language_with_inputs(language, &self.input_paths).map_err(
+            |error| nex_gen_core::Error::Load {
                 message: error.to_string(),
-            })?;
+            },
+        )?;
         let descriptors = DescriptorIndex::load_many(&self.descriptor_paths).map_err(|error| {
             nex_gen_core::Error::Load {
                 message: error.to_string(),
@@ -70,16 +71,18 @@ impl nex_gen_core::Loader for WitLoader {
         ensure_unique_resource_names(&spec).map_err(|error| nex_gen_core::Error::Load {
             message: error.to_string(),
         })?;
-        let support = crate::load_support_files(language, &spec, &self.support_paths).map_err(
-            |error| nex_gen_core::Error::Load {
-                message: error.to_string(),
-            },
-        )?;
-        let symbols = build_wit_symbols(&spec, &descriptors, &support.fragments).map_err(
-            |error| nex_gen_core::Error::Load {
-                message: error.to_string(),
-            },
-        )?;
+        let support =
+            crate::load_support_files(language, &spec, &self.support_paths).map_err(|error| {
+                nex_gen_core::Error::Load {
+                    message: error.to_string(),
+                }
+            })?;
+        let symbols =
+            build_wit_symbols(&spec, &descriptors, &support.fragments).map_err(|error| {
+                nex_gen_core::Error::Load {
+                    message: error.to_string(),
+                }
+            })?;
         let warnings = generation_warnings(&WitSymbols::new(&symbols));
         Ok(LoadOutput::with_warnings(IR::new(symbols), warnings))
     }
@@ -92,9 +95,9 @@ mod tests {
     use prost_types::FileDescriptorSet;
 
     use crate::Language;
-    use crate::wit_symbols::{WitSymbolKind, build_wit_symbols};
     use crate::descriptors::DescriptorIndex;
     use crate::spec::{ApiSpec, SupportFragmentSpec};
+    use crate::wit_symbols::{WitSymbolKind, build_wit_symbols};
 
     const INLINE_WIT: &str = r#"
 package temporal:users@1.0.0;

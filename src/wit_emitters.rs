@@ -11,10 +11,10 @@
 //! byte-identical to the legacy `generate_files` path (guarded by the
 //! equivalence tests below and the checked-in example suites).
 
-use nex_gen_core::{Emitter, EmittedFile, Error, Language, Result, IR};
+use nex_gen_core::{EmittedFile, Emitter, Error, IR, Language, Result};
 
-use crate::wit_symbols::{WitSymbolKind, WitSymbols};
 use crate::generator::GeneratedFiles;
+use crate::wit_symbols::{WitSymbolKind, WitSymbols};
 
 /// Wrap a legacy [`GeneratedFiles`] map into core [`EmittedFile`]s.
 ///
@@ -103,14 +103,14 @@ impl Emitter<WitSymbolKind> for DotnetEmitter {
 mod tests {
     use std::path::PathBuf;
 
-    use nex_gen_core::{assemble, IR};
+    use nex_gen_core::{IR, assemble};
     use prost_types::FileDescriptorSet;
 
     use super::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
-    use crate::wit_symbols::{build_wit_symbols, WitSymbolKind, WitSymbols};
+    use crate::Language;
     use crate::descriptors::DescriptorIndex;
     use crate::spec::ApiSpec;
-    use crate::Language;
+    use crate::wit_symbols::{WitSymbolKind, WitSymbols, build_wit_symbols};
 
     const INLINE_WIT: &str = r#"
 package temporal:users@1.0.0;

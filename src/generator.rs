@@ -1,14 +1,14 @@
+use crate::Language;
 use crate::SupportFiles;
-use crate::wit_symbols::{WitSymbols, build_wit_symbols};
 use crate::descriptors::DescriptorIndex;
 use crate::dotnet;
 use crate::error::{Error, Result};
-use crate::Language;
 use crate::python;
 use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
 use crate::typescript;
 use crate::validation::validate_type_overrides;
+use crate::wit_symbols::{WitSymbols, build_wit_symbols};
 
 // The generated-file model + layout now live in the core crate (the output
 // plumbing is frontend-agnostic). Re-exported here so existing
@@ -112,9 +112,9 @@ mod tests {
 
     use prost_types::FileDescriptorSet;
 
+    use crate::Language;
     use crate::SupportFiles;
     use crate::descriptors::DescriptorIndex;
-    use crate::Language;
     use crate::spec::ApiSpec;
 
     use super::generate_files;

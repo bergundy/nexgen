@@ -495,8 +495,7 @@ interface workflow-service {
 
     let input_paths = vec![input_path];
     let rendered =
-        generate_to_string_with_inputs(nex_gen::Language::Dotnet, &input_paths, &[])
-            .unwrap();
+        generate_to_string_with_inputs(nex_gen::Language::Dotnet, &input_paths, &[]).unwrap();
 
     assert!(rendered.contains("namespace Temporalio.Workflows\n{"));
     assert!(rendered.contains("public static partial class Workflow"));

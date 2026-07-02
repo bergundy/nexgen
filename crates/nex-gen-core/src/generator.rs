@@ -33,10 +33,7 @@ impl<L: Loader> Generator<L> {
     ///
     /// `emitters` is any iterable of boxed emitters, e.g. an array literal:
     /// `Generator::new(loader, [Box::new(py), Box::new(ts)])`.
-    pub fn new(
-        loader: L,
-        emitters: impl IntoIterator<Item = Box<dyn Emitter<L::Kind>>>,
-    ) -> Self {
+    pub fn new(loader: L, emitters: impl IntoIterator<Item = Box<dyn Emitter<L::Kind>>>) -> Self {
         let emitters = emitters
             .into_iter()
             .map(|emitter| (emitter.language(), emitter))

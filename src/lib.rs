@@ -90,8 +90,7 @@ pub fn generate_to_string_with_inputs_and_support(
     descriptor_paths: &[PathBuf],
     support_paths: &[PathBuf],
 ) -> Result<String> {
-    let generated =
-        generate(language, input_paths, descriptor_paths, support_paths)?;
+    let generated = generate(language, input_paths, descriptor_paths, support_paths)?;
     print_warnings(&generated);
     Ok(match generated.layout {
         GeneratedOutputLayout::SingleFile => generated
@@ -133,9 +132,9 @@ fn generate(
 ) -> Result<GeneratedFiles> {
     use nex_gen_core::{Emitter, Generator};
 
-    use wit_symbols::WitSymbolKind;
     use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};
     use wit_loader::WitLoader;
+    use wit_symbols::WitSymbolKind;
 
     let emitters: [Box<dyn Emitter<WitSymbolKind>>; 3] = [
         Box::new(PythonEmitter::new()),

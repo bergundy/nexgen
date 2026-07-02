@@ -204,8 +204,7 @@ mod tests {
 
     #[test]
     fn chooses_typescript_formatter_command() {
-        let (program, args) =
-            formatter_command(Language::TypeScript, Path::new("output")).unwrap();
+        let (program, args) = formatter_command(Language::TypeScript, Path::new("output")).unwrap();
         assert_eq!(program, "prettier");
         assert_eq!(args, vec!["--write", "--print-width", "88", "output"]);
         assert_eq!(

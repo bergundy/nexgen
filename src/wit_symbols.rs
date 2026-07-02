@@ -1100,7 +1100,8 @@ fn descriptor_field_by_name<'a>(
 }
 
 fn ensure_enum(enumeration: &EnumMetadata, spec: &ApiSpec, tables: &mut WitTables) {
-    tables.enums
+    tables
+        .enums
         .entry(enumeration.full_name.clone())
         .or_insert_with(|| WitEnum {
             info: WitTypeInfo::from_enum(enumeration, spec),
@@ -1120,7 +1121,8 @@ fn ensure_enum(enumeration: &EnumMetadata, spec: &ApiSpec, tables: &mut WitTable
 }
 
 fn ensure_wit_enum(enumeration: &WitEnumSpec, tables: &mut WitTables) {
-    tables.enums
+    tables
+        .enums
         .entry(enumeration.full_name.clone())
         .or_insert_with(|| WitEnum {
             info: WitTypeInfo::from_wit_enum(enumeration),
@@ -1137,7 +1139,8 @@ fn ensure_wit_enum(enumeration: &WitEnumSpec, tables: &mut WitTables) {
 }
 
 fn ensure_wit_flags(flags: &WitFlagsSpec, tables: &mut WitTables) {
-    tables.flags
+    tables
+        .flags
         .entry(flags.full_name.clone())
         .or_insert_with(|| WitFlags {
             info: WitTypeInfo::from_wit_flags(flags),
@@ -1282,12 +1285,7 @@ fn wit_field_kind_from_authored(
         if let Some(type_override) = spec.type_override(proto_name) {
             if type_override.replacement.is_none() {
                 if let Some(authored_type) = type_override.authored_type.as_ref() {
-                    return wit_field_kind_from_authored(
-                        authored_type,
-                        spec,
-                        descriptors,
-                        tables,
-                    );
+                    return wit_field_kind_from_authored(authored_type, spec, descriptors, tables);
                 }
             }
         }
@@ -1297,17 +1295,15 @@ fn wit_field_kind_from_authored(
         AuthoredFieldTypeSpec::Option(inner) => {
             wit_field_kind_from_authored(inner, spec, descriptors, tables)
         }
-        AuthoredFieldTypeSpec::List(inner) => WitFieldKind::Repeated(
-            wit_value_type_from_authored(inner.without_option(), spec, descriptors, tables),
-        ),
+        AuthoredFieldTypeSpec::List(inner) => WitFieldKind::Repeated(wit_value_type_from_authored(
+            inner.without_option(),
+            spec,
+            descriptors,
+            tables,
+        )),
         AuthoredFieldTypeSpec::Map(key, value) => WitFieldKind::Map {
             key: wit_value_type_from_authored(key.without_option(), spec, descriptors, tables),
-            value: wit_value_type_from_authored(
-                value.without_option(),
-                spec,
-                descriptors,
-                tables,
-            ),
+            value: wit_value_type_from_authored(value.without_option(), spec, descriptors, tables),
         },
         _ => WitFieldKind::Singular(wit_value_type_from_authored(
             wit_type.without_option(),
@@ -1414,22 +1410,12 @@ fn wit_value_type_from_authored(
                 .collect(),
         ),
         AuthoredFieldTypeSpec::Result { ok, err } => WitValueType::Result {
-            ok: ok.as_ref().map(|ok| {
-                Box::new(wit_value_type_from_authored(
-                    ok,
-                    spec,
-                    descriptors,
-                    tables,
-                ))
-            }),
-            err: err.as_ref().map(|err| {
-                Box::new(wit_value_type_from_authored(
-                    err,
-                    spec,
-                    descriptors,
-                    tables,
-                ))
-            }),
+            ok: ok
+                .as_ref()
+                .map(|ok| Box::new(wit_value_type_from_authored(ok, spec, descriptors, tables))),
+            err: err
+                .as_ref()
+                .map(|err| Box::new(wit_value_type_from_authored(err, spec, descriptors, tables))),
         },
         AuthoredFieldTypeSpec::Alias {
             target, type_name, ..
@@ -1441,9 +1427,7 @@ fn wit_value_type_from_authored(
                 fallback: Box::new(fallback),
             }
         }
-        AuthoredFieldTypeSpec::List(_) | AuthoredFieldTypeSpec::Map(_, _) => {
-            WitValueType::Unknown
-        }
+        AuthoredFieldTypeSpec::List(_) | AuthoredFieldTypeSpec::Map(_, _) => WitValueType::Unknown,
     }
 }
 
@@ -1466,10 +1450,7 @@ fn build_sourced_field(
     }
 }
 
-fn wit_field_role(
-    generated_model: Option<&GeneratedModelSpec>,
-    proto_name: &str,
-) -> WitFieldRole {
+fn wit_field_role(generated_model: Option<&GeneratedModelSpec>, proto_name: &str) -> WitFieldRole {
     if let Some(function) =
         generated_model.and_then(|generated_model| generated_model.function(proto_name))
     {
@@ -2012,7 +1993,8 @@ impl<'a> WitSymbols<'a> {
                         .insert(enumeration.info.full_name.as_str(), enumeration);
                 }
                 WitSymbolKind::Flags(flag_set) => {
-                    view.flags.insert(flag_set.info.full_name.as_str(), flag_set);
+                    view.flags
+                        .insert(flag_set.info.full_name.as_str(), flag_set);
                 }
                 WitSymbolKind::Variant(variant) => {
                     view.variants

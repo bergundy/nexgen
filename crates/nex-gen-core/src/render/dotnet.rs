@@ -112,7 +112,12 @@ fn render_operation_xml_doc(output: &mut String, indent: &str, operation: &Opera
 
 /// Render a `<summary>`-only XML doc block. Mirrors the front-end's
 /// `render_xml_summary`.
-fn render_xml_summary(output: &mut String, indent: &str, summary: Option<&str>, experimental: bool) {
+fn render_xml_summary(
+    output: &mut String,
+    indent: &str,
+    summary: Option<&str>,
+    experimental: bool,
+) {
     render_xml_doc(output, indent, summary, Vec::new(), None, experimental);
 }
 
