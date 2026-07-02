@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nex-gen-core"]
+members = ["crates/nex-gen-core", "crates/nex-gen-json-schema"]
 
 [package]
 name = "nex-gen"
