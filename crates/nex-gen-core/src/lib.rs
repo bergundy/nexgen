@@ -23,9 +23,12 @@
 //! which a frontend kind wraps.
 //!
 //! The import-resolution + assembly path is implemented end-to-end:
-//! [`assemble`] resolves each [`EmittedFile`]'s `refs` to cross-module imports
-//! (dropping same-module refs, unioning runtime imports, deduping) and
-//! [`render_imports`] renders them for Python and TypeScript.
+//! [`resolve_imports`] turns a file's `module` + `refs` + `runtime_imports` into
+//! cross-module imports (dropping same-module refs, unioning runtime imports,
+//! deduping) and [`render_imports`] renders them per language (Python,
+//! TypeScript, and .NET). [`assemble`] drives both for every file; a
+//! per-language `emit` can instead call them directly to render + place its own
+//! import blocks.
 
 pub mod assemble;
 pub mod emit;
@@ -37,7 +40,7 @@ pub mod output;
 pub mod render;
 pub mod traits;
 
-pub use assemble::assemble;
+pub use assemble::{assemble, resolve_imports};
 pub use emit::{EmittedFile, Import, ImportBinding, Module};
 pub use error::{Error, Result};
 pub use generator::Generator;

@@ -292,3 +292,38 @@ fn render_imports_dedups_and_merges_named() {
     let block = render_imports(Language::Python, &imports);
     assert_eq!(block, "from ./models.ts import (\n    A,\n    B,\n)");
 }
+
+#[test]
+fn render_imports_dotnet_emits_using_lines_in_order() {
+    // .NET imports are whole-namespace `using X;`, rendered in the given order
+    // (the front-end supplies dependency order; the output is not formatted, so
+    // it is not re-sorted). `resolve_imports` handles dedup upstream.
+    let imports = vec![
+        Import {
+            module: Module::new("System"),
+            name: None,
+            binding: ImportBinding::Module,
+            type_only: false,
+        },
+        Import {
+            module: Module::new("System.CodeDom.Compiler"),
+            name: None,
+            binding: ImportBinding::Module,
+            type_only: false,
+        },
+        Import {
+            module: Module::new("NexusRpc"),
+            name: None,
+            binding: ImportBinding::Module,
+            type_only: false,
+        },
+    ];
+    let block = render_imports(Language::Dotnet, &imports);
+    assert_eq!(
+        block,
+        "using System;\nusing System.CodeDom.Compiler;\nusing NexusRpc;"
+    );
+
+    // No imports -> empty block (short-circuited before dispatch).
+    assert_eq!(render_imports(Language::Dotnet, &[]), "");
+}

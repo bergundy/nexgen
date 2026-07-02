@@ -6,8 +6,7 @@
 //! a file's import block. Both dispatch on [`Language`] into the per-language
 //! submodules ([`python`], [`typescript`], [`dotnet`]). Only **type** rendering
 //! is per-frontend and stays in the front-end crate — service and import
-//! rendering are written once per language here. (Import rendering is not yet
-//! implemented for [`dotnet`], which inlines its `using` block.)
+//! rendering are written once per language here.
 
 mod dotnet;
 mod python;
@@ -100,6 +99,7 @@ pub fn render_imports(lang: Language, imports: &[Import]) -> String {
     match lang {
         Language::Python => python::render_imports(imports),
         Language::TypeScript => typescript::render_imports(imports),
+        Language::Dotnet => dotnet::render_imports(imports),
         _ => todo!("import rendering for {lang} is not implemented yet"),
     }
 }

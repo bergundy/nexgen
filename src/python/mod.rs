@@ -2697,18 +2697,43 @@ fn render_python_module_imports_with_indent(
     module_imports: &BTreeSet<String>,
     indent: &str,
 ) {
-    for import in module_imports {
-        output.push_str(indent);
-        if let Some(relative_import) = import.strip_prefix('.') {
-            output.push_str("from . import ");
-            output.push_str(relative_import.trim_start_matches('.'));
-            output.push('\n');
-        } else {
-            output.push_str("import ");
-            output.push_str(import);
-            output.push('\n');
+    // Plain top-level `import X` lines are formatted by the shared core
+    // `render_imports` (whole-module bindings, already sorted by the `BTreeSet`).
+    // The `.`-relative `from . import X` form and the indented `TYPE_CHECKING`
+    // form have no core equivalent, so those keep the manual rendering below.
+    if !indent.is_empty() || module_imports.iter().any(|import| import.starts_with('.')) {
+        for import in module_imports {
+            output.push_str(indent);
+            if let Some(relative_import) = import.strip_prefix('.') {
+                output.push_str("from . import ");
+                output.push_str(relative_import.trim_start_matches('.'));
+                output.push('\n');
+            } else {
+                output.push_str("import ");
+                output.push_str(import);
+                output.push('\n');
+            }
         }
+        return;
     }
+
+    if module_imports.is_empty() {
+        return;
+    }
+    let imports: Vec<nex_gen_core::Import> = module_imports
+        .iter()
+        .map(|module| nex_gen_core::Import {
+            module: nex_gen_core::Module::new(module),
+            name: None,
+            binding: nex_gen_core::ImportBinding::Module,
+            type_only: false,
+        })
+        .collect();
+    output.push_str(&nex_gen_core::render_imports(
+        nex_gen_core::Language::Python,
+        &imports,
+    ));
+    output.push('\n');
 }
 
 fn body_uses_python_module_path(body: &str, module_path: &str) -> bool {
@@ -2759,6 +2784,29 @@ fn render_named_python_import_with_indent(
     indent: &str,
 ) {
     if names.is_empty() {
+        return;
+    }
+
+    // Top-level `from M import ...` statements are formatted by the shared core
+    // `render_imports` (single source of truth for the `import X` / multi-line
+    // paren block). The core sorts names; callers already supply them sorted, so
+    // the byte output is unchanged. The indented form (a `TYPE_CHECKING` block)
+    // has no core equivalent, so it keeps the manual rendering below.
+    if indent.is_empty() {
+        let imports: Vec<nex_gen_core::Import> = names
+            .iter()
+            .map(|name| nex_gen_core::Import {
+                module: nex_gen_core::Module::new(module),
+                name: Some(name.clone()),
+                binding: nex_gen_core::ImportBinding::Named,
+                type_only: false,
+            })
+            .collect();
+        output.push_str(&nex_gen_core::render_imports(
+            nex_gen_core::Language::Python,
+            &imports,
+        ));
+        output.push('\n');
         return;
     }
 

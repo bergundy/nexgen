@@ -1,12 +1,28 @@
-//! .NET (C#) service rendering. Reached through the
-//! [`render_service`](super::render_service) dispatcher, so callers use the
-//! `dotnet::` prefix. Import rendering is not migrated — the .NET front-end
-//! still inlines its `using` block per file.
+//! .NET (C#) service and import rendering. Reached through the
+//! [`render_service`](super::render_service) / [`render_imports`](super::render_imports)
+//! dispatchers, so callers use the `dotnet::` prefix.
 
 use heck::ToUpperCamelCase;
 
 use super::NameResolver;
+use crate::emit::Import;
 use crate::ir::{Operation, Service, SymbolId};
+
+/// Render a .NET `using` block for a file's resolved [`Import`]s.
+///
+/// Every .NET import is a whole-namespace `using <module>;` (C# has no named or
+/// aliased import in generated code here), so [`Import::name`] / `binding` /
+/// `type_only` are unused. Order is preserved from `imports` — the front-end
+/// supplies its `using`s in dependency order, and unlike Python/TypeScript the
+/// .NET output is not run through a formatter, so it is not re-sorted here.
+/// Dedup is already done by [`resolve_imports`](crate::resolve_imports).
+pub(super) fn render_imports(imports: &[Import]) -> String {
+    imports
+        .iter()
+        .map(|import| format!("using {};", import.module.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// The `[GeneratedCode]` attribute stamped on every generated declaration.
 /// Mirrors the front-end's `GENERATED_CODE_ATTRIBUTE`.

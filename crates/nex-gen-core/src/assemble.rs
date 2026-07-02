@@ -10,9 +10,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::emit::{EmittedFile, Import};
+use crate::emit::{EmittedFile, Import, Module};
 use crate::error::Result;
-use crate::ir::IR;
+use crate::ir::{SymbolId, IR};
 use crate::output::GeneratedFiles;
 use crate::render::{NameResolver, render_imports};
 use crate::traits::Emitter;
@@ -38,7 +38,7 @@ pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFile
     //    same-module refs, union with runtime imports, and dedup.
     let mut files: BTreeMap<std::path::PathBuf, String> = BTreeMap::new();
     for file in emitted {
-        let imports = resolve_imports(resolver, &file);
+        let imports = resolve_imports(resolver, &file.module, &file.refs, &file.runtime_imports);
         let import_block = render_imports(language, &imports);
         let stitched = stitch(&import_block, &file.body);
         files.insert(file.path.clone(), stitched);
@@ -58,7 +58,8 @@ pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFile
     Ok(generated)
 }
 
-/// Resolve the cross-module imports a file needs.
+/// Resolve the cross-module imports a file needs from its `module`, `refs`, and
+/// non-symbol `runtime_imports` — the [`EmittedFile`] fields a caller passes in.
 ///
 /// Driven by `refs` + `module` comparison: each referenced symbol is located
 /// via the [`NameResolver`]; a ref placed in the file's *own* module yields no
@@ -66,14 +67,23 @@ pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFile
 /// the symbol's [`Import`]. Foreign references are just `Type` symbols in a
 /// foreign module, so they resolve through the same path. The file's
 /// non-symbol `runtime_imports` are unioned in. Dedup is by the structured
-/// [`Import`], preserving a stable order.
-fn resolve_imports(resolver: &dyn NameResolver, file: &EmittedFile) -> Vec<Import> {
+/// [`Import`], preserving a stable (insertion) order.
+///
+/// Exported so a per-language `emit` can resolve its own files' imports and
+/// render them via [`render_imports`](crate::render_imports) directly, without
+/// routing through [`assemble`] (which calls this for every file).
+pub fn resolve_imports(
+    resolver: &dyn NameResolver,
+    module: &Module,
+    refs: &[SymbolId],
+    runtime_imports: &[Import],
+) -> Vec<Import> {
     let mut seen: BTreeSet<Import> = BTreeSet::new();
     let mut imports: Vec<Import> = Vec::new();
 
     // Cross-module symbol refs.
-    for &id in &file.refs {
-        if resolver.module_of(id) == file.module {
+    for &id in refs {
+        if resolver.module_of(id) == *module {
             continue; // same-module exclusion
         }
         let import = resolver.import_binding(id);
@@ -83,8 +93,8 @@ fn resolve_imports(resolver: &dyn NameResolver, file: &EmittedFile) -> Vec<Impor
     }
 
     // Non-symbol runtime imports (already module-relative; never same-module).
-    for import in &file.runtime_imports {
-        if import.module == file.module {
+    for import in runtime_imports {
+        if import.module == *module {
             continue;
         }
         if seen.insert(import.clone()) {

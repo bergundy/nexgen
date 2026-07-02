@@ -2660,6 +2660,13 @@ fn render_typescript_namespace_imports(
         }
     }
 
+    // NOTE: these statements are NOT routed through the core `render_imports`.
+    // The core sorts canonically (star imports by rendered line — value
+    // `import * as` before type `import type * as` — and named imports by name),
+    // but this front-end orders namespace imports by namespace name and keeps
+    // named imports in source-definition order. prettier does not re-sort
+    // imports, so the core's ordering would diverge from the checked-in
+    // snapshots. TypeScript therefore keeps its own per-statement rendering.
     for ((namespace, package), needs_value_import) in namespace_imports {
         if needs_value_import {
             output.push_str("import * as ");
