@@ -202,9 +202,24 @@ interface user-service {
             .operations
             .first()
             .expect("service should have at least one operation");
-        let input_model_name = &operation.input.model_name;
+        let input_id = operation.input;
 
-        // Find the model symbol matching the operation input's model name.
+        // A service references its operations' input/output symbols directly.
+        assert!(
+            service_symbol.refs.contains(&input_id),
+            "service refs {:?} should include input symbol id {:?}",
+            service_symbol.refs,
+            input_id
+        );
+
+        // The input symbol, in turn, references its backing model symbol.
+        let input_symbol = table
+            .get(input_id)
+            .expect("operation input symbol should exist");
+        let WitSymbolKind::OperationInput(input) = &input_symbol.kind else {
+            panic!("operation input id should resolve to an OperationInput symbol");
+        };
+        let input_model_name = &input.model_name;
         let input_model_symbol = table
             .iter()
             .find(|symbol| {
@@ -213,9 +228,9 @@ interface user-service {
             .expect("operation input model should be a symbol");
 
         assert!(
-            service_symbol.refs.contains(&input_model_symbol.id),
-            "service refs {:?} should include input model id {:?}",
-            service_symbol.refs,
+            input_symbol.refs.contains(&input_model_symbol.id),
+            "input symbol refs {:?} should include input model id {:?}",
+            input_symbol.refs,
             input_model_symbol.id
         );
     }

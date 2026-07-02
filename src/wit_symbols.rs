@@ -23,7 +23,7 @@ use crate::spec::{
 
 #[derive(Debug, Clone, Default)]
 struct WitTables {
-    pub(crate) services: Vec<WitService>,
+    pub(crate) services: Vec<WitServiceBuild>,
     pub(crate) enums: IndexMap<String, WitEnum>,
     pub(crate) flags: IndexMap<String, WitFlags>,
     pub(crate) variants: IndexMap<String, WitVariant>,
@@ -44,6 +44,29 @@ pub(crate) struct WitService {
     pub(crate) resources: Vec<WitResource>,
 }
 
+/// Build-time counterpart of [`WitService`]: identical except its operations
+/// still carry their fully-resolved I/O type data ([`WitOperationBuild`]).
+///
+/// [`tables_to_symbols`] lowers each build service into a [`WitService`],
+/// registering every operation's input and output as their own symbols and
+/// replacing the inline type data with the [`SymbolId`]s that reference them.
+#[derive(Debug, Clone)]
+struct WitServiceBuild {
+    name: String,
+    wire_name: String,
+    namespace: LanguageStringSpec,
+    operations_class: LanguageStringSpec,
+    endpoint: String,
+    experimental: bool,
+    delay_load_temporalio_workflow: bool,
+    operations: Vec<WitOperationBuild>,
+    resources: Vec<WitResource>,
+}
+
+/// A service operation as seen by the emitters: its input and output types are
+/// referenced by [`SymbolId`] (resolved through [`WitSymbols::op_input`] /
+/// [`WitSymbols::op_output`]) rather than embedded inline, so an operation is a
+/// thin symbol pointing at its own dedicated input/output symbols.
 #[derive(Debug, Clone)]
 pub(crate) struct WitOperation {
     pub(crate) name: String,
@@ -51,11 +74,32 @@ pub(crate) struct WitOperation {
     pub(crate) experimental: bool,
     pub(crate) doc: LanguageStringSpec,
     pub(crate) return_doc: LanguageStringSpec,
-    pub(crate) input: WitMessageType,
-    pub(crate) output: WitOperationOutput,
+    /// The operation's input type symbol
+    /// ([`WitSymbolKind::OperationInput`]).
+    pub(crate) input: SymbolId,
+    /// The operation's output type symbol
+    /// ([`WitSymbolKind::OperationOutput`]).
+    pub(crate) output: SymbolId,
     pub(crate) output_transform: Option<OperationOutputTransformSpec>,
     pub(crate) output_resource_return: Option<WitOperationResourceReturn>,
     pub(crate) output_direct_result: bool,
+}
+
+/// Build-time counterpart of [`WitOperation`]: holds the fully-resolved input
+/// and output type data before [`tables_to_symbols`] hoists them into their own
+/// symbols and replaces them with [`SymbolId`]s.
+#[derive(Debug, Clone)]
+struct WitOperationBuild {
+    name: String,
+    wire_name: String,
+    experimental: bool,
+    doc: LanguageStringSpec,
+    return_doc: LanguageStringSpec,
+    input: WitMessageType,
+    output: WitOperationOutput,
+    output_transform: Option<OperationOutputTransformSpec>,
+    output_resource_return: Option<WitOperationResourceReturn>,
+    output_direct_result: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -525,7 +569,7 @@ fn build_service(
     descriptors: &DescriptorIndex,
     root_model_capabilities: &BTreeMap<String, ModelCapabilities>,
     tables: &mut WitTables,
-) -> Result<WitService> {
+) -> Result<WitServiceBuild> {
     let endpoint = service
         .endpoint
         .as_deref()
@@ -575,7 +619,7 @@ fn build_service(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(WitService {
+    Ok(WitServiceBuild {
         name: service.name.clone(),
         wire_name: service.wire_name.clone(),
         namespace: service.namespace.clone(),
@@ -596,7 +640,7 @@ fn build_operation(
     root_model_capabilities: &BTreeMap<String, ModelCapabilities>,
     tables: &mut WitTables,
     output_resource_return: Option<&ResolvedResourceReturnSpec>,
-) -> Result<WitOperation> {
+) -> Result<WitOperationBuild> {
     let input = build_operation_input(
         service_name,
         operation,
@@ -615,7 +659,7 @@ fn build_operation(
         output_resource_return,
     )?;
 
-    Ok(WitOperation {
+    Ok(WitOperationBuild {
         name: operation.name.clone(),
         wire_name: operation.wire_name.clone(),
         experimental: operation.experimental,
@@ -1591,6 +1635,15 @@ pub(crate) enum WitSymbolKind {
     Enum(WitEnum),
     Flags(WitFlags),
     Variant(WitVariant),
+    /// An operation's input type, tracked as its own symbol so a
+    /// [`WitOperation`] can reference it by [`SymbolId`]. Its `refs` point at the
+    /// backing model symbol when the type is in the table.
+    OperationInput(WitMessageType),
+    /// An operation's output type, tracked as its own symbol so a
+    /// [`WitOperation`] can reference it by [`SymbolId`]. Its `refs` point at the
+    /// backing model symbol for a message output; a resource/none output carries
+    /// no `refs`.
+    OperationOutput(WitOperationOutput),
     /// A support code fragment (already resolved for the target language).
     /// Carries no `refs`: it is opaque code copied verbatim into the output.
     Fragment(SupportFragmentSpec),
@@ -1602,9 +1655,13 @@ pub(crate) enum WitSymbolKind {
 /// Runs in two passes so a symbol's `refs` can point at not-yet-inserted
 /// symbols: pass 1 allocates ids and builds a `full_name -> SymbolId` index;
 /// pass 2 computes each symbol's `refs` from that index and inserts it. Ids are
-/// allocated services -> models -> enums -> flags -> variants -> fragments, each
-/// group in its source order, so [`WitSymbols`] can replay the original grouping
-/// order.
+/// allocated services (each followed by its operations' input/output symbols)
+/// -> models -> enums -> flags -> variants -> fragments, each group in its
+/// source order, so [`WitSymbols`] can replay the original grouping order.
+///
+/// Each operation's input and output type is hoisted into its own symbol
+/// ([`WitSymbolKind::OperationInput`] / [`WitSymbolKind::OperationOutput`]) and
+/// the lowered [`WitOperation`] references them by [`SymbolId`].
 fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
     let WitTables {
         services,
@@ -1625,6 +1682,9 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
     let mut wit_flags: Vec<(SymbolId, WitFlags)> = Vec::new();
     let mut wit_variants: Vec<(SymbolId, WitVariant)> = Vec::new();
     let mut wit_fragments: Vec<(SymbolId, SupportFragmentSpec)> = Vec::new();
+    // Per-operation input/output symbols, allocated inline with their service.
+    let mut op_inputs: Vec<(SymbolId, WitMessageType)> = Vec::new();
+    let mut op_outputs: Vec<(SymbolId, WitOperationOutput)> = Vec::new();
 
     // Maps a type's `full_name` (the IndexMap key) to its allocated `SymbolId`.
     // Services are not referenced by full_name, so they are not indexed.
@@ -1633,6 +1693,41 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
     // Pass 1: allocate + index (services, models, enums, flags, variants).
     for service in services {
         let id = table.alloc_id();
+        // Hoist each operation's input/output into its own symbol and lower the
+        // operation to reference them by id.
+        let operations = service
+            .operations
+            .into_iter()
+            .map(|operation| {
+                let input = table.alloc_id();
+                op_inputs.push((input, operation.input));
+                let output = table.alloc_id();
+                op_outputs.push((output, operation.output));
+                WitOperation {
+                    name: operation.name,
+                    wire_name: operation.wire_name,
+                    experimental: operation.experimental,
+                    doc: operation.doc,
+                    return_doc: operation.return_doc,
+                    input,
+                    output,
+                    output_transform: operation.output_transform,
+                    output_resource_return: operation.output_resource_return,
+                    output_direct_result: operation.output_direct_result,
+                }
+            })
+            .collect();
+        let service = WitService {
+            name: service.name,
+            wire_name: service.wire_name,
+            namespace: service.namespace,
+            operations_class: service.operations_class,
+            endpoint: service.endpoint,
+            experimental: service.experimental,
+            delay_load_temporalio_workflow: service.delay_load_temporalio_workflow,
+            operations,
+            resources: service.resources,
+        };
         wit_services.push((id, service));
     }
     for (full_name, model) in models {
@@ -1664,7 +1759,7 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
 
     // Pass 2: compute refs + insert.
     for (id, service) in wit_services {
-        let refs = service_refs(&service, &full_name_to_id);
+        let refs = service_refs(&service);
         let name = Name::new(&service.name);
         table.insert(Symbol {
             id,
@@ -1709,6 +1804,26 @@ fn tables_to_symbols(tables: WitTables) -> SymbolTable<WitSymbolKind> {
             name,
             refs,
             kind: WitSymbolKind::Variant(variant),
+        });
+    }
+    for (id, input) in op_inputs {
+        let refs = message_type_refs(&input, &full_name_to_id);
+        let name = Name::new(&input.model_name);
+        table.insert(Symbol {
+            id,
+            name,
+            refs,
+            kind: WitSymbolKind::OperationInput(input),
+        });
+    }
+    for (id, output) in op_outputs {
+        let refs = operation_output_refs(&output, &full_name_to_id);
+        let name = Name::new(operation_output_name(&output));
+        table.insert(Symbol {
+            id,
+            name,
+            refs,
+            kind: WitSymbolKind::OperationOutput(output),
         });
     }
     for (id, fragment) in wit_fragments {
@@ -1805,19 +1920,46 @@ fn model_refs(model: &WitModel, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolI
     refs
 }
 
-fn service_refs(service: &WitService, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
+/// A service references its operations' input and output symbols directly; each
+/// of those in turn references the backing type (see [`message_type_refs`] /
+/// [`operation_output_refs`]).
+fn service_refs(service: &WitService) -> Vec<SymbolId> {
     let mut refs = Vec::new();
     for operation in &service.operations {
-        push_full_name(map, &operation.input.info.full_name, &mut refs);
-        match &operation.output {
-            WitOperationOutput::Message(message) => {
-                push_full_name(map, &message.info.full_name, &mut refs);
-            }
-            // TODO: resource refs when resources become symbols
-            WitOperationOutput::Resource { .. } | WitOperationOutput::None => {}
-        }
+        push_unique(&mut refs, operation.input);
+        push_unique(&mut refs, operation.output);
     }
     refs
+}
+
+/// Refs for an operation input symbol: its backing model, when in the table.
+fn message_type_refs(message: &WitMessageType, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
+    let mut refs = Vec::new();
+    push_full_name(map, &message.info.full_name, &mut refs);
+    refs
+}
+
+/// Refs for an operation output symbol: the backing model for a message output;
+/// resource/none outputs carry none.
+fn operation_output_refs(
+    output: &WitOperationOutput,
+    map: &BTreeMap<String, SymbolId>,
+) -> Vec<SymbolId> {
+    let mut refs = Vec::new();
+    if let WitOperationOutput::Message(message) = output {
+        push_full_name(map, &message.info.full_name, &mut refs);
+    }
+    // TODO: resource refs when resources become symbols.
+    refs
+}
+
+/// The canonical name for an operation output symbol.
+fn operation_output_name(output: &WitOperationOutput) -> &str {
+    match output {
+        WitOperationOutput::Message(message) => &message.model_name,
+        WitOperationOutput::Resource { type_name } => type_name,
+        WitOperationOutput::None => "",
+    }
 }
 
 fn variant_refs(variant: &WitVariant, map: &BTreeMap<String, SymbolId>) -> Vec<SymbolId> {
@@ -1840,6 +1982,8 @@ pub(crate) struct WitSymbols<'a> {
     enums: IndexMap<&'a str, &'a WitEnum>,
     flags: IndexMap<&'a str, &'a WitFlags>,
     variants: IndexMap<&'a str, &'a WitVariant>,
+    op_inputs: BTreeMap<SymbolId, &'a WitMessageType>,
+    op_outputs: BTreeMap<SymbolId, &'a WitOperationOutput>,
     fragments: Vec<&'a SupportFragmentSpec>,
 }
 
@@ -1853,6 +1997,8 @@ impl<'a> WitSymbols<'a> {
             enums: IndexMap::new(),
             flags: IndexMap::new(),
             variants: IndexMap::new(),
+            op_inputs: BTreeMap::new(),
+            op_outputs: BTreeMap::new(),
             fragments: Vec::new(),
         };
         for symbol in symbols.iter() {
@@ -1871,6 +2017,12 @@ impl<'a> WitSymbols<'a> {
                 WitSymbolKind::Variant(variant) => {
                     view.variants
                         .insert(variant.info.full_name.as_str(), variant);
+                }
+                WitSymbolKind::OperationInput(input) => {
+                    view.op_inputs.insert(symbol.id, input);
+                }
+                WitSymbolKind::OperationOutput(output) => {
+                    view.op_outputs.insert(symbol.id, output);
                 }
                 WitSymbolKind::Fragment(fragment) => view.fragments.push(fragment),
             }
@@ -1922,5 +2074,21 @@ impl<'a> WitSymbols<'a> {
 
     pub(crate) fn variant_(&self, full_name: &str) -> Option<&'a WitVariant> {
         self.variants.get(full_name).copied()
+    }
+
+    /// Resolve an operation's input symbol to its message type.
+    pub(crate) fn op_input(&self, id: SymbolId) -> &'a WitMessageType {
+        self.op_inputs
+            .get(&id)
+            .copied()
+            .expect("operation input symbol should be in the table")
+    }
+
+    /// Resolve an operation's output symbol to its output.
+    pub(crate) fn op_output(&self, id: SymbolId) -> &'a WitOperationOutput {
+        self.op_outputs
+            .get(&id)
+            .copied()
+            .expect("operation output symbol should be in the table")
     }
 }

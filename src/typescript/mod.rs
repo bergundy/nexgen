@@ -154,8 +154,8 @@ fn collect_typescript_language_imports(symbols: &WitSymbols) -> Vec<LanguageImpo
     }
     for service in symbols.services() {
         for operation in &service.operations {
-            collect_message_type_imports(&operation.input, &mut imports);
-            match &operation.output {
+            collect_message_type_imports(symbols.op_input(operation.input), &mut imports);
+            match symbols.op_output(operation.output) {
                 WitOperationOutput::Message(message) => {
                     collect_message_type_imports(message, &mut imports);
                 }
@@ -1099,17 +1099,13 @@ fn resolve_operation<'a>(
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> Result<RenderedOperation<'a>> {
-    let input_conversion = resolve_message_value_conversion(
-        &operation.input,
-        symbols,
-        enums,
-        flags,
-        variants,
-        models,
-    );
+    let input = symbols.op_input(operation.input);
+    let input_conversion =
+        resolve_message_value_conversion(input, symbols, enums, flags, variants, models);
     let output_transform = operation.output_transform.as_ref();
     let output_resource_return = operation.output_resource_return.clone();
-    let (output_proto_ref, output_type_id, output_annotation_default) = match &operation.output {
+    let output = symbols.op_output(operation.output);
+    let (output_proto_ref, output_type_id, output_annotation_default) = match output {
         WitOperationOutput::Message(output) => {
             if output_transform.is_none()
                 && output_resource_return.is_none()
@@ -1132,7 +1128,7 @@ fn resolve_operation<'a>(
             ("void".to_string(), "void".to_string(), "void".to_string())
         }
     };
-    let input_model = models.get(&operation.input.info.full_name);
+    let input_model = models.get(&input.info.full_name);
     let input_model_name = input_model.map(|model| model.name.clone());
     let input_type_parameters = input_model
         .map(|model| {
@@ -1169,16 +1165,16 @@ fn resolve_operation<'a>(
         // Assigned once the owning service's `io_type_refs` table is built.
         input: None,
         output: None,
-        input_proto_ref: operation_type_ref(&operation.input),
+        input_proto_ref: operation_type_ref(input),
         output_proto_ref,
-        input_type_id: operation.input.info.full_name.clone(),
+        input_type_id: input.info.full_name.clone(),
         output_type_id,
         input_model_name,
         input_type_parameters,
         input_annotation,
         input_to_proto_expr: input_conversion.to_proto_expr("request"),
-        input_nexus_type_id: if operation.input.source == WitMessageSource::Wit {
-            Some(operation.input.info.full_name.clone())
+        input_nexus_type_id: if input.source == WitMessageSource::Wit {
+            Some(input.info.full_name.clone())
         } else {
             None
         },

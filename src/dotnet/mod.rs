@@ -311,12 +311,19 @@ fn lower_operation(
 ) -> nex_gen_codegen::Operation {
     use nex_gen_codegen::{Name, Operation};
 
-    let input = operation_has_input(operation, symbols)
-        .then(|| push_io_ref(io_type_refs, operation_raw_input_type(&operation.input)));
-    let output = Some(push_io_ref(io_type_refs, operation_raw_return_type(operation)));
+    let input = operation_has_input(operation, symbols).then(|| {
+        push_io_ref(
+            io_type_refs,
+            operation_raw_input_type(symbols.op_input(operation.input)),
+        )
+    });
+    let output = Some(push_io_ref(
+        io_type_refs,
+        operation_raw_return_type(operation, symbols),
+    ));
     // The service binding only documents a return when the operation has an
     // output, matching `render_operation_summary_xml_doc`.
-    let returns_doc = match operation.output {
+    let returns_doc = match symbols.op_output(operation.output) {
         WitOperationOutput::None => None,
         _ => dotnet_doc(&operation.return_doc).map(str::to_string),
     };
@@ -467,11 +474,12 @@ fn render_operation_xml_doc(
     operation: &WitOperation,
     symbols: &WitSymbols,
 ) {
-    let return_doc = match operation.output {
+    let return_doc = match symbols.op_output(operation.output) {
         WitOperationOutput::None => None,
         _ => dotnet_doc(&operation.return_doc),
     };
-    let request_doc = symbols.model(&operation.input.info.full_name)
+    let request_doc = symbols
+        .model(&symbols.op_input(operation.input).info.full_name)
         .and_then(|model| dotnet_doc(model.generated_model.doc()));
     render_xml_doc(
         output,
@@ -613,11 +621,12 @@ fn render_operation_extension(
     support_namespace: Option<&str>,
 ) {
     let method_name = format!("{}Async", csharp_type_name(&operation.name));
-    let raw_return = operation_raw_return_type(operation);
-    let high_level_return = operation_return_type(operation);
+    let input = symbols.op_input(operation.input);
+    let raw_return = operation_raw_return_type(operation, symbols);
+    let high_level_return = operation_return_type(operation, symbols);
     let has_input = operation_has_input(operation, symbols);
-    let raw_input_type = operation_raw_input_type(&operation.input);
-    let high_level_input_type = operation_input_type(&operation.input, symbols);
+    let raw_input_type = operation_raw_input_type(input);
+    let high_level_input_type = operation_input_type(input, symbols);
 
     if high_level_input_type == raw_input_type || !operation_requires_high_level_request(operation)
     {
@@ -652,7 +661,7 @@ fn render_operation_extension(
         );
     }
 
-    if let Some(model) = symbols.model(&operation.input.info.full_name)
+    if let Some(model) = symbols.model(&input.info.full_name)
         && operation_has_flattened_convenience(operation, model, symbols)
     {
         render_operation_flattened_extension(
@@ -763,11 +772,13 @@ fn operation_request_method_access(
     request_kind: RequestArgumentKind,
     symbols: &WitSymbols,
 ) -> &'static str {
-    let raw_input_type = operation_raw_input_type(&operation.input);
-    let high_level_input_type = operation_input_type(&operation.input, symbols);
+    let input = symbols.op_input(operation.input);
+    let raw_input_type = operation_raw_input_type(input);
+    let high_level_input_type = operation_input_type(input, symbols);
     if (matches!(request_kind, RequestArgumentKind::HighLevel)
         || high_level_input_type == raw_input_type)
-        && symbols.model(&operation.input.info.full_name)
+        && symbols
+            .model(&input.info.full_name)
             .is_some_and(|model| operation_has_flattened_convenience(operation, model, symbols))
     {
         "private"
@@ -933,7 +944,7 @@ fn render_operation_flattened_xml_doc(
     symbols: &WitSymbols,
     overload: &FlattenedOverload,
 ) {
-    let return_doc = match operation.output {
+    let return_doc = match symbols.op_output(operation.output) {
         WitOperationOutput::None => None,
         _ => dotnet_doc(&operation.return_doc),
     };
@@ -1307,7 +1318,7 @@ fn render_operation_options_type(
     operation: &WitOperation,
     symbols: &WitSymbols,
 ) {
-    let Some(model) = symbols.model(&operation.input.info.full_name) else {
+    let Some(model) = symbols.model(&symbols.op_input(operation.input).info.full_name) else {
         return;
     };
     if !operation_has_flattened_convenience(operation, model, symbols)
@@ -1742,8 +1753,9 @@ fn collect_public_operation_models(
     operation: &WitOperation,
     symbols: &WitSymbols,
 ) {
-    let raw_input_type = operation_raw_input_type(&operation.input);
-    let high_level_input_type = operation_input_type(&operation.input, symbols);
+    let input = symbols.op_input(operation.input);
+    let raw_input_type = operation_raw_input_type(input);
+    let high_level_input_type = operation_input_type(input, symbols);
     let has_input = operation_has_input(operation, symbols);
     if has_input
         && (high_level_input_type == raw_input_type
@@ -1751,30 +1763,25 @@ fn collect_public_operation_models(
         && operation_request_method_access(operation, RequestArgumentKind::Raw, symbols)
             == "public"
     {
-        collect_public_operation_input_models(names, &operation.input, &raw_input_type, symbols);
+        collect_public_operation_input_models(names, input, &raw_input_type, symbols);
     }
     if has_input
         && high_level_input_type != raw_input_type
         && operation_request_method_access(operation, RequestArgumentKind::HighLevel, symbols)
             == "public"
     {
-        collect_public_operation_input_models(
-            names,
-            &operation.input,
-            &high_level_input_type,
-            symbols,
-        );
+        collect_public_operation_input_models(names, input, &high_level_input_type, symbols);
     }
 
-    if let WitOperationOutput::Message(message) = &operation.output
+    if let WitOperationOutput::Message(message) = symbols.op_output(operation.output)
         && operation.output_transform.is_none()
         && operation.output_resource_return.is_none()
-        && operation_return_type(operation) == csharp_type_name(&message.model_name)
+        && operation_return_type(operation, symbols) == csharp_type_name(&message.model_name)
     {
         collect_public_message_models(names, message, symbols);
     }
 
-    let Some(model) = symbols.model(&operation.input.info.full_name) else {
+    let Some(model) = symbols.model(&input.info.full_name) else {
         return;
     };
     if !operation_has_flattened_convenience(operation, model, symbols) {
@@ -2068,7 +2075,7 @@ fn resource_method_operation_call_args(
     request_plan: &RequestPlan,
     symbols: &WitSymbols,
 ) -> Option<Vec<String>> {
-    let model = symbols.model(&operation.input.info.full_name)?;
+    let model = symbols.model(&symbols.op_input(operation.input).info.full_name)?;
     if operation_has_flattened_convenience(operation, model, symbols) {
         if model.fields.iter().any(|field| field.function.is_some()) {
             return resource_method_flattened_operation_call_args(
@@ -2248,10 +2255,10 @@ fn render_result_helper(output: &mut String) {
 }
 
 fn operation_has_input(operation: &WitOperation, symbols: &WitSymbols) -> bool {
-    symbols.model(&operation.input.info.full_name)
-        .is_none_or(|model| {
-            !model.fields.is_empty() || operation.input.source == WitMessageSource::Proto
-        })
+    let input = symbols.op_input(operation.input);
+    symbols.model(&input.info.full_name).is_none_or(|model| {
+        !model.fields.is_empty() || input.source == WitMessageSource::Proto
+    })
 }
 
 fn operation_input_type(message: &WitMessageType, symbols: &WitSymbols) -> String {
@@ -2264,7 +2271,7 @@ fn operation_input_type(message: &WitMessageType, symbols: &WitSymbols) -> Strin
     dotnet_message_type(message)
 }
 
-fn operation_return_type(operation: &WitOperation) -> String {
+fn operation_return_type(operation: &WitOperation, symbols: &WitSymbols) -> String {
     if let Some(transform) = &operation.output_transform
         && let Some(type_name) = transform.type_name.for_language(Language::Dotnet)
     {
@@ -2273,7 +2280,7 @@ fn operation_return_type(operation: &WitOperation) -> String {
     if let Some(resource) = &operation.output_resource_return {
         return csharp_type_name(&resource.resource_type_name);
     }
-    match &operation.output {
+    match symbols.op_output(operation.output) {
         WitOperationOutput::Message(message) => dotnet_message_type(message),
         WitOperationOutput::Resource { type_name } => csharp_type_name(type_name),
         WitOperationOutput::None => "void".to_string(),
@@ -2284,8 +2291,8 @@ fn operation_raw_input_type(message: &WitMessageType) -> String {
     dotnet_message_type(message)
 }
 
-fn operation_raw_return_type(operation: &WitOperation) -> String {
-    match &operation.output {
+fn operation_raw_return_type(operation: &WitOperation, symbols: &WitSymbols) -> String {
+    match symbols.op_output(operation.output) {
         WitOperationOutput::Message(message) => dotnet_message_type(message),
         WitOperationOutput::Resource { type_name } => csharp_type_name(type_name),
         WitOperationOutput::None => "void".to_string(),

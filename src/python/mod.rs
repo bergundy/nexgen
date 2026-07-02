@@ -144,8 +144,8 @@ fn collect_python_language_imports(symbols: &WitSymbols) -> Vec<LanguageImportSp
     }
     for service in symbols.services() {
         for operation in &service.operations {
-            collect_message_type_imports(&operation.input, &mut imports);
-            match &operation.output {
+            collect_message_type_imports(symbols.op_input(operation.input), &mut imports);
+            match symbols.op_output(operation.output) {
                 WitOperationOutput::Message(message) => {
                     collect_message_type_imports(message, &mut imports);
                 }
@@ -957,19 +957,14 @@ fn resolve_operation<'a>(
     variants: &mut IndexMap<String, RenderedVariant>,
     models: &mut IndexMap<String, RenderedModel>,
 ) -> Result<RenderedOperation<'a>> {
-    let (input_ref, input_module_path) = operation_service_ref(&operation.input, "models");
-    let input_conversion = resolve_message_value_conversion(
-        &operation.input,
-        None,
-        symbols,
-        enums,
-        flags,
-        variants,
-        models,
-    );
+    let input = symbols.op_input(operation.input);
+    let (input_ref, input_module_path) = operation_service_ref(input, "models");
+    let input_conversion =
+        resolve_message_value_conversion(input, None, symbols, enums, flags, variants, models);
     let output_transform = operation.output_transform.as_ref();
     let output_resource_return = operation.output_resource_return.clone();
-    let (output_ref, output_module_path, output_annotation_default) = match &operation.output {
+    let output = symbols.op_output(operation.output);
+    let (output_ref, output_module_path, output_annotation_default) = match output {
         WitOperationOutput::Message(output) => {
             let (output_ref, output_module_path) = operation_service_ref(output, "models");
             if output_transform.is_none()
@@ -1008,11 +1003,7 @@ fn resolve_operation<'a>(
         input_conversion.kind,
         MessageValueConversionKind::GeneratedModel { .. } | MessageValueConversionKind::NativeModel
     ) {
-        Some(build_unpacked_input(
-            &operation.input.info.full_name,
-            models,
-            symbols,
-        )?)
+        Some(build_unpacked_input(&input.info.full_name, models, symbols)?)
     } else {
         None
     };
@@ -1063,7 +1054,7 @@ fn resolve_operation<'a>(
         }),
         output_resource_return,
         output_direct_result: operation.output_direct_result,
-        output_none: matches!(operation.output, WitOperationOutput::None),
+        output_none: matches!(output, WitOperationOutput::None),
         unpacked_input,
     })
 }
