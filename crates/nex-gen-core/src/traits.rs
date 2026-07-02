@@ -12,7 +12,7 @@ use crate::ir::{LoadOutput, IR};
 use crate::language::Language;
 use crate::render::NameResolver;
 
-/// Validates input files for one frontend and produces the base IR.
+/// Validates input files for one frontend and produces the core IR.
 ///
 /// This is where **input validation** lives: each frontend loader parses and
 /// validates its own input format before lowering. The loader lowers its inputs
@@ -38,9 +38,9 @@ pub trait Loader {
 /// Renders symbols for one language, owning file layout.
 ///
 /// Type symbols are rendered by the emitter (reading its private data by id);
-/// service symbols are rendered by the base
+/// service symbols are rendered by the core
 /// [`render_service`](crate::render_service) utility, which the emitter calls.
-/// Import blocks are rendered by the base
+/// Import blocks are rendered by the core
 /// [`render_imports`](crate::render_imports) (not an emitter method) and
 /// stitched in during [`assemble`](crate::assemble).
 pub trait Emitter<K> {
@@ -50,19 +50,19 @@ pub trait Emitter<K> {
     /// Render the IR into a set of files (bodies without import blocks).
     ///
     /// Each [`EmittedFile`] declares the symbols it references (`refs`) and any
-    /// non-symbol runtime imports; the base resolves them into the import block
+    /// non-symbol runtime imports; the core resolves them into the import block
     /// during [`assemble`](crate::assemble) using [`resolver`](Emitter::resolver).
     ///
     /// Fallible: rendering may resolve types that fail validation (e.g. an
     /// unresolvable I/O type), so the error surfaces here rather than panicking.
     fn emit(&self, ir: &IR<K>) -> Result<Vec<EmittedFile>>;
 
-    /// How the base names and locates referenced symbols for this emitter.
+    /// How the core names and locates referenced symbols for this emitter.
     ///
     /// Used by [`assemble`](crate::assemble) to resolve each
     /// [`EmittedFile`](crate::EmittedFile)'s `refs` into cross-module imports,
     /// and by [`render_service`](crate::render_service) to name operation I/O
     /// types. Resolution stays out of the emitter's `emit` body: the emitter
-    /// only declares `refs`, the base resolves them through this resolver.
+    /// only declares `refs`, the core resolves them through this resolver.
     fn resolver(&self) -> &dyn NameResolver;
 }

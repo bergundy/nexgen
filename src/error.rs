@@ -255,22 +255,22 @@ pub enum Error {
         conflicting_property: &'static str,
     },
 
-    /// An error surfaced through the base codegen pipeline (loader / emitter /
+    /// An error surfaced through the core codegen pipeline (loader / emitter /
     /// assemble). Its `message` is an already-formed diagnostic — the frontend
-    /// wrapped its own error into the base [`nex_gen_codegen::Error::Load`] on
+    /// wrapped its own error into the core [`nex_gen_core::Error::Load`] on
     /// the way in, so it is displayed transparently here on the way out.
     #[error("{message}")]
     Pipeline { message: String },
 }
 
-impl From<nex_gen_codegen::Error> for Error {
-    fn from(error: nex_gen_codegen::Error) -> Self {
-        use nex_gen_codegen::Error as Base;
+impl From<nex_gen_core::Error> for Error {
+    fn from(error: nex_gen_core::Error) -> Self {
+        use nex_gen_core::Error as Core;
         match error {
-            Base::ReadFile { path, source } => Error::ReadFile { path, source },
-            Base::WriteFile { path, source } => Error::WriteFile { path, source },
-            Base::OutputPathExists { path } => Error::OutputPathExists { path },
-            Base::RunFormatter {
+            Core::ReadFile { path, source } => Error::ReadFile { path, source },
+            Core::WriteFile { path, source } => Error::WriteFile { path, source },
+            Core::OutputPathExists { path } => Error::OutputPathExists { path },
+            Core::RunFormatter {
                 path,
                 command,
                 source,
@@ -279,7 +279,7 @@ impl From<nex_gen_codegen::Error> for Error {
                 command,
                 source,
             },
-            Base::FormatterFailed {
+            Core::FormatterFailed {
                 path,
                 command,
                 status,
@@ -288,8 +288,8 @@ impl From<nex_gen_codegen::Error> for Error {
                 command,
                 status,
             },
-            Base::UnsupportedLanguage { language } => Error::UnsupportedLanguage { language },
-            Base::Load { message } => Error::Pipeline { message },
+            Core::UnsupportedLanguage { language } => Error::UnsupportedLanguage { language },
+            Core::Load { message } => Error::Pipeline { message },
         }
     }
 }

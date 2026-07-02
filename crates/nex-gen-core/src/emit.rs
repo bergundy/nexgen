@@ -4,7 +4,7 @@
 //! [`Emitter`](crate::Emitter). `module` is the placement key that drives both
 //! which file a symbol lands in and whether a cross-module reference needs an
 //! import; `Import` / `ImportBinding` describe a resolved import; `EmittedFile`
-//! is one rendered file (body without its import block — the base renders and
+//! is one rendered file (body without its import block — the core renders and
 //! stitches the import block via [`render_imports`](crate::render_imports)).
 //!
 //! Shapes start from the existing crate's `LanguageImportSpec` /
@@ -92,14 +92,14 @@ pub struct Import {
 /// One rendered file produced by an emitter.
 ///
 /// The emitter owns file layout (which files, what's in each). The `body`
-/// does **not** include the import block; the base resolves cross-module
+/// does **not** include the import block; the core resolves cross-module
 /// imports from `refs`, renders the block via
 /// [`render_imports`](crate::render_imports), and stitches it in during
 /// [`assemble`](crate::assemble).
 ///
 /// Import resolution is split so it stays out of the emitter: the emitter
 /// declares which symbols the file references (`refs`) and any non-symbol
-/// runtime imports (`runtime_imports`); the base walks `refs` through the
+/// runtime imports (`runtime_imports`); the core walks `refs` through the
 /// emitter's [`NameResolver`](crate::NameResolver), drops same-module refs,
 /// resolves the rest to [`Import`]s, unions in the runtime imports, and dedups.
 #[derive(Clone, Debug)]
@@ -108,7 +108,7 @@ pub struct EmittedFile {
     pub path: PathBuf,
     /// The module this file represents (its placement key).
     pub module: Module,
-    /// Symbols this file references. The base resolves these to cross-module
+    /// Symbols this file references. The core resolves these to cross-module
     /// [`Import`]s (same-module refs are dropped) via the emitter's
     /// [`NameResolver`](crate::NameResolver).
     pub refs: Vec<SymbolId>,

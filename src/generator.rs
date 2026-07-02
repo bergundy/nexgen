@@ -10,10 +10,10 @@ use crate::spec::ApiSpec;
 use crate::typescript;
 use crate::validation::validate_type_overrides;
 
-// The generated-file model + layout now live in the base crate (the output
+// The generated-file model + layout now live in the core crate (the output
 // plumbing is frontend-agnostic). Re-exported here so existing
 // `crate::generator::GeneratedFiles` paths keep working.
-pub use nex_gen_codegen::{GeneratedFiles, GeneratedOutputLayout};
+pub use nex_gen_core::{GeneratedFiles, GeneratedOutputLayout};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ModelCapabilities {

@@ -1,9 +1,9 @@
 mod wit_symbols;
 // The WIT `Loader`: validates inputs and lowers them into `IR<WitSymbolKind>`
-// (+ warnings). Wired into the CLI generation path via the base `Generator`
+// (+ warnings). Wired into the CLI generation path via the core `Generator`
 // (see `generate`).
 mod wit_loader;
-// The WIT emitters: render straight from `IR<WitSymbolKind>` through the base
+// The WIT emitters: render straight from `IR<WitSymbolKind>` through the core
 // `assemble` pipeline. Wired into the CLI generation path via the `Generator`;
 // the tests assert byte-identity with the direct `generate` path.
 mod wit_emitters;
@@ -31,7 +31,7 @@ use generator::{GeneratedFiles, GeneratedOutputLayout};
 use heck::ToSnakeCase;
 use spec::{ApiSpec, SupportFragmentSpec, write_prepared_wit_directory};
 
-pub use nex_gen_codegen::Language;
+pub use nex_gen_core::Language;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SupportFiles {
@@ -120,18 +120,18 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
     Ok(())
 }
 
-/// Run the WIT generation pipeline through the base [`Generator`]: the
+/// Run the WIT generation pipeline through the core [`Generator`]: the
 /// [`WitLoader`](wit_loader::WitLoader) parses the inputs once, resolving both
 /// the type symbols and the support-fragment symbols (spec-embedded plus any
 /// external `--support` files), and the language emitter renders the resulting
-/// `IR<WitSymbolKind>` through [`assemble`](nex_gen_codegen::assemble).
+/// `IR<WitSymbolKind>` through [`assemble`](nex_gen_core::assemble).
 fn generate(
     language: Language,
     input_paths: &[PathBuf],
     descriptor_paths: &[PathBuf],
     support_paths: &[PathBuf],
 ) -> Result<GeneratedFiles> {
-    use nex_gen_codegen::{Emitter, Generator};
+    use nex_gen_core::{Emitter, Generator};
 
     use wit_symbols::WitSymbolKind;
     use wit_emitters::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};

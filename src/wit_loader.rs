@@ -1,7 +1,7 @@
-//! WIT front-end loader lowering WIT inputs into the shared base IR.
+//! WIT front-end loader lowering WIT inputs into the shared core IR.
 //!
 //! This is the WIT side of the `Loader` -> `IR` -> `Emitter` pipeline described
-//! in `crates/nex-gen-codegen`. [`WitLoader`] validates its inputs and lowers
+//! in `crates/nex-gen-core`. [`WitLoader`] validates its inputs and lowers
 //! them into a [`SymbolTable<WitSymbolKind>`] via
 //! [`build_wit_symbols`](crate::wit_symbols::build_wit_symbols) — that table *is* the WIT
 //! IR. The symbol machinery (`WitSymbolKind`, the
@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use nex_gen_codegen::{IR, Language, LoadOutput};
+use nex_gen_core::{IR, Language, LoadOutput};
 
 use crate::wit_symbols::{WitSymbolKind, WitSymbols, build_wit_symbols};
 use crate::descriptors::DescriptorIndex;
@@ -19,7 +19,7 @@ use crate::resources::ensure_unique_resource_names;
 use crate::spec::ApiSpec;
 use crate::validation::validate_type_overrides;
 
-/// Loads WIT inputs (plus proto descriptors and support files) into the base IR.
+/// Loads WIT inputs (plus proto descriptors and support files) into the core IR.
 ///
 /// Holds its own inputs; `language` is supplied per [`Loader::load`] call
 /// because WIT resolves language-specific overrides at parse time — and support
@@ -49,34 +49,34 @@ impl WitLoader {
     }
 }
 
-impl nex_gen_codegen::Loader for WitLoader {
+impl nex_gen_core::Loader for WitLoader {
     type Kind = WitSymbolKind;
 
-    fn load(&self, language: Language) -> nex_gen_codegen::Result<LoadOutput<WitSymbolKind>> {
+    fn load(&self, language: Language) -> nex_gen_core::Result<LoadOutput<WitSymbolKind>> {
         let spec = ApiSpec::load_for_language_with_inputs(language, &self.input_paths)
-            .map_err(|error| nex_gen_codegen::Error::Load {
+            .map_err(|error| nex_gen_core::Error::Load {
                 message: error.to_string(),
             })?;
         let descriptors = DescriptorIndex::load_many(&self.descriptor_paths).map_err(|error| {
-            nex_gen_codegen::Error::Load {
+            nex_gen_core::Error::Load {
                 message: error.to_string(),
             }
         })?;
         validate_type_overrides(&spec, &descriptors, language).map_err(|error| {
-            nex_gen_codegen::Error::Load {
+            nex_gen_core::Error::Load {
                 message: error.to_string(),
             }
         })?;
-        ensure_unique_resource_names(&spec).map_err(|error| nex_gen_codegen::Error::Load {
+        ensure_unique_resource_names(&spec).map_err(|error| nex_gen_core::Error::Load {
             message: error.to_string(),
         })?;
         let support = crate::load_support_files(language, &spec, &self.support_paths).map_err(
-            |error| nex_gen_codegen::Error::Load {
+            |error| nex_gen_core::Error::Load {
                 message: error.to_string(),
             },
         )?;
         let symbols = build_wit_symbols(&spec, &descriptors, &support.fragments).map_err(
-            |error| nex_gen_codegen::Error::Load {
+            |error| nex_gen_core::Error::Load {
                 message: error.to_string(),
             },
         )?;
@@ -122,7 +122,7 @@ interface user-service {
 }
 "#;
 
-    fn build_symbols() -> nex_gen_codegen::SymbolTable<WitSymbolKind> {
+    fn build_symbols() -> nex_gen_core::SymbolTable<WitSymbolKind> {
         let spec =
             ApiSpec::parse_for_language(Language::Python, INLINE_WIT, PathBuf::from("inline.wit"))
                 .unwrap();

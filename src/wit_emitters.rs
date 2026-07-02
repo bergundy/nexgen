@@ -2,7 +2,7 @@
 //!
 //! Each emitter builds a borrowing [`WitSymbols`] view over the symbol table
 //! and runs the existing per-language renderers, then routes the result through
-//! the base [`assemble`](nex_gen_codegen::assemble) pipeline. The emitter
+//! the core [`assemble`](nex_gen_core::assemble) pipeline. The emitter
 //! derives everything it needs from the IR, satisfying the "emitter works only
 //! from the IR" contract.
 //!
@@ -10,10 +10,10 @@
 //! body and declare no `refs`, so `assemble` runs as a stitch/layout pass and
 //! the output is byte-identical to the legacy `generate_files` path (guarded by
 //! the equivalence tests below and the checked-in example suites). Moving
-//! import resolution itself into the base (populating `refs` + `render_imports`)
-//! is a follow-up that requires extending the base import model.
+//! import resolution itself into the core (populating `refs` + `render_imports`)
+//! is a follow-up that requires extending the core import model.
 
-use nex_gen_codegen::{
+use nex_gen_core::{
     Emitter, EmittedFile, Error, Import, Language, Module, NameResolver, Result, SymbolId, IR,
 };
 
@@ -23,7 +23,7 @@ use crate::generator::GeneratedFiles;
 /// A resolver that is never consulted.
 ///
 /// These emitters render each file's imports inline and declare no `refs`, so
-/// [`assemble`](nex_gen_codegen::assemble) never resolves a symbol through the
+/// [`assemble`](nex_gen_core::assemble) never resolves a symbol through the
 /// resolver. It exists only to satisfy the [`Emitter::resolver`] contract; if a
 /// method is ever called it is a bug (a `ref` leaked without matching wiring).
 struct UnusedResolver;
@@ -42,7 +42,7 @@ impl NameResolver for UnusedResolver {
     }
 }
 
-/// Wrap a legacy [`GeneratedFiles`] map into base [`EmittedFile`]s.
+/// Wrap a legacy [`GeneratedFiles`] map into core [`EmittedFile`]s.
 ///
 /// Each file's body already contains its import block, so it carries no `refs`
 /// and no `runtime_imports`; `module` is set to the path so it is stable but is
@@ -161,7 +161,7 @@ impl Emitter<WitSymbolKind> for DotnetEmitter {
 mod tests {
     use std::path::PathBuf;
 
-    use nex_gen_codegen::{assemble, IR};
+    use nex_gen_core::{assemble, IR};
     use prost_types::FileDescriptorSet;
 
     use super::{DotnetEmitter, PythonEmitter, TypeScriptEmitter};

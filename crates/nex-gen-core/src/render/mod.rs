@@ -1,4 +1,4 @@
-//! Base per-language rendering utilities, reused by every emitter.
+//! Core per-language rendering utilities, reused by every emitter.
 //!
 //! Two entry points, symmetric with each other: [`render_service`] renders a
 //! service binding (structural logic + per-language formatting), naming I/O
@@ -17,9 +17,9 @@ use crate::emit::{Import, Module};
 use crate::ir::{Service, SymbolId};
 use crate::language::Language;
 
-/// How the base names and locates a referenced symbol, supplied by the emitter.
+/// How the core names and locates a referenced symbol, supplied by the emitter.
 ///
-/// The base never inspects the frontend's private type data, so when it
+/// The core never inspects the frontend's private type data, so when it
 /// renders a service it asks the emitter (via this resolver) how to name and
 /// import each operation's I/O type by [`SymbolId`].
 pub trait NameResolver {
@@ -38,7 +38,7 @@ pub trait NameResolver {
 /// A [`NameResolver`] backed by a service's I/O type-reference names, indexed by
 /// the per-service [`SymbolId`] the front-end assigned them.
 ///
-/// The base reasons over [`SymbolId`]s, but a front-end that renders a service
+/// The core reasons over [`SymbolId`]s, but a front-end that renders a service
 /// already holds each operation's I/O type as a resolved source string rather
 /// than as a symbol-graph node. It keeps those strings on its own per-service
 /// model — one per id it handed out, in id order — and passes the list here as
@@ -80,9 +80,9 @@ pub fn render_service(lang: Language, svc: &Service, names: &dyn NameResolver) -
 /// Render the import block for a file, given its resolved [`Import`]s.
 ///
 /// Symmetric with [`render_service`]: structural over `imports`, formatted per
-/// `lang` in the language submodule. This is a base utility, **not** an emitter
+/// `lang` in the language submodule. This is a core utility, **not** an emitter
 /// method — the emitter produces structured imports on its
-/// [`EmittedFile`](crate::EmittedFile)s and the base renders + stitches the
+/// [`EmittedFile`](crate::EmittedFile)s and the core renders + stitches the
 /// block in [`assemble`](crate::assemble).
 ///
 /// Output is canonical (sorted, grouped); the per-language formatter

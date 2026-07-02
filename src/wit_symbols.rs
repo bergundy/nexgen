@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use heck::ToUpperCamelCase;
 use indexmap::IndexMap;
-use nex_gen_codegen::{Name, Symbol, SymbolId, SymbolTable};
+use nex_gen_core::{Name, Symbol, SymbolId, SymbolTable};
 use prost_types::FieldDescriptorProto;
 use prost_types::FileOptions;
 use prost_types::field_descriptor_proto::{Label, Type};

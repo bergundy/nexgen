@@ -1,15 +1,15 @@
 //! Helpers shared by the front-ends when lowering their per-language service
-//! models into the base [`Service`](nex_gen_codegen::Service) /
-//! [`Operation`](nex_gen_codegen::Operation) binding model.
+//! models into the core [`Service`](nex_gen_core::Service) /
+//! [`Operation`](nex_gen_core::Operation) binding model.
 //!
-//! The base names operation I/O types by [`SymbolId`](nex_gen_codegen::SymbolId)
-//! and resolves them through a [`NameResolver`](nex_gen_codegen::NameResolver);
+//! The core names operation I/O types by [`SymbolId`](nex_gen_core::SymbolId)
+//! and resolves them through a [`NameResolver`](nex_gen_core::NameResolver);
 //! a front-end already holds those types as resolved *strings*, so it keeps a
 //! per-service table of them (a `Vec<String>` — which is itself the resolver,
-//! see the base `impl NameResolver for Vec<String>`) and assigns each operation
-//! the [`SymbolId`](nex_gen_codegen::SymbolId) that indexes its entry.
+//! see the core `impl NameResolver for Vec<String>`) and assigns each operation
+//! the [`SymbolId`](nex_gen_core::SymbolId) that indexes its entry.
 
-use nex_gen_codegen::SymbolId;
+use nex_gen_core::SymbolId;
 
 /// Append a resolved I/O type-reference string to a service's `refs` table and
 /// return the per-service [`SymbolId`] that indexes it. Ids are handed out in

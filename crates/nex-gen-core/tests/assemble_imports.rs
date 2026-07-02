@@ -3,7 +3,7 @@
 //! Hand-builds a small [`SymbolTable`] — a service plus two types in a `models`
 //! module and one foreign type (living in another tool's package) — and a
 //! trivial test [`Emitter`]/[`NameResolver`], then runs [`assemble`] and asserts
-//! the base-owned resolution rules: cross-module refs import, same-module refs
+//! the core-owned resolution rules: cross-module refs import, same-module refs
 //! do not, the foreign ref produces a namespace/foreign import, imports dedup, and
 //! the service file imports its I/O types.
 //!
@@ -13,16 +13,16 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use nex_gen_codegen::emit::{EmittedFile, Import, ImportBinding, Module};
-use nex_gen_codegen::ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
-use nex_gen_codegen::{
+use nex_gen_core::emit::{EmittedFile, Import, ImportBinding, Module};
+use nex_gen_core::ir::{IR, Name, Operation, Service, Symbol, SymbolId, SymbolTable};
+use nex_gen_core::{
     GeneratedOutputLayout, Language, NameResolver, assemble, render_imports,
     traits::Emitter,
 };
 
 /// A local, minimal frontend kind for this test — symbol kinds are
-/// frontend-defined, so the base crate's own tests define their own. A service
-/// wraps the base [`Service`]; a type carries nothing here.
+/// frontend-defined, so the core crate's own tests define their own. A service
+/// wraps the core [`Service`]; a type carries nothing here.
 enum TestKind {
     Service(Service),
     Type,
@@ -151,7 +151,7 @@ impl Emitter<TestKind> for TestEmitter {
         Language::TypeScript
     }
 
-    fn emit(&self, ir: &IR<TestKind>) -> nex_gen_codegen::Result<Vec<EmittedFile>> {
+    fn emit(&self, ir: &IR<TestKind>) -> nex_gen_core::Result<Vec<EmittedFile>> {
         // models.ts: the two model types. GetUserRequest references Extra
         // (same module) and Extra references nothing -> no cross-module refs.
         let models = EmittedFile {

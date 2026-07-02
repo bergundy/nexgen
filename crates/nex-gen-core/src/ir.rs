@@ -1,20 +1,20 @@
-//! The base intermediate representation.
+//! The core intermediate representation.
 //!
 //! `Symbol<K>` is the core IR primitive. Its `kind: K` is **frontend-defined
-//! and open** — the base is compile-time-agnostic to `K` and only ever touches
+//! and open** — the core is compile-time-agnostic to `K` and only ever touches
 //! `id` / `name` / `refs` (plus the emitter's [`NameResolver`](crate::NameResolver)).
 //! Records, enums, variants, resources, type references, and services are all
 //! variants of the kind type each frontend crate defines and owns.
 //!
 //! Because `refs` are explicit on every symbol, placement, import resolution,
 //! reachability, and dedup are one algorithm over `refs` + the emitter-computed
-//! `module`, with no frontend-specific knowledge in the base.
+//! `module`, with no frontend-specific knowledge in the core.
 //!
-//! Services stay a base concept (they are well-defined across all frontends):
-//! the base provides the [`Service`] / [`Operation`] data structs and the
+//! Services stay a core concept (they are well-defined across all frontends):
+//! the core provides the [`Service`] / [`Operation`] data structs and the
 //! [`render_service`](crate::render_service) utility. A frontend kind simply
 //! *wraps* a [`Service`], and its emitter calls `render_service` when it renders
-//! that symbol — the base never matches on `K`.
+//! that symbol — the core never matches on `K`.
 
 use std::collections::BTreeMap;
 
@@ -41,7 +41,7 @@ impl Name {
 
 /// The core IR primitive, generic over the frontend's open symbol-kind type `K`.
 ///
-/// The base treats `kind` opaquely; it only reasons over `id`, `name`, and
+/// The core treats `kind` opaquely; it only reasons over `id`, `name`, and
 /// `refs`. The frontend's emitter matches on `kind` to render each symbol.
 #[derive(Clone, Debug)]
 pub struct Symbol<K> {
@@ -50,15 +50,15 @@ pub struct Symbol<K> {
     /// Canonical name (language mapping applied later, at emit time).
     pub name: Name,
     /// Symbols this one references (service I/O, type fields). Drives
-    /// reachability, placement, and import resolution in the base.
+    /// reachability, placement, and import resolution in the core.
     pub refs: Vec<SymbolId>,
-    /// Frontend-defined kind + its data. Opaque to the base.
+    /// Frontend-defined kind + its data. Opaque to the core.
     pub kind: K,
 }
 
-/// Base data for a service symbol: operations, wire names, docs.
+/// Core data for a service symbol: operations, wire names, docs.
 ///
-/// Services are frontend-independent, so this is base data a frontend kind
+/// Services are frontend-independent, so this is core data a frontend kind
 /// wraps (e.g. a frontend's `Kind::Service(Service)` variant); it never leaks
 /// frontend-specific details. Rendered by
 /// [`render_service`](crate::render_service).
@@ -80,7 +80,7 @@ pub struct Service {
 /// A single service operation.
 ///
 /// All fields are Nexus operation properties shared across front-ends; the
-/// I/O are referenced by [`SymbolId`] so the base never sees the
+/// I/O are referenced by [`SymbolId`] so the core never sees the
 /// schema-specific type data.
 #[derive(Clone, Debug)]
 pub struct Operation {
@@ -164,7 +164,7 @@ impl<K> SymbolTable<K> {
     }
 }
 
-/// What a [`Loader`](crate::Loader) produces: the base [`SymbolTable`] for the
+/// What a [`Loader`](crate::Loader) produces: the core [`SymbolTable`] for the
 /// frontend kind `K`. The emitter receives `&IR<K>` and works only from it.
 #[derive(Clone, Debug)]
 pub struct IR<K> {

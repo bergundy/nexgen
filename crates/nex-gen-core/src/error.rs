@@ -1,7 +1,7 @@
 //! Crate-local error type.
 //!
 //! A trimmed subset of the existing crate's `src/error.rs` — only the variants
-//! the base layer (output plumbing + assembly + load/emit) needs. Front-ends
+//! the core layer (output plumbing + assembly + load/emit) needs. Front-ends
 //! add their own validation errors in their own crates; those map into
 //! [`Error::Load`] (or are surfaced via the front-end's own error type) rather
 //! than living here.
@@ -16,7 +16,7 @@ use crate::language::Language;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Errors produced by the base codegen layer.
+/// Errors produced by the core codegen layer.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("failed to read `{path}`: {source}")]
@@ -55,7 +55,7 @@ pub enum Error {
     UnsupportedLanguage { language: Language },
 
     /// A loader failed while validating inputs / building the IR. The message
-    /// is the front-end's own diagnostic; the base does not interpret it.
+    /// is the front-end's own diagnostic; the core does not interpret it.
     #[error("failed to load inputs: {message}")]
     Load { message: String },
 }

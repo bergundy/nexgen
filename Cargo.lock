@@ -275,7 +275,7 @@ dependencies = [
  "clap",
  "heck",
  "indexmap",
- "nex-gen-codegen",
+ "nex-gen-core",
  "prost",
  "prost-types",
  "tempfile",
@@ -284,7 +284,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nex-gen-codegen"
+name = "nex-gen-core"
 version = "0.1.0"
 dependencies = [
  "heck",

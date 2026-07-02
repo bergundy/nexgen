@@ -1,6 +1,6 @@
-//! `nex-gen-codegen` — the front-end-agnostic codegen base layer.
+//! `nex-gen-core` — the front-end-agnostic codegen core layer.
 //!
-//! This crate is the frontend-agnostic base: the
+//! This crate is the frontend-agnostic core: the
 //! `Symbol`-centric IR, the [`Loader`] / [`Emitter`] traits, the per-language
 //! [`render_service`] / [`render_imports`] utilities, the [`assemble`]
 //! pipeline (placement + import resolution), the [`Generator`], and the output
@@ -17,9 +17,9 @@
 //! ```
 //!
 //! It is **frontend-agnostic**: symbol kinds are frontend-defined (the
-//! generic `K`), and the base reasons only over `id` / `name` / `refs` plus
+//! generic `K`), and the core reasons only over `id` / `name` / `refs` plus
 //! emit-tier data (`module`, `type_ref`, `import_binding`, `body`) — it never
-//! inspects `K`. Services stay a base concept ([`Service`] + [`render_service`]),
+//! inspects `K`. Services stay a core concept ([`Service`] + [`render_service`]),
 //! which a frontend kind wraps.
 //!
 //! The import-resolution + assembly path is implemented end-to-end:

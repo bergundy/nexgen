@@ -42,7 +42,7 @@ pub(crate) fn generate(symbols: &WitSymbols) -> Result<GeneratedFiles> {
             // Assign each operation a per-service I/O `SymbolId` (input then
             // output) as we collect the shared `io_type_refs` resolver table.
             // Python strips the `models.` prefix — a placement concern kept out
-            // of the base — before interning.
+            // of the core — before interning.
             let mut io_type_refs = Vec::new();
             let operations = service
                 .operations
@@ -492,7 +492,7 @@ struct RenderedService<'a> {
     operations: Vec<RenderedOperation<'a>>,
     resources: Vec<WitResource>,
     /// The service's I/O type-reference names, indexed by the per-service
-    /// [`SymbolId`](nex_gen_codegen::SymbolId) assigned to each operation's
+    /// [`SymbolId`](nex_gen_core::SymbolId) assigned to each operation's
     /// `input` / `output`. Passed to `render_service` as the resolver.
     io_type_refs: Vec<String>,
 }
@@ -505,10 +505,10 @@ struct RenderedOperation<'a> {
     experimental: bool,
     doc: Option<String>,
     return_doc: Option<String>,
-    /// Per-service I/O [`SymbolId`](nex_gen_codegen::SymbolId)s into the owning
+    /// Per-service I/O [`SymbolId`](nex_gen_core::SymbolId)s into the owning
     /// service's `io_type_refs`, assigned when the service model is built.
-    input: Option<nex_gen_codegen::SymbolId>,
-    output: Option<nex_gen_codegen::SymbolId>,
+    input: Option<nex_gen_core::SymbolId>,
+    output: Option<nex_gen_core::SymbolId>,
     input_ref: String,
     input_module_path: Option<String>,
     output_ref: String,
@@ -3614,16 +3614,16 @@ fn render_package_init(
     output
 }
 
-/// Build the base [`Operation`](nex_gen_codegen::Operation) binding model from a
+/// Build the core [`Operation`](nex_gen_core::Operation) binding model from a
 /// [`RenderedOperation`], carrying over the per-service I/O
-/// [`SymbolId`](nex_gen_codegen::SymbolId)s assigned when the service model was
+/// [`SymbolId`](nex_gen_core::SymbolId)s assigned when the service model was
 /// built. Python's `Operation[...]` always lists both I/O as concrete refs (no
 /// `void`/`None` collapsing) and the WIT front-end always provides both, so each
 /// carries `Some(id)`.
-impl<'a> From<&RenderedOperation<'a>> for nex_gen_codegen::Operation {
+impl<'a> From<&RenderedOperation<'a>> for nex_gen_core::Operation {
     fn from(operation: &RenderedOperation<'a>) -> Self {
-        nex_gen_codegen::Operation {
-            name: nex_gen_codegen::Name::new(operation.name),
+        nex_gen_core::Operation {
+            name: nex_gen_core::Name::new(operation.name),
             wire_name: operation.wire_name.to_string(),
             experimental: operation.experimental,
             input: operation.input,
@@ -3634,13 +3634,13 @@ impl<'a> From<&RenderedOperation<'a>> for nex_gen_codegen::Operation {
     }
 }
 
-/// Build the base [`Service`](nex_gen_codegen::Service) binding model from a
+/// Build the core [`Service`](nex_gen_core::Service) binding model from a
 /// [`RenderedService`]. The matching `io_type_refs` resolver is passed
 /// separately to `render_service`.
-impl<'a> From<&RenderedService<'a>> for nex_gen_codegen::Service {
+impl<'a> From<&RenderedService<'a>> for nex_gen_core::Service {
     fn from(service: &RenderedService<'a>) -> Self {
-        nex_gen_codegen::Service {
-            name: nex_gen_codegen::Name::new(service.name),
+        nex_gen_core::Service {
+            name: nex_gen_core::Name::new(service.name),
             wire_name: service.wire_name.to_string(),
             experimental: service.experimental,
             operations: service.operations.iter().map(Into::into).collect(),
@@ -3650,14 +3650,14 @@ impl<'a> From<&RenderedService<'a>> for nex_gen_codegen::Service {
 }
 
 fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    use nex_gen_codegen::{Language as BaseLanguage, Service};
+    use nex_gen_core::{Language as CoreLanguage, Service};
 
-    // Lower the per-language model into the base service binding, then delegate
-    // to the base `render_service` utility, resolving I/O type names through the
+    // Lower the per-language model into the core service binding, then delegate
+    // to the core `render_service` utility, resolving I/O type names through the
     // service's own `io_type_refs`. Resources and proto-conversion stay here.
     let service_def = Service::from(service);
-    output.push_str(&nex_gen_codegen::render_service(
-        BaseLanguage::Python,
+    output.push_str(&nex_gen_core::render_service(
+        CoreLanguage::Python,
         &service_def,
         &service.io_type_refs,
     ));

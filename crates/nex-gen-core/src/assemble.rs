@@ -3,7 +3,7 @@
 //! Because `refs` are explicit on every emitted file and `module` is computed
 //! per symbol by the emitter (surfaced through its
 //! [`NameResolver`](crate::NameResolver)), **reachability, placement, import
-//! resolution, and dedup are base-owned**: `module` comparison drives both
+//! resolution, and dedup are core-owned**: `module` comparison drives both
 //! which file a symbol lands in and whether a cross-module reference needs an
 //! import (same module => none). Foreign references and same-module exclusion
 //! fall out uniformly.
@@ -34,7 +34,7 @@ pub fn assemble<K>(ir: &IR<K>, emitter: &dyn Emitter<K>) -> Result<GeneratedFile
     let emitted: Vec<EmittedFile> = emitter.emit(ir)?;
 
     // 2. For each file, resolve + render its import block and stitch it on.
-    //    Resolution is base-owned: walk `refs` through the resolver, drop
+    //    Resolution is core-owned: walk `refs` through the resolver, drop
     //    same-module refs, union with runtime imports, and dedup.
     let mut files: BTreeMap<std::path::PathBuf, String> = BTreeMap::new();
     for file in emitted {

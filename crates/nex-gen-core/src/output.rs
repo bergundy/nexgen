@@ -3,7 +3,7 @@
 //! Mirrors `GeneratedFiles` / `GeneratedOutputLayout` from the existing
 //! crate's `src/generator.rs` and the `write_generated_files` /
 //! `format_generated_file` / `formatter_command` logic from its `src/lib.rs`.
-//! This layer is the same regardless of frontend, so it lives in the base.
+//! This layer is the same regardless of frontend, so it lives in the core.
 
 use std::collections::BTreeMap;
 use std::fs;
