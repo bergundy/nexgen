@@ -1,30 +1,21 @@
-//! Bridge for lowering a frontend's per-language service/operation model into
-//! the base [`Service`](nex_gen_codegen::Service) /
+//! Helpers shared by the front-ends when lowering their per-language service
+//! models into the base [`Service`](nex_gen_codegen::Service) /
 //! [`Operation`](nex_gen_codegen::Operation) binding model.
 //!
-//! Each frontend implements the lowering as `From<Interned<'_, T>>` (see the
-//! `render_service_definition` in the `dotnet` / `python` / `typescript`
-//! modules), so the conversion reads as `Service::from(Interned { .. })`.
+//! The base names operation I/O types by [`SymbolId`](nex_gen_codegen::SymbolId)
+//! and resolves them through a [`NameResolver`](nex_gen_codegen::NameResolver);
+//! a front-end already holds those types as resolved *strings*, so it keeps a
+//! per-service table of them (a `Vec<String>` — which is itself the resolver,
+//! see the base `impl NameResolver for Vec<String>`) and assigns each operation
+//! the [`SymbolId`](nex_gen_codegen::SymbolId) that indexes its entry.
 
-use nex_gen_codegen::ServiceTypeRefs;
+use nex_gen_codegen::SymbolId;
 
-/// Pairs a frontend value with the [`ServiceTypeRefs`] interner it feeds while
-/// being lowered into the base binding model.
-///
-/// The base names operation I/O types by
-/// [`SymbolId`](nex_gen_codegen::SymbolId); a frontend rendering a service
-/// already holds those types as resolved *strings*, so it interns them into a
-/// [`ServiceTypeRefs`] (which doubles as the resolver) while building each
-/// operation. `From`'s single-argument shape can't carry that running
-/// accumulator on its own, so the lowerings take it wrapped here. Defining the
-/// wrapper in this crate (rather than passing a bare tuple) also keeps those
-/// `From` impls orphan-rule-legal — a tuple would hide the local source type
-/// from coherence, leaving the impl with only foreign types.
-pub(crate) struct Interned<'a, T> {
-    /// The frontend value being lowered, plus any extra context the lowering
-    /// needs (e.g. the .NET symbol table).
-    pub(crate) value: T,
-    /// The interner the lowering pushes each operation's I/O type-ref strings
-    /// into, in the order the base assigns their [`SymbolId`]s.
-    pub(crate) refs: &'a mut ServiceTypeRefs,
+/// Append a resolved I/O type-reference string to a service's `refs` table and
+/// return the per-service [`SymbolId`] that indexes it. Ids are handed out in
+/// call order, so the caller interns each operation's input then output.
+pub(crate) fn push_io_ref(refs: &mut Vec<String>, type_ref: String) -> SymbolId {
+    let id = SymbolId(refs.len() as u32);
+    refs.push(type_ref);
+    id
 }

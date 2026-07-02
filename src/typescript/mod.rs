@@ -20,7 +20,7 @@ use crate::Language;
 use crate::resources::{
     RequestPlan, RequestPlanSource, ResolvedResourceBindingSource, render_request_plan,
 };
-use crate::service_binding::Interned;
+use crate::service_binding::push_io_ref;
 use crate::spec::{
     AuthoredFieldTypeSpec, FunctionArgsSpec, FunctionFieldSpec, FunctionResultSpec,
     LanguageImportSpec, LanguageImportStyle, LanguageStringSpec, SupportFragmentSpec,
@@ -43,18 +43,26 @@ pub(crate) fn generate(symbols: &WitSymbols) -> Result<GeneratedFiles> {
     let services = symbols
         .services()
         .map(|service| {
+            // Assign each operation a per-service I/O `SymbolId` (input then
+            // output) as we collect the shared `io_type_refs` resolver table.
+            let mut io_type_refs = Vec::new();
             let operations = service
                 .operations
                 .iter()
                 .map(|operation| {
-                    resolve_operation(
+                    let mut rendered = resolve_operation(
                         operation,
                         symbols,
                         &mut enums,
                         &mut flags,
                         &mut variants,
                         &mut models,
-                    )
+                    )?;
+                    rendered.input =
+                        Some(push_io_ref(&mut io_type_refs, rendered.input_proto_ref.clone()));
+                    rendered.output =
+                        Some(push_io_ref(&mut io_type_refs, rendered.output_proto_ref.clone()));
+                    Ok(rendered)
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -66,6 +74,7 @@ pub(crate) fn generate(symbols: &WitSymbols) -> Result<GeneratedFiles> {
                 experimental: service.experimental,
                 operations,
                 resources: service.resources.clone(),
+                io_type_refs,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -795,6 +804,10 @@ struct RenderedService<'a> {
     experimental: bool,
     operations: Vec<RenderedOperation<'a>>,
     resources: Vec<WitResource>,
+    /// The service's I/O type-reference names, indexed by the per-service
+    /// [`SymbolId`](nex_gen_codegen::SymbolId) assigned to each operation's
+    /// `input` / `output`. Passed to `render_service` as the resolver.
+    io_type_refs: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -805,6 +818,10 @@ struct RenderedOperation<'a> {
     experimental: bool,
     doc: Option<String>,
     return_doc: Option<String>,
+    /// Per-service I/O [`SymbolId`](nex_gen_codegen::SymbolId)s into the owning
+    /// service's `io_type_refs`, assigned when the service model is built.
+    input: Option<nex_gen_codegen::SymbolId>,
+    output: Option<nex_gen_codegen::SymbolId>,
     input_proto_ref: String,
     output_proto_ref: String,
     input_type_id: String,
@@ -1149,6 +1166,9 @@ fn resolve_operation<'a>(
             .return_doc
             .for_language(Language::TypeScript)
             .map(str::to_string),
+        // Assigned once the owning service's `io_type_refs` table is built.
+        input: None,
+        output: None,
         input_proto_ref: operation_type_ref(&operation.input),
         output_proto_ref,
         input_type_id: operation.input.info.full_name.clone(),
@@ -4247,19 +4267,18 @@ fn render_model(output: &mut String, model: &RenderedModel) {
 }
 
 /// Build the base [`Operation`](nex_gen_codegen::Operation) binding model from a
-/// [`RenderedOperation`], interning its already-resolved TypeScript I/O type
-/// references into the [`Interned`] resolver (which the caller passes to
-/// `render_service` as the [`NameResolver`](nex_gen_codegen::NameResolver)).
-/// Both I/O are always present for the WIT front-end, so each carries
+/// [`RenderedOperation`], carrying over the per-service I/O
+/// [`SymbolId`](nex_gen_codegen::SymbolId)s assigned when the service model was
+/// built. Both I/O are always present for the WIT front-end, so each carries
 /// `Some(id)`.
-impl<'a> From<Interned<'_, &RenderedOperation<'a>>> for nex_gen_codegen::Operation {
-    fn from(Interned { value: operation, refs }: Interned<'_, &RenderedOperation<'a>>) -> Self {
+impl<'a> From<&RenderedOperation<'a>> for nex_gen_codegen::Operation {
+    fn from(operation: &RenderedOperation<'a>) -> Self {
         nex_gen_codegen::Operation {
             name: nex_gen_codegen::Name::new(operation.name),
             wire_name: operation.wire_name.to_string(),
             experimental: operation.experimental,
-            input: Some(refs.intern(operation.input_proto_ref.clone())),
-            output: Some(refs.intern(operation.output_proto_ref.clone())),
+            input: operation.input,
+            output: operation.output,
             docs: operation.doc.clone(),
             returns_doc: None,
         }
@@ -4267,14 +4286,10 @@ impl<'a> From<Interned<'_, &RenderedOperation<'a>>> for nex_gen_codegen::Operati
 }
 
 /// Build the base [`Service`](nex_gen_codegen::Service) binding model from a
-/// [`RenderedService`], interning each operation's I/O type refs.
-impl<'a> From<Interned<'_, &RenderedService<'a>>> for nex_gen_codegen::Service {
-    fn from(Interned { value: service, refs }: Interned<'_, &RenderedService<'a>>) -> Self {
-        let operations = service
-            .operations
-            .iter()
-            .map(|operation| Interned { value: operation, refs: &mut *refs }.into())
-            .collect();
+/// [`RenderedService`]. The matching `io_type_refs` resolver is passed
+/// separately to `render_service`.
+impl<'a> From<&RenderedService<'a>> for nex_gen_codegen::Service {
+    fn from(service: &RenderedService<'a>) -> Self {
         nex_gen_codegen::Service {
             // The base emits the service-binding const name verbatim; TypeScript
             // exports it lower-camel-cased, so pass the already-cased `attr_name`
@@ -4282,24 +4297,23 @@ impl<'a> From<Interned<'_, &RenderedService<'a>>> for nex_gen_codegen::Service {
             name: nex_gen_codegen::Name::new(service.attr_name.clone()),
             wire_name: service.wire_name.to_string(),
             experimental: service.experimental,
-            operations,
+            operations: service.operations.iter().map(Into::into).collect(),
             docs: None,
         }
     }
 }
 
 fn render_service_definition(output: &mut String, service: &RenderedService<'_>) {
-    use nex_gen_codegen::{Language as BaseLanguage, Service, ServiceTypeRefs};
+    use nex_gen_codegen::{Language as BaseLanguage, Service};
 
-    // Build the frontend-agnostic service binding model, interning the
-    // already-computed TS type refs into a resolver, then delegate to the base
-    // `render_service` utility. Resources and proto-conversion stay here.
-    let mut refs = ServiceTypeRefs::default();
-    let service_def = Service::from(Interned { value: service, refs: &mut refs });
+    // Lower the per-language model into the base service binding, then delegate
+    // to the base `render_service` utility, resolving I/O type names through the
+    // service's own `io_type_refs`. Resources and proto-conversion stay here.
+    let service_def = Service::from(service);
     output.push_str(&nex_gen_codegen::render_service(
         BaseLanguage::TypeScript,
         &service_def,
-        &refs,
+        &service.io_type_refs,
     ));
 }
 

@@ -35,36 +35,18 @@ pub trait NameResolver {
     fn import_binding(&self, id: SymbolId) -> Import;
 }
 
-/// Interns service-binding I/O type-reference *strings*, minting a sequential
-/// [`SymbolId`] per string, and doubles as the [`NameResolver`] for
-/// [`render_service`].
+/// A [`NameResolver`] backed by a service's I/O type-reference names, indexed by
+/// the per-service [`SymbolId`] the front-end assigned them.
 ///
-/// The base reasons over [`SymbolId`]s, but a frontend that renders a service
+/// The base reasons over [`SymbolId`]s, but a front-end that renders a service
 /// already holds each operation's I/O type as a resolved source string rather
-/// than as a symbol-graph node. It [`intern`](Self::intern)s those strings while
-/// building the [`Operation`]s — each returned id simply indexes the string —
-/// then passes the same value as the resolver. Only [`type_ref`] is ever called
-/// during service rendering; `module_of` / `import_binding` are unreachable.
-///
-/// [`type_ref`]: NameResolver::type_ref
-#[derive(Debug, Default)]
-pub struct ServiceTypeRefs {
-    refs: Vec<String>,
-}
-
-impl ServiceTypeRefs {
-    /// Intern a type-reference string, returning the [`SymbolId`] that resolves
-    /// back to it. Ids are handed out in call order.
-    pub fn intern(&mut self, type_ref: impl Into<String>) -> SymbolId {
-        let id = SymbolId(self.refs.len() as u32);
-        self.refs.push(type_ref.into());
-        id
-    }
-}
-
-impl NameResolver for ServiceTypeRefs {
+/// than as a symbol-graph node. It keeps those strings on its own per-service
+/// model — one per id it handed out, in id order — and passes the list here as
+/// the resolver. Only `type_ref` is ever consulted during service rendering;
+/// `module_of` / `import_binding` are unreachable.
+impl NameResolver for Vec<String> {
     fn type_ref(&self, id: SymbolId) -> String {
-        self.refs[id.0 as usize].clone()
+        self[id.0 as usize].clone()
     }
 
     fn module_of(&self, _id: SymbolId) -> Module {

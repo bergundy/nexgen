@@ -47,5 +47,5 @@ pub use output::{
     GeneratedFiles, GeneratedOutputLayout, format_generated_file, formatter_command,
     write_generated_files,
 };
-pub use render::{NameResolver, ServiceTypeRefs, render_imports, render_service};
+pub use render::{NameResolver, render_imports, render_service};
 pub use traits::{Emitter, Loader};
