@@ -15,6 +15,7 @@ pub mod error;
 pub mod generator;
 pub mod python;
 pub mod resources;
+mod service_binding;
 pub mod spec;
 pub mod typescript;
 pub mod validation;

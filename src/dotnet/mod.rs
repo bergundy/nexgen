@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::generator::GeneratedFiles;
 use crate::Language;
 use crate::resources::{RequestPlan, RequestPlanSource, ResolvedResourceBindingSource};
+use crate::service_binding::Interned;
 use crate::spec::{
     AuthoredFieldTypeSpec, FunctionFieldSpec, SupportFragmentSpec, TypeReplacementSpec,
 };
@@ -290,90 +291,82 @@ fn render_service_file(namespace: &str, symbols: &WitSymbols) -> String {
     output
 }
 
-/// Adapter that lets the base [`render_service`](nex_gen_codegen::render_service)
-/// utility name operation I/O types using the already-resolved C# type strings
-/// (`operation_raw_input_type` / `operation_raw_return_type`) for this service.
+/// Build the base [`Operation`](nex_gen_codegen::Operation) binding model from a
+/// [`WitOperation`] (paired with the [`WitSymbols`] table), interning its
+/// resolved C# I/O type strings (`operation_raw_input_type` /
+/// `operation_raw_return_type`) into the [`Interned`] resolver (which the caller
+/// passes to `render_service` as the
+/// [`NameResolver`](nex_gen_codegen::NameResolver)).
 ///
-/// The base reasons over [`SymbolId`](nex_gen_codegen::SymbolId)s; here each id
-/// indexes a precomputed type-ref string. `module_of` / `import_binding` are
-/// never called during service rendering (it only uses `type_ref`), so they are
-/// unreachable.
-struct ServiceTypeRefResolver {
-    type_refs: Vec<String>,
+/// `input` is `Some` only when the operation takes a request parameter (the base
+/// emits no parameter for `None`); the symbol table is what
+/// [`operation_has_input`] consults to decide. `output` is always registered
+/// (the raw return type already collapses the output-less case to `"void"`).
+impl From<Interned<'_, (&WitOperation, &WitSymbols<'_>)>> for nex_gen_codegen::Operation {
+    fn from(
+        Interned { value: (operation, symbols), refs }: Interned<
+            '_,
+            (&WitOperation, &WitSymbols<'_>),
+        >,
+    ) -> Self {
+        let input = operation_has_input(operation, symbols)
+            .then(|| refs.intern(operation_raw_input_type(&operation.input)));
+        let output = Some(refs.intern(operation_raw_return_type(operation)));
+        // The service binding only documents a return when the operation has an
+        // output, matching `render_operation_summary_xml_doc`.
+        let returns_doc = match operation.output {
+            WitOperationOutput::None => None,
+            _ => dotnet_doc(&operation.return_doc).map(str::to_string),
+        };
+        nex_gen_codegen::Operation {
+            name: nex_gen_codegen::Name::new(operation.name.as_str()),
+            wire_name: operation.wire_name.to_string(),
+            experimental: operation.experimental,
+            input,
+            output,
+            docs: dotnet_doc(&operation.doc).map(str::to_string),
+            returns_doc,
+        }
+    }
 }
 
-impl nex_gen_codegen::NameResolver for ServiceTypeRefResolver {
-    fn type_ref(&self, id: nex_gen_codegen::SymbolId) -> String {
-        self.type_refs[id.0 as usize].clone()
-    }
-
-    fn module_of(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Module {
-        unreachable!("render_service only resolves type_ref, never module_of")
-    }
-
-    fn import_binding(&self, _id: nex_gen_codegen::SymbolId) -> nex_gen_codegen::Import {
-        unreachable!("render_service only resolves type_ref, never import_binding")
+/// Build the base [`Service`](nex_gen_codegen::Service) binding model from a
+/// [`WitService`] (paired with the [`WitSymbols`] table), interning each
+/// operation's I/O type refs.
+impl From<Interned<'_, (&WitService, &WitSymbols<'_>)>> for nex_gen_codegen::Service {
+    fn from(
+        Interned { value: (service, symbols), refs }: Interned<'_, (&WitService, &WitSymbols<'_>)>,
+    ) -> Self {
+        let operations = service
+            .operations
+            .iter()
+            .map(|operation| Interned { value: (operation, symbols), refs: &mut *refs }.into())
+            .collect();
+        nex_gen_codegen::Service {
+            name: nex_gen_codegen::Name::new(service.name.as_str()),
+            wire_name: service.wire_name.to_string(),
+            experimental: service.experimental,
+            operations,
+            // The .NET service interface renders no `<summary>` for the service
+            // itself; only the experimental flag matters.
+            docs: None,
+        }
     }
 }
 
 fn render_service_definition(output: &mut String, service: &WitService, symbols: &WitSymbols) {
-    use nex_gen_codegen::{Language as BaseLanguage, Name, Operation, Service, SymbolId};
+    use nex_gen_codegen::{Language as BaseLanguage, Service, ServiceTypeRefs};
 
-    // Build the frontend-agnostic service binding model + a resolver over the
-    // already-computed C# I/O type strings, then delegate the rendering to the
+    // Build the frontend-agnostic service binding model, interning the
+    // already-computed C# I/O type strings into a resolver, then delegate to the
     // base `render_service` utility. The file prelude, `using` block, and
     // namespace wrapping stay in `render_service_file`.
-    let mut type_refs: Vec<String> = Vec::new();
-    let mut next_io_id = |type_ref: String| -> SymbolId {
-        let id = SymbolId(type_refs.len() as u32);
-        type_refs.push(type_ref);
-        id
-    };
-
-    let operations = service
-        .operations
-        .iter()
-        .map(|operation| {
-            // `input` is `Some` only when the operation takes a request
-            // parameter; the base emits no parameter for `None`. `output` is
-            // always registered (the raw return type already collapses the
-            // output-less case to `"void"`).
-            let input = operation_has_input(operation, symbols)
-                .then(|| next_io_id(operation_raw_input_type(&operation.input)));
-            let output = Some(next_io_id(operation_raw_return_type(operation)));
-            // The service binding only documents a return when the operation
-            // has an output, matching `render_operation_summary_xml_doc`.
-            let returns_doc = match operation.output {
-                WitOperationOutput::None => None,
-                _ => dotnet_doc(&operation.return_doc).map(str::to_string),
-            };
-            Operation {
-                name: Name::new(operation.name.as_str()),
-                wire_name: operation.wire_name.to_string(),
-                experimental: operation.experimental,
-                input,
-                output,
-                docs: dotnet_doc(&operation.doc).map(str::to_string),
-                returns_doc,
-            }
-        })
-        .collect();
-
-    let service_def = Service {
-        name: Name::new(service.name.as_str()),
-        wire_name: service.wire_name.to_string(),
-        experimental: service.experimental,
-        operations,
-        // The .NET service interface renders no `<summary>` for the service
-        // itself; only the experimental flag matters.
-        docs: None,
-    };
-
-    let resolver = ServiceTypeRefResolver { type_refs };
+    let mut refs = ServiceTypeRefs::default();
+    let service_def = Service::from(Interned { value: (service, symbols), refs: &mut refs });
     output.push_str(&nex_gen_codegen::render_service(
         BaseLanguage::Dotnet,
         &service_def,
-        &resolver,
+        &refs,
     ));
 }
 

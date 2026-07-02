@@ -35,6 +35,47 @@ pub trait NameResolver {
     fn import_binding(&self, id: SymbolId) -> Import;
 }
 
+/// Interns service-binding I/O type-reference *strings*, minting a sequential
+/// [`SymbolId`] per string, and doubles as the [`NameResolver`] for
+/// [`render_service`].
+///
+/// The base reasons over [`SymbolId`]s, but a frontend that renders a service
+/// already holds each operation's I/O type as a resolved source string rather
+/// than as a symbol-graph node. It [`intern`](Self::intern)s those strings while
+/// building the [`Operation`]s — each returned id simply indexes the string —
+/// then passes the same value as the resolver. Only [`type_ref`] is ever called
+/// during service rendering; `module_of` / `import_binding` are unreachable.
+///
+/// [`type_ref`]: NameResolver::type_ref
+#[derive(Debug, Default)]
+pub struct ServiceTypeRefs {
+    refs: Vec<String>,
+}
+
+impl ServiceTypeRefs {
+    /// Intern a type-reference string, returning the [`SymbolId`] that resolves
+    /// back to it. Ids are handed out in call order.
+    pub fn intern(&mut self, type_ref: impl Into<String>) -> SymbolId {
+        let id = SymbolId(self.refs.len() as u32);
+        self.refs.push(type_ref.into());
+        id
+    }
+}
+
+impl NameResolver for ServiceTypeRefs {
+    fn type_ref(&self, id: SymbolId) -> String {
+        self.refs[id.0 as usize].clone()
+    }
+
+    fn module_of(&self, _id: SymbolId) -> Module {
+        unreachable!("render_service only resolves type_ref, never module_of")
+    }
+
+    fn import_binding(&self, _id: SymbolId) -> Import {
+        unreachable!("render_service only resolves type_ref, never import_binding")
+    }
+}
+
 /// The experimental-warning text emitted as the `@experimental` doc tag. Shared
 /// by the per-language submodules.
 const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to change.";
