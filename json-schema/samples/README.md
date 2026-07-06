@@ -1,9 +1,20 @@
 # Samples
 
-A single feature-diverse input and its `nex-gen` output in all four
+Two feature-diverse inputs and their `nex-gen` output in all four
 languages. These are **illustrative** of the intended output while the
 generator is under development — not a generated-from-the-real-tool
 artifact and not a compatibility promise.
+
+- **[`chat.nexusrpc.yaml`](chat.nexusrpc.yaml)** (below) — one input file:
+  the **single-input** layout and a broad feature tour.
+- **[`kb/`](kb)** — a four-file closure: the **multi-input** layout
+  (flattened module names, a shared `definitions` file, a re-exporting
+  aggregator) plus recursion — a within-file self-cycle and a cross-file
+  cycle that Python hoists into `_recursive.py`. It is the worked example
+  for [`../generated-file-layout.md`](../generated-file-layout.md); see
+  [`kb/README.md`](kb/README.md).
+
+The rest of this page tours the single-input chat sample.
 
 ## The input
 
