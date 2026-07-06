@@ -38,7 +38,12 @@ Loader behavior ([[minimum]] rules with `>`, plus the boolean reject):
 - On an `integer` field the bound MUST be integer-valued (`0.0` ok, `0.5`
   reject) — see [[maximum]].
 - On a `number` field any finite numeric bound is accepted.
-- Satisfiability (empty interval → reject) is the [[maximum]] rule:
+- **`exclusiveMinimum` and `minimum` both present → reject (redundant)** —
+  both are lower bounds, one always dominates; keep exactly one (**P7.1**,
+  the [[maximum]] rule). The lower+upper interval `exclusiveMinimum` +
+  `maximum`/`exclusiveMaximum` is fine.
+- Satisfiability with the *upper* bounds (empty interval → reject) is the
+  [[maximum]] rule:
   `exclusiveMinimum ≥ exclusiveMaximum`, `exclusiveMinimum ≥ maximum`, and
   an integer field with no integer strictly above the bound and below the
   ceiling are all unsatisfiable → reject.
@@ -87,6 +92,7 @@ As [[maximum]]: the `>` predicate re-runs before emit; an in-memory value
 | Value not a number | `exclusiveMinimum:"0"`, `exclusiveMinimum:null` |
 | Type mismatch (P7.1) | `{type:"string", exclusiveMinimum:0}` |
 | Fractional bound on integer field | `{type:"integer", exclusiveMinimum:0.5}` |
+| Redundant same-axis pair | `{type:"integer", minimum:0, exclusiveMinimum:2}` |
 | Empty interval | `{type:"integer", exclusiveMinimum:1, exclusiveMaximum:2}`, `{type:"number", exclusiveMinimum:5, maximum:5}` |
 
 ### Runtime fixtures (validator)
@@ -99,8 +105,8 @@ As [[maximum]]: the `>` predicate re-runs before emit; an in-memory value
 
 ## Interactions
 
-- **[[minimum]]**: co-exists; the tighter of `> exclusiveMinimum` and
-  `≥ minimum` wins.
+- **[[minimum]]**: same-axis (both lower) — both present on one node is a
+  **load reject** (one always dominates; keep exactly one).
 - **[[exclusiveMaximum]]**: the strict upper sibling; `exclusiveMinimum ≥
   exclusiveMaximum` → empty interval → load reject.
 - **[[multipleOf]]**: combines for satisfiability (see [[multipleOf]]).

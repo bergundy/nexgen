@@ -45,7 +45,11 @@ reject):
 - On an `integer` field the bound MUST be integer-valued (`5.0` ok, `5.5`
   reject) — see [[maximum]].
 - On a `number` field any finite numeric bound is accepted.
-- Satisfiability with the other bounds (empty interval → reject) is the
+- **`exclusiveMaximum` and `maximum` both present → reject (redundant)** —
+  both are upper bounds, one always dominates; keep exactly one (**P7.1**,
+  the [[maximum]] rule). Not to be confused with the lower+upper interval
+  `exclusiveMaximum` + `minimum`/`exclusiveMinimum`, which is fine.
+- Satisfiability with the *lower* bounds (empty interval → reject) is the
   [[maximum]] rule. Note the strict operator makes `exclusiveMinimum ==
   exclusiveMaximum`, `minimum == exclusiveMaximum`, and an integer field
   with no integer strictly below the bound and above the floor all
@@ -96,6 +100,7 @@ As [[maximum]]: the `<` predicate re-runs before emit; an in-memory value
 | Value not a number | `exclusiveMaximum:"10"`, `exclusiveMaximum:null` |
 | Type mismatch (P7.1) | `{type:"string", exclusiveMaximum:5}` |
 | Fractional bound on integer field | `{type:"integer", exclusiveMaximum:5.5}` |
+| Redundant same-axis pair | `{type:"integer", maximum:10, exclusiveMaximum:12}` |
 | Empty interval | `{type:"integer", exclusiveMinimum:1, exclusiveMaximum:2}`, `{type:"number", minimum:5, exclusiveMaximum:5}` |
 
 ### Runtime fixtures (validator)
@@ -108,9 +113,9 @@ As [[maximum]]: the `<` predicate re-runs before emit; an in-memory value
 
 ## Interactions
 
-- **[[maximum]]**: co-exists; the tighter of `< exclusiveMaximum` and
-  `≤ maximum` wins. Both present is legal (one redundant). All shared
-  machinery and combined-bound satisfiability live in [[maximum]].
+- **[[maximum]]**: same-axis (both upper) — both present on one node is a
+  **load reject** (one always dominates; keep exactly one). All shared
+  machinery and lower-vs-upper satisfiability live in [[maximum]].
 - **[[exclusiveMinimum]]**: the strict lower sibling; `exclusiveMinimum ≥
   exclusiveMaximum` is an empty interval → load reject.
 - **[[multipleOf]]**: combines for satisfiability (see [[multipleOf]]).

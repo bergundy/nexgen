@@ -55,9 +55,19 @@ Loader behavior:
 - A `maximum` larger than the [[type]] integer cap `+(2^53−1)` (or
   `minimum` below `−(2^53−1)`) on an `integer` field is **redundant** (the
   cap already rejects) but **allowed** — not an error, just dead range.
-- Combined-bound satisfiability (with [[minimum]] / [[exclusiveMaximum]] /
-  [[exclusiveMinimum]] on the same node): if the accepted set is empty,
-  reject. See **Interactions → satisfiability**.
+- **`maximum` and `exclusiveMaximum` both present on the same node →
+  reject (redundant).** Both are upper bounds, so one always dominates
+  (`v ≤ M ∧ v < X` reduces to whichever is tighter) — keeping both is
+  ambiguous redundancy, not a tighter constraint. Fix-it: specify exactly
+  one — `exclusiveMaximum:N` for a strict bound, `maximum:N` for an
+  inclusive one (**P7.1**). (This is a *same-axis* rule; the lower+upper
+  mix `minimum` + `exclusiveMaximum` is **not** redundant and stays a
+  satisfiability check below.) When [[allOf]] support is considered, two
+  bounds arriving from *different* subschemas must be **intersected
+  (tightened)**, not rejected — see [[allOf]].
+- Combined-bound satisfiability (a lower with an upper — [[minimum]] /
+  [[exclusiveMinimum]] against [[maximum]] / [[exclusiveMaximum]]): if the
+  accepted set is empty, reject. See **Interactions → satisfiability**.
 - Combined with [[multipleOf]]: if no multiple of the divisor lies in the
   accepted range, reject (deferred detail lives in [[multipleOf]]).
 
@@ -133,6 +143,7 @@ not here.
 | Fractional bound on integer field | `{type:"integer", maximum:5.5}` |
 | Unsatisfiable range | `{type:"integer", minimum:10, maximum:2}` |
 | Empty range vs exclusive | `{type:"integer", minimum:5, exclusiveMaximum:5}` (see [[exclusiveMaximum]]) |
+| Redundant same-axis pair | `{type:"integer", maximum:10, exclusiveMaximum:12}`, `{type:"integer", maximum:10, exclusiveMaximum:10}` |
 
 ### Runtime fixtures (validator)
 
@@ -151,10 +162,13 @@ not here.
 - **[[minimum]]**: the paired lower bound over the same value. `minimum >
   maximum` is a load error; `minimum == maximum` pins a single value
   (accepted — a numeric near-`const`).
-- **[[exclusiveMaximum]] / [[exclusiveMinimum]]**: co-exist freely; the
-  tighter constraint wins. `maximum` and `exclusiveMaximum` together is
-  legal (one is redundant, allowed). See those specs for the strict
+- **[[exclusiveMaximum]]**: same-axis (both upper) — `maximum` and
+  `exclusiveMaximum` on one node is a **load reject** (one always
+  dominates; keep exactly one). See [[exclusiveMaximum]] for the strict
   operator and the draft-4 boolean-form rejection.
+- **[[exclusiveMinimum]]**: different axis (a lower bound) — combines with
+  `maximum` to form an interval, so co-existing is fine; only the
+  emptiness case (empty interval) rejects.
 - **Satisfiability (combined bounds).** The accepted set is the
   intersection of the active half-lines: `minimum` → `[m,∞)`,
   `exclusiveMinimum` → `(e,∞)`, `maximum` → `(−∞,M]`, `exclusiveMaximum` →

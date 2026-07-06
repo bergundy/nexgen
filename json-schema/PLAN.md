@@ -133,9 +133,13 @@ example at `features/type/spec.md`:
   integer-vs-float comparison lossless (the `±(2^53−1)` cap is exactly
   representable as a double, so `(double)cap == cap`, verified). Combined
   bounds reject when the interval is empty (incl. the integer "no integer
-  in range" case). The **exclusive pair reject the draft-4 / OpenAPI-3.0
-  boolean form** (`exclusiveMaximum: true`) with a rewrite fix-it — the
-  largest source-dialect difference in the family. Zero open questions.
+  in range" case). A **same-axis bound pair on one node is rejected as
+  redundant** (`maximum`+`exclusiveMaximum`, `minimum`+`exclusiveMinimum`
+  — one always dominates; P7.1), with an allOf-tightening caveat noted in
+  the Applicators section. The **exclusive pair reject the draft-4 /
+  OpenAPI-3.0 boolean form** (`exclusiveMaximum: true`) with a rewrite
+  fix-it — the largest source-dialect difference in the family. Zero open
+  questions.
 - `features/multipleOf/spec.md`: complete — **partial**: positive
   **integer** divisor only; **fractional divisor temporarily unsupported**
   (reject at load, deferred not excluded). Empirically justified (P1):
@@ -423,6 +427,18 @@ decisions:
 **Applicators (mostly P6-rejected, each needs a spec'd rejection):**
 - `allOf`, `anyOf`, `not`, `if-then-else` — reject per P6; document
   rationale and rewrite hints.
+  - **allOf constraint-tightening note (revisit when allOf is
+    considered):** the numeric specs reject a same-axis bound pair on a
+    *single* node — `maximum`+`exclusiveMaximum`, `minimum`+
+    `exclusiveMinimum` — as redundant (one always dominates; see
+    [[maximum]]). allOf semantics is the opposite — *intersect / tighten*
+    across subschemas — so two same-axis bounds arriving from *different*
+    allOf branches (e.g. `allOf:[{maximum:10},{exclusiveMaximum:8}]`) are
+    legitimate and must be **merged to the tighter**, not rejected. Any
+    future allOf lowering / merge-flatten step must apply the tighten rule
+    there instead of the single-node redundancy reject. Same care for
+    combining a bound with a tighter bound of the same kind (two
+    `maximum`s → keep the smaller).
 - `oneOf` — partial: nullability pattern accepted (see [[nullability]]);
   formalizing the nullability-only `oneOf` rule and the
   discriminator-bearing form is the next open question (P7 implies

@@ -42,6 +42,12 @@ Loader behavior (mirror of [[maximum]] with `≥`):
 - On a `number` field any finite bound is accepted.
 - `minimum` below the [[type]] integer cap `−(2^53−1)` on an `integer`
   field is redundant (cap already rejects) but allowed.
+- **`minimum` and `exclusiveMinimum` both present on the same node →
+  reject (redundant)** — both are lower bounds, one always dominates; keep
+  exactly one (**P7.1**, mirror of the [[maximum]] rule). The lower+upper
+  mix `minimum` + `exclusiveMaximum` is *not* redundant (interval) and
+  stays a satisfiability check. allOf tightening caveat: see [[maximum]] /
+  [[allOf]].
 - Combined-bound satisfiability and [[multipleOf]] emptiness are the
   [[maximum]] rules (see **Interactions → satisfiability** there):
   `minimum > maximum` → reject; `minimum ≥ exclusiveMaximum` → reject;
@@ -94,6 +100,7 @@ than being written. See [[maximum]] serialize note (symmetric).
 | Value not a number | `minimum:"0"`, `minimum:false` |
 | Type mismatch (P7.1) | `{type:"string", minimum:0}` |
 | Fractional bound on integer field | `{type:"integer", minimum:0.5}` |
+| Redundant same-axis pair | `{type:"integer", minimum:0, exclusiveMinimum:2}`, `{type:"integer", minimum:0, exclusiveMinimum:0}` |
 | Unsatisfiable range | `{type:"integer", minimum:10, maximum:2}` |
 
 ### Runtime fixtures (validator)
@@ -110,8 +117,9 @@ than being written. See [[maximum]] serialize note (symmetric).
 - **[[maximum]]**: the paired upper bound; `min > max` load error;
   `min == max` pins a single value (accepted). All combined-bound
   satisfiability rules live in [[maximum]].
-- **[[exclusiveMinimum]]**: the strict (`>`) variant; co-exists (tighter
-  wins).
+- **[[exclusiveMinimum]]**: same-axis (both lower) — `minimum` and
+  `exclusiveMinimum` on one node is a **load reject** (one always
+  dominates; keep exactly one).
 - **[[multipleOf]]**: combines for satisfiability (no multiple in range →
   reject; see [[multipleOf]]).
 - **[[type]]**: gates applicability; integer cap is the implicit floor
