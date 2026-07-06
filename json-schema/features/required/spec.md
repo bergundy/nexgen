@@ -93,10 +93,10 @@ Per **P10**/**P11**. The "Required, non-nullable" row of
 
 | Language | Presence enforcement |
 |---|---|
-| Go | shadow `*json.RawMessage` per member; `nil` → `Violation{Path:name, Reason:"required"}`, collected into one `ValidationError`. |
-| TypeScript | `parsed.x === undefined \|\| parsed.x === null` → push `Violation{path, reason}`, throw one `ValidationError`. |
-| Python | Pydantic field with no default → strict mode raises automatically; aggregated in `pydantic.ValidationError`. |
-| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): a missing or `null` tree node for a required member → `Violation{path:name, reason:"required"}`; the strict-vs-non-strict `null`-token logic (Java §4) runs as a helper here, not as a per-field binder. Collected into one `ValidationException`. |
+| Go | shadow `*json.RawMessage` per member; `nil` → `Violation{Path:name, Reason: fmt.Sprintf("required property %q is missing", name)}`, collected into one `ValidationError`. |
+| TypeScript | `parsed.x === undefined \|\| parsed.x === null` → push ``Violation{path, reason: `required property "${name}" is missing`}``, throw one `ValidationError`. |
+| Python | Pydantic field with no default → strict mode raises automatically (its `missing` error already names the field); aggregated in `pydantic.ValidationError`. |
+| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): a missing or `null` tree node for a required member → `Violation{path:name, reason: "required property \"" + name + "\" is missing"}`; the strict-vs-non-strict `null`-token logic (Java §4) runs as a helper here, not as a per-field binder. Collected into one `ValidationException`. |
 
 Required + explicit `null`: for a required **non-nullable** member,
 rejected (may not be `null`) — same machinery as the
@@ -137,10 +137,11 @@ vs the missing shadow pointer on the wire).
 ### Runtime fixtures (validator)
 
 - Required member present + valid → OK.
-- Required member absent → one `ValidationError{path:name, reason:"required"}`.
+- Required member absent → one `ValidationError` at `path:name` reading
+  `required property "<name>" is missing`.
 - Required **non-nullable** member present as `null` → rejected.
 - Required **nullable** member present as `null` → OK; absent → still
-  one `ValidationError{…, reason:"required"}`.
+  one `ValidationError` reading `required property "<name>" is missing`.
 - Multiple required members absent → all reported in one shot (P11).
 - Optional member absent → no error (contrast control).
 

@@ -268,10 +268,10 @@ value — the **shared `Validate`** layer of **P12**).
 
 | Language | Strategy |
 |---|---|
-| Go | In `UnmarshalJSON`, after decoding, compare the field to the typed value constant (`if v != UserEventKindUser { … Violation{Path, Reason:"const"} }`), collected into one `ValidationError`. Emitted as `type UserEventKind = string` + `const UserEventKindUser = UserEventKind("user")` — the typed const is also the idiomatic way to set it (`UserEvent{Kind: UserEventKindUser}`). |
-| TypeScript | `if (v !== KIND_CONST) push(Violation{path, reason:"const"})`, throw one `ValidationError`. Fixed value emitted as `const KIND_CONST = "user"`. |
+| Go | The equality check is a predicate in the shared `Validate`, which `UnmarshalJSON` calls after decoding: `if v != UserEventKindUser { … Violation{Path, Reason: fmt.Sprintf("must equal %q, got %q", UserEventKindUser, v)} }`, collected into one `ValidationError`. Emitted as `type UserEventKind = string` + `const UserEventKindUser = UserEventKind("user")` — the typed const is also the idiomatic way to set it (`UserEvent{Kind: UserEventKindUser}`). |
+| TypeScript | the shared `Validate` predicate ``if (v !== KIND_CONST) push(Violation{path, reason: `must equal ${JSON.stringify(KIND_CONST)}, got ${JSON.stringify(v)}`})``, throw one `ValidationError`. Fixed value emitted as `const KIND_CONST = "user"`. |
 | Python | a field/`model_validator` checking `== <const>`, raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. Field typed as the **open** union `Literal["user"] \| str` (`EventKind = Union[EventKindUser, str]`) — a closed `Literal` would make a const bump a type-level break against **P13.1**; the open union keeps any str assignable and only hints the value (see Type mapping). |
-| Java | the field is the generated value class (`UserEventKind`), whose own `@JsonCreator fromString` converts the wire string. The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the node, builds the value, checks `UserEventKind.USER.equals(v)` (equivalently `!v.isUnrecognized()`), and pushes a `Violation` on mismatch into the single `ValidationException`. The known value is the `public static final UserEventKind USER` constant. (For `integer`/`number`/`boolean` consts the field is the plain primitive and the check is a bare `==`.) |
+| Java | the field is the generated value class (`UserEventKind`), whose own `@JsonCreator fromString` converts the wire string. The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the node, builds the value, checks `UserEventKind.USER.equals(v)` (equivalently `!v.isUnrecognized()`), and on mismatch pushes a `Violation{path, "must equal \"user\", got \"" + v + "\""}` into the single `ValidationException`. The known value is the `public static final UserEventKind USER` constant. (For `integer`/`number`/`boolean` consts the field is the plain primitive and the check is a bare `==`.) |
 
 ### Serialize-side (P12)
 
@@ -330,8 +330,8 @@ so the check is effectively a deserialize-direction guard there.
 ### Runtime fixtures (validator)
 
 - Wire value equals const → OK (both directions).
-- Wire value present but `!= const` → one
-  `ValidationError{reason:"const"}`.
+- Wire value present but `!= const` → one `ValidationError` naming the
+  expected and actual value (`must equal "user", got "admin"`).
 - required+const **absent on the wire** → required violation (see
   [[required]]), reported as a presence error, not a const error.
 - Serialize of a correctly-set required const → the fixed value on the

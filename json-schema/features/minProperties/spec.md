@@ -58,8 +58,8 @@ comparison:
 
 | Language | Strategy |
 |---|---|
-| Go | count decoded members in `UnmarshalJSON` (wire keys, pre-population); `< min` → `Violation{Reason:"minProperties"}`, collected into one `ValidationError`. |
-| TypeScript | `Object.keys(parsed).length < min` on the raw parsed wire object (before defaults applied) → push `Violation` + throw one `ValidationError`. |
+| Go | `UnmarshalJSON` counts decoded members (wire keys, pre-population) and hands the count to the shared `Validate`, whose `< min` predicate raises `Violation{Reason: fmt.Sprintf("too few properties: at least %d, got %d", min, n)}`; collected into one `ValidationError`. |
+| TypeScript | count `Object.keys(parsed).length` on the raw parsed wire object (before defaults applied); the shared `Validate`'s `< min` check pushes ``Violation{path, reason: `too few properties: at least ${min}, got ${n}`}`` + throw one `ValidationError`. |
 | Python | `model_validator`; `len(model_fields_set) < min` — `model_fields_set` already includes extras and excludes default-filled fields, so it is the exact wire-key count; raise into aggregated `ValidationError`. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`< min`) — one number over the wire object, **not** POJO fields + catch-all map summed post-bind; a violation joins the single `ValidationException`. |
 
@@ -96,7 +96,8 @@ serialize note (symmetric).
 ### Runtime fixtures (validator)
 
 - Member count `== min` → OK (≥ inclusive).
-- Member count `min-1` → one `ValidationError{reason:"minProperties"}`.
+- Member count `min-1` → one `ValidationError` whose reason names the
+  floor and count (`too few properties: at least 2, got 1`).
 - Open struct reaching the floor via extras → OK (extras count).
 
 ## Interactions

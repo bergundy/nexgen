@@ -74,10 +74,10 @@ string against the (string) constraint.
 
 | Language | Strategy |
 |---|---|
-| Go | In `UnmarshalJSON`, iterate decoded keys; run the key-constraint check (e.g. compiled `regexp` for [[pattern]], length checks); failures → `Violation{Path:key, Reason:"propertyName"}`, collected into one `ValidationError`. |
-| TypeScript | `for (const k of Object.keys(parsed))` apply the check; push `Violation{path:k, reason}`, throw one `ValidationError`. |
-| Python | a field/model validator over `__pydantic_extra__` / the dict keys, raising `InitErrorDetails` per bad key into the aggregated `pydantic.ValidationError`. |
-| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5), iterate the parsed tree's keys, apply the key check, and push a `Violation{path:key, reason}` per bad key into the single `ValidationException`. |
+| Go | The key-constraint check is a predicate in the shared `Validate`, which `UnmarshalJSON` calls after decoding: iterate the decoded keys and run the check (compiled `regexp` for [[pattern]], length checks); a failure → `Violation{Path:key, Reason: fmt.Sprintf("invalid property name %q: %s", key, why)}` (`why` is the underlying assertion's reason, e.g. `must match ^[a-z]+$`), collected into one `ValidationError`. |
+| TypeScript | the shared `Validate` predicate over `Object.keys(parsed)` applies the check; a failure → push ``Violation{path:k, reason: `invalid property name "${k}": ${why}`}``, throw one `ValidationError`. |
+| Python | a field/model validator over `__pydantic_extra__` / the dict keys, raising `InitErrorDetails` (message `invalid property name "<key>": <why>`) per bad key into the aggregated `pydantic.ValidationError`. |
+| Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5), iterate the parsed tree's keys, apply the shared key check, and push a `Violation{path:key, "invalid property name \"" + key + "\": " + why}` per bad key into the single `ValidationException`. |
 
 Reuses whatever the string-assertion specs ([[pattern]], [[minLength]],
 [[maxLength]], [[enum]], [[format]]) emit — `propertyNames` is just those
