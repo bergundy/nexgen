@@ -123,6 +123,30 @@ example at `features/type/spec.md`:
   `default:null` rejected, expected to relax. 1 open question —
   composite-default materialization.
 
+- `features/maximum/spec.md` (+ `minimum`, `exclusiveMaximum`,
+  `exclusiveMinimum`): complete — **supported** (runtime comparison
+  assertions). `maximum` is the canonical numeric-bound spec; the other
+  three reference its machinery. Comparison is a shared-`Validate`
+  predicate (P12), enforced both directions. **Integer-field bounds MUST
+  be integer-valued** (`5.0` ok, `5.5` reject) — Pydantic can't build a
+  fractional `le`/`ge` on an `int` field, and an integer bound keeps the
+  integer-vs-float comparison lossless (the `±(2^53−1)` cap is exactly
+  representable as a double, so `(double)cap == cap`, verified). Combined
+  bounds reject when the interval is empty (incl. the integer "no integer
+  in range" case). The **exclusive pair reject the draft-4 / OpenAPI-3.0
+  boolean form** (`exclusiveMaximum: true`) with a rewrite fix-it — the
+  largest source-dialect difference in the family. Zero open questions.
+- `features/multipleOf/spec.md`: complete — **partial**: positive
+  **integer** divisor only; **fractional divisor temporarily unsupported**
+  (reject at load, deferred not excluded). Empirically justified (P1):
+  integer modulo and IEEE `fmod` agree value-for-value across all four
+  languages, but Pydantic's native float `multiple_of` is *tolerant* and
+  diverges for fractional divisors (accepts `0.3` against `multipleOf:0.1`
+  where `fmod` rejects) — irreconcilable without a shared decimal lib (P4).
+  Integer field → integer modulo; number field → `fmod` (Python uses an
+  explicit `fmod` AfterValidator for numbers, native `multiple_of` for
+  ints). Combined with a range: reject when no multiple lies in the
+  interval. 1 open question — fractional-divisor decimal-scaling carve-out.
 - `features/services/spec.md`: complete — **supported**. Nexus extension
   (not a JSON Schema keyword, like [[nullability]]): a top-level
   `services` map → per-language service bindings (Go `struct` of
@@ -386,8 +410,8 @@ decisions:
   deferred.
 
 **Numeric assertions** (gated by integer-cap decision):
-- `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`,
-  `exclusiveMinimum`
+- ✅ `maximum`, ✅ `minimum`, ✅ `exclusiveMaximum`,
+  ✅ `exclusiveMinimum`, ✅ `multipleOf` — landed. See "Features" below.
 
 **Array structure:**
 - `items`, `prefixItems`, `contains`, `unevaluatedItems`,
@@ -459,6 +483,17 @@ decisions:
    reject path is forward-compatible but the acceptance policy for
    `>1.0.0` is deferred (P13.2).
 
+### `features/multipleOf/spec.md`
+1. **Fractional-divisor carve-out** — `multipleOf: 0.1`/`2.5` is rejected
+   (deferred). A future decimal-scaling lowering could support
+   fixed-precision fractional divisors if all four targets agree; revisit
+   on demand.
+
+### `features/maximum/spec.md` (+ minimum / exclusive pair)
+- Zero open questions. (Flooring a fractional bound on an integer field —
+  rather than rejecting — was considered and rejected: Pydantic can't
+  represent it and silent flooring violates "reject ambiguity loudly".)
+
 ### `features/services/spec.md`
 1. **Explicit-vs-default wire name (Python/Java)** — generator always
    emits `name=` for P1 clarity; could omit when `fqn` equals the SDK
@@ -486,12 +521,14 @@ decisions:
    Deferred pending demand.
 
 ### Cross-cutting
-1. **Literal-value-against-constraint validation at load time.**
-   A `const`, `default`, or `enum` value must satisfy every sibling
-   assertion on the same node. `type`-compatibility is enforced today;
-   validating against constraint keywords (`pattern`, `minLength`/
-   `maxLength`, `minimum`/`maximum`/`exclusive*`, `multipleOf`, …) is
-   deferred to land with those constraint feature specs.
+1. **Literal-value-against-constraint validation at load time** (partially
+   closed). A `const`, `default`, or `enum` value must satisfy every
+   sibling assertion on the same node. `type`-compatibility and now the
+   **numeric constraints** (`minimum`/`maximum`/`exclusive*`/`multipleOf`)
+   are enforced at load — the numeric bound/multipleOf specs each require
+   the supplied literal to satisfy them. **Still deferred:** the string
+   assertions (`pattern`, `minLength`/`maxLength`), to land with those
+   specs.
 
 ## How to pick up the work in a new session
 
