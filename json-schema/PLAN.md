@@ -159,6 +159,49 @@ example at `features/type/spec.md`:
   explicit `fmod` AfterValidator for numbers, native `multiple_of` for
   ints). Combined with a range: reject when no multiple lies in the
   interval. 1 open question — fractional-divisor decimal-scaling carve-out.
+- `features/maxLength/spec.md` (+ `minLength`, `pattern`): complete —
+  **string assertions**. `maxLength` is the canonical string-length spec
+  (like [[maximum]] for numerics); `minLength` mirrors it. Both are
+  **supported**: length is counted in Unicode **code points** (RFC 8259),
+  never bytes/UTF-16/graphemes — the P1 crux, since the naive per-language
+  primitive counts the wrong unit (Go `len`=bytes, TS/Java `.length`=UTF-16
+  units; only Python `len`=code points). Each language uses its
+  code-point-counting primitive (`utf8.RuneCountInString` / `[...v].length`
+  / `len` / `codePointCount`); no normalization (NFC vs NFD lengths differ
+  and all four agree per form). `pattern` is **partial** — portable
+  (RE2-safe) subset only, matched **unanchored** with **ASCII** classes and
+  a **code-point `.`**: the load-time compile gate is the **pure-Rust
+  `regex` crate** (the generator's own engine — **no Go toolchain
+  dependency**; same regular/no-backtracking RE2 family, rejects
+  lookahead/lookbehind/backreferences the other three accept). Runtime
+  matching is pinned per target: anchoring uses search/find (NOT Java
+  `matches()` / Python `re.match`); Python compiles with `re.ASCII` via an
+  explicit `AfterValidator` (not pydantic-core's Rust engine for *matching*,
+  mirroring the [[multipleOf]] number decision — though that same `regex`
+  crate *is* trusted for the compile gate), JS emits the `u` flag, Java uses
+  default flags. **An 83-pair conformance corpus
+  (`research/pattern_conformance/`) proved compile-gate + pinned-flags
+  insufficient**, adding rules via a `regex-syntax` AST walk: **reject
+  inline flag groups** `(?i)` (JS can't compile); **normalize `\s`/`\S`** →
+  explicit ASCII class `[\t\n\x0B\f\r ]` (JS whitespace is Unicode & not
+  flag-controllable; only `\S` in a *multi-member* class is rejected as an
+  open complement); and **normalize the `$` anchor** (`\Z` Python / `\z`
+  Java, keep `$` Go/JS) for the trailing-`\n` divergence. `\d`/`\w` kept
+  (identical ASCII). **Prospective targets .NET + Ruby verified conformant**
+  with per-target emitter transforms only (no new gate rules): .NET needs
+  `RegexOptions.ECMAScript` + `$`→`\z` + an astral-`.`→surrogate rewrite (no
+  `u`-flag equivalent); Ruby needs `^`→`\A`/`$`→`\z` (line anchors) + a
+  leading `(?a)` (its `\b` is Unicode). Regex emitted as a compile-once
+  constant. All three specs close the string half of the
+  deferred literal-vs-constraint obligation ([[const]] / [[default]] /
+  [[enum]]). Verified across all four current targets +
+  prospective .NET/Ruby in `json-schema/research/string_probe/` +
+  `pattern_conformance/` (incl. `runner.rb`, `dotnet_runner/`) +
+  `rust_regex_gate/` + `ws_normalize/`, incl. Pydantic 2.13.4 confirmed to
+  count **code points** for `min/max_length` (`pydantic_length_probe.py`)
+  and native `pattern=` rejected as Unicode-class-divergent
+  (`pydantic_pattern_probe.py`). All three string specs have zero open
+  questions except pattern's one deferred widen-the-subset item.
 - `features/services/spec.md`: complete — **supported**. Nexus extension
   (not a JSON Schema keyword, like [[nullability]]): a top-level
   `services` map → per-language service bindings (Go `struct` of
@@ -437,7 +480,7 @@ decisions:
   `minItems`, `maxItems`, `uniqueItems`, `maxContains`, `minContains`
 
 **String assertions:**
-- `maxLength`, `minLength`, `pattern`
+- ✅ `maxLength`, ✅ `minLength`, ✅ `pattern` — landed. See "Features" below.
 
 **Applicators (mostly P6-rejected, each needs a spec'd rejection):**
 - `allOf`, `anyOf`, `not`, `if-then-else` — reject per P6; document
@@ -525,6 +568,38 @@ decisions:
   rather than rejecting — was considered and rejected: Pydantic can't
   represent it and silent flooring violates "reject ambiguity loudly".)
 
+### `features/maxLength/spec.md` (+ minLength)
+- Zero open questions. (The Pydantic length-unit question is **resolved**:
+  verified to count code points — pydantic 2.13.4,
+  `research/string_probe/pydantic_length_probe.py`.)
+
+### `features/pattern/spec.md`
+1. **Widen the accepted subset** — v1 still rejects backtracking constructs,
+   inline flag groups, and `\S` in a multi-member class; each could later be
+   admitted via a semantics-preserving rewrite (`(?i)`→case-fold, etc.),
+   gated on the conformance corpus agreeing.
+
+Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
+- **Conformance corpus built** (`research/pattern_conformance/`, 83 pairs
+  through the Rust gate + all runtimes). It proved compile-gate + pinned
+  flags **insufficient** and drove: **reject** inline flags (JS can't
+  compile) + the narrow `\S`-in-multi-member-class case; **normalize**
+  `\s`/`\S`→explicit ASCII class `[\t\n\x0B\f\r ]` (`research/ws_normalize/`:
+  13 divergences → 0, all placements incl. `[^\S]`) and `$`→`\Z`(Py)/`\z`
+  (Java, keep `$` Go/JS). All via a `regex-syntax` AST walk. Corpus stays as
+  the regression guard (feeds the [[type]] conformance suite).
+- **Pydantic native `pattern` rejected** — `research/pydantic_pattern_probe.py`
+  (pydantic 2.13.4): native `pattern=` uses pydantic-core's Rust engine
+  whose `\d\w\s` are Unicode (4/32 corpus disagreements vs our ASCII);
+  anchoring/dot do match. Keep the explicit `re`+`re.ASCII`+`search`
+  `AfterValidator`.
+- **.NET + Ruby verified future-conformant** (`pattern_conformance/dotnet_runner/`,
+  `runner.rb`), per-target emitter transforms only, no new gate rules: .NET
+  = `RegexOptions.ECMAScript` + `$`→`\z` + astral-`.`→surrogate rewrite (no
+  `u`-flag equivalent, the sole divergence); Ruby = `^`→`\A`/`$`→`\z` (line
+  anchors) + inject `(?a)` (Unicode `\b`). Captured in the spec's
+  "Prospective targets" note.
+
 ### `features/services/spec.md`
 1. **Explicit-vs-default wire name (Python/Java)** — generator always
    emits `name=` for P1 clarity; could omit when `fqn` equals the SDK
@@ -552,14 +627,16 @@ decisions:
    Deferred pending demand.
 
 ### Cross-cutting
-1. **Literal-value-against-constraint validation at load time** (partially
-   closed). A `const`, `default`, or `enum` value must satisfy every
-   sibling assertion on the same node. `type`-compatibility and now the
-   **numeric constraints** (`minimum`/`maximum`/`exclusive*`/`multipleOf`)
-   are enforced at load — the numeric bound/multipleOf specs each require
-   the supplied literal to satisfy them. **Still deferred:** the string
-   assertions (`pattern`, `minLength`/`maxLength`), to land with those
-   specs.
+1. **Literal-value-against-constraint validation at load time** (now
+   closed for scalar constraints). A `const`, `default`, or `enum` value
+   must satisfy every sibling assertion on the same node.
+   `type`-compatibility, the **numeric constraints**
+   (`minimum`/`maximum`/`exclusive*`/`multipleOf`), and now the **string
+   assertions** (`minLength`/`maxLength`/`pattern`) are all enforced at
+   load — each constraint spec requires the supplied literal to satisfy it.
+   Nothing scalar remains deferred here; array/object literal checks will
+   land with the array/object constraint specs (and with composite
+   const/default, currently deferred).
 
 ## How to pick up the work in a new session
 
