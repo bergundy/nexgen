@@ -126,6 +126,7 @@ pub(crate) struct PlannedTypeInfo {
     pub(crate) full_name: String,
     pub(crate) package: String,
     pub(crate) file_name: Option<String>,
+    pub(crate) go_package: Option<String>,
     pub(crate) file_options: Option<FileOptions>,
     pub(crate) proto_reference: crate::spec::LanguageStringSpec,
     pub(crate) proto_type_name: crate::spec::LanguageStringSpec,
@@ -137,6 +138,7 @@ impl PlannedTypeInfo {
             full_name: message.full_name.clone(),
             package: message.package.clone(),
             file_name: message.file_name.clone(),
+            go_package: message.go_package.clone(),
             file_options: message.file_options.clone(),
             proto_reference: spec
                 .type_override(&message.full_name)
@@ -154,6 +156,7 @@ impl PlannedTypeInfo {
             full_name: enumeration.full_name.clone(),
             package: enumeration.package.clone(),
             file_name: enumeration.file_name.clone(),
+            go_package: enumeration.go_package.clone(),
             file_options: enumeration.file_options.clone(),
             proto_reference: spec
                 .type_override(&enumeration.full_name)
@@ -171,6 +174,7 @@ impl PlannedTypeInfo {
             full_name: enumeration.full_name.clone(),
             package: String::new(),
             file_name: None,
+            go_package: None,
             file_options: None,
             proto_reference: crate::spec::LanguageStringSpec::default(),
             proto_type_name: crate::spec::LanguageStringSpec::default(),
@@ -182,6 +186,7 @@ impl PlannedTypeInfo {
             full_name: flags.full_name.clone(),
             package: String::new(),
             file_name: None,
+            go_package: None,
             file_options: None,
             proto_reference: crate::spec::LanguageStringSpec::default(),
             proto_type_name: crate::spec::LanguageStringSpec::default(),
@@ -193,6 +198,7 @@ impl PlannedTypeInfo {
             full_name: record.full_name.clone(),
             package: String::new(),
             file_name: None,
+            go_package: None,
             file_options: None,
             proto_reference: crate::spec::LanguageStringSpec::default(),
             proto_type_name: crate::spec::LanguageStringSpec::default(),
@@ -204,6 +210,7 @@ impl PlannedTypeInfo {
             full_name: variant.full_name.clone(),
             package: String::new(),
             file_name: None,
+            go_package: None,
             file_options: None,
             proto_reference: crate::spec::LanguageStringSpec::default(),
             proto_type_name: crate::spec::LanguageStringSpec::default(),

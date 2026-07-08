@@ -2479,16 +2479,7 @@ fn build_source_call(
         });
     };
 
-    if !is_valid_support_helper_path(helper_name) {
-        return Err(Error::InvalidWitDirective {
-            path: path.to_path_buf(),
-            context: context.to_string(),
-            directive: "@nexus.source".to_string(),
-            reason: format!("invalid support helper name `{helper_name}`"),
-        });
-    }
-
-    Ok(Some(format!("{helper_name}()")))
+    Ok(Some(helper_name.to_string()))
 }
 
 fn is_valid_support_helper_name(name: &str) -> bool {
@@ -4218,7 +4209,7 @@ interface workflow-service {
   record request {
     /// @nexus.proto-field "workflow_id_reuse_policy"
     /// @nexus.default "allow-duplicate"
-    /// @nexus.source "workflow_id_reuse_policy"
+    /// @nexus.source "workflow_id_reuse_policy()"
     id-reuse-policy: workflow-id-reuse-policy,
   }
 }
@@ -4260,7 +4251,7 @@ interface workflow-service {
     task-queue: string,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    /// @nexus.source "workflow_namespace"
+    /// @nexus.source "workflow_namespace()"
     namespace: option<string>,
     /// @nexus.omit
     header: placeholder,
@@ -4486,7 +4477,7 @@ interface workflow-service {
     }
 
     #[test]
-    fn accepts_language_specific_source_helpers() {
+    fn accepts_language_specific_source_helper_calls() {
         let wit = r#"
 package temporal:nexus@1.0.0;
 
@@ -4497,7 +4488,7 @@ world system {
 interface workflow-service {
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record request {
-    /// @nexus.source python="workflow_namespace" typescript="workflowNamespace" dotnet="TemporalWorkflowContext.WorkflowNamespace"
+    /// @nexus.source python="workflow_namespace()" typescript="workflowNamespace()" go="workflowNamespace(ctx)" dotnet="TemporalWorkflowContext.WorkflowNamespace()"
     namespace: option<string>,
   }
 
@@ -4514,6 +4505,8 @@ interface workflow-service {
         let dotnet =
             ApiSpec::parse_for_language(Language::Dotnet, wit, PathBuf::from("inline.wit"))
                 .unwrap();
+        let go =
+            ApiSpec::parse_for_language(Language::Go, wit, PathBuf::from("inline.wit")).unwrap();
         assert_eq!(
             python
                 .type_override(
@@ -4531,6 +4524,14 @@ interface workflow-service {
                 .unwrap()
                 .field_source("namespace"),
             Some("workflowNamespace()")
+        );
+        assert_eq!(
+            go.type_override(
+                "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
+            )
+            .unwrap()
+            .field_source("namespace"),
+            Some("workflowNamespace(ctx)")
         );
         assert_eq!(
             dotnet
@@ -5188,7 +5189,7 @@ interface workflow-service {
     task-queue: task-queue,
     /// @nexus.proto-field "signal_name"
     signal: signal-function,
-    /// @nexus.source "workflow_namespace"
+    /// @nexus.source "workflow_namespace()"
     namespace: option<string>,
     /// @nexus.omit
     workflow-execution-timeout: placeholder,

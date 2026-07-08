@@ -3210,6 +3210,7 @@ mod tests {
             full_name: "temporal.api.workflow.v1.VersioningOverride.PinnedOverride".to_string(),
             package: "temporal.api.workflow.v1".to_string(),
             file_name: Some("temporal/api/workflow/v1/message.proto".to_string()),
+            go_package: None,
             file_options: Some(FileOptions {
                 csharp_namespace: Some("Temporalio.Api.Workflow.V1".to_string()),
                 ..Default::default()
@@ -3230,6 +3231,7 @@ mod tests {
             full_name: "temporal.api.common.v1.Payload".to_string(),
             package: "temporal.api.common.v1".to_string(),
             file_name: Some("temporal/api/common/v1/message.proto".to_string()),
+            go_package: None,
             file_options: Some(FileOptions {
                 csharp_namespace: Some("Temporalio.Api.Common.V1".to_string()),
                 ..Default::default()

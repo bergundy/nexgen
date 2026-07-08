@@ -5,6 +5,7 @@ pub mod descriptors;
 pub mod dotnet;
 pub mod error;
 pub mod generator;
+pub mod go;
 pub mod language;
 pub mod python;
 pub mod resources;
@@ -173,7 +174,7 @@ pub fn build_examples(request: &BuildExamplesRequest) -> Result<()> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let use_default_languages = request.languages.is_empty();
     let languages = if use_default_languages {
-        vec![Language::Python, Language::TypeScript]
+        vec![Language::Python, Language::TypeScript, Language::Go]
     } else {
         request.languages.clone()
     };
@@ -302,6 +303,7 @@ fn formatter_command(
 ) -> Result<(&'static str, Vec<String>)> {
     let output_path = output_path.to_string_lossy().into_owned();
     match language {
+        Language::Go => Ok(("gofmt", vec!["-w".to_string(), output_path])),
         Language::Python => Ok((
             "ruff",
             vec![
@@ -537,16 +539,12 @@ fn example_linked_input_paths(repo_root: &Path) -> Vec<PathBuf> {
 }
 
 fn example_output_path(repo_root: &Path, language: Language, example_id: &str) -> PathBuf {
-    match language {
-        Language::Python => example_language_root(repo_root, language)
-            .join(example_directory_name(language, example_id)),
-        Language::TypeScript => example_language_root(repo_root, language).join(example_id),
-        _ => example_language_root(repo_root, language).join(example_id),
-    }
+    example_language_root(repo_root, language).join(example_directory_name(language, example_id))
 }
 
 fn example_directory_name(language: Language, example_id: &str) -> String {
     match language {
+        Language::Go => go::go_package_name(example_id),
         Language::Python => python_example_package_name(example_id),
         _ => example_id.to_string(),
     }
@@ -559,6 +557,11 @@ fn python_example_package_name(example_id: &str) -> String {
 fn format_example_output(repo_root: &Path, language: Language, output_path: &Path) -> Result<()> {
     let (cwd, program, args): (PathBuf, &str, Vec<String>) = match language {
         Language::Dotnet => return Ok(()),
+        Language::Go => (
+            example_language_root(repo_root, language),
+            "gofmt",
+            vec!["-w".to_string(), output_path.to_string_lossy().into_owned()],
+        ),
         Language::Python => (
             example_language_root(repo_root, language),
             "uv",

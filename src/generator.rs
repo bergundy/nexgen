@@ -6,6 +6,7 @@ use crate::api_plan::build_api_plan;
 use crate::descriptors::DescriptorIndex;
 use crate::dotnet;
 use crate::error::{Error, Result};
+use crate::go;
 use crate::language::Language;
 use crate::python;
 use crate::resources::ensure_unique_resource_names;
@@ -24,6 +25,11 @@ pub struct GeneratedFiles {
     pub layout: GeneratedOutputLayout,
     pub files: BTreeMap<PathBuf, String>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenerationOptions {
+    pub go: go::GoOptions,
 }
 
 impl GeneratedFiles {
@@ -80,6 +86,22 @@ pub fn generate_files(
     descriptors: &DescriptorIndex,
     support: &SupportFiles,
 ) -> Result<GeneratedFiles> {
+    generate_files_with_options(
+        language,
+        spec,
+        descriptors,
+        support,
+        &GenerationOptions::default(),
+    )
+}
+
+pub fn generate_files_with_options(
+    language: Language,
+    spec: &ApiSpec,
+    descriptors: &DescriptorIndex,
+    support: &SupportFiles,
+    options: &GenerationOptions,
+) -> Result<GeneratedFiles> {
     validate_type_overrides(spec, descriptors, language)?;
     ensure_unique_resource_names(spec)?;
     let plan = build_api_plan(spec, descriptors)?;
@@ -92,6 +114,7 @@ pub fn generate_files(
 
     let mut generated = match language {
         Language::Dotnet => dotnet::generate(&plan, support_fragments),
+        Language::Go => go::generate(&plan, support_fragments, &options.go),
         Language::Python => python::generate(&plan, support_fragments),
         Language::TypeScript => typescript::generate(&plan, support_fragments),
         language => Err(Error::UnsupportedLanguage { language }),
