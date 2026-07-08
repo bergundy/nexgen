@@ -283,28 +283,16 @@ encode-adapter-only logic: the match is pure and direction-agnostic.
 
 ### Runtime fixtures (validator)
 
-- **Anchoring:** `pattern:"cat"` accepts `"the cat sat"` (unanchored —
-  verified across all four); `pattern:"^cat$"` rejects it. The Java
-  `matches()`/Python `re.match` footgun would reject `"the cat sat"` for
-  bare `"cat"` — the fixtures pin the correct unanchored behavior.
-- **Class semantics:** `pattern:"^\\d$"` accepts ASCII `"5"` and **rejects
-  the Arabic-Indic digit `"٣"`** in all four (ASCII `\d` — verified;
-  Python without `re.ASCII` and Java under `UNICODE_CHARACTER_CLASS` would
-  wrongly accept it).
-- **Code-point `.`:** `pattern:"^a.b$"` accepts `"a😀b"` in all four (the
-  astral char is one `.`; JS without the `u` flag would reject it —
-  verified).
-- **`\s` normalized:** `pattern:"^\\s+$"` (emitted as `^[\t\n\x0B\f\r ]+$`)
-  accepts `" \t"` and **rejects** NBSP `" "` / ideographic space
-  `"　"` in all four. Without normalization JS's Unicode `\s` would
-  *accept* NBSP while the others reject — the corpus divergence this rule
-  closes. `\v` (`""`) is accepted in all four (in the canonical set),
-  where a bare `\s` would have Go alone reject it.
-- **`$` + trailing newline (normalized):** `pattern:"^cat$"` against
-  `"cat\n"` → the **same** result in all four after normalization
-  (rejected — end-of-input anchor). Without the `$`→`\Z`/`\z` rewrite,
-  Python and Java would *accept* it while Go and JS reject — the corpus
-  divergence this rule closes.
+The per-`(pattern, instance)` match behavior — unanchored search, ASCII
+class semantics, code-point `.`, and the `\s`/`\S` and `$` normalizations —
+is exercised by the **83-pair conformance corpus**
+(`research/pattern_conformance/corpus.json`), run through all four runtime
+engines plus the prospective .NET/Ruby (`compare.py`, `compare_ruby.py`,
+`dotnet_runner/`) and the Rust gate; `research/ws_normalize/` covers the
+`\s`/`\S` rewrite. That corpus is this keyword's regression suite — new
+edge cases are added there, not enumerated here.
+
+Fixtures outside the corpus (validator integration, not pure matching):
 - Combined with a failing [[minLength]]/[[maxLength]] or sibling field →
   **all** reported in one shot (**P11**); serialize of an off-pattern
   in-memory value → rejected before emit (**P12**).
