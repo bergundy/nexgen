@@ -2,16 +2,18 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use heck::ToSnakeCase;
 use nex_gen::SupportFiles;
-use nex_gen::generate_to_string_with_inputs;
 use nex_gen::generator::{GeneratedOutputLayout, generate_files};
 use nex_gen::spec::SupportFragmentSpec;
+use nex_gen::{GenerateRequest, generate_to_file};
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
 const TYPE_ROUNDTRIP_EXAMPLE_ID: &str = "type-roundtrip";
+static OUTPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -47,11 +49,35 @@ fn input_path(root: &Path, example_id: &str) -> PathBuf {
 }
 
 fn python_output_path(root: &Path, example_id: &str) -> PathBuf {
-    python_root(root).join(example_id.to_snake_case())
+    python_root(root)
+        .join("wit")
+        .join(example_id.to_snake_case())
+}
+
+fn python_json_definitions_output_path(root: &Path, example_id: &str) -> PathBuf {
+    python_root(root)
+        .join("json_schema")
+        .join("definitions")
+        .join(example_id.to_snake_case())
+}
+
+fn python_json_api_output_path(root: &Path, example_id: &str) -> PathBuf {
+    python_root(root)
+        .join("json_schema")
+        .join("api")
+        .join(example_id.to_snake_case())
+}
+
+fn json_input_path(root: &Path, example_id: &str) -> PathBuf {
+    let dir_path = root.join("examples/json-inputs").join(example_id);
+    if dir_path.is_dir() {
+        return dir_path;
+    }
+    root.join("examples/json-inputs")
+        .join(format!("{example_id}.yaml"))
 }
 
 fn python_example_ids(root: &Path) -> Vec<String> {
-    let python_root = python_root(root);
     let mut ids = fs::read_dir(root.join("examples/inputs"))
         .unwrap()
         .filter_map(|entry| {
@@ -64,7 +90,7 @@ fn python_example_ids(root: &Path) -> Vec<String> {
             } else {
                 return None;
             };
-            if python_root.join(example_id.to_snake_case()).is_dir() {
+            if python_output_path(root, &example_id).is_dir() {
                 Some(example_id)
             } else {
                 None
@@ -106,6 +132,36 @@ fn read_python_package_files(dir: &Path) -> BTreeMap<PathBuf, String> {
     files
 }
 
+fn render_output_files(files: BTreeMap<PathBuf, String>) -> String {
+    files
+        .into_iter()
+        .map(|(path, contents)| format!("### {}\n{contents}", path.display()))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn generate_python_to_string(input_paths: &[PathBuf], descriptor_paths: &[PathBuf]) -> String {
+    let temp_dir = unique_output_path("python-rendered");
+    let output_path = temp_dir.join("output");
+    generate_to_file(&GenerateRequest {
+        language: nex_gen::language::Language::Python,
+        input_paths: input_paths.to_vec(),
+        support_paths: Vec::new(),
+        descriptor_paths: descriptor_paths.to_vec(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: true,
+    })
+    .unwrap();
+    let rendered = if output_path.is_file() {
+        fs::read_to_string(&output_path).unwrap()
+    } else {
+        render_output_files(read_python_package_files(&output_path))
+    };
+    fs::remove_dir_all(temp_dir).unwrap();
+    rendered
+}
+
 fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: &Path) {
     let status = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
         .args([
@@ -121,6 +177,49 @@ fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: 
             "--output",
             output_path.to_str().unwrap(),
         ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let format_status = Command::new("uv")
+        .current_dir(python_root(root))
+        .args([
+            "run",
+            "ruff",
+            "format",
+            "--line-length",
+            "88",
+            "--config",
+            "pyproject.toml",
+            output_path.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(format_status.success());
+}
+
+fn generate_formatted_json_python_output(
+    root: &Path,
+    example_id: &str,
+    output_path: &Path,
+    generate_native_api: bool,
+) {
+    let input_path = json_input_path(root, example_id);
+    let mut args = vec![
+        "generate",
+        "--lang",
+        "python",
+        "--input",
+        input_path.to_str().unwrap(),
+        "--output",
+        output_path.to_str().unwrap(),
+    ];
+    if !generate_native_api {
+        args.push("--no-native-api");
+    }
+
+    let status = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
+        .args(args)
         .status()
         .unwrap();
     assert!(status.success());
@@ -174,7 +273,8 @@ fn unique_output_path(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("nex-gen-{label}-{unique}"))
+    let counter = OUTPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("nex-gen-{label}-{unique}-{counter}"))
 }
 
 #[test]
@@ -186,6 +286,35 @@ fn python_examples_generation_matches_checked_in_output() {
         assert_python_310_syntax_compatible(&output_path);
         let rendered = read_python_package_files(&output_path);
         let expected = read_python_package_files(&python_output_path(&root, &example_id));
+        assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        fs::remove_dir_all(output_path).unwrap();
+    }
+}
+
+#[test]
+fn python_json_example_generation_matches_checked_in_output() {
+    let root = project_root();
+    for example_id in ["chat", "kb"] {
+        let output_path = unique_output_path(&format!("python-json-{example_id}"));
+        generate_formatted_json_python_output(&root, example_id, &output_path, false);
+        assert_python_310_syntax_compatible(&output_path);
+        let rendered = read_python_package_files(&output_path);
+        let expected =
+            read_python_package_files(&python_json_definitions_output_path(&root, example_id));
+        assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        fs::remove_dir_all(output_path).unwrap();
+    }
+}
+
+#[test]
+fn python_json_api_example_generation_matches_checked_in_output() {
+    let root = project_root();
+    for example_id in ["chat", "kb"] {
+        let output_path = unique_output_path(&format!("python-json-api-{example_id}"));
+        generate_formatted_json_python_output(&root, example_id, &output_path, true);
+        assert_python_310_syntax_compatible(&output_path);
+        let rendered = read_python_package_files(&output_path);
+        let expected = read_python_package_files(&python_json_api_output_path(&root, example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
         fs::remove_dir_all(output_path).unwrap();
     }
@@ -216,6 +345,63 @@ fn cli_generates_wit_direct_example_without_descriptors() {
     assert!(output_path.join("__init__.py").is_file());
     assert!(output_path.join("models.py").is_file());
     fs::remove_dir_all(output_path).unwrap();
+}
+
+#[test]
+fn cli_generates_definitions_without_native_api_or_endpoint() {
+    let temp_dir = unique_output_path("python-definitions-only");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("input.wit");
+    let output_path = temp_dir.join("output");
+    fs::write(
+        &input_path,
+        r#"
+package temporal:example@1.0.0;
+
+world system {
+  export example-service;
+}
+
+interface example-service {
+  record request {
+    name: string,
+  }
+
+  record response {
+    message: string,
+  }
+
+  example-operation: func(request: request) -> response;
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
+        .args([
+            "generate",
+            "--lang",
+            "python",
+            "--input",
+            input_path.to_str().unwrap(),
+            "--output",
+            output_path.to_str().unwrap(),
+            "--no-native-api",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_path.join("__init__.py").is_file());
+    assert!(output_path.join("models.py").is_file());
+    assert!(output_path.join("services.py").is_file());
+    assert!(!output_path.join("operations/example_operation.py").exists());
+
+    fs::remove_dir_all(temp_dir).unwrap();
 }
 
 #[test]
@@ -286,7 +472,7 @@ fn python_example_suite_type_checks_and_runs() {
 #[test]
 fn python_request_models_are_write_only() {
     let root = project_root();
-    let spec = nex_gen::spec::ApiSpec::load_for_language_with_inputs(
+    let spec = nex_gen::parser::load_api_spec_from_wit_for_language_with_inputs(
         nex_gen::language::Language::Python,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
     )
@@ -294,7 +480,7 @@ fn python_request_models_are_write_only() {
     let descriptors = nex_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
     let generated = generate_files(
         nex_gen::language::Language::Python,
-        &spec,
+        spec.clone(),
         &descriptors,
         &nex_gen::SupportFiles::default(),
     )
@@ -304,12 +490,10 @@ fn python_request_models_are_write_only() {
         .files
         .get(&PathBuf::from("models.py"))
         .expect("Python package should include models.py");
-    let rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::Python,
+    let rendered = generate_python_to_string(
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
         &[descriptor_path(&root)],
-    )
-    .unwrap();
+    );
 
     assert!(!rendered.contains("SignalWithStartWorkflowRequest.from_proto"));
     assert!(!rendered.contains(
@@ -430,12 +614,10 @@ fn python_request_models_are_write_only() {
     assert!(models.contains("from ._support import ("));
     assert!(models.contains("retry_policy_to_proto,"));
 
-    let type_roundtrip_rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::Python,
+    let type_roundtrip_rendered = generate_python_to_string(
         &example_input_paths(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
         &[descriptor_path(&root)],
-    )
-    .unwrap();
+    );
     assert!(type_roundtrip_rendered.contains("async def activity_options_operation("));
     assert!(type_roundtrip_rendered.contains("task_queue: str | None = None,"));
     assert!(type_roundtrip_rendered.contains("retry_policy: temporalio.common.RetryPolicy,"));
@@ -445,7 +627,7 @@ fn python_request_models_are_write_only() {
 #[test]
 fn python_rejects_support_namespace() {
     let root = project_root();
-    let spec = nex_gen::spec::ApiSpec::load_for_language_with_inputs(
+    let spec = nex_gen::parser::load_api_spec_from_wit_for_language_with_inputs(
         nex_gen::language::Language::Python,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
     )
@@ -453,7 +635,7 @@ fn python_rejects_support_namespace() {
     let descriptors = nex_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
     let err = generate_files(
         nex_gen::language::Language::Python,
-        &spec,
+        spec.clone(),
         &descriptors,
         &SupportFiles {
             fragments: vec![SupportFragmentSpec {

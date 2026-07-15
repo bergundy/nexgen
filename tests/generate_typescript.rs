@@ -2,16 +2,17 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nex_gen::SupportFiles;
-use nex_gen::generate_to_string_with_inputs;
 use nex_gen::generator::generate_files;
 use nex_gen::spec::SupportFragmentSpec;
+use nex_gen::{GenerateRequest, SupportFiles, generate_to_file};
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
 const START_WORKFLOW_EXAMPLE_ID: &str = "start-workflow";
 const TYPE_ROUNDTRIP_EXAMPLE_ID: &str = "type-roundtrip";
+static OUTPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -47,11 +48,33 @@ fn input_path(root: &Path, example_id: &str) -> PathBuf {
 }
 
 fn typescript_output_path(root: &Path, example_id: &str) -> PathBuf {
-    typescript_root(root).join(example_id)
+    typescript_root(root).join("wit").join(example_id)
+}
+
+fn typescript_json_definitions_output_path(root: &Path, example_id: &str) -> PathBuf {
+    typescript_root(root)
+        .join("json_schema")
+        .join("definitions")
+        .join(example_id)
+}
+
+fn typescript_json_api_output_path(root: &Path, example_id: &str) -> PathBuf {
+    typescript_root(root)
+        .join("json_schema")
+        .join("api")
+        .join(example_id)
+}
+
+fn json_input_path(root: &Path, example_id: &str) -> PathBuf {
+    let dir_path = root.join("examples/json-inputs").join(example_id);
+    if dir_path.is_dir() {
+        return dir_path;
+    }
+    root.join("examples/json-inputs")
+        .join(format!("{example_id}.yaml"))
 }
 
 fn typescript_example_ids(root: &Path) -> Vec<String> {
-    let typescript_root = typescript_root(root);
     let mut ids = fs::read_dir(root.join("examples/inputs"))
         .unwrap()
         .filter_map(|entry| {
@@ -64,7 +87,7 @@ fn typescript_example_ids(root: &Path) -> Vec<String> {
             } else {
                 return None;
             };
-            if typescript_root.join(&example_id).is_dir() {
+            if typescript_output_path(root, &example_id).is_dir() {
                 Some(example_id)
             } else {
                 None
@@ -113,6 +136,36 @@ fn read_typescript_output_files(dir: &Path) -> BTreeMap<PathBuf, String> {
     files
 }
 
+fn render_output_files(files: BTreeMap<PathBuf, String>) -> String {
+    files
+        .into_iter()
+        .map(|(path, contents)| format!("### {}\n{contents}", path.display()))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn generate_typescript_to_string(input_paths: &[PathBuf], descriptor_paths: &[PathBuf]) -> String {
+    let temp_dir = unique_output_path("typescript-rendered");
+    let output_path = temp_dir.join("output");
+    generate_to_file(&GenerateRequest {
+        language: nex_gen::language::Language::TypeScript,
+        input_paths: input_paths.to_vec(),
+        support_paths: Vec::new(),
+        descriptor_paths: descriptor_paths.to_vec(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: true,
+    })
+    .unwrap();
+    let rendered = if output_path.is_file() {
+        fs::read_to_string(&output_path).unwrap()
+    } else {
+        render_output_files(read_typescript_output_files(&output_path))
+    };
+    fs::remove_dir_all(temp_dir).unwrap();
+    rendered
+}
+
 fn generate_formatted_typescript_output(root: &Path, example_id: &str, output_path: &Path) {
     ensure_typescript_dependencies(root);
 
@@ -150,12 +203,57 @@ fn generate_formatted_typescript_output(root: &Path, example_id: &str, output_pa
     assert!(format_status.success());
 }
 
+fn generate_formatted_json_typescript_output(
+    root: &Path,
+    example_id: &str,
+    output_path: &Path,
+    generate_native_api: bool,
+) {
+    ensure_typescript_dependencies(root);
+
+    let input_path = json_input_path(root, example_id);
+    let mut args = vec![
+        "generate",
+        "--lang",
+        "typescript",
+        "--input",
+        input_path.to_str().unwrap(),
+        "--output",
+        output_path.to_str().unwrap(),
+    ];
+    if !generate_native_api {
+        args.push("--no-native-api");
+    }
+
+    let status = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let format_status = Command::new("npm")
+        .current_dir(typescript_root(root))
+        .args([
+            "exec",
+            "--",
+            "prettier",
+            "--write",
+            "--print-width",
+            "88",
+            output_path.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(format_status.success());
+}
+
 fn unique_output_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("nex-gen-{label}-{unique}"))
+    let counter = OUTPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("nex-gen-{label}-{unique}-{counter}"))
 }
 
 #[test]
@@ -166,6 +264,35 @@ fn typescript_examples_generation_matches_checked_in_output() {
         generate_formatted_typescript_output(&root, &example_id, &output_path);
         let rendered = read_typescript_output_files(&output_path);
         let expected = read_typescript_output_files(&typescript_output_path(&root, &example_id));
+        assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        fs::remove_dir_all(output_path).unwrap();
+    }
+}
+
+#[test]
+fn typescript_json_example_generation_matches_checked_in_output() {
+    let root = project_root();
+    for example_id in ["chat", "kb"] {
+        let output_path = unique_output_path(&format!("typescript-json-{example_id}"));
+        generate_formatted_json_typescript_output(&root, example_id, &output_path, false);
+        let rendered = read_typescript_output_files(&output_path);
+        let expected = read_typescript_output_files(&typescript_json_definitions_output_path(
+            &root, example_id,
+        ));
+        assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        fs::remove_dir_all(output_path).unwrap();
+    }
+}
+
+#[test]
+fn typescript_json_api_example_generation_matches_checked_in_output() {
+    let root = project_root();
+    for example_id in ["chat", "kb"] {
+        let output_path = unique_output_path(&format!("typescript-json-api-{example_id}"));
+        generate_formatted_json_typescript_output(&root, example_id, &output_path, true);
+        let rendered = read_typescript_output_files(&output_path);
+        let expected =
+            read_typescript_output_files(&typescript_json_api_output_path(&root, example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
         fs::remove_dir_all(output_path).unwrap();
     }
@@ -215,7 +342,7 @@ fn cli_generates_typescript_support_file_from_parameter() {
 #[test]
 fn typescript_rejects_support_namespace() {
     let root = project_root();
-    let spec = nex_gen::spec::ApiSpec::load_for_language_with_inputs(
+    let spec = nex_gen::parser::load_api_spec_from_wit_for_language_with_inputs(
         nex_gen::language::Language::TypeScript,
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
     )
@@ -223,7 +350,7 @@ fn typescript_rejects_support_namespace() {
     let descriptors = nex_gen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
     let err = generate_files(
         nex_gen::language::Language::TypeScript,
-        &spec,
+        spec.clone(),
         &descriptors,
         &SupportFiles {
             fragments: vec![SupportFragmentSpec {
@@ -261,12 +388,10 @@ fn typescript_example_suite_typechecks_and_tests() {
 #[test]
 fn typescript_renders_required_fields_and_custom_message_types() {
     let root = project_root();
-    let rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::TypeScript,
+    let rendered = generate_typescript_to_string(
         &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
         &[descriptor_path(&root)],
-    )
-    .unwrap();
+    );
 
     assert!(!rendered.contains("type _RequestWithFunctionField<"));
     assert!(!rendered.contains("type _RequestWithArgumentsField<"));
@@ -413,7 +538,7 @@ fn typescript_renders_required_fields_and_custom_message_types() {
         "outputType: \"temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse\""
     ));
     assert!(rendered.contains("export type { SignalWithStartWorkflowRequest } from './models';"));
-    assert!(!rendered.contains("export { WorkflowService } from './service';"));
+    assert!(!rendered.contains("export { WorkflowService } from './services';"));
     assert!(!rendered.contains("export type { SignalWithStartWorkflowResponse"));
     assert!(rendered.contains("request: SignalWithStartWorkflowRequest<WorkflowFn, SignalValue>,"));
     assert!(rendered.contains("const client = workflow.createNexusServiceClient({"));
@@ -434,24 +559,20 @@ fn typescript_renders_required_fields_and_custom_message_types() {
     assert!(!rendered.contains("signalWithStartWorkflowExecution("));
     assert!(!rendered.contains("from './temporal_model_converters.ts'"));
 
-    let start_workflow_rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::TypeScript,
+    let start_workflow_rendered = generate_typescript_to_string(
         &example_input_paths(&root, START_WORKFLOW_EXAMPLE_ID),
         &[descriptor_path(&root)],
-    )
-    .unwrap();
+    );
     assert!(
         start_workflow_rendered
             .contains("export type CancelWorkflowResponse = Record<string, never>;")
     );
     assert!(!start_workflow_rendered.contains("export interface CancelWorkflowResponse {}"));
 
-    let type_roundtrip_rendered = generate_to_string_with_inputs(
-        nex_gen::language::Language::TypeScript,
+    let type_roundtrip_rendered = generate_typescript_to_string(
         &example_input_paths(&root, TYPE_ROUNDTRIP_EXAMPLE_ID),
         &[descriptor_path(&root)],
-    )
-    .unwrap();
+    );
     assert!(type_roundtrip_rendered.contains("retryPolicy: common.RetryPolicy;"));
     assert!(type_roundtrip_rendered.contains("request: common.RetryPolicy,"));
 }
