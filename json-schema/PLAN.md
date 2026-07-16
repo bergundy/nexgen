@@ -99,17 +99,25 @@ example at `features/type/spec.md`:
 - `features/propertyNames/spec.md`: complete — **partial** (map-shaped
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
-- `features/const/spec.md`: complete — **supported (scalar)**. Emits the
-  underlying primitive (P13.1) via an open form per target, closed only at
-  runtime: TS `'v' | (string & {})` + `readonly`, Go alias
-  `type X = string` + typed value const, Python `Literal['v'] | str`,
-  Java a generated value class (`@JsonCreator`/`@JsonValue`,
-  `isUnrecognized()`) shared with [[enum]] (const = single-value
-  specialization). `const` is a pure assertion validated in both
-  directions; presence is owned by `required`; the value reaches the wire
-  because it is set in memory. Mutually exclusive with `default` and
-  `enum`. `const:null` rejected; composite (object/array) const
-  temporarily unsupported. 1 open question — composite-const carve-out.
+- `features/const/spec.md`: complete — **supported (scalar,
+  string/integer/number/boolean)**. Emits a type **closed** to the const
+  value for every scalar kind (P13.1): TS the closed literal (`'v'` /
+  `1.5` / `true`), Python `Literal['v']` (`float` consts plain `float`),
+  Go a defined type + typed value const (`type Priority int64` +
+  `Priority3`), Java a value class (known constant obtainable only through
+  the class). Any non-matching value is a hard reject — the same closed
+  machinery [[enum]] uses with more than one known value; a bump is a
+  breaking change surfaced as a compile break. Value constants are named
+  from the value (`{Type}{EncodedValue}` Go / class-scoped Java), encoded
+  through the [[properties]] Stage 1–4 pipeline (string values ASCII, no
+  whitespace; float `.`→`_`; negatives `Neg`; Java `V_` prefix when
+  needed; P15 rejects collisions). Float consts use exact `==` (Ryu
+  round-trip makes it cross-language/arch identical). `const` is a pure
+  assertion validated in both directions; presence owned by `required`;
+  the value reaches the wire because it is set in memory. Mutually
+  exclusive with `default` and `enum`. `const:null` rejected; composite
+  (object/array) const temporarily unsupported. 1 open question —
+  composite-const carve-out.
 - `features/default/spec.md`: complete — **supported** with off-the-wire /
   materialized-on-read semantics: annotation (no validator, never fails validation);
   off-the-wire; set-ness tracked; omit-unset with no deep-equals;
@@ -211,21 +219,23 @@ example at `features/type/spec.md`:
   (native), Go `<Field>OrDefault()` accessor (proto3 `GetX()`-style),
   TS `?? DEFAULT_X` + emitted constant.
 - **`const` is a pure assertion — no serialize-side special-casing.**
-  `const` is treated as a single-value `enum`: validate `== value` in
-  both directions; the generator does not force-write. Presence is owned
-  by `required`; the fixed value reaches the wire because it is set in
-  memory. Emits the underlying primitive via an open form (P13.1): TS
-  `'v' | (string & {})` + `readonly`, Go named alias `type X = string`
-  + typed value const, Python `Literal['v'] | str`, Java a generated
-  value class shared with [[enum]]. Go sets it via that value const (zero
-  value fails `Validate` loudly); Java uses a `final` field initialized
-  to the known constant + getter, no setter, no builders; Python injects
-  it in a `model_validator(mode='before')` (which marks it set →
-  `model_fields_set` → emitted by the generic `@model_serializer`).
-  Mutually exclusive with `default`/`enum`; `const:null` and composite
-  consts rejected/deferred.
+  Validate `== value` in both directions; the generator does not
+  force-write. Presence is owned by `required`; the fixed value reaches
+  the wire because it is set in memory. Emits a type **closed** to the
+  value for every scalar kind (P13.1): TS the closed literal, Python
+  `Literal` (`float` plain `float`), Go a defined type + typed value
+  const, Java a value class. `const` is a *closed contract* — the same
+  machinery [[enum]] uses, with one known value — so a bump breaks loudly.
+  Go sets it via the value const (zero value fails `Validate` loudly);
+  Java initializes a `final` field to the known constant with a getter,
+  and the collecting deserializer's non-throwing membership lookup records
+  a Violation for a bad wire value (the value class's `fromString` throws
+  only on the standalone interop path); Python injects it in a
+  `model_validator(mode='before')` (which marks it set → `model_fields_set`
+  → emitted by the generic `@model_serializer`). Mutually exclusive with
+  `default`/`enum`; `const:null` and composite consts rejected/deferred.
 - **Synthesized-identifier collisions reject at load time, never mangle
-  (P15).** Synthesized names — [[const]] type aliases + value consts,
+  (P15).** Synthesized names — [[const]] value constants,
   future [[enum]] value class/members, the Go `<Field>OrDefault()`
   accessor and TS `DEFAULT_<FIELD>` ([[default]]) — share one per-scope
   namespace with declared types/members and with each other
@@ -301,7 +311,7 @@ example at `features/type/spec.md`:
   are emitted as `public static final` nested classes on the model
   (`User.Deserializer` / `User.Serializer`) — each model owns its pair,
   names never collide across models (same nesting idiom as P15's
-  const/enum value classes). The deserializer does a two-stage
+  [[enum]] value classes). The deserializer does a two-stage
   lenient-tree-then-validate bind (`readValueAsTree()` defeats Jackson's
   fail-fast `MismatchedInputException`, then every field runs through
   shared spec-strict + constraint helpers, collecting
@@ -399,19 +409,24 @@ decisions:
   `dependentSchemas` (expect P6-reject)
 
 **Any-type assertions:**
-- `enum` — remaining. Representation pre-decided (with const):
-  per-language open form — TS `… | (string & {})`, Go alias,
-  Python `Literal[…] | str`, Java a generated value class (static known
-  constants + private ctor + `@JsonCreator fromString` + `@JsonValue` +
-  `isUnrecognized()`). `enum` preserves unknown values (P13) where `const`
-  rejects them. Collision handling pre-settled (P15): two enum values
-  mapping to the same identifier → load reject; the value-class name is
-  package-scoped like const's; the class-body collision pass is the
-  [[properties]] policy applied per value class.
-- ✅ `const` — landed (scalar). Pure assertion, validated both
-  directions; presence owned by `required`. Open-form emit per target
-  (P13.1). Mutually exclusive with `default`/`enum`; composite consts
-  deferred.
+- `enum` — remaining. Representation pre-decided, shared with `const`
+  (enum = the multi-value case): a **closed** value set that rejects any
+  unrecognized value — TS a union of literals `'a' | 'b'`, Python
+  `Literal['a', 'b']`, Go a defined type + one typed value const per
+  member, Java a generated value class (static known constants + private
+  ctor + `@JsonValue`; a `@JsonCreator fromString` that throws only on the
+  standalone/interop path, while the collecting deserializer uses a
+  non-throwing membership lookup so misses aggregate). Member constants are
+  named from each value via the [[properties]] Stage 1–4 encoding (float
+  `.`→`_`, negatives `Neg`, Java `V_` prefix when needed). Collision
+  handling pre-settled (P15): two enum values whose encodings collide →
+  load reject; the value-class/type name is package-scoped; the class-body
+  collision pass is the [[properties]] policy applied per value class.
+- ✅ `const` — landed (scalar, all primitive kinds). Pure assertion,
+  validated both directions; presence owned by `required`. Closed-value
+  emit per target (P13.1) — TS/Python literals, Go defined type + typed
+  const, Java value class. Mutually exclusive with `default`/`enum`;
+  composite consts deferred.
 
 **Numeric assertions** (gated by integer-cap decision):
 - ✅ `maximum`, ✅ `minimum`, ✅ `exclusiveMaximum`,

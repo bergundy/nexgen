@@ -160,37 +160,44 @@ members — e.g. `user_id` + `userId` → Go `UserId`. Like Stage 3,
 collisions are evaluated only for languages being generated.
 
 The check is not limited to declared members. The generator also
-synthesizes identifiers from member/type names — [[const]]'s type aliases
-and value consts, the Go `<Field>OrDefault()` accessor and TS
-`DEFAULT_<FIELD>` constant ([[default]]), the [[enum]] value class and
-members — and these enter the **same per-scope namespace** as the declared
-names and each other (package/module scope for package-level
-aliases/consts/types; the struct method-set for the Go accessor, where Go
+synthesizes identifiers from member/type names — [[const]]'s named type
+(Go defined type / Java value class), the Go `<Field>OrDefault()`
+accessor and TS `DEFAULT_<FIELD>` constant ([[default]]), the [[enum]]
+value class — and these enter the **same per-scope namespace** as the
+declared names and each other (package/module scope for package-level
+types/consts; the struct method-set for the Go accessor, where Go
 forbids a field/method clash outright). The single collision pass runs
 over that full union and rejects on any coincidence; the `x-*-name`
-override (Stage 4) on the declaring member is the escape hatch, and
-re-mapping the member moves every name synthesized from it. The generator
-**never auto-mangles** (P15) — a numeric suffix would be unstable under
-schema evolution (P13).
+override (Stage 4) on the declaring member is the escape hatch for these,
+and re-mapping the member moves every name synthesized *from the member*.
+A [[const]]/[[enum]] **value constant** is synthesized from the *value*,
+not the member — it shares the same namespace and collision pass but is
+re-mapped by its own `x-<lang>-const-name` override, not `x-*-name`. The
+generator **never auto-mangles** (P15) — a numeric suffix would be
+unstable under schema evolution (P13).
 
 ### Synthesized type names
 
 The Stage 1–4 algorithm maps *member* names; a synthesized **named type**
-(the [[const]]/[[enum]] value class / alias / union) is named separately.
-When the const/enum is a named `$defs` definition, the synthesized type
-reuses the `$defs` name. When it is **anonymous** (inline on a property),
-the synthesized type is **nested inside its enclosing model** where the
-language supports it, so it leaves the package/module namespace and cannot
-collide with a coincidentally-named top-level type:
+(the [[const]]/[[enum]] value class / defined type) is named separately.
+A const or an enum synthesizes a named type where the language lacks
+literal types (Go defined type, Java value class), for every scalar kind;
+TS and Python close the type inline (a literal / union of literals) and
+synthesize no named type. When the const/enum is a named `$defs` definition, the
+synthesized type reuses the `$defs` name. When it is **anonymous** (inline
+on a property), the synthesized type is **nested inside its enclosing
+model** where the language supports it, so it leaves the package/module
+namespace and cannot collide with a coincidentally-named top-level type:
 
 - **Java** — `public static final class Kind` nested in `UserEvent`,
   referenced `UserEvent.Kind`. Java is the only target that cannot inline
   a const/enum, so it is where nesting matters most.
-- **Python** — a `Kind: ClassVar = Union[Literal[…], str]` member on the
-  model, field typed `"UserEvent.Kind"`, resolved by `model_rebuild()`.
-- **TypeScript** — a const has no named type (it is inline
-  `"v" | (string & {})`), so there is nothing to nest; an [[enum]] stays
-  an alias (nest under a `namespace` only if needed).
+- **Python** — a const/enum is an inline `Literal[…]`, so there is no
+  named type to nest and nothing synthesized in the module namespace; the
+  fixed value is compared inline in the `model_validator`.
+- **TypeScript** — a const/enum is an inline literal / union of literals,
+  so there is nothing to nest and nothing synthesized; the validator
+  compares the wire value against the inline literal.
 - **Go** — has no nested types (a `type` decl inside a struct is a syntax
   error), so it falls back to flat package-level composition
   `<EnclosingType><Property>` (`UserEventKind`) and relies on the P15

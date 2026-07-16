@@ -5,14 +5,14 @@ Source: JSON Schema 2020-12, Validation vocabulary, §6.1.3
 
 Pins an instance to a single fixed value. The discriminator primitive:
 a `const` string on a member is how a typed object announces its
-variant on the wire. Supported for scalar values; the in-memory type
-stays the underlying primitive (**P13.1**). `const` is a **pure
-assertion** — equivalent to a single-value [[enum]] — checked in both
-directions by the shared `Validate` layer (**P12**). It carries **no
-serialize-side special-casing**: the value reaches the wire because it
-is *set in memory* (by the TS type, by a Java `final` field, by a
-Python `before`-validator inject, or by the Go consumer), not because
-the serializer rewrites it.
+variant on the wire. Supported for scalar values. `const` is a **pure
+assertion** — a single-value [[enum]] — checked in both directions by
+the shared `Validate` layer (**P12**): any value other than the fixed
+one is **rejected** (**P13.1**). It carries **no serialize-side
+special-casing**: the value reaches the wire because it is *set in
+memory* (by the TS literal type, by the Java value constant, by a Python
+`before`-validator inject, or by the Go consumer), not because the
+serializer rewrites it.
 
 ## Spec summary
 
@@ -46,27 +46,33 @@ Rationale (citing [[PRINCIPLES.md]]):
   boundary, aggregated per **P11**. It is a pure predicate over the
   decoded value, identical in both directions — the **shared `Validate`**
   layer of **P12**, with no serialize-side adapter logic of its own.
-- **P13.1 (forward-compatible const)**: the emitted field type is the
-  **underlying primitive** (`string`, not the literal type `"v1"`); the
-  fixed value is validated at runtime. Bumping a const value in the
-  schema never breaks the generated type signature — only the runtime
-  check moves. This trades static discriminated-union ergonomics for
-  forward compatibility, deliberately. TS and Go both soften the DX cost
-  without closing the type (see Type mapping): TS with a
-  `"v1" | (string & {})` hint, Go with a named alias `type X = string` +
-  typed value consts — discoverable, still any-value-assignable.
-- **No auto-emit.** `const` is treated exactly as a single-value
-  [[enum]]: validate that the value equals the keyword on every model —
+- **P13.1 (closed value set; unknown values rejected)**: `const` is a
+  **closed contract** — the field admits only the fixed value, and any
+  other value is a hard validation failure. The emitted type expresses
+  that closedness in each language's idiom, for **every scalar kind**: a
+  **closed literal** where literal types exist (TS `"v1"` / `1.5` /
+  `true`; Python `Literal["v1"]`, with `float` the one exception — see
+  Type mapping), a **defined type + typed constant** in Go
+  (`type UserEventKind string` + `UserEventKindUser`), and a **value
+  class** in Java (a known constant, obtainable only through the class).
+  A schema revision that bumps the value (`"v1"`→`"v2"`) is a **breaking
+  change** to the contract and surfaces as one — a compile error at stale
+  call sites (the literal changes in TS/Python; the value-derived constant
+  is renamed in Go/Java) — the correct, loud outcome: a changed value
+  contract is not backward compatible, and the generator does not pretend
+  otherwise. [[enum]] is the same closed machinery with more than one
+  known value.
+- **No auto-emit.** Like [[enum]], `const` is validated, not
+  force-written: validate that the value equals the keyword on every model —
   whether constructed in-language or deserialized over the wire. The
   generator does **not** force-write the fixed value on serialize. The
   value lands on the wire because it is *set in memory*, and **presence
   is governed by [[required]]**, like every other field — a required+const
   is always present (so always emitted) for the same reason any required
-  field is. Dropping force-write deletes a special case from every
-  language's serializer and stops the serializer from **silently
-  rewriting** a wrong in-memory value: setting `kind="admin"` on a type
-  whose const is `"user"` now fails `Validate` loudly instead of being
-  masked.
+  field is. Not force-writing keeps the serializer free of const
+  special-casing and stops it from **silently rewriting** a wrong
+  in-memory value: setting `kind="admin"` on a type whose const is
+  `"user"` fails `Validate` loudly instead of being masked.
 
 Loader behavior:
 - `const` value type-incompatible with the declared [[type]] → reject
@@ -102,163 +108,203 @@ Loader behavior:
 
 ## Type mapping
 
-The emitted **bare type is the underlying primitive of the const's
-scalar type** (**P13.1**) — *not* a singleton/literal type. Optional vs
-required wrapping is owned by [[required]] / [[nullability]].
+The emitted type is **closed to the const value**, in each language's
+idiom and for **every scalar kind** (**P13.1**). Optional vs required
+wrapping is owned by [[required]] / [[nullability]].
 
 | const value kind | Go | TypeScript | Python | Java |
 |---|---|---|---|---|
-| string  | `type X = string`  | `"<v>" \| (string & {})`  | `Literal["<v>"] \| str` | value class `X` |
-| integer | `type X = int64`   | `<v> \| (number & {})`    | `Literal[<v>] \| int`   | `long` |
-| number  | `type X = float64` | `<v> \| (number & {})`    | `float`                 | `double` |
-| boolean | `type X = bool`    | `boolean` | `bool`  | `boolean` |
+| string  | `type UserEventKind string` + typed const | `"<v>"` | `Literal["<v>"]` | value class `UserEventKind` |
+| integer | `type Priority int64` + typed const       | `<v>`   | `Literal[<v>]`   | value class `Priority` |
+| number  | `type Ratio float64` + typed const        | `<v>`   | `float`          | value class `Ratio` |
+| boolean | `type Enabled bool` + typed const         | `<v>`   | `Literal[<v>]`   | value class `Enabled` |
 
-Notably **not** `kind: "user"` as a *closed* literal (TS), a *closed*
-`Literal["user"]` (Python), or an enum singleton — all four keep any
-value of the primitive assignable and enforce the fixed value in the
-validator (**P13.1**). Each target instead emits an *open* form, closed
-only at runtime: TS `"<v>" | (string & {})`, Go a named alias, Python the
-open union `Literal["<v>"] | str`, Java a generated **value class** (it
-has no structural literal type to lean on — see below). This keeps a
-const *bump* ("v1"→"v2" in a new schema revision) a validator-only
-change: regenerated code still compiles against the same field type, and
-old typed call sites are unaffected at compile time (they fail the
-runtime check against the new value, which is the correct, loud outcome —
-not a type error).
+**Go.** A **defined type** over the primitive plus a typed value
+constant, for every scalar kind:
 
-**TypeScript autocomplete hint.** TS uses the `"<v>" | (string & {})`
-idiom (and `<v> | (number & {})` for numerics): the `& {}` intersection
-stops TS from collapsing the union back to the bare primitive, so editors
-suggest the const value while *any* value of the primitive stays
-assignable. This is "emit the primitive **+ a hint**" — strictly better
-DX than bare `string` with the **identical** forward-compatibility
-(boolean has only two values, so it needs no hint). const fields are also
-emitted **`readonly`**: the value is fixed, mutating it in memory is
-always a bug, and `readonly` catches that at compile time (compile-only;
-no runtime or serialize effect).
+```go
+type UserEventKind string
+const UserEventKindUser = UserEventKind("user")
 
-**Go named alias.** Go emits a **type alias** over the primitive —
-`type UserEventKind = string` — plus one typed value constant per const,
-`const UserEventKindUser = UserEventKind("user")`; the field is typed
-`UserEventKind`. The alias form (`=`, **not** a defined type
-`type UserEventKind string`) is deliberate: it stays fully
-interchangeable with the underlying `string`, so any value — including a
-future/unknown one — remains assignable without a conversion (**P13.1**),
-exactly mirroring the TS `string & {}` hint. It buys naming and
-discoverability (the value consts group under one named type, IDE- and
-doc-surfaced) without closing the type or forcing conversions at call
-sites. This also generalizes cleanly to [[enum]], where the same alias
-carries several value constants.
-
-**Python open-enum hint.** Python mirrors this with an open union, named
-in two parts (parallel to Go's type/value split):
-
-```python
-EventKindUser = Literal["user"]            # the specific value
-EventKind     = Union[EventKindUser, str]  # the open field type
+type Priority int64
+const Priority3 = Priority(3)
 ```
 
-The field is typed `EventKind`. Because `str` is in the union, **any**
-string stays assignable — including a future/unknown value (**P13.1**);
-the union is what an editor reads to suggest `"user"`. Three honest caveats:
-- It is **open, not closed** — to a static type checker the union is
-  *semantically* just `str` (the `Literal` is absorbed), so it provides
-  **no** compile-time closedness. That is exactly what we want for
-  forward-compat; runtime correctness is the `model_validator`, never the
-  annotation (the probe shows Pydantic accepting `"user_v2"` through the
-  `str` arm when the validator is absent).
-- Autocomplete of the literal is **best-effort and tool-dependent**
-  (Pylance/Pyright surface it; type-only tools and `mypy` see plain
-  `str`). It is a DX nicety, not a guarantee.
-- **`float` consts get no hint** — `Literal` forbids float members — and
-  `bool` needs none (two values), so both stay the plain primitive (see
-  the type table).
+The field is typed with the defined type (`Kind UserEventKind`); the
+value constant is the idiomatic way to set it
+(`UserEvent{Kind: UserEventKindUser}`) and the value the validator
+compares against. The defined type gives the value its own name, groups
+the constant(s) under it, and provides **safety on initialization** — a
+bare primitive requires a deliberate cast (`Priority(4)`) to reach the
+field, so a wrong value is a conscious act, caught by `Validate`. It
+generalizes directly to [[enum]], which lists several constants under one
+type. The value-constant name is `{Type}{EncodedValue}` (see Naming and
+encoding).
 
-**Java value class.** Java has no structural literal type, so the open
-form is a generated **value class** wrapping the string — the same shape
-the [[enum]] feature will emit, of which a const is the single-value
-specialization. (Shown standalone for clarity; when the const is
-**anonymous** on a property it is emitted **nested** as
-`UserEvent.Kind` — see Naming and collisions below.)
+**TypeScript.** The **closed literal** of the value — `kind: "user"`,
+`n: 1.5`, `ok: true`. The literal type closes the field in-language (a
+wrong value is a compile error); the deserialize validator compares the
+wire value against the same literal.
+
+**Python.** The **closed literal** via `Literal` — `Literal["user"]`,
+`Literal[1]`, `Literal[True]`. **`float` consts are the exception:**
+`Literal` forbids float members (PEP 586), so a number const is plain
+`float` and closedness rests on the `model_validator` alone.
+
+**Java.** A generated **value class** wrapping the primitive, for every
+scalar kind — a known constant, a private constructor, and Jackson
+`@JsonCreator`/`@JsonValue` for wire mapping:
 
 ```java
 public final class UserEventKind {
-    public static final UserEventKind USER = new UserEventKind("user");  // the known value
+    public static final UserEventKind USER = new UserEventKind("user");
     private final String value;
     private UserEventKind(String value) { this.value = value; }
 
-    @JsonCreator                              // deserialize: string -> instance
+    @JsonCreator                              // standalone / interop decode
     public static UserEventKind fromString(String v) {
         if (v == null) return null;
         return switch (v) {
             case "user" -> USER;
-            default -> new UserEventKind(v);  // open: any value representable (P13.1)
+            default -> throw new IllegalArgumentException(
+                "must equal \"user\", got \"" + v + "\"");
         };
     }
-    @JsonValue public String getValue() { return value; }   // serialize: instance -> string
-    public boolean isUnrecognized() { return this != USER; }
+    @JsonValue public String getValue() { return value; }
     // equals/hashCode/toString by value (omitted)
 }
 ```
 
-The class is **open** — `fromString` represents any wire value, so a
-future/unknown one round-trips at the type level, exactly like the other
-three targets. const and [[enum]] share this class and differ **only in
-the validator**: const is *closed*, so its check **rejects** an
-unrecognized value (`!UserEventKind.USER.equals(v)` → aggregated const
-error); [[enum]] is *forward-compatible* (**P13**), so it **preserves**
-the unrecognized instance. Jackson maps the field via `@JsonCreator` /
-`@JsonValue`, so the wire form stays the bare string. Only **string**
-consts use the value class; `integer`/`number`/`boolean` consts stay the
-plain primitive (a value class buys nothing there), matching the type
-table. This is heavier than a bare `String` field for a single-value
-const, accepted for cross-language and [[enum]] consistency.
+The private constructor makes the known constant the only obtainable
+instance, so a wrong value **cannot be constructed** in-language — a
+compile-time guarantee. The value class is the shared carrier of `const`
+(one constant) and [[enum]] (several). Numeric and boolean value classes
+wrap `long`/`double`/`boolean`, with `@JsonCreator` over the corresponding
+primitive. How the aggregating deserialize path validates (without the
+throw defeating aggregation) is in Validator mapping.
+
+**Float exactness (all languages).** A number const is compared with
+**exact `==`**, never an epsilon — it is an equality assertion, and an
+epsilon would admit near-but-unequal values. The comparison is
+deterministic and portable: the wire value and the const literal are both
+IEEE-754 binary64 produced by correctly-rounded decimal→double parsing,
+so the same decimal yields the identical bit pattern in every language
+and on every architecture (the path only parses and compares, never
+computes). The loader carries the value through its shortest
+round-trippable decimal, so every target re-parses to the same double.
+`-0.0` equals `0.0`; `NaN`/`±Infinity` cannot appear (not JSON literals);
+an integer-valued number such as `1.0` is normalized to an integer const.
+A float const asserts *exact* equality to one specific double, so it is
+intended for values transmitted as authored — not values arrived at by
+upstream computation.
 
 ### Naming and collisions (P15)
 
-A scalar `const` synthesizes identifiers that do not exist in the input
-schema and so can collide with declared types or other synthesized names.
-**Type-name derivation follows the [[properties]] resolved policy:** reuse
-the `$defs` name when the const is a **named** definition; when it is
-**anonymous** (inline on a property), **nest the synthesized type inside
-its enclosing model where the language allows it**, so it leaves the
-package/module namespace. Per-target:
+A `const` synthesizes identifiers that do not exist in the input schema —
+a **named type** (Go defined type / Java value class) and a **value
+constant** — for every scalar kind. (TS and Python close the type to an
+inline literal and synthesize no type or constant; the value lives in the
+literal and the validator.) **Type-name derivation follows the
+[[properties]] resolved policy:** reuse the `$defs` name when the const is
+a **named** definition; when it is **anonymous** (inline on a property),
+nest the synthesized type inside its enclosing model where the language
+allows it, so it leaves the package/module namespace.
 
 | Target | Synthesized identifier(s) | Placement / scope |
 |---|---|---|
-| Java | value class `Kind` (member `USER` class-scoped) | **nested** `UserEvent.Kind` |
-| Python | `Kind = Union[…]` + the `Literal[…]` arm; `KIND_CONST` value | **nested** `ClassVar` on the model |
-| TypeScript | only the validator's `KIND_CONST` constant (the type is inline `"v" \| (string & {})`) | module |
-| Go | type alias `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types); P15 backstop |
+| Go | defined type `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types); P15 backstop |
+| Java | value class `Kind` + class-scoped constant (`USER`) | **nested** `UserEvent.Kind` |
+| TypeScript | none — the type is the inline literal `"user"` | — |
+| Python | none — the type is the inline `Literal["user"]` | — |
 
-Per **P15** every synthesized name still enters the **same per-scope
+Per **P15** every synthesized name enters the **same per-scope
 namespace** as the declared names and as one another; the generator runs
 a single collision pass (after case-mapping) and **rejects at load** with
-a fix-it diagnostic on any coincidence. Nesting **shrinks** that surface
-(a nested `UserEvent.Kind` cannot clash with a top-level `UserEventKind`,
-verified) but does not remove the pass — **Go especially** still composes
-a flat package-level `UserEventKind` that can collide with a declared
-type, caught and rejected, resolvable via the [[properties]] `x-go-name`
-override on the declaring member. **No auto-mangling** — a synthesized
-`EventKind2` would be unstable across schema revisions (P13).
+a fix-it diagnostic on any coincidence. A **type-name** collision is
+resolved by the [[properties]] `x-<lang>-name` override on the declaring
+member — the synthesized type is named from the member, so re-mapping it
+moves the type. A **value-constant** collision is resolved by the
+`x-<lang>-const-name` override on the const schema (see [Overriding the
+value constant](#overriding-the-value-constant)) — the value constant is
+named from the *value*, a separate axis that `x-<lang>-name` does not
+touch. Nesting shrinks the
+surface (a nested `UserEvent.Kind` cannot clash with a top-level
+`UserEventKind`); **Go** stays flat and relies on the P15 backstop. **No
+auto-mangling** — a synthesized `UserEventKind2` would be unstable across
+schema revisions (P13). The class-body surface where **many** constants
+can case-map together (`"user"` + `"USER"` → both `USER`) is exercised by
+[[enum]].
 
-**Java value class — two surfaces.** The shared value class (Type
-mapping above) collides on two levels, both under **P15**: its **name**
-(`UserEventKind`) is *package*-scoped (vs declared types / other value
-classes), and its **value constants** are *class-body*-scoped. A scalar
-const has exactly one member (`USER`), so it can never self-collide on
-the second surface — but [[enum]] synthesizes **many** members into one
-class and is the first feature to exercise it: two enum values that
-case-map to the same Java identifier (`"user"` + `"USER"` → both `USER`)
-are a **hard compile error** → load reject. The class-body pass only has
-to police **member-vs-member**: the fixed scaffolding (`value` field,
-`fromString`/`getValue`/`isUnrecognized` methods) does *not* constrain
-member names, because members are UPPER_SNAKE while the scaffolding is
-lowerCamel, and Java permits a same-name field+method (unlike Go's hard
-field/method clash). So the class-body collision pass is
-just the [[properties]] case-mapping collision policy applied within the
-value class. [[enum]] inherits all of this unchanged (a const is its
-single-value specialization).
+### Naming and encoding (value → identifier)
+
+Go and Java name the value constant after the **value** — Go
+`{Type}{EncodedValue}`, Java a class-scoped `{EncodedValue}` — so the
+value is encoded as an identifier through the [[properties]] Stage 1–4
+pipeline, with a per-kind front-end producing the token and a **constant
+recasing scope** (Go `PascalCase`, Java `UPPER_SNAKE`):
+
+| kind | token | Go | Java |
+|---|---|---|---|
+| string  | value split on **any non-alphanumeric ASCII** into words (Stage 1) | `UserEventKindUser` | `USER` |
+| integer | the digits | `Priority3` | `V_3` |
+| number  | shortest round-trippable decimal, `.` → `_` | `Ratio3_14` | `V_3_14` |
+| boolean | `True` / `False` | `EnabledTrue` | `TRUE` / `FALSE` |
+
+Rules:
+- **Negatives** encode the sign as the word `Neg`: `-3` → `PriorityNeg3` /
+  `V_NEG_3`; `-3.14` → `RatioNeg3_14`.
+- **Numbers** encode from the shortest round-trippable decimal; the `.`
+  becomes `_` and is **kept** (so `3_14` stays distinct from `314`). A
+  magnitude that canonicalizes to exponent form encodes `e` as `E` and its
+  exponent sign via `Neg` (`1e-7` → `Ratio1ENeg7`).
+- **Java leading-letter guarantee.** Java constants are class-scoped with
+  no type prefix, and Stage 3 rejects an identifier beginning with a
+  digit. A token that does not start with an ASCII letter (every numeric,
+  and digit-leading strings) is prefixed `V_`; string and boolean tokens
+  that already start with a letter are used as-is (`USER`, `TRUE`). Go
+  needs no prefix — the `{Type}` prefix always supplies a leading letter.
+- **Empty or illegal** encodings are **rejected at load** by Stage 3 —
+  e.g. a string const `"-"` (all separators → empty token) — with a
+  diagnostic pointing at the `x-<lang>-const-name` override (below), which
+  names the value constant directly. `x-<lang>-name` cannot rescue it: that
+  override moves the synthesized *type*, whereas the empty token belongs to
+  the *value constant* (in Java the constant has no member-derived
+  component at all — it is purely the encoded value).
+- The encoding is a **readable handle, not a lossless round-trip**: it is
+  intentionally many-to-one (`"user-admin"`, `"user_admin"`, `"userAdmin"`
+  all → `UserAdmin`; string `"3"` and integer `3` both → `…3`). Genuine
+  clashes are caught by the P15 collision pass and **rejected**, never
+  auto-mangled. Because a number token derives from the canonical
+  round-trippable decimal, the name is stable across schema revisions
+  (P13).
+- `const` string values are restricted to **ASCII without whitespace**
+  (rejected at load otherwise), keeping the string front-end to the Stage
+  1 word-splitter.
+
+### Overriding the value constant
+
+The value constant is named from the **value**, on a different axis from
+the member name. The [[properties]] `x-<lang>-name` override moves the
+synthesized **type** (which *is* derived from the member) but leaves the
+value constant untouched — in **Java** the constant is purely the encoded
+value with no member-derived component, and a **`$defs`**-named const has
+no declaring member at all. So the escape hatch for the value-constant
+axis is a separate override, **`x-<lang>-const-name`** (`x-go-const-name`
+/ `x-java-const-name`), placed on the **const schema** — the node carrying
+`const`, whether inline on a property or a named `$defs` definition. Like
+`x-<lang>-name` it is used **verbatim** (it skips the Stage 1–4 encoding),
+must itself be a legal, non-reserved identifier in that language, and
+participates in the P15 collision pass. Only **Go** and **Java**
+synthesize a value constant; **TS** and **Python** carry the value in an
+inline literal and have nothing to override, so the keyword is inert
+there. This is the only way to admit a value that encodes to an empty or
+illegal token (`const "-"`) or to separate two values whose encodings
+case-map together (`"user-admin"` ⨯ `"user_admin"` → both `UserAdmin`),
+consistent with the **no-auto-mangling** rule (P13/P15).
+
+[[enum]] runs the same value→constant encoding per member, so it inherits
+the same empty/illegal-token and encoding-clash cases; the per-value
+override mechanism for the multi-value form is specified there.
 
 ## Validator mapping
 
@@ -268,10 +314,10 @@ value — the **shared `Validate`** layer of **P12**).
 
 | Language | Strategy |
 |---|---|
-| Go | The equality check is a predicate in the shared `Validate`, which `UnmarshalJSON` calls after decoding: `if v != UserEventKindUser { … Violation{Path, Reason: fmt.Sprintf("must equal %q, got %q", UserEventKindUser, v)} }`, collected into one `ValidationError`. Emitted as `type UserEventKind = string` + `const UserEventKindUser = UserEventKind("user")` — the typed const is also the idiomatic way to set it (`UserEvent{Kind: UserEventKindUser}`). |
-| TypeScript | the shared `Validate` predicate ``if (v !== KIND_CONST) push(Violation{path, reason: `must equal ${JSON.stringify(KIND_CONST)}, got ${JSON.stringify(v)}`})``, throw one `ValidationError`. Fixed value emitted as `const KIND_CONST = "user"`. |
-| Python | a field/`model_validator` checking `== <const>`, raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. Field typed as the **open** union `Literal["user"] \| str` (`EventKind = Union[EventKindUser, str]`) — a closed `Literal` would make a const bump a type-level break against **P13.1**; the open union keeps any str assignable and only hints the value (see Type mapping). |
-| Java | the field is the generated value class (`UserEventKind`), whose own `@JsonCreator fromString` converts the wire string. The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the node, builds the value, checks `UserEventKind.USER.equals(v)` (equivalently `!v.isUnrecognized()`), and on mismatch pushes a `Violation{path, "must equal \"user\", got \"" + v + "\""}` into the single `ValidationException`. The known value is the `public static final UserEventKind USER` constant. (For `integer`/`number`/`boolean` consts the field is the plain primitive and the check is a bare `==`.) |
+| Go | A predicate in the shared `Validate`, which `UnmarshalJSON` calls after decoding: `if v != UserEventKindUser { … Violation{Path, Reason: fmt.Sprintf("must equal %q, got %q", UserEventKindUser, v)} }`, collected into one `ValidationError`. The field is the defined type; the typed constant is both the compared value and the idiomatic setter (`UserEvent{Kind: UserEventKindUser}`). |
+| TypeScript | the shared `Validate` predicate compares against the literal: ``if (v !== "user") push(Violation{path, reason: `must equal "user", got ${JSON.stringify(v)}`})``, throwing one `ValidationError`. The field's literal type closes it in-language. |
+| Python | a field/`model_validator` comparing `== "user"` (the literal), raising `InitErrorDetails` into the aggregated `pydantic.ValidationError`. The field is the closed `Literal` (`float` consts are plain `float`, validated the same way). |
+| Java | the aggregating path is the per-POJO collecting deserializer (PRINCIPLES Java §5), which does a **non-throwing membership lookup** — known value → the constant, otherwise record a `Violation{path, "must equal \"user\", got …"}` — so multiple bad fields all collect into the single `ValidationException`, consistent with every other §5 constraint helper. The value class's `@JsonCreator fromString` *throws* only on the **standalone/interop** path, where fail-fast is expected. Serialize needs no separate check: the value class can only hold a known constant. |
 
 ### Serialize-side (P12)
 
@@ -293,10 +339,10 @@ in:
 
 | Language | Mechanism |
 |---|---|
-| Go | Plain field typed as the alias (`Kind UserEventKind`), no force-write. The consumer sets it idiomatically via the typed value constant: `UserEvent{Kind: UserEventKindUser}` (`type UserEventKind = string`; `const UserEventKindUser = UserEventKind("user")`). A forgotten field is the zero value (`""`), which the shared `Validate` rejects **loudly** on serialize — consistent with how Go treats every required field (no compile enforcement; validation catches it). No `readonly` exists in Go, so `Validate` is the whole guard. optional+const uses `*UserEventKind`+`,omitempty`, validated when non-nil. |
-| TypeScript | `readonly kind: "user" \| (string & {})`. Required+const is always set by the type, emitted by the normal `toIntermediate`; the validator rejects a non-const value (and `readonly` blocks in-memory mutation at compile time). optional+const emits when not `undefined`. No unconditional literal write. |
-| Python | The generated `@model_serializer(mode='wrap')` keeps **only** `model_fields_set` — **no** `const_fields` union. A `model_validator(mode='before')` injects the value when absent (`data[field]=<const>`), which makes it *provided* → in `model_fields_set` → emitted by the normal keep-set; and enforces `==` when present. The field carries **no** Pydantic `default` (a default isn't in `model_fields_set` and would be dropped). The before-inject lands in `model_fields_set` so the const emits under plain `to_json` (the **default Temporal converter** path), a wrong value is rejected, and a genuinely-absent optional field stays omitted. |
-| Java | `private final UserEventKind kind = UserEventKind.USER;` initialized to the known constant, getter only, **no setter**. The field is always `USER`, so Jackson's getter (via `@JsonValue`) emits `"user"` by the normal path — this is *not* force-write, the field simply cannot hold a wrong value. On the way in, the per-POJO collecting deserializer (PRINCIPLES Java §5) reads `kind`, checks `UserEventKind.USER.equals(v)`, and pushes a `Violation` on mismatch into the single `ValidationException`. The `final`-initializer is required+const only; optional+const is a normal nullable field, validated if non-null. **No builders** — they are a model-wide decision, deferred, and const does not justify them. |
+| Go | Field typed with the defined type (`Kind UserEventKind`), set idiomatically via the typed value constant (`UserEvent{Kind: UserEventKindUser}`). A forgotten field is the zero value (`UserEventKind("")`), which the shared `Validate` rejects **loudly** on serialize — consistent with how Go treats every required field. optional+const uses a pointer to the defined type + `,omitempty`, validated when non-nil. |
+| TypeScript | The field is the closed literal (`kind: "user"`); a wrong value is a compile error, so a required+const is always correct in memory and emitted by the normal `toIntermediate`. optional+const emits when not `undefined`. |
+| Python | The generated `@model_serializer(mode='wrap')` keeps `model_fields_set`. A `model_validator(mode='before')` injects the value when absent (`data[field]="user"`) — marking it *provided* so it enters `model_fields_set` and emits under plain `to_json` (the **default Temporal converter** path) — and enforces `== "user"` when present. A genuinely-absent optional field stays omitted. |
+| Java | `private final UserEventKind kind = UserEventKind.USER;` for required+const, getter only. The value class can only hold a known constant, so the getter (via `@JsonValue`) emits `"user"` by the normal path. On the way in, the collecting deserializer's membership lookup records a `Violation` for a non-`"user"` wire value. optional+const is a `@Nullable UserEventKind` constructor parameter, validated if non-null. Numeric/boolean consts use their value classes the same way. |
 
 The serialize equality check has teeth only where a wrong value can be
 set in memory before emit: an optional+const set to a wrong value, a Go
@@ -311,9 +357,13 @@ so the check is effectively a deserialize-direction guard there.
 | Shape | Example |
 |---|---|
 | String discriminator | `{type:"string", const:"user"}` |
-| Integer const | `{type:"integer", const:1}` |
+| String needing encoding | `{type:"string", const:"user-admin"}` → `UserAdmin` |
+| Integer const | `{type:"integer", const:3}` |
 | Boolean const | `{type:"boolean", const:true}` |
-| Number const (`1.0` ≡ integer-valued) | `{type:"number", const:1.5}` |
+| Float const (exact `==`) | `{type:"number", const:3.14}` → `Ratio3_14` |
+| Negative float const | `{type:"number", const:-3.14}` → `RatioNeg3_14` |
+| Integer-valued number → integer const | `{type:"number", const:1.0}` (normalized to integer `1`) |
+| Un-encodable value rescued by override | `{type:"string", const:"-", x-go-const-name:"Dash", x-java-const-name:"DASH"}` → Go `Dash`, Java `DASH` (empty token would otherwise reject; TS/Python inert) |
 
 ### Rejected at load time (negative)
 
@@ -325,7 +375,9 @@ so the check is effectively a deserialize-direction guard there.
 | With `enum` (redundant) | `{type:"string", enum:["a"], const:"a"}` |
 | `const: null` (degenerate) | `{type:"null", const:null}` |
 | Composite const (deferred) | `{type:"object", const:{a:1}}`, `{type:"array", const:[1]}` |
-| Synthesized-name collision (P15) | Go flat `UserEventKind` (anonymous const) ⨯ a declared top-level `UserEventKind`; a `$defs`-named const reusing an existing type name; two consts colliding on one value-const name. (Nesting removes the Java/Python anonymous case; Go stays flat → still caught.) |
+| Non-ASCII / whitespace string value | `{type:"string", const:"user admin"}`, `{type:"string", const:"café"}` |
+| Value un-encodable as an identifier | `{type:"string", const:"-"}` (empty token → Stage 3 reject; override: `x-<lang>-const-name`) |
+| Synthesized-name collision (P15) | Go flat `UserEventKind`/`UserEventKindUser` ⨯ a declared top-level name; a `$defs`-named const reusing an existing type name; two values whose encodings collide (`"user-admin"` ⨯ `"user_admin"` → both `UserAdmin`). Type-name clash → `x-<lang>-name`; value-constant clash → `x-<lang>-const-name`. (Nesting removes the Java anonymous case; Go stays flat → still caught. TS/Python close the type inline and synthesize nothing.) |
 
 ### Runtime fixtures (validator)
 
@@ -337,28 +389,33 @@ so the check is effectively a deserialize-direction guard there.
 - Serialize of a correctly-set required const → the fixed value on the
   wire (TS/Java cannot be wrong; Python before-inject guarantees it; Go
   set via the value constant).
-- Serialize of a Go zero-value / bypassed required const (`Kind == ""`)
-  → rejected **loudly** by `Validate`, not silently rewritten — the key
-  behavioral change from the dropped auto-emit.
+- Serialize of a Go zero-value / bypassed required const
+  (`Kind == UserEventKind("")`) → rejected **loudly** by `Validate`, not
+  silently rewritten (the generator never force-writes the value).
 - Serialize after mutating an optional+const to a wrong value → rejected
   before emit (**P12**).
+- Override-named const (`const:"-"` + `x-go-const-name:"Dash"` /
+  `x-java-const-name:"DASH"`): wire value `"-"` round-trips — validates
+  equal in both directions (the override renames the constant, not the
+  compared value), and the value constant (Go `Dash`, Java `DASH`) sets it
+  in memory; any other wire value → one `ValidationError`
+  (`must equal "-", got …`). Confirms the override affects only the
+  synthesized identifier, never the equality check.
 
 ## Interactions
 
-- **[[enum]]**: `const` ≡ a single-element `enum` (spec §6.1.3). We
-  reject the two together; `const` is the canonical spelling for the
-  one-value case, [[enum]] for the multi-value case. They share the
-  emitted open representation per language (TS `… | (string & {})`, Go
-  alias, Python `Literal[…] | str`, Java the value class) — a const is
-  the single-value specialization. Forward-compat handling (preserve
-  unknown values, **P13**) is where they **diverge in the validator**, not
-  the type: an *unknown enum* value is preserved, an *off-const* value is
-  a hard reject — const is a closed contract. (In Java this is literally
-  the same value class with `isUnrecognized()`; enum keeps an unrecognized
-  instance, const rejects it.)
+- **[[enum]]**: `const` ≡ a single-element `enum` (spec §6.1.3), and the
+  two **share one representation** — a closed value set that rejects any
+  unrecognized value (TS/Python literal, Go defined type + value consts,
+  Java value class). `const` is the single-value specialization; [[enum]]
+  lists several known values in the same machinery. We reject the two
+  together; `const` is the canonical spelling for the one-value case,
+  [[enum]] for the multi-value case. An off-set value is a hard reject in
+  both.
 - **[[type]]**: the const value must be assignable to the declared type;
-  mismatch is a load-time reject (**P7.1**). The emitted type is
-  `type`'s primitive mapping, not a literal (**P13.1**).
+  mismatch is a load-time reject (**P7.1**). The emitted type is closed to
+  that value — a literal / defined type / value class over `type`'s
+  primitive mapping (**P13.1**).
 - **[[required]]**: owns presence entirely. required+const is always set
   in memory (so always emitted) — the discriminator — for the same reason
   any required field is; optional+const is validated-if-present and
@@ -373,9 +430,10 @@ so the check is effectively a deserialize-direction guard there.
 - **[[oneOf]] / discriminated unions** (future): a per-branch `const` on
   a shared member name is the natural discriminator a future tagged-union
   feature would key on. `const` specifies the *value* contract today;
-  the union *dispatch* convention is deferred to that feature. The
-  **P13.1** "emit primitive, not literal" rule is what lets a discriminator
-  value be bumped without breaking branch types.
+  the union *dispatch* convention is deferred to that feature. Because the
+  discriminator type is **closed** (**P13.1**), bumping a branch's `const`
+  value is a deliberate breaking change to that branch, surfaced at
+  compile time — the intended, loud outcome for a changed contract.
 - **[[minProperties]] / [[maxProperties]]**: an **object-level** const
   would pin the exact member set, making the count statically decidable
   (noted in both specs) — but object-level const is deferred (see Loader
@@ -397,7 +455,8 @@ so the check is effectively a deserialize-direction guard there.
 
 ## See also
 
-- [[enum]] — the multi-value sibling; `const` ≡ single-element enum.
+- [[enum]] — the multi-value sibling; `const` ≡ single-element enum,
+  sharing one closed representation (both reject unrecognized values).
 - [[properties]] — owns the identifier case-mapping + collision/escape-hatch
   policy that governs const's synthesized type/value-const names (P15).
 - [[type]] — supplies the emitted primitive type; gates value

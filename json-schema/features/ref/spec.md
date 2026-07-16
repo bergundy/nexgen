@@ -261,7 +261,8 @@ helper is emitted — the named-type machinery already in place
 - **[[required]]** — owns which `$ref` edges are optional (a primary
   source of cycle termination).
 - **[[const]]** / **[[enum]]** — a `$defs` whose name a synthesized
-  const/enum type reuses enters the same per-package namespace (P15).
+  type reuses (the Go defined type / Java value class) enters the same
+  per-package namespace (P15).
 - **[[additionalProperties]]** — a `$ref`-valued catch-all/typed map is a
   collection-wrapped (terminating) edge.
 - **[[generated-file-layout]]** — owns the package structure this spec

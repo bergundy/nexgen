@@ -264,11 +264,13 @@ For each accepted `type`, fuzz over:
   type-mismatched keywords; per **P7.1** we instead **reject** mismatched
   combinations at generator time (e.g. `{type:"string", minimum: 5}`
   errors).
-- **[[const]]**: per **P13.1**, emitted field type is `type`'s mapping
-  (`string`, not `"v1"`). Validator checks the const value at runtime so
-  bumping a const never breaks the type signature.
-- **[[enum]]**: emitted type comes from `type`; `enum` narrows runtime
-  values; per **P13** unknown enum values are preserved on deserialize.
+- **[[const]]**: per **P13.1**, the emitted field type is **closed** to
+  the const value — a literal / defined type / value class over `type`'s
+  primitive mapping. A bump is a deliberate breaking change to the value
+  contract, surfaced loudly.
+- **[[enum]]**: the value set derives from `type`; per **P13.1** the
+  emitted type is **closed** to the known values and an unrecognized value
+  is rejected on deserialize.
 - **[[oneOf]]**: rejected in general per **P6**. The **only** accepted
   shape is the [[nullability]] pattern — `oneOf` with exactly 2
   branches, one being `{"type":"null"}` (order-insensitive). This is
