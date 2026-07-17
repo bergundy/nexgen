@@ -314,11 +314,11 @@ Fixtures outside the corpus (validator integration, not pure matching):
   unsupported). It faces the **same** RE2-vs-ECMA-262 dialect gap this
   keyword manages for values — see [[patternProperties]], which points
   here for the confined, managed case.
-- **`format`** (not yet specced): several `format` values (e.g. `email`,
-  `uuid`) are informally "a regex"; when `format` lands it should decide
-  whether to lower to an equivalent portable `pattern` or to a dedicated
-  check — this keyword's RE2-subset gate is the reference for the regex
-  route.
+- **[[format]]**: the named-shape string keyword. Its regex-lowered
+  formats (`uuid`, `ipv4`, `ipv6`, and the syntactic pass of the temporal
+  formats) reuse this keyword's RE2-safe gate and compile-once mechanism;
+  temporal formats add a shared calendar predicate on top. Both may appear
+  on one node — the value must satisfy both.
 
 ## Ecosystem variance
 
