@@ -179,9 +179,10 @@ and direction-agnostic.
   above) — the string-length half of the deferred literal-vs-constraint
   obligation.
 - **[[minProperties]] / [[maxProperties]]**: the *object member-count*
-  analog; `maxItems`/`minItems` (array spec, not yet written) is the
-  *array-length* analog. All three are count assertions that share the
-  "count the right thing, compare once" shape but count different things.
+  analog; [[maxItems]] / [[minItems]] is the *array-length* analog. All
+  are count assertions that share the "count the right thing, compare
+  once" shape but count different things (and the array/object counts,
+  unlike string length, need no unit normalization).
 
 ## Ecosystem variance
 

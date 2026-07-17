@@ -218,10 +218,11 @@ of the value and is preserved).
 - **[[contains]] / [[unevaluatedItems]]**: **rejected** per **P6**
   (`contains`' existential and `unevaluatedItems`' annotation-dependent
   semantics don't lower); `items` is the supported array applicator.
-- **[[minItems]] / [[maxItems]] / [[uniqueItems]]**: array-level count and
-  uniqueness assertions that layer over the same element set; each is
-  covered by its own spec when landed, and applies to the full array
-  including all `items`-validated elements.
+- **[[minItems]] / [[maxItems]]**: array-level count assertions that layer
+  over the same element set (see their specs); both count the full array
+  including every `items`-validated element, and are orthogonal to the
+  element typing `items` supplies. **[[uniqueItems]]**: element-uniqueness
+  assertion, covered by its own spec when landed.
 - **[[nullability]]**: owns optional/nullable wrapping of the array field;
   element-level nullability is expressed by the element subschema (the
   `oneOf` null pattern) and composes with the field wrapping. The Go

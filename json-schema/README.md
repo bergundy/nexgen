@@ -285,7 +285,7 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `const` | scalar | the wire discriminator; emitted as the underlying primitive |
 | `default` | scalar | off-the-wire, materialized on read; never echoed back |
 | `$ref` / `$defs` | named, local-file targets only | no `$id`, no siblings, no remote refs |
-| count assertions | `minProperties` / `maxProperties` | over distinct wire keys |
+| count assertions | `minProperties` / `maxProperties`; `minItems` / `maxItems` | member counts over distinct wire keys; element counts over array size |
 | `services` | yes | Nexus documents only |
 
 ### IDE support
