@@ -1,0 +1,4 @@
+# build artifacts
+dotnet_runner/bin/
+dotnet_runner/obj/
+*.class

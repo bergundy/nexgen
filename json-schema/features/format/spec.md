@@ -13,17 +13,24 @@ assertion is the *opt-in* `format-assertion` vocabulary. We deliberately
 (validation is enforced, not advisory) forbids. We do **not** delegate to
 any target's native format validator — those are the single most divergent
 corner of JSON Schema across implementations, which is *why* the spec made
-assertion optional (see the empirical divergence tables under **Ecosystem
-variance**). Instead each supported format lowers to a **generator-owned**
+assertion optional. Each supported format lowers to a **generator-owned**
 check: a pinned portable regex through the [[pattern]] RE2-safe gate, plus —
 where a regex alone is insufficient — a shared **length guard** or **calendar
-predicate**, all plain arithmetic. [[pattern]] anticipated this and points
-here for the regex route. Every rule below was verified value-for-value
-across all four runtime targets **plus** the Rust gate and the prospective
-.NET / Ruby targets by the conformance corpora under
-`research/format_conformance/`, `research/format_email/`,
-`research/format_hostname/`, `research/format_duration/`, and
-`research/format_uri/`.
+predicate**, all plain arithmetic.
+
+Beyond validation, the temporal formats (`date-time`, `date`, `time`,
+`duration`) are **materialized** as idiomatic typed model fields (Go
+`time.Time`, Java `OffsetDateTime`, Python `datetime`, …) rather than a bare
+`string` — see **Materialization (type mapping)**. That is the one place
+`format` departs from a pure assertion: the field carries a language-native
+value, and the wire is produced by **re-serializing** it to a **pinned
+canonical form**. Every rule below was verified value-for-value across all
+four runtime targets **plus** the Rust gate and the prospective .NET / Ruby
+targets by the corpora under `research/format_conformance/`,
+`research/format_email/`, `research/format_hostname/`,
+`research/format_duration/`, `research/format_uri/`,
+`research/format_materialize_clock/`, and
+`research/format_materialize_duration/`.
 
 ## Spec summary
 
@@ -74,10 +81,6 @@ spec-default annotation-only fallthrough — is **rejected at load**
   - `uuid` — RFC 4122 8-4-4-4-12 hex.
   - `ipv4` — dotted-quad, each octet `0–255`, no leading zeros.
   - `ipv6` — RFC 4291 (full, `::`-compressed, and IPv4-tail forms).
-  - `duration` — RFC 3339 App. A / ISO 8601 duration; the week-vs-rest
-    mutual exclusion and strict component nesting fall out of the
-    alternation, so **no auxiliary predicate is needed**
-    (`research/format_duration/`, 68 pairs, 7/7 agree).
   - `uri`, `uri-reference` — RFC 3986, ASCII-only, at high fidelity
     (`research/format_uri/`, 67 pairs, 7/7 agree). One documented gap: the
     IP-literal host is checked structurally, not semantically (below).
@@ -87,14 +90,14 @@ spec-default annotation-only fallthrough — is **rejected at load**
   - `hostname` — RFC 1123 LDH labels; each label ≤63, **total ≤253**
     (`research/format_hostname/`, 41 pairs, 7/7 agree).
   - `email` — a well-defined **ASCII dot-atom** subset of RFC 5321 (no
-    quoted locals, comments, IP-literals, or IDN); **total ≤254**, and the
+    quoted locals, comments, IP-literals, or IDN); **total ≤254**, the
     guard runs *before* the regex to neutralize a Java matcher hazard
-    (below) (`research/format_email/`, 56 pairs, 7/7 agree).
-- **Pinned regex (syntax) + a shared calendar/range predicate** (semantics
-  a regex cannot express):
-  - `date`, `date-time`, `time` — RFC 3339 profile; the predicate enforces
-    day-in-month, the Gregorian leap-year rule, and the offset numeric
-    range (`research/format_conformance/`, 124 pairs, 7/7 agree).
+    (`research/format_email/`, 56 pairs, 7/7 agree).
+- **Pinned regex (syntax) + a shared calendar/range predicate, and
+  materialized** (below): `date`, `date-time`, `time`, `duration` — RFC 3339
+  profile; the predicate enforces day-in-month, the Gregorian leap-year
+  rule, and the offset numeric range
+  (`research/format_conformance/`, 124 pairs, 7/7 agree).
 
 **Deferred (rejected at load, "not yet supported"):** `idn-email`,
 `idn-hostname`, `iri`, `iri-reference` (all need **IDNA / Unicode** handling
@@ -102,200 +105,207 @@ that diverges across engines — WHATWG punycodes, Ruby ASCII-rejects; the
 asserted set is deliberately ASCII-only, the portable line); `uri-template`
 (RFC 6570 templating grammar), `json-pointer`, `relative-json-pointer`, and
 `regex` (niche; `regex` would additionally mean running the [[pattern]] gate
-over the *value*). Each is deferred, *not* a categorical **P6** exclusion —
-admitting it needs a portable owned check we don't yet commit to.
+over the *value*). Each is deferred, *not* a categorical **P6** exclusion.
 
 **Unknown / non-standard format** (`format: "phone"`, a typo, a custom
-string) → **reject** with a fix-it listing the supported names. We do
-**not** silently accept it as an annotation: an unrecognized format is
-the ambiguity **P7.1** rejects loudly, and `format-assertion` itself
-mandates failing on unknown formats.
+string) → **reject** with a fix-it listing the supported names. An
+unrecognized format is the ambiguity **P7.1** rejects loudly, and
+`format-assertion` itself mandates failing on unknown formats.
 
 **`format` on a non-string [[type]]** (`{type:"integer", format:"uuid"}`)
 → **reject** (**P7.1**). The spec would make it a vacuous no-op; a
 statically meaningless keyword is a load reject here, exactly as
-[[pattern]] / the count keywords treat a type mismatch. (No standard
-format targets a non-string type.)
+[[pattern]] / the count keywords treat a type mismatch.
 
 Grounding ([[PRINCIPLES.md]]): **P1** (identical cross-language accept /
-reject — guaranteed by owning the check, proven by the corpora, never by a
-native validator), **P4** (the regex route needs only each stdlib's regex
-engine, as [[pattern]] established; the length and calendar predicates are
-plain arithmetic — no new dependency), **P10** (enforced at the boundary),
-**P11** (aggregated), **P12** (a pure predicate over the decoded value in
-the **shared `Validate`** layer, identical both directions — no per-adapter
-logic). The curated line is the **P1** line, mirroring [[pattern]]'s
-"portable subset accepted, hazardous form rejected, deferred not excluded"
-and [[multipleOf]]'s fractional-divisor deferral: we assert only where every
-target provably agrees.
+reject **and** identical wire bytes — guaranteed by owning the check and the
+canonical serializer, proven by the corpora, never by a native validator),
+**P2** (a typed field is the idiomatic, hand-written-feeling shape — the
+motivation for materialization), **P4** (only each stdlib's regex engine and
+temporal types — no new dependency), **P10** (enforced at the boundary),
+**P11** (aggregated), **P12** (see Validator mapping). The curated line is
+the **P1** line, mirroring [[pattern]]'s "portable subset accepted, hazardous
+form rejected, deferred not excluded".
 
-**Why assert rather than annotate.** The spec default (`format-annotation`)
-would have us accept any `format` and never check it. That collides with
-this generator's mission — a `format: "uuid"` that lets a non-UUID through
-is a silent wire-contract hole (**P10**). So for the subset we own we adopt
-`format-assertion` semantics; for everything else we reject at load rather
-than accept-and-ignore, keeping the "no silently-incorrect output"
-guarantee (**P7.1**).
+**Materialization narrows two grammars, node-scoped.** Materializing a
+temporal into a native type means the native type must be able to *hold* the
+value, which the full RFC 3339 / ISO 8601 grammar does not always allow. So a
+**materialized** node asserts a **narrower** grammar than a **string-opt-out**
+node (below):
+- **Leap second `:60` is rejected** on a materialized `date-time` / `time`
+  node. No stdlib temporal type can store `:60`; every native parser rejects
+  it and **Ruby silently clamps** `:60`→`:59` (corruption). Rejecting it at
+  validation, uniformly, is the only portable choice. A **string-opt-out**
+  node keeps accepting `:60` (the current pure-assertion contract).
+- **`duration` is narrowed to a time-only duration** — `PT`-forms of hours /
+  minutes / seconds only. The calendar components (years, months, weeks,
+  days) are **rejected** on a materialized node, because no stdlib
+  fixed-duration type (`time.Duration`, `timedelta`, `java.time.Duration`,
+  `TimeSpan`) can represent calendar-variable years/months without a
+  reference date (`research/format_materialize_duration/`). A
+  **string-opt-out** node keeps the full duration grammar.
 
-**Two portability rules every pinned pattern obeys** (both learned from
-[[pattern]], both re-confirmed by these corpora — no new gate machinery):
-- **Explicit ASCII classes, never `\d` / `\w` / `\s`.** The Rust `regex`
-  crate (the load gate) makes `\d` Unicode-aware, so a bare `\d` would
-  accept `P٣Y` / fullwidth digits in the gate; every pinned pattern spells
-  `[0-9]` / `[A-Za-z0-9]` etc. so even the gate agrees without a per-engine
-  flag.
-- **Per-target end/start anchor.** A bare `$` matches before a trailing
-  `\n` in Python / Java / .NET, so a pinned `^…$` initially let
-  `"…uuid…\n"` through; every emitted pattern uses the strict end anchor
-  ([[pattern]]'s existing rewrite — `\Z` Python, `\z` Java / Ruby / .NET,
-  `$` Go / JS already strict) and Ruby's `\A` start anchor. This is why the
-  inline patterns below are written with `$`/`^` but *emit* the normalized
-  form.
+Both narrowings are strictly *more* restrictive (no previously-rejected value
+becomes accepted) and are the price of the idiomatic typed field.
 
 **RFC 3339 edge decisions (pinned, temporal formats).** All targets follow
 these because we own the check:
-- **Leap second** `:60` in the seconds field is **accepted syntactically**
-  (RFC 3339 permits it); we do not verify it against a real leap-second
-  table (out of scope, and unportable). Native parsers split on this
-  (Go / Java / Python / .NET reject `:60`; Ruby silently *clamps* it to
-  `:59`) — one of the reasons we own the check.
-- **`date-time` offset is required** (`Z` or `±HH:MM`) per RFC 3339; a
-  bare local `date-time` is invalid. `-00:00` ("unknown offset") is
-  accepted.
-- **`time` offset is optional** — RFC 3339 `partial-time` permits a bare
-  local `time` (`12:30:00`), which is accepted; an offset, when present, is
-  range-checked like `date-time`'s.
-- **Offset range** is enforced by the predicate, not just the regex:
-  hours `00–23`, minutes `00–59`, so `+24:00` and `+01:60` are rejected.
-- **Fractional seconds** are accepted at **any precision** (`.` followed by
-  one or more digits); trailing precision is not normalized (native parsers
-  truncate/pad — Python 9→6, Ruby pads to 9, .NET to 7 — which is why the
-  string, not a parsed value, stays authoritative; see Type mapping).
-- **Case** — the `T` / `Z` separators are accepted in either case
-  (RFC 3339 §5.6 NOTE), pinned identically across targets.
+- **`date-time` offset is required** (`Z` or `±HH:MM`); a bare local
+  `date-time` is invalid. `-00:00` is accepted. **`time` offset is optional**
+  (RFC 3339 `partial-time`); an offset, when present, is range-checked.
+- **Offset range** is enforced by the predicate: hours `00–23`, minutes
+  `00–59`, so `+24:00` / `+01:60` are rejected.
+- **Case** — `T` / `Z` separators are accepted in either case (RFC 3339
+  §5.6). Materialized nodes **uppercase on the parse path** before the native
+  parse (Go / Python / Ruby native parsers reject lowercase; safe because the
+  grammar has no other letters).
 - **Calendar validity** (`date`, and the date half of `date-time`) enforces
-  month `01–12`, day within the month's length, and the Gregorian
-  leap-year rule for February — so `2021-02-30` and `2021-13-01` are
-  rejected, which a pure regex would miss.
+  month `01–12`, day within the month's length, and the Gregorian leap-year
+  rule.
+- **Leap second** — see the narrowing above: **rejected** on materialized
+  nodes, **accepted** on string-opt-out nodes.
 
-**Edge decisions for the string-shaped formats** (pinned, all corpus-proven):
-- **`hostname`**: a **trailing dot** (`example.`) is **rejected** (matches
-  the JSON-Schema-Test-Suite; note `ajv` accepts it — we deliberately
-  don't). An **all-numeric label / TLD** (`999`, `123.456`) is **accepted**
-  — RFC 1123's "never all-numeric" is an interpretive note, not
-  RE2-expressible; documented residual risk. `xn--` A-labels pass as
-  ordinary LDH labels (Punycode decoding is `idn-hostname`, deferred).
-- **`email`**: the accepted language is an **ASCII dot-atom** local part
-  (`atext`), a single `@`, and a `hostname`-style domain of **≥2 labels**
-  (so `user@localhost` is rejected). Quoted locals, comments, IP-literal
-  domains, trailing dots, whitespace, and all Unicode are rejected. The
-  **≤254 length guard precedes the regex**: `java.util.regex` matches the
-  nested dot-atom quantifier recursively and throws `StackOverflowError`
-  (a crash, not a clean reject) on multi-thousand-char runs; RE2 engines
-  are linear and immune, but the length cap keeps every engine safe and is
-  independently the RFC 5321 mailbox limit. The regex is **not** ReDoS-prone
-  (linear to 100k chars on all backtracking engines).
-- **`uri` / `uri-reference`**: RFC 3986 faithful for scheme rules,
-  percent-encoding (`%HEXDIG HEXDIG` only — bare/truncated `%` rejected),
-  the authority/path split, port, query, and fragment char classes, and
-  ASCII-only enforcement (non-ASCII ⇒ IRI ⇒ rejected). **One deliberate
-  fidelity gap:** the IP-literal host `[…]` is validated *structurally*
-  (brackets + allowed inner bytes), not *semantically*, so
-  `http://[1::2::3]` (double `::`) is accepted. Bounded and closable later
-  by splicing in `ipv6`'s pinned grammar; mirrors the leap-second "syntax,
-  not full semantics" line.
+**Edge decisions for the string-shaped formats** (pinned, corpus-proven):
+- **`hostname`**: a **trailing dot** is **rejected** (note `ajv` accepts it);
+  an **all-numeric label / TLD** is **accepted** (RFC 1123's note is not
+  RE2-expressible; documented residual risk); `xn--` A-labels pass as LDH
+  (Punycode is `idn-hostname`, deferred).
+- **`email`**: ASCII dot-atom local, single `@`, `hostname`-style domain of
+  **≥2 labels** (`user@localhost` rejected). Quoted locals, comments,
+  IP-literals, trailing dots, Unicode rejected. The **≤254 guard precedes the
+  regex**: `java.util.regex` matches the nested dot-atom quantifier
+  recursively and throws `StackOverflowError` on multi-thousand-char runs;
+  the cap keeps every engine safe (RE2 engines are already linear/immune).
+- **`uri` / `uri-reference`**: RFC 3986 faithful for scheme, percent-encoding
+  (`%HEXDIG HEXDIG` only), the authority/path split, and ASCII-only
+  enforcement. **One deliberate gap:** the IP-literal host `[…]` is validated
+  *structurally*, so `http://[1::2::3]` (double `::`) is accepted; bounded,
+  closable later by splicing in `ipv6`'s grammar.
 
-## Type mapping
+## Materialization (type mapping)
 
-None. The emitted field type is [[type]]'s `string`; the format check lives
-only in the validator. The format name is surfaced in the generated type's
-**doc comment** (`// format: uuid` and analogues) so the intent survives
-into the generated source (**P2**), but it changes no signature.
+The temporal formats carry a **typed model field**; the rest stay `string`.
+The typed value is **authoritative** (authority model B): the parse path
+turns the validated wire string into it, and the serialize path re-emits it
+as a **pinned canonical string**. **P1 is preserved not by round-tripping the
+original bytes but by every language emitting the identical canonical bytes**
+— which the round-trip corpora prove. Where a language lacks a suitable
+native type, the field stays a `string` **holding the canonical form** (the
+parse adapter canonicalizes on ingest), so it emits the same bytes as the
+materializing languages.
 
-**Why not a typed field** (`time.Time`, `Date`, `UUID`, `IPAddress`, …).
-Empirically ruled out across all seven languages
-(`research/format_typed_repr/`): **no format** has a stdlib typed
-representation available in *every* target (Rust `std` builds only the two
-IP types; JS has none; `uuid` has no stdlib type in Go / JS / Rust / Ruby),
-so a typed field would force a dependency (**P4**) somewhere. Worse, where a
-native type *does* exist it **diverges from the pinned grammar** and/or
-**normalizes on re-emit** — JS `Date` rolls `2021-02-30`→Mar 2 and drops to
-ms; Ruby clamps leap seconds; Java `InetAddress` can do a **blocking DNS
-lookup** and rewrites `01.2.3.4`; UUID parsers are uniformly lax and
-lowercase-normalize; IPv6 recompresses. Handing the user a parsed value
-would therefore break both **P1** (accept/reject) and the byte round-trip.
-The stored `string` stays authoritative. A future opt-in *derived accessor*
-(parse the already-validated string with **our** check, never re-serialize
-from the parsed value) is the escape hatch — see Open questions.
+| Format | Go | Java | Python | TS | Canonical wire (identical in all targets) |
+|---|---|---|---|---|---|
+| `date-time` | `time.Time` | `OffsetDateTime` | `datetime` (aware) | `Date` | `YYYY-MM-DDTHH:MM:SS.sssZ` (UTC-normalized, ms floor, always `Z`, always 3 frac digits) |
+| `date` | `time.Time`† | `LocalDate` | `date` | `string`‡ | `YYYY-MM-DD` (lossless) |
+| `time` | `time.Time`† | `LocalTime` | `time` | `string` | `HH:MM:SS.sss` (offset **dropped**, ms floor) |
+| `duration` | `time.Duration` | `Duration` | `timedelta` | `string` | `PTnHnMnS` (time-only; omit zero components; `PT0S` for zero) |
+| `uuid` / `ipv4` / `ipv6` / `hostname` / `email` / `uri` / `uri-reference` | `string` | `string` | `String` | `string` | verbatim (no materialization) |
+
+† Go has no date-only / time-of-day type; `time.Time` carries a phantom
+time-of-day / date that the canonical serializer ignores. ‡ TS has no
+date-only type — `Date` is a UTC **instant**, so a materialized TS `date`
+would misread under a local-timezone `getHours()`; `date` therefore stays a
+(canonical) `string` in TS specifically.
+
+**The cost of materialization (model B), consistent across languages:**
+- **`date-time` folds the offset to UTC and floors to milliseconds** — the
+  wire changes on round-trip (`…T12:30:45+02:00` → `…T10:30:45.000Z`). Same
+  instant, different bytes; the original offset and sub-ms precision are
+  gone. This is the "consistent truncation" accepted for the idiomatic field.
+  The millisecond floor is forced by JS `Date` (the least-capable
+  materializer, whose `toISOString()` dictates the canonical form).
+- **`time` drops the offset**, which can **merge distinct values**
+  (`12:30:45+02:00` and `12:30:45-05:00` both → `12:30:45.000`). `time`
+  materializes only in Go / Java / Python; TS / Ruby keep the canonical
+  `string` (no time-of-day type).
+- **`duration` canonicalizes** non-canonical inputs (`PT90M` → `PT1H30M`,
+  `PT3600S` → `PT1H`) — consistent across languages. `duration` materializes
+  natively in Go / Java / Python; TS keeps the canonical `string` (no stdlib
+  duration type).
+
+**String opt-out (authority model A).** A node may opt out of materialization
+and keep a **verbatim `string`** in *every* language (byte-exact round-trip,
+offset and precision preserved, `:60` and calendar durations accepted), with
+an optional derived accessor (`asDateTime()` / `AsOffsetDateTime()` /
+`.as_datetime()`) that parses on demand. Use it where the sender's exact
+offset / sub-ms precision is contractually significant. The opt-out is
+per-node (and available as a generator-wide mode); it keeps the *wider*
+(pre-narrowing) grammar.
+
+**Doc comment.** The materialized field's doc comment names the format and
+the canonical behavior (`// format: date-time — UTC, millisecond precision`)
+so the lossy round-trip is visible in the generated source (**P2**).
 
 ## Validator mapping
 
-Per **P10** / **P11**. A single "does the value satisfy `<format>`?"
-predicate, identical in both directions (shared `Validate`, **P12**),
-composed of a pinned regex and — for some formats — an auxiliary length or
-calendar/range check, all in the same shared layer.
-
-**Regex-lowered formats** reuse [[pattern]]'s machinery wholesale: the
-format lowers to a **pinned portable pattern**, compiled **once**
-(module/package init) with the same P1-pinned flags [[pattern]] uses (the
-pinned patterns are fully anchored via the per-target end-anchor
-normalization above; ASCII classes; code-point `.`). Because the patterns
-are generator-authored they are RE2-safe by construction — no author-supplied
-regex reaches the gate. Pinned patterns (written with `^…$`; **emitted**
+Per **P10** / **P11**. For a **string-shaped format** (`uuid`, `ipv4`,
+`ipv6`, `hostname`, `email`, `uri`, `uri-reference`, and any opt-out
+temporal) the check is a single predicate over the decoded `string`,
+identical in both directions (shared `Validate`, **P12**): the pinned regex
+compiled **once** ([[pattern]]'s machinery — the ASCII-class rule and the
+per-target end-anchor `$`→`\Z`/`\z` normalization apply), plus the length
+guard for `hostname` / `email`. Pinned patterns (written `^…$`; **emitted**
 with the normalized anchors):
 
 | Format | Pinned pattern / source | Auxiliary check |
 |---|---|---|
 | `uuid` | `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$` | — |
-| `ipv4` | `^(?:(25[0-5]\|2[0-4][0-9]\|1[0-9][0-9]\|[1-9]?[0-9])\.){3}(25[0-5]\|2[0-4][0-9]\|1[0-9][0-9]\|[1-9]?[0-9])$` (the `[1-9]?[0-9]` alternative is what forbids leading zeros) | — |
-| `ipv6` | RFC 4291 full / `::`-compressed / IPv4-tail — see `research/format_conformance/` (authoritative pinned form) | — |
-| `date` | `^[0-9]{4}-(0[1-9]\|1[0-2])-(0[1-9]\|[12][0-9]\|3[01])$` | calendar predicate |
-| `time` | `^([01][0-9]\|2[0-3]):[0-5][0-9]:([0-5][0-9]\|60)(\.[0-9]+)?(Z\|[+-]([01][0-9]\|2[0-3]):[0-5][0-9])?$` (offset optional) | range predicate |
-| `date-time` | full-date `T` full-time with **offset required** | calendar + range predicate |
-| `duration` | `^P(?:(?:[0-9]+Y(?:[0-9]+M(?:[0-9]+D)?)?\|[0-9]+M(?:[0-9]+D)?\|[0-9]+D)(?:T(?:[0-9]+H(?:[0-9]+M(?:[0-9]+S)?)?\|[0-9]+M(?:[0-9]+S)?\|[0-9]+S))?\|T(?:[0-9]+H(?:[0-9]+M(?:[0-9]+S)?)?\|[0-9]+M(?:[0-9]+S)?\|[0-9]+S)\|[0-9]+W)$` | — |
+| `ipv4` | `^(?:(25[0-5]\|2[0-4][0-9]\|1[0-9][0-9]\|[1-9]?[0-9])\.){3}(25[0-5]\|2[0-4][0-9]\|1[0-9][0-9]\|[1-9]?[0-9])$` | — |
+| `ipv6` | RFC 4291 — see `research/format_conformance/` (authoritative form) | — |
 | `hostname` | `^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$` | length ≤253 |
-| `email` | `^[A-Za-z0-9!#$%&'*+/=?^_`{\|}~-]+(?:\.[…same…]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$` — see `research/format_email/` | length ≤254 (runs **first**) |
-| `uri` / `uri-reference` | RFC 3986 ASCII grammar — see `research/format_uri/pinned_body.json` (authoritative pinned form) | — |
+| `email` | ASCII dot-atom — see `research/format_email/` | length ≤254 (runs **first**) |
+| `uri` / `uri-reference` | RFC 3986 ASCII — see `research/format_uri/pinned_body.json` | — |
 
-**Auxiliary predicates** run in the same shared `Validate`, plain
-arithmetic, no date/net library:
-- **Length guards** (`hostname` ≤253, `email` ≤254) — a `code_point_count`
-  comparison; for `email` it runs *before* the regex (Java stack-overflow
-  mitigation, above).
-- **Calendar / range predicate** (`date`, `date-time`, `time`) — day-in-month
-  + Gregorian leap year + offset hour/minute range, over the fields the
-  regex already grouped. We do **not** delegate to `time.Parse` /
-  `LocalDate.parse` / `datetime.fromisoformat` / `Date`: their grammars and
-  error surfaces diverge (110 native divergences recorded in
-  `research/format_conformance/`), the exact P1 hazard the owned check
-  avoids.
+For a **materialized temporal**, the pinned regex + calendar/range predicate
+run in the **parse adapter over the wire string** (that is where `:60`,
+offset, and precision are still observable) — a value that fails is one
+aggregated `Violation`; a value that passes is then **uppercased and parsed
+into the native construct** (UTC-normalized / offset-dropped / floored to ms
+per the table). Pinned temporal patterns (the materialized, `:60`-rejecting
+grammar):
 
-| Language | Strategy |
+| Format | Pinned pattern (materialized node) |
 |---|---|
-| Go | Package-level `var fmtRe = regexp.MustCompile(<pinned>)` (compiled once at init); the shared `Validate` runs any length guard, `if !fmtRe.MatchString(v) { push(Violation{Path, Reason: fmt.Sprintf("must be a valid %s, got %q", <format>, v)}) }`, then for temporal formats calls the shared `validRFC3339(...)` calendar/range helper. Collected into one `ValidationError`. |
-| TypeScript | Module-level ``const FMT_RE = /<pinned>/u;`` (the `u` flag mandatory, as [[pattern]]). Length guard, then ``if (!FMT_RE.test(v)) push(Violation{path, reason: `must be a valid ${format}, got ${JSON.stringify(v)}`})``, plus the shared calendar/range check for temporal formats. One `ValidationError`. |
-| Python | Module-level `FMT_RE = re.compile(<pinned>, re.ASCII)` and an `AfterValidator`: length guard, then `if FMT_RE.search(v) is None: raise ValueError(...)` (plus the calendar/range helper), aggregating into `pydantic.ValidationError`. We deliberately do **not** use Pydantic's `UUID` / `datetime` / `EmailStr` types: they coerce/normalize (a `UUID` object, a `datetime`, a lowercased domain) and shift the wire shape, add a dependency (`EmailStr`), and their grammars differ from the pinned one — the same reason [[pattern]] avoids the native `pattern=`. |
-| Java | Static `private static final Pattern FMT_RE = Pattern.compile(<pinned>);` (default flags — ASCII classes). The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the `String`, runs the length guard **first** (for `email`, mandatory — it caps the input below the matcher's recursion limit), checks `if (!FMT_RE.matcher(v).find())` (the pinned pattern is anchored) and the shared calendar/range helper, pushing a `Violation{path, "must be a valid " + <format> + ", got " + v}` into the single `ValidationException`. Not bean-validation `@Pattern` / `@Email`. |
+| `date` | `^[0-9]{4}-(0[1-9]\|1[0-2])-(0[1-9]\|[12][0-9]\|3[01])$` + calendar predicate |
+| `time` | `^([01][0-9]\|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?(Z\|[+-]([01][0-9]\|2[0-3]):[0-5][0-9])?$` (offset optional; no `\|60`) |
+| `date-time` | full-date `T` full-time, **offset required**, no `\|60` + calendar + range |
+| `duration` | `^PT(?:[0-9]+H(?:[0-9]+M(?:[0-9]+S)?)?\|[0-9]+M(?:[0-9]+S)?\|[0-9]+S)$` (time-only) |
+
+*(A string-opt-out temporal node keeps the wider grammar: `time` / `date-time`
+add back the `|60` seconds alternative; `duration` uses the full
+`PnYnMnDTnHnMnS` / `PnW` grammar from `research/format_duration/`.)*
+
+| Language | Strategy (materialized temporal) |
+|---|---|
+| Go | Parse adapter: run the pinned regex + `validRFC3339(...)` over the wire string, pushing a `Violation` on failure; else `t, _ := time.Parse(RFC3339, strings.ToUpper(s))` → store `t.UTC().Truncate(time.Millisecond)` (`date-time`), or `time.Parse("2006-01-02", s)` (`date`); `duration` parses the `PT…` components into a `time.Duration`. Encode adapter: format the canonical string. `regexp.MustCompile` compiled once at init. |
+| TypeScript | Parse adapter: pinned regex (`/…/u`) + calendar/range check, then `new Date(s)` (`date-time`); `date` / `time` / `duration` store the **canonicalized string** (no native type). Encode adapter: `date-time` → `.toISOString()`; others emit the stored canonical string. |
+| Python | Parse adapter (an `AfterValidator` / model hook): regex + calendar over the wire string, then `datetime.fromisoformat(s.upper()).astimezone(utc)` floored to ms (`date-time`), `date.fromisoformat(s)` (`date`), `time.fromisoformat` (`time`), or parse `PT…` into a `timedelta` (`duration`). Encode: canonical via `@model_serializer`. We do **not** use Pydantic's native `datetime` coercion (it accepts a missing offset and normalizes differently). |
+| Java | The per-POJO collecting deserializer (PRINCIPLES Java §5): regex + calendar over the `String`, then `OffsetDateTime.parse(s).atOffset(UTC).truncatedTo(MILLIS)` (`date-time`), `LocalDate.parse` / `LocalTime.parse`, or `Duration.parse` for the `PT…` form. The `Serializer` emits the **generator-owned** canonical string — **not** `Duration.toString()` for `.NET` parity and **not** the BCL serializer (`.NET XmlConvert` rolls `PT24H`→`P1D`). |
 
 **Informative `reason` strings.** The `Violation` `reason` names the
-**format and the offending value** (`must be a valid uuid, got "xyz"`), per
-the [[maximum]] / [[pattern]] convention — never a bare keyword.
+**format and the offending value** (`must be a valid date-time, got "…"`),
+per the [[maximum]] / [[pattern]] convention.
 
-**Why compile-once.** Identical to [[pattern]]: the pinned pattern is a
-package-level compiled constant reused across calls, not recompiled per
-(de)serialize. The patterns are generator-authored and RE2-safe, so the
+**Why compile-once.** As [[pattern]]: the pinned pattern is a package-level
+compiled constant; the load gate proves it compiles, so the emitted
 `MustCompile` / `Pattern.compile` is unconditional.
 
 ### Serialize-side (P12)
 
-The format check is a shared-`Validate` predicate, so it **re-runs before
-emit** over the decoded value — a model constructed in memory with a
-malformed string (a Go `string` / Java `String` / Python `str` set to a
-non-UUID) fails serialize with the same aggregated primitive rather than
-writing an invalid value. Real teeth in the statically-typed targets, where
-in-memory construction is unchecked. The value is the same string in memory
-as on the wire, so the check is the identical predicate in both directions —
-no parse-adapter-only or encode-adapter-only logic.
+- **String-shaped formats:** the predicate **re-runs before emit** over the
+  decoded string, so an in-memory value set to a non-UUID (etc.) fails
+  serialize with the same aggregated primitive — real teeth in the
+  statically-typed targets. The check is direction-agnostic.
+- **Materialized temporals:** the model field is a **native type that cannot
+  hold an invalid value** (a `time.Time` is always a valid instant; a
+  `time.Duration` always a valid duration), so the type system replaces the
+  serialize-side validator — there is no invalid state to catch. Serialize is
+  therefore a pure **canonicalization** (typed → canonical wire), the one
+  place `format` has genuine encode-adapter logic. The only parse-side guard
+  beyond validation is a **duration overflow check** (the regex caps no digit
+  count, so an adversarial `PT999999999999H` that overflows the native type
+  pushes a `Violation`).
 
 ## Property-testing matrix
 
@@ -303,16 +313,14 @@ no parse-adapter-only or encode-adapter-only logic.
 
 | Shape | Example |
 |---|---|
-| `uuid` | `{type:"string", format:"uuid"}` |
-| `ipv4` / `ipv6` | `{type:"string", format:"ipv4"}`, `{…, format:"ipv6"}` |
-| `date-time` / `date` / `time` | `{type:"string", format:"date-time"}` |
-| `duration` | `{type:"string", format:"duration"}` |
-| `hostname` | `{type:"string", format:"hostname"}` |
-| `email` | `{type:"string", format:"email"}` |
-| `uri` / `uri-reference` | `{type:"string", format:"uri"}`, `{…, format:"uri-reference"}` |
-| Combined with a length bound | `{type:"string", format:"uuid", maxLength:36}` |
+| `uuid` / `ipv4` / `ipv6` | `{type:"string", format:"uuid"}` |
+| `date-time` / `date` / `time` | `{type:"string", format:"date-time"}` (materialized) |
+| `duration` (time-only) | `{type:"string", format:"duration"}` → accepts `PT1H30M`, `PT0S` |
+| `hostname` / `email` | `{type:"string", format:"hostname"}` |
+| `uri` / `uri-reference` | `{type:"string", format:"uri"}` |
 | Combined with `pattern` | `{type:"string", format:"uuid", pattern:"^0"}` (value must satisfy both) |
 | On a nullable string | `{oneOf:[{type:"string", format:"uuid"},{type:"null"}]}` |
+| String opt-out keeps the wider grammar | opt-out `date-time` accepts `…T23:59:60Z`; opt-out `duration` accepts `P1Y` |
 
 ### Rejected at load time (negative)
 
@@ -321,136 +329,108 @@ no parse-adapter-only or encode-adapter-only logic.
 | Value not a string | `format:5`, `format:true`, `format:["uuid"]` |
 | Type mismatch (P7.1) | `{type:"integer", format:"uuid"}`, `{type:"boolean", format:"date"}` |
 | Unknown / non-standard format | `{type:"string", format:"phone"}`, `{…, format:"datetime"}` (typo) |
-| Deferred standard format (IDNA/Unicode or niche) | `{type:"string", format:"idn-email"}`, `{…, format:"iri"}`, `{…, format:"uri-template"}`, `{…, format:"json-pointer"}`, `{…, format:"regex"}` |
-| Literal fails its format | `{type:"string", format:"uuid", const:"not-a-uuid"}`, `{…, default:"nope"}` |
+| Deferred standard format | `{…, format:"idn-email"}`, `{…, format:"iri"}`, `{…, format:"uri-template"}`, `{…, format:"regex"}` |
+| Materialized narrowing: leap second | materialized `{…, format:"date-time"}` with `const:"2021-12-31T23:59:60Z"` |
+| Materialized narrowing: calendar duration | materialized `{…, format:"duration"}` with `const:"P1Y"` / `"P4W"` / `"P1D"` |
+| Literal fails its format | `{…, format:"uuid", const:"not-a-uuid"}`, `{…, default:"nope"}` |
 
-### Runtime fixtures (validator)
+### Runtime fixtures (validator + round-trip)
 
-Per-format accept/reject behavior is exercised by the conformance corpora
-(counts below); those corpora are each keyword-shape's regression suite —
-new edge cases are added there, not enumerated here. Representative cases:
+Per-format accept/reject is exercised by the conformance corpora
+(`research/format_conformance/` 124, `format_email/` 56, `format_hostname/`
+41, `format_duration/` 68, `format_uri/` 67); the materialization round-trips
+by `research/format_materialize_clock/` and
+`research/format_materialize_duration/`. Representative cases:
 
-- **`uuid`** (`format_conformance/`, 18): canonical OK, upper/lower hex OK;
-  wrong length / non-hex / missing dashes / braces / `urn:` prefix → fail.
-- **`ipv4`** (17): `"192.168.0.1"` OK; `"256.0.0.1"`, `"1.2.3"`,
-  leading-zero `"01.2.3.4"` → fail.
-- **`ipv6`** (20): full / `::`-compressed / IPv4-tail OK; double `::`, too
-  many groups, zone id → fail.
-- **`date-time`** (22): `"2021-02-28T23:59:60Z"` (leap second) OK;
-  `"2021-02-30T…"` (calendar) → fail; missing offset → fail;
-  `"…+24:00"` (offset range) → fail; lowercase `t`/`z` and `-00:00` OK.
-- **`date`** (25) / **`time`** (22): Feb-29 leap-year OK / non-leap → fail;
-  month 00/13, day 32 → fail; `time` may omit the offset (`"12:30:00"` OK).
-- **`duration`** (`format_duration/`, 68): `P3Y6M4DT12H30M5S`, `P4W`, `PT1H`
-  OK; `P`, `PT`, `P1H` (no `T`), `1Y`, `P1Y1W`, `PT1.5S` → fail.
-- **`hostname`** (`format_hostname/`, 41): `a.b-c.example` OK; trailing dot,
-  label >63, total >253, leading/trailing hyphen, `host_name` → fail.
-- **`email`** (`format_email/`, 56): `a.b+c@x.example` OK; `user@localhost`
-  (single-label domain), quoted local, IP-literal, trailing dot, Unicode →
-  fail; a ≤254 guard precedes the match.
-- **`uri`** (`format_uri/`, 67): absolute URIs with valid pct-encoding OK;
-  truncated `%2`, raw space, non-ASCII → fail; `http://[1::2::3]` accepted
-  (documented IP-literal structural gap).
-- Combined with a failing [[minLength]] / [[maxLength]], [[pattern]], or
-  sibling field → **all** reported in one shot (**P11**); serialize of a
-  malformed in-memory value → rejected before emit (**P12**).
+- **String formats** — `uuid` canonical OK, wrong length/non-hex → fail;
+  `ipv4` `256.0.0.1` / `01.2.3.4` → fail; `email` `user@localhost` → fail;
+  `uri` truncated `%2` / non-ASCII → fail; `http://[1::2::3]` accepted (gap).
+- **`date-time` materialized round-trip** (byte-identical across Go/Java/
+  Python/TS): `…+02:00` → `…-02h…Z`; `.123456Z` → `.123Z`; lowercase
+  `t`/`z` → uppercase; `…T23:59:60Z` → **load reject** (materialized).
+- **`date`**: `2020-02-29` OK; `2021-02-29` / `2021-13-01` → fail.
+- **`time`**: `12:30:45+02:00` → `12:30:45.000` (offset dropped; materialized
+  in Go/Java/Python).
+- **`duration`**: `PT90M` → `PT1H30M`; `PT0S` OK; `P1Y` / `P4W` / `P1D` →
+  **load reject** (materialized time-only); overflow `PT<huge>H` → `Violation`.
+- Combined with a failing [[minLength]] / [[maxLength]] / [[pattern]] or a
+  sibling field → **all** reported in one shot (**P11**).
 
 ## Interactions
 
-- **[[pattern]]**: the general-purpose regex keyword; `format` reuses its
-  RE2-safe gate, compile-once mechanism, ASCII-class rule, and end-anchor
-  normalization for every regex-lowered format. Both may appear on one
-  node — the value must satisfy **both**, aggregated independently.
-  [[pattern]] points here for the format route; this is the return edge.
+- **[[pattern]]**: `format` reuses its RE2-safe gate, compile-once
+  mechanism, ASCII-class rule, and end-anchor normalization for every
+  regex-lowered format. Both may appear on one node — the value must satisfy
+  **both**, aggregated independently.
 - **[[type]]**: gates applicability — `format` is meaningful only for
-  `string`; a mismatch is a load reject (**P7.1**). The emitted type stays
-  `string`.
-- **[[const]] / [[default]] / [[enum]]**: a supplied string literal on the
-  same node MUST satisfy the format at load (e.g. a `const`/`default` UUID
-  must be a valid UUID; every `enum` member must match) — the format arm of
-  the deferred literal-vs-constraint obligation, exactly as [[pattern]]
-  validates a literal against the regex.
-- **[[minLength]] / [[maxLength]]**: independent string assertions; all
-  present keywords apply and aggregate. We do **not** cross-check a length
-  bound against a format's implied length (a `uuid` is always 36 chars, but
-  a contradictory `maxLength:10` is not caught at load) — the same non-check
-  stance [[pattern]] takes on regex↔length satisfiability. The format's own
-  length guard (`hostname`/`email`) is internal, not a `maxLength`.
-- **[[nullability]]**: orthogonal — the format constrains a *present,
-  non-null* string; if the field is the nullable [[nullability]] pattern, a
-  `null` skips the format check (nothing to validate), and a present string
-  is checked.
-- **[[required]]**: orthogonal — `required` decides presence; `format`
-  shapes the value when present.
+  `string`; a mismatch is a load reject (**P7.1**). For a materialized
+  temporal the **emitted field type is the native construct**, not `string`
+  (the wire is still a JSON string).
+- **[[const]] / [[default]] / [[enum]]**: a supplied string literal MUST
+  satisfy the format at load; on a **materialized** node it must also be
+  **materializable** (a `const` `date-time` cannot be `:60`; a `const`
+  `duration` must be time-only) and is stored/echoed in its **canonical**
+  form.
+- **[[minLength]] / [[maxLength]]**: independent string assertions; not
+  cross-checked against a format's implied length. On a materialized temporal
+  they constrain the *wire* string; the internal length guards
+  (`hostname` / `email`) are separate.
+- **[[nullability]]**: orthogonal — a `null` skips the format check and is not
+  materialized; a present value is checked (and materialized).
+- **[[required]]**: orthogonal — presence vs value shape.
 
 ## Ecosystem variance
 
 | Source dialect | Action |
 |---|---|
 | JSON Schema 2020-12 | `format-annotation` is the default (collect only); we opt into `format-assertion` for the curated subset and reject the rest. Native format names, no rewrite. |
-| OpenAPI 3.1 | Adopts 2020-12 `format`; same names. Native. OAS-specific formats (`int32`, `int64`, `float`, `double`, `password`, `byte`, `binary`) are **not** JSON Schema formats — treated as unknown and rejected (numeric width is a [[type]] concern; `password`/`byte`/`binary` deferred). |
-| OpenAPI 3.0 / draft-4 | `format` present with the same intent; `date-time` / `date` / `uuid` / `email` / `uri` / `hostname` names carry over (`url` maps to `uri` intent). Deferred formats await wider support. |
+| OpenAPI 3.1 | Adopts 2020-12 `format`; same names. Native. OAS-specific formats (`int32`, `int64`, `float`, `double`, `password`, `byte`, `binary`) are **not** JSON Schema formats — treated as unknown and rejected. |
+| OpenAPI 3.0 / draft-4 | `format` present with the same intent; `date-time` / `date` / `uuid` / `email` / `uri` / `hostname` names carry over (`url` → `uri`). Deferred formats await wider support. |
 | Swagger 2.0 | Same as OAS 3.0. |
 
-**Why native validators can't serve as the oracle** (empirical, recorded in
-the corpora): they diverge and/or mutate, so delegating would break **P1**
-or the wire round-trip.
-- **Temporal** (`format_conformance/`): JS `Date` accepts `2021-02-30` and
-  a missing offset; Go `time.Parse` rejects lowercase `t`/`z` and leap
-  seconds but accepts `+24:00`; Ruby clamps `:60`→`:59`.
-- **`email`** (`format_email/`): `.NET MailAddress` accepts `user@localhost`,
-  IP-literals, quoted locals, and full IDN; Python `parseaddr` never really
-  rejects; Pydantic `EmailStr` adds a dependency **and** normalizes the
-  domain.
-- **`hostname`** (`format_hostname/`): `.NET Uri.CheckHostName` accepts
-  underscores and trailing dots and calls `999` an IPv4; even `ajv` accepts
-  a trailing dot.
-- **`duration`** (`format_duration/`): Java `Duration.parse` (no Y/M,
-  accepts fractions) and `Period.parse` (accepts negatives, expands `P1W`)
-  disagree with each other; `.NET XmlConvert` rejects the valid `P1W`.
-- **`uri`** (`format_uri/`): 27 of 57 tricky inputs get divergent verdicts
-  across the seven native parsers — Python `urllib` accepts nearly
-  everything, WHATWG `URL` silently normalizes, `.NET` reinterprets a
-  path as `file:///…`.
+**Why native validators / parsers can't serve as the oracle** (empirical, in
+the corpora): they diverge and/or mutate, so delegating would break **P1** or
+the wire round-trip. Highlights: JS `Date` accepts `2021-02-30` and a missing
+offset; Ruby clamps `:60`→`:59`; `.NET MailAddress` accepts `user@localhost`
+and full IDN; `.NET Uri.CheckHostName` accepts underscores/trailing dots;
+Java `Duration.parse`/`Period.parse` disagree on Y/M and `P1W`; `.NET
+XmlConvert` collapses `P1Y`→365d and rolls `PT24H`→`P1D`; 27/57 tricky URIs
+get divergent verdicts across the seven native URI parsers.
 
 ## Open questions
 
 1. **Remaining deferred formats.** `idn-email`, `idn-hostname`, `iri`,
-   `iri-reference` await a portable **IDNA / Unicode** story (the empirical
-   punycode-vs-ASCII divergence is why they're out for now); `uri-template`,
-   `json-pointer`, `relative-json-pointer`, and `regex` are niche. Each is a
-   candidate for later admission once a portable owned check is pinned and
-   corpus-proven — mirroring [[pattern]]'s subset-widening question. (The
-   v1 candidates `email` / `hostname` / `duration` / `uri` / `uri-reference`
-   are now **resolved** and asserted.)
-2. **Close the `uri` IP-literal semantic gap.** `uri` / `uri-reference`
-   currently accept a structurally-valid but semantically-invalid
-   IP-literal host (`[1::2::3]`); splicing in `ipv6`'s pinned grammar would
-   close it. Deferred as a bounded, documented limitation.
-3. **Calendar-semantic depth.** v1 pins leap-second acceptance and skips a
-   real leap-second table; whether to tighten is revisited on demand.
-4. **Opt-in typed accessor.** The model field stays `string` (Type mapping).
-   If a typed *accessor* is ever wanted (`asTime()`, `asUUID()`), it must
-   parse the already-validated string with **our** pinned check — never a
-   native parser — and never re-serialize from the parsed value, so the
-   stored string stays authoritative and P1 holds. Gated on demand; the
-   `research/format_typed_repr/` matrix is the feasibility record.
-5. **Declaring `format-assertion`.** If the IDE-support JSON Schema for
-   `*.nexusrpc.yaml` documents ever needs to signal that we assert, it can
-   reference the `format-assertion` vocabulary in `$vocabulary`; today the
-   assertion behavior is implicit in the generator.
+   `iri-reference` await a portable **IDNA / Unicode** story; `uri-template`,
+   `json-pointer`, `relative-json-pointer`, `regex` are niche. Candidates for
+   later admission once a portable owned check is corpus-proven.
+2. **Full-grammar `duration` via a component struct.** The materialized
+   `duration` is narrowed to time-only so it can be a native type. To also
+   support calendar durations (`P1Y`, `P4W`), a **generated component struct**
+   (`{years,months,weeks,days,hours,minutes,seconds}`) round-trips the full
+   grammar byte-identically in all six languages
+   (`research/format_materialize_duration/`, design B) — a candidate
+   representation for a node that needs Y/M/W, or the behavior behind the
+   string opt-out's accessor. Deferred pending demand.
+3. **Materialize `time`, and TS `date`.** `time` materializes only in
+   Go/Java/Python (offset-drop can merge values; TS/Ruby have no type) and
+   TS `date` stays a string (`Date`-as-instant footgun). A cleaner `time`
+   (offset-less `partial-time` subset only) or a dedicated TS date/time type
+   would let these join the native set uniformly.
+4. **Close the `uri` IP-literal semantic gap** — splice in `ipv6`'s grammar.
+5. **Declaring `format-assertion`.** The IDE-support schema for
+   `*.nexusrpc.yaml` could reference the `format-assertion` vocabulary in
+   `$vocabulary`; today the assertion behavior is implicit.
 
 ## See also
 
 - [[pattern]] — the regex keyword whose RE2-safe gate, compile-once
-  mechanism, ASCII-class rule, and end-anchor normalization `format`
-  reuses; owns the regex-lowering route.
-- [[type]] — supplies the emitted `string`; gates applicability to
-  `string`.
-- [[const]] / [[default]] / [[enum]] — supplied string literals validated
-  against the format at load.
-- [[minLength]] / [[maxLength]] — the other string assertions; independent,
-  and not cross-checked against a format's implied length.
+  mechanism, ASCII-class rule, and end-anchor normalization `format` reuses.
+- [[type]] — supplies the base `string`; gates applicability; a materialized
+  temporal replaces the field type with a native construct.
+- [[const]] / [[default]] / [[enum]] — supplied literals validated (and, when
+  materialized, canonicalized) against the format at load.
+- [[minLength]] / [[maxLength]] — independent string assertions.
+- [[nullability]] — a `null` is neither validated nor materialized.
 - [[multipleOf]] — the sibling "support the portable subset, reject the
   hazardous form, deferred not excluded" decision posture.
 - [[maximum]] — the `reason`-string convention.
