@@ -271,10 +271,13 @@ For each accepted `type`, fuzz over:
 - **[[enum]]**: the value set derives from `type`; per **P13.1** the
   emitted type is **closed** to the known values and an unrecognized value
   is rejected on deserialize.
-- **[[oneOf]]**: rejected in general per **P6**. The **only** accepted
-  shape is the [[nullability]] pattern — `oneOf` with exactly 2
-  branches, one being `{"type":"null"}` (order-insensitive). This is
-  also the only context in which `type:"null"` may appear.
+- **[[oneOf]]**: a supported union is one whose branches occupy
+  pairwise-disjoint JSON type kinds — each branch's `type` supplies the
+  kind that is the wire selector. `type:"null"` may appear as a branch:
+  as one of exactly two (the [[nullability]] pattern) it makes the field
+  nullable; a `null` branch among 3+ kinds is a nullable union ([[oneOf]]).
+  `integer`+`number` branches together are rejected (unsatisfiable
+  overlap).
 - **[[properties]] / [[items]]**: only meaningful when `type` is `"object"`
   / `"array"`. Cross-product mismatches are generator-time errors.
   Object-shape decisions live in [[properties]] / [[additionalProperties]];
@@ -305,7 +308,8 @@ no current toolchain emits it.
 - [[multipleOf]], [[minimum]], [[maximum]], [[exclusiveMinimum]],
   [[exclusiveMaximum]] — numeric assertions gated by `type`.
 - [[format]] — string refinements layered on `type:"string"`.
-- [[oneOf]] — rejected per P6 in the general case; the nullability
-  `oneOf:[{T},{null}]` pattern is the one accepted exemption (see
+- [[oneOf]] — unions of branches with pairwise-disjoint JSON kinds
+  (each branch's `type` is the selector); the nullability
+  `oneOf:[{T},{null}]` pattern is the degenerate two-branch case (see
   [[nullability]]).
 - [[required]], [[nullability]] — own optional/nullable wrapping.

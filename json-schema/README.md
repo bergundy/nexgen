@@ -282,6 +282,7 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `additionalProperties` | yes | structs are **open by default** (extras preserved); `false` closes them; a typed value makes a typed map |
 | `type: array` / `items` | yes | homogeneous lists (`[]T` / `T[]` / `list[T]` / `List<T>`); `items` is required; tuples (`prefixItems`) are rejected |
 | nullability | `oneOf: [{T}, {null}]` | the array form `["T","null"]` and OAS 3.0 `nullable` are rejected with a fix-it |
+| `oneOf` | selector-separable unions | closed sum type (Go sealed interface, TS/Python native union, Java interface). Branches of disjoint JSON kinds separate by the wire token (mixed kinds OK, e.g. `object \| string`; a `null` branch makes it a nullable union); two+ object branches separate by a shared required `const`-tag (discriminated/tagged union). Only the OpenAPI `discriminator` object is deferred; `integer`+`number` overlap rejected |
 | `const` | scalar | the wire discriminator; emitted as the underlying primitive |
 | `default` | scalar | off-the-wire, materialized on read; never echoed back |
 | `$ref` / `$defs` | named, local-file targets only | no `$id`, no siblings, no remote refs |

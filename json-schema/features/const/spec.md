@@ -429,13 +429,13 @@ so the check is effectively a deserialize-direction guard there.
   `const` is always present and asserted; a `default` value is *off the
   wire* (omit-unset) and only materialized on read. That opposition is
   exactly why they don't co-occur.
-- **[[oneOf]] / discriminated unions** (future): a per-branch `const` on
-  a shared member name is the natural discriminator a future tagged-union
-  feature would key on. `const` specifies the *value* contract today;
-  the union *dispatch* convention is deferred to that feature. Because the
-  discriminator type is **closed** (**P13.1**), bumping a branch's `const`
-  value is a deliberate breaking change to that branch, surfaced at
-  compile time — the intended, loud outcome for a changed contract.
+- **[[oneOf]] / discriminated unions**: a per-branch `const` on a shared
+  required member name **is** the discriminator [[oneOf]] keys on for object
+  tagged unions — `const` specifies the *value* contract, and [[oneOf]]
+  reuses it (unchanged) as the selector. Because the discriminator type is
+  **closed** (**P13.1**), bumping a branch's `const` value is a deliberate
+  breaking change to that branch, surfaced at compile time — the intended,
+  loud outcome for a changed contract.
 - **[[minProperties]] / [[maxProperties]]**: an **object-level** const
   would pin the exact member set, making the count statically decidable
   (noted in both specs) — but object-level const is deferred (see Loader
@@ -468,6 +468,6 @@ so the check is effectively a deserialize-direction guard there.
 - [[default]] — the semantic opposite (off-the-wire/omit-unset vs
   always-present-and-asserted); mutually exclusive with `const`.
 - [[nullability]] — `const: null` rejected; otherwise orthogonal.
-- [[oneOf]] — future discriminated-union dispatch keys on `const`.
+- [[oneOf]] — object discriminated-union dispatch keys on a required `const`.
 - [[minProperties]] / [[maxProperties]] — object-level const (deferred)
   would make counts static.

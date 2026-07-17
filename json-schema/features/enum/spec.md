@@ -396,9 +396,10 @@ deserialize-direction guard there.
 - **[[propertyNames]]**: `enum` is reused as a **key** assertion when it
   appears under `propertyNames` — the map's keys must be one of the set,
   same closed machinery applied to keys instead of values.
-- **[[oneOf]] / discriminated unions** (future): a per-branch discriminator
-  is more naturally a single-value [[const]]; an `enum`-typed member
-  narrows a value to a closed set but does not by itself select a branch.
+- **[[oneOf]] / discriminated unions**: a per-branch discriminator is a
+  single-value [[const]] (an equivalent single-value `enum` also qualifies);
+  a multi-value `enum`-typed member narrows a value to a closed set but does
+  not by itself select a branch.
 - **[[ref]]**: a `$defs`-named enum's synthesized type (Go defined type /
   Java value class) reuses the `$defs` name and enters the same
   per-package namespace (P15); recursion/anonymity follow the shared

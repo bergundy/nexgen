@@ -182,12 +182,13 @@ sibling keyword recognized for that `type`:
 ]}
 ```
 
-This is a **narrow exemption to P6** — we still reject `oneOf` in the
-general case; only this exact recognized shape is accepted.
+This two-branch form is the **degenerate type-token case** of the general
+`oneOf` rule (the `null` token is the selector); [[oneOf]] owns the
+general treatment, and this doc owns this specific shape.
 
 ### Pattern acceptance rules
 
-The generator accepts a `oneOf` schema iff:
+This doc recognizes a `oneOf` as the nullability pattern iff:
 - exactly 2 branches;
 - exactly one branch is the literal `{"type": "null"}` with no sibling
   keywords on the null branch;
@@ -195,8 +196,12 @@ The generator accepts a `oneOf` schema iff:
   `"null"` — `{type:"null"}` paired with `{type:"null"}` is a
   tautology and rejected).
 
-Any other `oneOf` shape → reject at load time per **P6** with a
-diagnostic naming the recognized nullability form.
+Any other `oneOf` shape is [[oneOf]]'s domain — supported there when its
+branches are separable by a decidable selector (pairwise-disjoint JSON
+type kinds), otherwise rejected or deferred. A `null` branch among 3+
+kinds is a **nullable union** — supported by [[oneOf]], reusing this doc's
+per-language nullable encoding over the union type (the `null` branch
+marks the field nullable; the non-null branches form the sum type).
 
 ### Required + nullable is supported
 
@@ -291,7 +296,7 @@ Wire form → required generator output:
 | `"type": ["T", "null"]` (array form) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
 | `{type:"T", "nullable": true}` (OAS 3.0) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
 | `oneOf` with `{type:"null"}` branch where field is in `required` | **Accept** — required+nullable (must be present, may be `null`). |
-| `oneOf` of 3+ branches with `{type:"null"}` among them | Reject (P6). Diagnostic distinguishes from the supported 2-branch form. |
+| `oneOf` of 3+ branches with `{type:"null"}` among them | **Accept** — a nullable union ([[oneOf]]): the `null` branch marks the field nullable, the non-null branches (which must be pairwise-disjoint) form the sum type. |
 
 ## Validator implications
 
@@ -474,8 +479,8 @@ only the value, not "was the key present" — the absent-vs-explicit-
 - [[type]] — emitted bare type per `type` token; this doc wraps that.
 - [[required]] — owns *which* fields are optional (the JSON Schema
   side of the decision).
-- [[oneOf]] — rejected per **P6** in the general case; the nullability
-  `oneOf:[{T},{null}]` pattern is the accepted narrow exemption (defined
-  under "Nullability convention" above).
+- [[oneOf]] — owns the general `oneOf` treatment (type-token-separable
+  unions); this doc owns the degenerate two-branch `oneOf:[{T},{null}]`
+  nullability shape (defined under "Nullability convention" above).
 - [[PRINCIPLES.md]] — **P8** (optional ≠ nullable), **P9**
   (distinguish absent from zero value), **P2** (ergonomics).

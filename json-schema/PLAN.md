@@ -316,9 +316,8 @@ example at `features/type/spec.md`:
 - **Integer cap = ±(2^53−1)** (`Number.MAX_SAFE_INTEGER`), uniform
   across all four languages (see [[type]]). TS `Number.isSafeInteger` enforces it
   soundly with no third-party parser.
-- **Nullability via `oneOf: [{T}, {null}]`** — narrow exemption to
-  P7's discriminator-less `oneOf` rejection (see [[nullability]]; a
-  general `oneOf` convention is deferred to a future oneOf spec).
+- **Nullability via `oneOf: [{T}, {null}]`** — the degenerate two-branch
+  case of the general `oneOf` union rule (see [[nullability]], [[oneOf]]).
 - **Required + nullable supported** (P8) — presence and
   null-acceptance are independent axes; all four states are legal,
   including required+nullable ("must be present, may be `null`").
@@ -500,10 +499,17 @@ decisions:
     there instead of the single-node redundancy reject. Same care for
     combining a bound with a tighter bound of the same kind (two
     `maximum`s → keep the smaller).
-- `oneOf` — partial: nullability pattern accepted (see [[nullability]]);
-  formalizing the nullability-only `oneOf` rule and the
-  discriminator-bearing form is the next open question (P7 implies
-  support for the discriminator form, but no convention spec'd yet).
+- ✅ `oneOf` — spec'd (`features/oneOf/spec.md`). Selector-separable unions
+  supported, emitted as a closed sum type (Go sealed interface, TS/Python
+  native union, Java 8 by-convention interface): (a) disjoint JSON kinds
+  separate by the wire token (mixed kinds + nullable unions included), and
+  (b) two+ object branches separate by a shared required `const`-tag
+  (discriminated/tagged union — TS discriminant literal, Pydantic
+  `Field(discriminator=)`, Go/Java discriminator peek). The nullability
+  `[{T},{null}]` pattern is the degenerate case, still owned by
+  [[nullability]]. Deferred: only the OpenAPI `discriminator` object
+  (optional sugar over the const tag). Rejected outright: `integer`+
+  `number` overlap (unsatisfiable).
 
 **Core / structural:**
 - ✅ `$ref`, ✅ `$defs` — landed (`features/ref/spec.md` +
