@@ -80,13 +80,15 @@ Loader behavior:
   unsatisfiable). The const value must validate against the **rest** of
   the field's own schema too (e.g. `{type:"string", minLength:5,
   const:"ab"}` → reject — the fixed value can never satisfy the field).
-  **Called out, not yet fully specced:** validating the const
-  value against *constraint* keywords — `pattern`, `minLength`/
-  `maxLength`, `minimum`/`maximum`, `multipleOf`, … — means running those
-  keywords' own validators over the fixed value at load time. Those
-  features are not specced yet, so the full check is **deferred to land
-  with them**; today only `type`-compatibility is enforced here. Same
-  obligation applies to [[default]] and [[enum]].
+  The const value is run through every *constraint* keyword present on the
+  same node — [[pattern]], [[minLength]]/[[maxLength]],
+  [[minimum]]/[[maximum]], [[exclusiveMinimum]]/[[exclusiveMaximum]],
+  [[multipleOf]] — using that keyword's own load-time validator over the
+  fixed value; a violation is a load reject. **Each constraint keyword
+  owns its half of this check** (its spec states the rule and lists the
+  const/default/enum load reject); `const` supplies the fixed value and
+  inherits every such check that is present. The same obligation applies
+  to [[default]] and [[enum]].
 - `const` **and** [[default]] both present → reject. A const fixes the
   value; a default is then either redundant (equal) or contradictory
   (unequal). Diagnostic: drop the `default`; the const already
@@ -370,7 +372,7 @@ so the check is effectively a deserialize-direction guard there.
 | Reason | Example |
 |---|---|
 | Type-incompatible (P7.1) | `{type:"integer", const:"x"}` |
-| Fails own subschema — *constraint check, deferred* | `{type:"string", minLength:5, const:"ab"}` |
+| Fails own subschema's constraint | `{type:"string", minLength:5, const:"ab"}`, `{type:"integer", minimum:5, const:2}`, `{type:"string", pattern:"^[a-z]+$", const:"A1"}` |
 | With `default` | `{type:"string", const:"v1", default:"v1"}` |
 | With `enum` (redundant) | `{type:"string", enum:["a"], const:"a"}` |
 | `const: null` (degenerate) | `{type:"null", const:null}` |
