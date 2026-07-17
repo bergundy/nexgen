@@ -287,6 +287,7 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `$ref` / `$defs` | named, local-file targets only | no `$id`, no siblings, no remote refs |
 | count assertions | `minProperties` / `maxProperties`; `minItems` / `maxItems` | member counts over distinct wire keys; element counts over array size |
 | `uniqueItems` | scalar elements | element distinctness for scalar `items`; composite (object/array) elements deferred; `false` is a no-op |
+| `contains` | scalar matcher | existential "≥ 1 element matches" over scalar `items`; composite matchers/elements and `minContains`/`maxContains` deferred |
 | `services` | yes | Nexus documents only |
 
 ### IDE support

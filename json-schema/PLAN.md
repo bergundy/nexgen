@@ -476,8 +476,11 @@ decisions:
   ✅ `exclusiveMinimum`, ✅ `multipleOf` — landed. See "Features" below.
 
 **Array structure:**
-- `items`, `prefixItems`, `contains`, `unevaluatedItems`,
-  `minItems`, `maxItems`, `uniqueItems`, `maxContains`, `minContains`
+- ✅ `items` (homogeneous list), ✅ `minItems`, ✅ `maxItems`,
+  ✅ `uniqueItems` (scalar elements), ✅ `prefixItems` (P6-reject landed),
+  ✅ `contains` (scalar matcher, ≥ 1 existential)
+- Remaining: `unevaluatedItems` (expect P6-reject), `minContains` /
+  `maxContains` (deferred count-of-matches bounds — see `contains` spec)
 
 **String assertions:**
 - ✅ `maxLength`, ✅ `minLength`, ✅ `pattern` — landed. See "Features" below.

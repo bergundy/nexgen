@@ -83,7 +83,8 @@ generation.
 - **[[items]]**: in 2020-12, `items` applies to elements *past* the
   `prefixItems` prefix. With `prefixItems` rejected, `items` applies to
   **all** elements — the homogeneous-list case is the supported form.
-- **[[contains]] / [[unevaluatedItems]]**: the other array applicators,
+- **[[contains]]**: the array existential — supported for a scalar matcher
+  (its own spec). **[[unevaluatedItems]]**: the other array applicator,
   also rejected per **P6**.
 - **[[minItems]] / [[maxItems]] / [[uniqueItems]]**: array-level
   assertions over the element set; unaffected by this keyword's rejection.
@@ -101,6 +102,7 @@ generation.
 
 - [[items]] — the supported homogeneous-list applicator; owns the
   array-valued-`items` rejection.
-- [[contains]], [[unevaluatedItems]] — other rejected array applicators.
+- [[contains]] — the supported scalar array existential.
+- [[unevaluatedItems]] — the other rejected array applicator.
 - [[properties]] — named-field alternative when positions are distinct
   fields.

@@ -215,9 +215,10 @@ of the value and is preserved).
   per **P6** (no coherent cross-language tuple lowering). With it rejected,
   `items` applies to *all* elements, so the annotation-dependent "elements
   past the prefix" clause never engages in our subset.
-- **[[contains]] / [[unevaluatedItems]]**: **rejected** per **P6**
-  (`contains`' existential and `unevaluatedItems`' annotation-dependent
-  semantics don't lower); `items` is the supported array applicator.
+- **[[contains]]**: the array **existential** — supported for a scalar
+  matcher over a scalar `items` element type (its own spec); layers over the
+  same element set `items` types. **[[unevaluatedItems]]**: **rejected** per
+  **P6** (annotation-dependent semantics don't lower).
 - **[[minItems]] / [[maxItems]]**: array-level count assertions that layer
   over the same element set (see their specs); both count the full array
   including every `items`-validated element, and are orthogonal to the
@@ -251,8 +252,9 @@ of the value and is preserved).
   check and the element base type.
 - [[properties]] — the object analog; array-of-objects elements are
   emitted aggregates.
-- [[prefixItems]], [[contains]], [[unevaluatedItems]] — rejected per
-  **P6**; `items` is the supported array applicator.
+- [[prefixItems]], [[unevaluatedItems]] — rejected per **P6**; `items` is
+  the supported per-element applicator. [[contains]] — the supported
+  scalar existential over the element set.
 - [[minItems]], [[maxItems]], [[uniqueItems]] — array-level assertions
   layered over the element set.
 - [[required]], [[nullability]] — own the array field's optional/nullable
