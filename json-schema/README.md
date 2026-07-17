@@ -287,7 +287,8 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `$ref` / `$defs` | named, local-file targets only | no `$id`, no siblings, no remote refs |
 | count assertions | `minProperties` / `maxProperties`; `minItems` / `maxItems` | member counts over distinct wire keys; element counts over array size |
 | `uniqueItems` | scalar elements | element distinctness for scalar `items`; composite (object/array) elements deferred; `false` is a no-op |
-| `contains` | scalar matcher | existential "≥ 1 element matches" over scalar `items`; composite matchers/elements and `minContains`/`maxContains` deferred |
+| `contains` | scalar matcher | existential "≥ 1 element matches" over scalar `items`; composite matchers/elements deferred |
+| `minContains` / `maxContains` | yes | bound the number of `contains` matches; `minContains:0` relaxes the existential (needs `maxContains`) |
 | `format` | curated subset | `uuid` / `ipv4` / `ipv6` / `date-time` / `date` / `time` asserted via owned checks; other + unknown formats rejected (deferred) |
 | `services` | yes | Nexus documents only |
 

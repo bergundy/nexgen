@@ -38,8 +38,8 @@ Distilled:
   **≥ 1 element** validates against it (the spec default, i.e.
   `minContains` omitted ≡ `1`).
 - The match count can be re-floored/capped by [[minContains]] /
-  [[maxContains]]; in this subset those are **deferred** (below), so
-  `contains` alone always means the **spec-default ≥ 1 match**.
+  [[maxContains]] (both supported — their own specs); `contains` **alone**
+  means the **spec-default ≥ 1 match** (`minContains` omitted ≡ `1`).
 - The annotation (matching indexes) exists only to feed
   [[unevaluatedItems]], which is **rejected** per **P6**. With no
   annotation consumer, the "apply to every element even after the first
@@ -98,10 +98,10 @@ Loader behavior:
   vice-versa, follows [[type]]'s numeric rules — an integer-valued number
   normalizes, so `contains:{const:1.0}` over `items:{type:integer}` is
   fine.)
-- **[[minContains]] / [[maxContains]]** present → **reject** ("not yet
-  supported") in this subset; `contains` is supported only with its
-  spec-default ≥ 1 semantics. Deferred to their own specs — see
-  Interactions and Ecosystem variance.
+- **[[minContains]] / [[maxContains]]** present → validated by their own
+  specs (non-negative integers, range satisfiability, the `minContains:0`
+  relaxation). They require a sibling `contains` and cannot appear without
+  one — see Interactions.
 
 ## Type mapping
 
@@ -116,9 +116,12 @@ identical in both directions (a pure predicate over the decoded value — the
 scalar matcher predicate — the same shared predicate the matcher's own
 keywords define ([[const]]/[[enum]] equality, [[minimum]]/[[maximum]]
 range, [[pattern]] regex, [[minLength]]/[[maxLength]], [[multipleOf]]) —
-and the scan **short-circuits on the first match** (no [[unevaluatedItems]]
+and the scan **short-circuits on the first match** — *when neither
+[[minContains]] nor [[maxContains]] is present*: no [[unevaluatedItems]]
 annotation consumes the full index set, so there is nothing to collect past
-the first hit). If no element matches, one `Violation` is pushed.
+the first hit. When a count bound is present the scan instead tallies **all**
+matches (the exact count is what the bound compares — see [[maxContains]]).
+If no element matches, one `Violation` is pushed.
 
 | Language | Strategy |
 |---|---|
@@ -162,6 +165,7 @@ directions.
 | Contains an element clearing a bound | `{type:"array", items:{type:integer}, contains:{type:integer, minimum:5}}` |
 | Contains a pattern-matching element | `{type:"array", items:{type:string}, contains:{type:string, pattern:"^x"}}` |
 | Integer-valued number matcher normalizes | `{type:"array", items:{type:integer}, contains:{const:1.0}}` |
+| Match-count bounds ([[minContains]] / [[maxContains]]) | `{type:"array", items:{type:integer}, contains:{minimum:5}, minContains:2, maxContains:4}` |
 | Combined with count/uniqueness assertions | `{type:"array", items:{type:string}, minItems:1, uniqueItems:true, contains:{const:"admin"}}` |
 | Array member of a struct | `{type:"object", properties:{roles:{type:array, items:{type:string}, contains:{const:"admin"}}}}` |
 
@@ -175,7 +179,6 @@ directions.
 | Composite matcher (deferred) | `{type:array, items:{type:object,…}, contains:{type:object,…}}` |
 | Composite element type (deferred) | `{type:array, items:{type:object,…}, contains:{const:…}}` |
 | Matcher type-incompatible with element (P7.1, unsatisfiable) | `{type:array, items:{type:string}, contains:{type:integer}}`, `…contains:{const:5}}` |
-| `minContains`/`maxContains` (deferred) | `{type:array, items:{type:integer}, contains:{minimum:5}, minContains:2}` |
 
 ### Runtime fixtures (validator)
 
@@ -203,11 +206,12 @@ directions.
   where both apply: an element must satisfy `items` to be present at all,
   and at least one must also satisfy `contains`.
 - **[[minContains]] / [[maxContains]]**: the 2020-12 count-of-matches
-  bounds that generalize `contains` from "≥ 1" to a range. **Deferred**
-  (rejected at load) in this subset; when landed they own the match-count
-  machinery (a full scan rather than a short-circuit, since the count
-  matters), and `minContains:0` relaxes the existential to vacuous. Until
-  then `contains` is exactly the spec-default ≥ 1.
+  bounds that generalize `contains` from "≥ 1" to a range — **supported**
+  (their own specs). They own the match-count machinery (a full tally
+  rather than a short-circuit, since the count matters), require a sibling
+  `contains`, and `minContains:0` relaxes the existential (vacuous alone,
+  meaningful as a `0..maxContains` range). `contains` **alone** is exactly
+  the spec-default ≥ 1.
 - **[[minItems]] / [[maxItems]]**: array-level **element**-count
   assertions; `contains` is a **match**-count existential over a subset.
   All apply and aggregate. We do **not** collapse `contains` into an
@@ -245,7 +249,7 @@ directions.
 
 | Source dialect | Action |
 |---|---|
-| JSON Schema 2020-12 | Native (scalar matcher; `minContains`/`maxContains` deferred). |
+| JSON Schema 2020-12 | Native (scalar matcher; `minContains`/`maxContains` supported). |
 | OpenAPI 3.1 | Adopts 2020-12 — `contains` identical. Native. |
 | draft-7 / draft-6 | `contains` present since draft-6 with the same ≥ 1 existential (no `minContains`/`maxContains` — those arrived in draft 2019-09). Native, no rewrite. |
 | OpenAPI 3.0 / Swagger 2.0 / draft-4 | No `contains` keyword — nothing to map. |
@@ -257,7 +261,7 @@ directions.
   where `contains` asserts one.
 - [[uniqueItems]] — the sibling scalar-gated array assertion; shares the
   scalar/composite support line and the scalar value-equality definition.
-- [[minContains]] / [[maxContains]] — the deferred count-of-matches bounds
+- [[minContains]] / [[maxContains]] — the supported count-of-matches bounds
   that generalize this keyword's ≥ 1 default.
 - [[minItems]] / [[maxItems]] — array **element**-count assertions,
   distinct from the **match**-count existential.
