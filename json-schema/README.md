@@ -280,6 +280,7 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `type` | single string only | array `type` and missing `type` are rejected |
 | `properties` / `required` | yes | typed structs; presence enforced at runtime |
 | `additionalProperties` | yes | structs are **open by default** (extras preserved); `false` closes them; a typed value makes a typed map |
+| `type: array` / `items` | yes | homogeneous lists (`[]T` / `T[]` / `list[T]` / `List<T>`); `items` is required; tuples (`prefixItems`) are rejected |
 | nullability | `oneOf: [{T}, {null}]` | the array form `["T","null"]` and OAS 3.0 `nullable` are rejected with a fix-it |
 | `const` | scalar | the wire discriminator; emitted as the underlying primitive |
 | `default` | scalar | off-the-wire, materialized on read; never echoed back |
