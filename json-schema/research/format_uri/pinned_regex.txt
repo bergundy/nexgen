@@ -1,0 +1,48 @@
+THE CANDIDATE PINNED URI CHECK (RFC 3986 URI, scheme REQUIRED).
+
+This is the *body* of the regex (no start/end anchors). Each runtime wraps it in
+its own portable full-input anchors (see per-runner notes): Go/JS `^...$` with no
+multiline; Python `\A...\Z`; Java/.NET/Ruby `\A...\z`. The body is ASCII-only,
+uses only character classes + alternation + `*`/`?` quantifiers, has NO
+lookaround / backreferences / inline flags, so it compiles under the Rust
+`regex` crate (the load-time gate) and is in the RE2 / regular family every
+target's engine accepts.
+
+Components (spaces added for readability; the emitted pattern has none):
+
+  scheme     : [A-Za-z][A-Za-z0-9+.-]*
+  pct        : %[0-9A-Fa-f][0-9A-Fa-f]
+  userinfo   : (?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*
+  host       : one of
+                 IP-literal  : \[[0-9A-Fa-f:.]+\]           (IPv6)   -- permissive
+                              | \[v[0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+\]  (IPvFuture) -- permissive
+                 reg-name/IPv4 : (?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*
+  port       : [0-9]*
+  authority  : (?:USERINFO@)?HOST(?::PORT)?
+  pchar      : (?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])
+  segment    : PCHAR*
+  segment-nz : PCHAR+     (non-zero-length)
+  path-abempty : (?:/PCHAR*)*          (used after //authority)
+  path-absolute: /(?:PCHAR+(?:/PCHAR*)*)?   (starts with / but not //)
+  path-rootless: PCHAR+(?:/PCHAR*)*         (no leading /, used when no authority)
+  path-empty   : (empty)
+  query      : (?:PCHAR|[/?])*
+  fragment   : (?:PCHAR|[/?])*
+
+  hier-part  : (?://AUTHORITY PATH-ABEMPTY) | PATH-ABSOLUTE | PATH-ROOTLESS | (empty)
+
+  URI        : SCHEME : HIER-PART (?:\?QUERY)? (?:#FRAGMENT)?
+
+FIDELITY LIMITS (documented, deliberate):
+  * IP-literal host is PERMISSIVE: it checks bracket structure and the allowed
+    inner byte class, NOT that the bytes form a valid IPv6/IPvFuture address.
+    (A faithful IPv6 grammar is enormous; ipv6 format already has its own pinned
+    check. `http://[zzzz]` would pass here. Acceptable: it is still bracket-well-
+    formed and ASCII, and distinguishing it needs the ipv6 grammar.)
+  * reg-name does NOT reject an all-numeric-but-invalid IPv4 (e.g. 999.1.1.1);
+    RFC 3986 lets such a string be a reg-name anyway, so this is actually faithful.
+  * No enforcement that path after `//authority` is empty-or-absolute beyond the
+    grammar (handled by path-abempty structure).
+  * `%` is ONLY accepted as part of `%HEXDIG HEXDIG`; a bare or truncated `%`
+    is rejected (faithful to pct-encoded).
+  * ASCII only: any non-ASCII byte (IRI territory) is rejected (faithful to uri).
