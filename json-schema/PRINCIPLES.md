@@ -22,7 +22,7 @@ renumber them.
 ### Input contract
 
 5. **Use 2020-12 as the base spec version.** The strict subset is based on the latest draft.
-6. **Strict JSON schema subset.** The generator rejects features that cannot be coherently represented in all supported languages (e.g., `allOf`) — the loader-time arm of polyglot wire compatibility (P1).
+6. **Strict JSON schema subset.** The generator rejects features that cannot be coherently represented in all supported languages (e.g., `anyOf`, `not`, `if`/`then`/`else`) — the loader-time arm of polyglot wire compatibility (P1). A feature is admitted when it *can* be represented coherently, even if that means a load-time rewrite rather than a retained construct: `allOf` is accepted as a **merge/flatten** into a single schema (see [[allOf]]), and `oneOf` as a closed sum type with a decidable selector (see [[oneOf]]).
 7. **Strict schema validation.** The *schema itself* is held to a strict shape — not just the runtime values it describes (that is P10).
     1. **Reject ambiguity loudly at generator time.** Better to error than to guess; unsupported features get explicit errors, not silent passthrough.
 

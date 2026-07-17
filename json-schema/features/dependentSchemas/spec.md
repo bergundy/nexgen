@@ -44,9 +44,11 @@ which has no coherent lowering across the four targets:
 - **P6 (strict subset), conditional shape.** The set of members and their
   types depends on whether a trigger key is present at runtime. Modeling
   that faithfully needs conditional-shape machinery — the same reason
-  `if`/`then`/`else` and `allOf` are rejected. (Contrast [[oneOf]], a
-  *closed* sum type with a decidable selector, which is supported — the
-  conditional shape here has neither.) Go and Java
+  `if`/`then`/`else`, `anyOf`, and `not` are rejected. (Contrast
+  [[allOf]], an *unconditional* intersection that flattens to one schema at
+  load, and [[oneOf]], a *closed* sum type with a decidable selector — both
+  supported because neither has a runtime-conditional shape, which this
+  keyword does.) Go and Java
   have no way to express "this object has these extra required
   fields/constraints *only when* key `a` was supplied" as a single static
   type; the only lowerings are to forfeit typing or to synthesize

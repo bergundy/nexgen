@@ -150,7 +150,9 @@ the loader, so all four targets accept exactly the same schemas.
 3. **Strict-subset gate.** Anything outside the supported subset is
    rejected here with a diagnostic that names the location and the fix —
    e.g. an array `type`, a missing `type`, a bare `{type: object}` with no
-   shape, an `allOf`/`anyOf`/`not`, or a `$ref` carrying a sibling keyword.
+   shape, an `anyOf`/`not`, or an unmergeable `allOf` (contradictory
+   branches). (A mergeable `allOf` — and the `$ref`-with-siblings sugar —
+   is instead flattened into one schema here.)
    This is the core principle: **reject loudly, never emit something
    subtly wrong.**
 4. **Reference graph.** A recursion cycle is kept only if it can
@@ -283,9 +285,10 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `type: array` / `items` | yes | homogeneous lists (`[]T` / `T[]` / `list[T]` / `List<T>`); `items` is required; tuples (`prefixItems`) are rejected |
 | nullability | `oneOf: [{T}, {null}]` | the array form `["T","null"]` and OAS 3.0 `nullable` are rejected with a fix-it |
 | `oneOf` | selector-separable unions | closed sum type (Go sealed interface, TS/Python native union, Java interface). Branches of disjoint JSON kinds separate by the wire token (mixed kinds OK, e.g. `object \| string`; a `null` branch makes it a nullable union); two+ object branches separate by a shared required `const`-tag (discriminated/tagged union). Only the OpenAPI `discriminator` object is deferred; `integer`+`number` overlap rejected |
+| `allOf` | load-time merge/flatten | branches fold into one materialized schema (no combinator kept, no new type): same-axis numeric bounds **tighten**, `multipleOf` → LCM, value sets intersect, object/array subschemas merge recursively; unmergeable branches (disjoint `type`, disagreeing `const`, empty `enum`, distinct `pattern`/`format`/`contains`, a `false`/combinator branch) reject; `$ref` branches fold in (flatten, not subtype — the base-extension idiom) |
 | `const` | scalar | the wire discriminator; emitted as the underlying primitive |
 | `default` | scalar | off-the-wire, materialized on read; never echoed back |
-| `$ref` / `$defs` | named, local-file targets only | no `$id`, no siblings, no remote refs |
+| `$ref` / `$defs` | named, local-file targets only | no `$id`, no remote refs; siblings are the implicit-`allOf` sugar and are merged (see `allOf`) |
 | count assertions | `minProperties` / `maxProperties`; `minItems` / `maxItems` | member counts over distinct wire keys; element counts over array size |
 | `uniqueItems` | scalar elements | element distinctness for scalar `items`; composite (object/array) elements deferred; `false` is a no-op |
 | `contains` | scalar matcher | existential "≥ 1 element matches" over scalar `items`; composite matchers/elements deferred |

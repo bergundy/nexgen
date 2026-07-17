@@ -4,10 +4,13 @@ Source: JSON Schema 2020-12, Core (Applicator vocabulary), §10.2.1.3
 "Keywords for Applying Subschemas With Boolean Logic → oneOf".
 
 The **tagged-union / sum-type** keyword: an instance is valid iff it
-validates against **exactly one** branch. This is the one boolean-logic
-applicator the subset supports — `allOf`, `anyOf`, `not`, `if`/`then`/
-`else` are all **rejected** per **P6** (see [[dependentSchemas]] for the
-same rationale). `oneOf` earns its place because "exactly one" is a *sum
+validates against **exactly one** branch. Among the boolean-logic
+applicators, `oneOf` and [[allOf]] are the two the subset admits — but by
+different mechanisms: `allOf` (intersection) collapses to a single
+materialized schema at load ([[allOf]]), whereas `oneOf` is *retained* as a
+closed sum type. `anyOf`, `not`, `if`/`then`/`else` stay **rejected** per
+**P6** (see [[dependentSchemas]] for the same rationale). `oneOf` earns its
+place because "exactly one" is a *sum
 type*, which lowers coherently to all four targets — **but only when the
 branches carry a decidable selector**, so a deserializer can route a wire
 value to exactly one branch without trial-validating every subschema. Two
@@ -111,8 +114,9 @@ discriminator value is *rejected*, not preserved. Keying selection on the
 
 Grounding ([[PRINCIPLES.md]]): **P1** — a sum type with a decidable
 selector round-trips identically across all four targets; **P6** — the
-selector requirement is the strict-subset line that admits `oneOf` while
-still excluding the other applicators; **P7 / P7.1** — a selector-less
+selector requirement is the strict-subset line that admits `oneOf` as a
+retained union while still excluding the non-collapsing applicators
+(`anyOf`/`not`/`if`); **P7 / P7.1** — a selector-less
 union (overlapping branches) would force trial-validation guessing, which
 we reject loudly rather than approximate; **P2** — the type-token rule is
 exactly the set of unions TypeScript can narrow with native
@@ -510,12 +514,16 @@ than being written (real teeth where construction is unchecked).
   unselectable. Separately, whether the whole union-typed member is present
   is its own `required` question; an absent optional union raises no
   `oneOf` violation (**P8**).
-- **[[allOf]] / [[anyOf]] / [[dependentSchemas]] / `not` / `if`-`then`-
-  `else`**: the other boolean-logic / conditional applicators, all
-  **rejected** per **P6**. `oneOf` is admitted precisely because
-  "exactly one" is a *closed sum type* with a decidable selector, which
-  intersection (`allOf`), inclusive-or (`anyOf`), negation (`not`), and
-  runtime shape-forking (`if`/`dependentSchemas`) are not.
+- **[[allOf]]**: the *other* admitted boolean-logic applicator, but by a
+  different mechanism — intersection **collapses to one type at load** (a
+  merge/flatten), so it disappears downstream, whereas `oneOf` is retained
+  and emits a union. An `allOf` branch that is itself a `oneOf` is rejected
+  ([[allOf]]): an intersection with a union does not collapse.
+- **[[anyOf]] / [[dependentSchemas]] / `not` / `if`-`then`-`else`**: the
+  boolean-logic / conditional applicators that stay **rejected** per
+  **P6**. `oneOf` is admitted because "exactly one" is a *closed sum type*
+  with a decidable selector, which inclusive-or (`anyOf`), negation
+  (`not`), and runtime shape-forking (`if`/`dependentSchemas`) are not.
 
 ## Ecosystem variance
 
@@ -541,6 +549,8 @@ than being written (real teeth where construction is unchecked).
   branches need an explicit `const` tag; branches stay open within.
 - [[required]] — the discriminator must be required in each branch; also
   the union member's own presence, distinct from branch selection.
+- [[allOf]] — the other admitted applicator; intersection collapses to
+  one type at load (merge), while `oneOf` is retained as a union.
 - [[dependentSchemas]] — a rejected applicator; shares the P6 rationale
   that `oneOf` (as a closed sum type) is the exception to.
 - [[PRINCIPLES.md]] — **P1** (polyglot sum type), **P6** (strict subset),

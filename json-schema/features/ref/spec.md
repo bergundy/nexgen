@@ -43,9 +43,10 @@ Rationale (citing [[PRINCIPLES.md]]):
 - **P7 / P7.1 (strict schema, reject loudly)**: every accepted `$ref`
   must resolve to a **nameable, top-level generated type** — codegen has
   no name for a pointer into the middle of a schema.
-- **P6 (strict subset)**: `$ref` siblings are an implicit `allOf`; we
-  reject `allOf`, so we reject sibling-bearing `$ref` too. `$id`
-  re-basing opens a URI-resolution surface we otherwise avoid.
+- **`$ref` siblings are an implicit `allOf`**, and `allOf` is a supported
+  load-time merge ([[allOf]]): a sibling-bearing `$ref` is rewritten to
+  `allOf:[{$ref:X},{…siblings}]` and **merged** into a single schema. `$id`
+  re-basing opens a URI-resolution surface we otherwise avoid (**P6**).
 
 ### Accepted ref forms
 
@@ -66,9 +67,11 @@ fix-it:
 - **Pointer into a non-`$defs` node** (`#/properties/x/items`, `#/items`,
   …) → reject. Fix-it: "extract the target into `$defs` and reference
   that." (Every ref must resolve to a nameable type — P7.)
-- **Any sibling key alongside `$ref`** — even `description` → reject.
-  Fix-it: "move shared annotations onto the `$defs` target." (Siblings
-  are implicit `allOf` — P6.)
+- **Sibling keys alongside `$ref`** — accepted: the implicit-`allOf`
+  sugar is rewritten to an explicit `allOf` and merged ([[allOf]]). The
+  merged result is subject to `allOf`'s reject rules (e.g. a sibling that
+  contradicts the target), and unresolvable/cyclic targets still reject
+  here.
 - **`$id` anywhere** (root or nested) → reject. Fix-it: "remove `$id`;
   refs resolve by file path + JSON pointer." (local-file-only — no URI resolution.)
 - **HTTP/URI ref**, `$anchor` fragment, `$dynamicRef`, `$dynamicAnchor`
@@ -226,13 +229,13 @@ helper is emitted — the named-type machinery already in place
 | Mutual cross-file cycle | `a.json#/X` ↔ `b.json#/Y` with a terminating edge → hoisted to `_recursive` (Py) |
 | Dead `$defs` | a `$defs` entry never referenced → still emitted/exported |
 | Bare-`$ref` root | file root `{"$ref":"#/$defs/Main"}` → alias (Go/TS/Py), `Main` (Java) |
+| `$ref` with siblings | `{"$ref":"#/$defs/X", "minProperties":1}` → implicit `allOf`, merged ([[allOf]]) |
 
 ### Rejected at load time (negative)
 
 | Case | Reason |
 |---|---|
 | Pointer into non-`$defs` | `{"$ref": "#/properties/x/items"}` — not nameable (P7) |
-| Sibling keyword | `{"$ref": "#/$defs/X", "description": "…"}` — implicit `allOf` (P6) |
 | `$id` present | root or nested `$id` — no URI resolution (local-file-only) |
 | HTTP ref | `{"$ref": "https://example.com/s.json"}` — not local (local-file-only) |
 | `$dynamicRef` / `$anchor` fragment | not in subset (P6) |

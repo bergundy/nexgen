@@ -484,21 +484,25 @@ decisions:
 **String assertions:**
 - ✅ `maxLength`, ✅ `minLength`, ✅ `pattern` — landed. See "Features" below.
 
-**Applicators (mostly P6-rejected, each needs a spec'd rejection):**
-- `allOf`, `anyOf`, `not`, `if-then-else` — reject per P6; document
-  rationale and rewrite hints.
-  - **allOf constraint-tightening note (revisit when allOf is
-    considered):** the numeric specs reject a same-axis bound pair on a
-    *single* node — `maximum`+`exclusiveMaximum`, `minimum`+
-    `exclusiveMinimum` — as redundant (one always dominates; see
-    [[maximum]]). allOf semantics is the opposite — *intersect / tighten*
-    across subschemas — so two same-axis bounds arriving from *different*
-    allOf branches (e.g. `allOf:[{maximum:10},{exclusiveMaximum:8}]`) are
-    legitimate and must be **merged to the tighter**, not rejected. Any
-    future allOf lowering / merge-flatten step must apply the tighten rule
-    there instead of the single-node redundancy reject. Same care for
-    combining a bound with a tighter bound of the same kind (two
-    `maximum`s → keep the smaller).
+**Applicators:**
+- `anyOf`, `not`, `if-then-else` — reject per P6; document rationale and
+  rewrite hints.
+- ✅ `allOf` — spec'd (`features/allOf/spec.md`). Admitted as a **load-time
+  merge/flatten**, not a retained combinator: branches fold into a single
+  materialized schema that the ordinary keyword loaders then lower (no
+  `allOf` residue, no new emitted type). Same-axis numeric bounds from
+  different branches **tighten** (`allOf:[{maximum:10},{exclusiveMaximum:8}]`
+  → `exclusiveMaximum:8`; two `maximum`s → the smaller), `multipleOf` →
+  LCM, value sets intersect, object/array subschemas merge recursively;
+  satisfiability/shape/collision checks are delegated to the owning specs
+  on the merged result. Unmergeable branches reject loudly (P7.1): disjoint
+  `type`, disagreeing `const`, empty `enum` intersection, distinct
+  `pattern`/`format`/`contains`, a `false`/combinator branch. `$ref`
+  branches fold in (flatten, not subtype — the base-extension idiom);
+  `$ref`-with-siblings is the implicit-`allOf` sugar, now **merged**
+  (supersedes the old [[ref]] sibling-reject). Closed-object merge fixes
+  the raw-allOf `additionalProperties:false` footgun by closing against the
+  union of declared properties.
 - ✅ `oneOf` — spec'd (`features/oneOf/spec.md`). Selector-separable unions
   supported, emitted as a closed sum type (Go sealed interface, TS/Python
   native union, Java 8 by-convention interface): (a) disjoint JSON kinds
@@ -627,11 +631,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
    — deferred to land with those constraint features.
 
 ### `features/ref/spec.md`
-1. **Sibling annotation passthrough** — currently all `$ref` siblings
-   are rejected, including pure annotations (`description`/`title`/
-   `deprecated`). A future relaxation could allow annotation-only
-   siblings. Deferred.
-2. **Pointer into a non-`$defs` subschema** — currently rejected (must
+1. **Pointer into a non-`$defs` subschema** — currently rejected (must
    extract to `$defs`); could relax via anonymous-name-synthesis.
    Deferred pending demand.
 

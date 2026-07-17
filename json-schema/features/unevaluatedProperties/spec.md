@@ -62,15 +62,21 @@ Distilled:
   the subset emits (**P1**/**P2**). There is no static struct shape that
   captures "the members no branch happened to touch."
 - **Redundant or incoherent in this subset — never in between.** The
-  applicators that make it *differ* from [[additionalProperties]] —
-  `allOf`, `anyOf`, `oneOf`, `if`/`then`/`else`, [[patternProperties]],
-  [[prefixItems]] — are **already rejected**. With none of them present,
-  the transitive evaluated set collapses to exactly [[properties]]'s
-  matched names, so `unevaluatedProperties` would mean *precisely* what
+  in-place applicators that would make it *differ* from
+  [[additionalProperties]] either leave **no unevaluated residue** or are
+  **rejected**. `anyOf`, `not`, `if`/`then`/`else`, [[patternProperties]],
+  and [[prefixItems]] are rejected. The two admitted applicators do not
+  reintroduce the problem: [[allOf]] is **flattened to a single schema at
+  load** (its branches' `properties` are merged in, so nothing survives as
+  an in-place sibling), and [[oneOf]] is a **closed sum type** whose object
+  branches are complete, discriminated types (no shared residual object
+  shape at the location). With no residual in-place applicator, the
+  transitive evaluated set collapses to exactly [[properties]]'s matched
+  names, so `unevaluatedProperties` would mean *precisely* what
   [[additionalProperties]] already means. Supporting it would add a second
-  spelling of one behavior (violating the one-canonical-spelling stance
-  the subset takes elsewhere) while its only *distinct* uses depend on
-  rejected keywords. Rejecting it is the honest, unambiguous outcome
+  spelling of one behavior (violating the one-canonical-spelling stance the
+  subset takes elsewhere) while its only *distinct* uses depend on rejected
+  keywords. Rejecting it is the honest, unambiguous outcome
   (**P7**/**P7.1**).
 
 Loader behavior:
