@@ -44,7 +44,7 @@ which has no coherent lowering across the four targets:
 - **P6 (strict subset), conditional shape.** The set of members and their
   types depends on whether a trigger key is present at runtime. Modeling
   that faithfully needs conditional-shape machinery — the same reason
-  `if`/`then`/`else`, `anyOf`, and `not` are rejected. (Contrast
+  [[if-then-else]], [[anyOf]], and `not` are rejected. (Contrast
   [[allOf]], an *unconditional* intersection that flattens to one schema at
   load, and [[oneOf]], a *closed* sum type with a decidable selector — both
   supported because neither has a runtime-conditional shape, which this
@@ -121,3 +121,6 @@ generation.
   fields that are always part of the shape.
 - [[unevaluatedProperties]] — another rejected annotation-driven object
   keyword.
+- [[if-then-else]] — the general conditional applicator this keyword is a
+  special case of (`if {required} then <subschema>`); same P6 rejection.
+- [[anyOf]] — the rejected inclusive-or applicator in the same P6 family.

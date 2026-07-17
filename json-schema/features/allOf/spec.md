@@ -5,7 +5,7 @@ Source: JSON Schema 2020-12, Core (Applicator vocabulary), §10.2.1.1
 
 The **intersection / schema-composition** keyword: an instance is valid
 iff it validates against **every** subschema. Unlike the other
-boolean-logic applicators ([[oneOf]], `anyOf`, `not`, `if`/`then`/`else`),
+boolean-logic applicators ([[oneOf]], [[anyOf]], `not`, [[if-then-else]]),
 `allOf` describes constraints that all apply to **one value of one kind** —
 so it is not a runtime fork at all. The generator admits it as a
 **load-time merge**: the branches are flattened into a **single

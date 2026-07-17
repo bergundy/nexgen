@@ -485,8 +485,15 @@ decisions:
 - ✅ `maxLength`, ✅ `minLength`, ✅ `pattern` — landed. See "Features" below.
 
 **Applicators:**
-- `anyOf`, `not`, `if-then-else` — reject per P6; document rationale and
-  rewrite hints.
+- ✅ `anyOf` — spec'd (`features/anyOf/spec.md`). P6-reject: inclusive-or
+  with overlapping branches and no decidable selector; fix-it points at a
+  discriminated `oneOf` (exclusive) or an `allOf` (combine).
+- ✅ `if-then-else` — spec'd (`features/if-then-else/spec.md`). P6-reject:
+  runtime conditional shape (the `dependentSchemas` generalization); fix-it
+  points at `oneOf` / `dependentRequired` / unconditional
+  `properties`+`required`. A stray `then`/`else` without `if` rejects as a
+  no-op.
+- `not` — remaining; reject per P6, document rationale and rewrite hints.
 - ✅ `allOf` — spec'd (`features/allOf/spec.md`). Admitted as a **load-time
   merge/flatten**, not a retained combinator: branches fold into a single
   materialized schema that the ordinary keyword loaders then lower (no
