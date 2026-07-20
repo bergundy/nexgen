@@ -6,7 +6,7 @@ lowers everything to one shared type model. The generator emits that model
 for each target. The per-file document concerns the Parse step decides
 first — the two file modes and the `nexusrpc` / `$schema` root rules —
 live in [[input-files]]. See [PRINCIPLES.md](PRINCIPLES.md) and
-`features/<keyword>/spec.md` for detail.
+`features/<keyword>.md` for detail.
 
 ```mermaid
 flowchart TD

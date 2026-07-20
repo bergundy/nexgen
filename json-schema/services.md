@@ -5,7 +5,7 @@ input document — the cross-cutting design note for declaring **Nexus
 services and their operations** (alongside the type-producing `$defs`),
 and emitting idiomatic service bindings in all four targets. Like
 [[nullability]] and [[generated-file-layout]], this is a design note, not
-a keyword spec, so it adapts the `features/<keyword>/spec.md` skeleton
+a keyword spec, so it adapts the `features/<keyword>.md` skeleton
 rather than following it verbatim.
 
 ## Spec summary

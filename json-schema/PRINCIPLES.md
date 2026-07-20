@@ -2,7 +2,7 @@
 
 Cross-cutting concerns only. Feature-specific reasoning — type tables,
 per-language mechanisms, loader rejects, property-testing matrices —
-lives in `features/<keyword>/spec.md`. This file is the shared base the
+lives in `features/<keyword>.md`. This file is the shared base the
 specs build on and link back to by label (`Pn`, `Pn.m`,
 `PRINCIPLES <lang> §n`); those labels are stable references, do not
 renumber them.

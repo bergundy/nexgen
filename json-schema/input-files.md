@@ -6,7 +6,7 @@ the loader recognizes, and the root-property rules
 (`nexusrpc` / `$schema`) that are decided **before** any schema
 processing. Like [[generated-file-layout]] and [[pipeline]], this is a
 loader-level note, not a per-keyword spec, so it adapts the
-`features/<keyword>/spec.md` skeleton rather than following it verbatim.
+`features/<keyword>.md` skeleton rather than following it verbatim.
 
 The reference semantics that turn a *set* of these files into one package
 live in [[ref]] (input set / closure) and [[generated-file-layout]]

@@ -146,7 +146,7 @@ the loader, so all four targets accept exactly the same schemas.
    `$id` re-basing, no pointers into the middle of a schema. Paths are
    normalized and the transitive closure of reachable files becomes the
    *input set*; their common-ancestor directory is the *input root*. See
-   [features/ref/spec.md](features/ref/spec.md).
+   [features/ref.md](features/ref.md).
 3. **Strict-subset gate.** Anything outside the supported subset is
    rejected here with a diagnostic that names the location and the fix —
    e.g. an array `type`, a missing `type`, a bare `{type: object}` with no

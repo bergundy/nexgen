@@ -22,13 +22,13 @@ incorrect output.
 - **Target spec:** JSON Schema 2020-12 (per P5).
   - <https://json-schema.org/draft/2020-12/json-schema-validation>
   - <https://json-schema.org/draft/2020-12/json-schema-core>
-- **Per-feature specs:** `features/<keyword>/spec.md`, following the
-  template established by `features/type/spec.md`.
+- **Per-feature specs:** `features/<keyword>.md`, following the
+  template established by `features/type.md`.
 
 ## Spec template (per feature)
 
-Each `features/<keyword>/spec.md` follows this skeleton — worked
-example at `features/type/spec.md`:
+Each `features/<keyword>.md` follows this skeleton — worked
+example at `features/type.md`:
 
 1. **Spec summary** — what the keyword does (3–5 bullets)
 2. **Support decision** — support / partial / reject + rationale
@@ -72,34 +72,34 @@ example at `features/type/spec.md`:
 
 ### Features
 
-- `features/type/spec.md`: complete. Integer cap: ±(2^53−1). 1 open
+- `features/type.md`: complete. Integer cap: ±(2^53−1). 1 open
   question — cross-language conformance suite.
-- `features/properties/spec.md`: complete. Shared 4-stage case-mapping
+- `features/properties.md`: complete. Shared 4-stage case-mapping
   algorithm + `x-*-name` escape hatch + P15 per-scope collision pass.
   One implementation dependency: the Python serialize keep-set must map
   field name↔alias when a JSON name is case-mapped (PRINCIPLES Python §6).
-- `features/additionalProperties/spec.md`: complete. Open-by-default;
+- `features/additionalProperties.md`: complete. Open-by-default;
   typed-extras supported in every position. All four languages wrap the
   catch-all in a dedicated named member (even pure maps) for shape
   stability and clean declared/extra key separation. Go exported
   `AdditionalProperties` map field; a declared member named
   `additionalProperties` is rejected at load time. Zero open questions.
-- `features/required/spec.md`: complete. Zero open questions.
-- `features/maxProperties/spec.md`, `features/minProperties/spec.md`:
+- `features/required.md`: complete. Zero open questions.
+- `features/maxProperties.md`, `features/minProperties.md`:
   complete (runtime count assertions). Count is over **distinct wire
   member keys**, taken before default population (see [[default]]) — defaults never
   count; counted as one number, never summed across declared/extras
   buckets. Zero open questions.
-- `features/dependentRequired/spec.md`: complete (runtime cross-field
+- `features/dependentRequired.md`: complete (runtime cross-field
   presence; `dependentSchemas` split off as P6-reject). Zero open Qs.
-- `features/patternProperties/spec.md`: complete — **temporarily
+- `features/patternProperties.md`: complete — **temporarily
   unsupported** (rejected at load time in v1, deferred not categorically
   excluded: a single-pattern typed-map form is plausibly lowerable).
   1 open question — single-pattern carve-out.
-- `features/propertyNames/spec.md`: complete — **partial** (map-shaped
+- `features/propertyNames.md`: complete — **partial** (map-shaped
   objects only; rejected alongside `properties`). 1 open question —
   static enforcement alongside `properties`.
-- `features/const/spec.md`: complete — **supported (scalar,
+- `features/const.md`: complete — **supported (scalar,
   string/integer/number/boolean)**. Emits a type **closed** to the const
   value for every scalar kind (P13.1): TS the closed literal (`'v'` /
   `1.5` / `true`), Python `Literal['v']` (`float` consts plain `float`),
@@ -118,7 +118,7 @@ example at `features/type/spec.md`:
   exclusive with `default` and `enum`. `const:null` rejected; composite
   (object/array) const temporarily unsupported. 1 open question —
   composite-const carve-out.
-- `features/default/spec.md`: complete — **supported** with off-the-wire /
+- `features/default.md`: complete — **supported** with off-the-wire /
   materialized-on-read semantics: annotation (no validator, never fails validation);
   off-the-wire; set-ness tracked; omit-unset with no deep-equals;
   materialized on read. Strengthens the spec's "RECOMMENDED valid
@@ -131,7 +131,7 @@ example at `features/type/spec.md`:
   `default:null` rejected, expected to relax. 1 open question —
   composite-default materialization.
 
-- `features/maximum/spec.md` (+ `minimum`, `exclusiveMaximum`,
+- `features/maximum.md` (+ `minimum`, `exclusiveMaximum`,
   `exclusiveMinimum`): complete — **supported** (runtime comparison
   assertions). `maximum` is the canonical numeric-bound spec; the other
   three reference its machinery. Comparison is a shared-`Validate`
@@ -148,7 +148,7 @@ example at `features/type/spec.md`:
   OpenAPI-3.0 boolean form** (`exclusiveMaximum: true`) with a rewrite
   fix-it — the largest source-dialect difference in the family. Zero open
   questions.
-- `features/multipleOf/spec.md`: complete — **partial**: positive
+- `features/multipleOf.md`: complete — **partial**: positive
   **integer** divisor only; **fractional divisor temporarily unsupported**
   (reject at load, deferred not excluded). Empirically justified (P1):
   integer modulo and IEEE `fmod` agree value-for-value across all four
@@ -159,7 +159,7 @@ example at `features/type/spec.md`:
   explicit `fmod` AfterValidator for numbers, native `multiple_of` for
   ints). Combined with a range: reject when no multiple lies in the
   interval. 1 open question — fractional-divisor decimal-scaling carve-out.
-- `features/maxLength/spec.md` (+ `minLength`, `pattern`): complete —
+- `features/maxLength.md` (+ `minLength`, `pattern`): complete —
   **string assertions**. `maxLength` is the canonical string-length spec
   (like [[maximum]] for numerics); `minLength` mirrors it. Both are
   **supported**: length is counted in Unicode **code points** (RFC 8259),
@@ -327,7 +327,7 @@ example at `features/type/spec.md`:
   Java/Go/Python (conservative-omit); TS round-trips all states
   faithfully.
 - **Optional-non-nullable strictly rejects explicit `null`** —
-  per-language enforcement strategies in `nullability/spec.md`.
+  per-language enforcement strategies in `nullability.md`.
 - **Integer parsing honors spec** — accept `1.0`/`1e2` as integers;
   reject `1.5`. Per-language runtime helpers (`parseSpecInteger`,
   `_parse_spec_integer`, Java node helper `SpecNumbers.specLong`).
@@ -389,7 +389,7 @@ example at `features/type/spec.md`:
   that diverge from what their docs imply. Verify with throwaway
   probes before committing the spec text.
 - **Probes at `json-schema/research/`** — re-runnable at any time, candidate
-  to promote into a conformance suite (see `type/spec.md` OQ2).
+  to promote into a conformance suite (see `features/type.md` OQ2).
 - **Decisions cite principles by P-number.** Every Support decision
   in a feature spec must reference the P-number(s) it's grounded in.
 - **Key empirical findings for future work:**
@@ -435,7 +435,7 @@ example at `features/type/spec.md`:
 All former high-priority blockers are resolved. Completed:
 - ±(2^53−1) integer cap (see [[type]]); all four PRINCIPLES.md language sections;
   open-by-default typed structs; Java error-aggregation primitive; `$ref`
-  spec (`features/ref/spec.md` + `generated-file-layout.md`).
+  spec (`features/ref.md` + `generated-file-layout.md`).
 
 ### Feature specs to write (≈50)
 
@@ -485,20 +485,20 @@ decisions:
 - ✅ `maxLength`, ✅ `minLength`, ✅ `pattern` — landed. See "Features" below.
 
 **Applicators:**
-- ✅ `anyOf` — spec'd (`features/anyOf/spec.md`). P6-reject: inclusive-or
+- ✅ `anyOf` — spec'd (`features/anyOf.md`). P6-reject: inclusive-or
   with overlapping branches and no decidable selector; fix-it points at a
   discriminated `oneOf` (exclusive) or an `allOf` (combine).
-- ✅ `if-then-else` — spec'd (`features/if-then-else/spec.md`). P6-reject:
+- ✅ `if-then-else` — spec'd (`features/if-then-else.md`). P6-reject:
   runtime conditional shape (the `dependentSchemas` generalization); fix-it
   points at `oneOf` / `dependentRequired` / unconditional
   `properties`+`required`. A stray `then`/`else` without `if` rejects as a
   no-op.
-- ✅ `not` — spec'd (`features/not/spec.md`). P6-reject: negation names an
+- ✅ `not` — spec'd (`features/not.md`). P6-reject: negation names an
   open complement (no positive type/member/shape); fix-it points at a
   positive `type`/constraint, an `enum`/`const` closed value set, or the
   complementary `exclusiveMinimum`/`exclusiveMaximum` bound. `not:{}`/`true`
   rejects as unsatisfiable; `not:false` as a no-op.
-- ✅ `allOf` — spec'd (`features/allOf/spec.md`). Admitted as a **load-time
+- ✅ `allOf` — spec'd (`features/allOf.md`). Admitted as a **load-time
   merge/flatten**, not a retained combinator: branches fold into a single
   materialized schema that the ordinary keyword loaders then lower (no
   `allOf` residue, no new emitted type). Same-axis numeric bounds from
@@ -514,7 +514,7 @@ decisions:
   (supersedes the old [[ref]] sibling-reject). Closed-object merge fixes
   the raw-allOf `additionalProperties:false` footgun by closing against the
   union of declared properties.
-- ✅ `oneOf` — spec'd (`features/oneOf/spec.md`). Selector-separable unions
+- ✅ `oneOf` — spec'd (`features/oneOf.md`). Selector-separable unions
   supported, emitted as a closed sum type (Go sealed interface, TS/Python
   native union, Java 8 by-convention interface): (a) disjoint JSON kinds
   separate by the wire token (mixed kinds + nullable unions included), and
@@ -527,11 +527,11 @@ decisions:
   `number` overlap (unsatisfiable).
 
 **Core / structural:**
-- ✅ `$ref`, ✅ `$defs` — landed (`features/ref/spec.md` +
+- ✅ `$ref`, ✅ `$defs` — landed (`features/ref.md` +
   `generated-file-layout.md`). Named-targets-only, local-file-only, no
   siblings, no `$id`; nested package tree per language (Go flattens); cyclic types hoist
   (not merge; P14); unsatisfiable-cycle reject.
-- ✅ `$comment` — landed (`features/comment/spec.md`). Known core
+- ✅ `$comment` — landed (`features/comment.md`). Known core
   keyword whose spec-mandated behavior is "ignore": accepted and silently
   dropped (non-string → reject), never surfaced as a doc comment (the line
   that separates it from [[description]]).
@@ -553,23 +553,23 @@ decisions:
 
 ## Open question inventory
 
-### `features/type/spec.md`
+### `features/type.md`
 1. **Cross-language conformance suite** for integer runtime helpers.
 
-### `features/properties/spec.md`
+### `features/properties.md`
 1. **Python serialize keep-set name↔alias mapping** — the
    `@model_serializer` keep-set (PRINCIPLES Python §6) filters Python
    field names against serialized keys; an `x-py-name`/case-mapped JSON
    alias means the keep-set must map name↔alias.
 
-### `features/patternProperties/spec.md`
+### `features/patternProperties.md`
 1. Possible future single-pattern typed-map carve-out (deferred).
 
-### `features/propertyNames/spec.md`
+### `features/propertyNames.md`
 1. Static enforcement of `propertyNames` alongside `properties`
    (currently rejected; deferred).
 
-### `features/const/spec.md`
+### `features/const.md`
 1. Composite (object/array) const — temporarily unsupported; would need
    a deep structural-equality check. Deferred.
 2. Validating the const value against constraint keywords (`pattern`,
@@ -581,23 +581,23 @@ decisions:
    reject path is forward-compatible but the acceptance policy for
    `>1.0.0` is deferred (P13.2).
 
-### `features/multipleOf/spec.md`
+### `features/multipleOf.md`
 1. **Fractional-divisor carve-out** — `multipleOf: 0.1`/`2.5` is rejected
    (deferred). A future decimal-scaling lowering could support
    fixed-precision fractional divisors if all four targets agree; revisit
    on demand.
 
-### `features/maximum/spec.md` (+ minimum / exclusive pair)
+### `features/maximum.md` (+ minimum / exclusive pair)
 - Zero open questions. (Flooring a fractional bound on an integer field —
   rather than rejecting — was considered and rejected: Pydantic can't
   represent it and silent flooring violates "reject ambiguity loudly".)
 
-### `features/maxLength/spec.md` (+ minLength)
+### `features/maxLength.md` (+ minLength)
 - Zero open questions. (The Pydantic length-unit question is **resolved**:
   verified to count code points — pydantic 2.13.4,
   `research/string_probe/pydantic_length_probe.py`.)
 
-### `features/pattern/spec.md`
+### `features/pattern.md`
 1. **Widen the accepted subset** — v1 still rejects backtracking constructs,
    inline flag groups, and `\S` in a multi-member class; each could later be
    admitted via a semantics-preserving rewrite (`(?i)`→case-fold, etc.),
@@ -632,7 +632,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
    contract only; sync/async, headers, links are implementation-time and
    not surfaced. Flagged for future I/O cardinality/streaming concepts.
 
-### `features/default/spec.md`
+### `features/default.md`
 1. Composite (object/array) defaults — deferred, expected to relax. v1
    is scalar-only; lifting needs a spec for materializing a literal
    object/array default into a constructed language value on read and
@@ -641,7 +641,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
 2. Validating the default value against constraint keywords at load time
    — deferred to land with those constraint features.
 
-### `features/ref/spec.md`
+### `features/ref.md`
 1. **Pointer into a non-`$defs` subschema** — currently rejected (must
    extract to `$defs`); could relax via anonymous-name-synthesis.
    Deferred pending demand.
@@ -661,7 +661,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
 ## How to pick up the work in a new session
 
 1. Read `PRINCIPLES.md` and this `PLAN.md`.
-2. Read `features/type/spec.md` as the worked-example template
+2. Read `features/type.md` as the worked-example template
    and `nullability.md` for cross-cutting conventions.
 3. Pick a feature from the priority list above.
 4. Use `WebFetch` to grab the JSON Schema 2020-12 spec text for that
@@ -682,7 +682,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
 
 - `json-schema/PRINCIPLES.md` — decisions
 - `json-schema/PLAN.md` — this file (state + next steps)
-- `json-schema/features/<keyword>/spec.md` — per-feature design (one
+- `json-schema/features/<keyword>.md` — per-feature design (one
   directory per JSON Schema keyword only)
 - `json-schema/*.md` cross-cutting design notes (not keywords):
   `input-files.md`, `generated-file-layout.md`, `nullability.md`,
