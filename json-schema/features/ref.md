@@ -27,7 +27,8 @@ per language (the layout itself lives in [[generated-file-layout]]).
 ## Support decision
 
 **Support: partial** — `$ref` to **named targets only**, **local files
-only**, **no siblings**, **no `$id`**.
+only**, **no `$id`**; sibling keywords are accepted and merged as an
+implicit `allOf` ([[allOf]]).
 
 `$defs` is **supported** as the canonical (and only) place a `$ref` may
 target by name.
@@ -304,7 +305,7 @@ helper is emitted — the named-type machinery already in place
 
 | Source | Handling |
 |---|---|
-| draft-07 (`$ref` siblings ignored) | reject sibling-bearing `$ref`; the draft-07 author intended the siblings to be dead, so dropping them and re-pointing is a safe rewrite |
+| draft-07 (`$ref` siblings ignored) | siblings are **merged** as an implicit `allOf` per 2020-12 ([[allOf]]), not dropped — a stricter, more faithful reading (the one cross-draft behavior change). A draft-07 author who intended the siblings as dead keys will see them take effect; remove them to restore the old meaning |
 | `definitions` (draft-07 keyword) | not recognized; require `$defs`. Diagnostic suggests renaming `definitions` → `$defs` |
 | `$id`-rebased refs (OpenAPI/JSON-Schema bundlers) | reject; the input must be a flat local-file tree resolvable by path + pointer |
 | `$anchor` / `$dynamicRef` | reject (P6); not in the subset |
