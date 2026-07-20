@@ -63,7 +63,7 @@ example at `features/type/spec.md`:
   extends JsonMappingException` with `List<Violation{path,reason}>`.
   All four language sections complete — Go (6), TypeScript (6),
   Python (6), Java (6).
-- `features/nullability/spec.md`: cross-cutting design note (not a
+- `nullability.md`: cross-cutting design note (not a
   keyword). Covers optionality + nullability for all 4 languages with
   per-language enforcement strategies. Carries the per-field serialize
   omit-vs-emit-`null` table (P12). Python optional+nullable uses
@@ -202,7 +202,10 @@ example at `features/type/spec.md`:
   and native `pattern=` rejected as Unicode-class-divergent
   (`pydantic_pattern_probe.py`). All three string specs have zero open
   questions except pattern's one deferred widen-the-subset item.
-- `features/services/spec.md`: complete — **supported**. Nexus extension
+
+### Cross-cutting (continued)
+
+- `services.md`: complete — **supported**. Nexus extension
   (not a JSON Schema keyword, like [[nullability]]): a top-level
   `services` map → per-language service bindings (Go `struct` of
   `OperationReference`s, TS `nexus.service`, Python `@nexusrpc.service`
@@ -220,9 +223,6 @@ example at `features/type/spec.md`:
   PascalCase and must be fixed). Services emit into the declaring module;
   Java is the per-file exception. Shape-compatible with the existing WIT
   emitters for reuse by the future separate crate. 2 open questions.
-
-### Cross-cutting (continued)
-
 - `input-files.md`: cross-cutting design note (not a keyword) — the
   document-level concerns of an input file. Two file modes selected by the
   root `nexusrpc` property: **Nexus document** (root is an envelope, not a
@@ -624,7 +624,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
   anchors) + inject `(?a)` (Unicode `\b`). Captured in the spec's
   "Prospective targets" note.
 
-### `features/services/spec.md`
+### `services.md`
 1. **Explicit-vs-default wire name (Python/Java)** — generator always
    emits `name=` for P1 clarity; could omit when `fqn` equals the SDK
    default. Deferred.
@@ -662,7 +662,7 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
 
 1. Read `PRINCIPLES.md` and this `PLAN.md`.
 2. Read `features/type/spec.md` as the worked-example template
-   and `features/nullability/spec.md` for cross-cutting conventions.
+   and `nullability.md` for cross-cutting conventions.
 3. Pick a feature from the priority list above.
 4. Use `WebFetch` to grab the JSON Schema 2020-12 spec text for that
    keyword (links at top). **Don't trust the doc-fetcher's summary**
@@ -682,4 +682,8 @@ Resolved (were OQ2/OQ3, plus the follow-on .NET/Ruby + `\s` normalization):
 
 - `json-schema/PRINCIPLES.md` — decisions
 - `json-schema/PLAN.md` — this file (state + next steps)
-- `json-schema/features/<keyword>/spec.md` — per-feature design
+- `json-schema/features/<keyword>/spec.md` — per-feature design (one
+  directory per JSON Schema keyword only)
+- `json-schema/*.md` cross-cutting design notes (not keywords):
+  `input-files.md`, `generated-file-layout.md`, `nullability.md`,
+  `services.md`, `pipeline.md`
