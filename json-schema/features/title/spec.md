@@ -84,12 +84,17 @@ Loader behavior:
   (spec: "preferably be short"), and a multi-line summary line is a
   category error — prose belongs in [[description]]. Diagnostic: move the
   body to `description`.
-- `title` as a **sibling of `$ref`** → **reject**, under the general
-  no-`$ref`-siblings rule (see [[ref]]); it is not a `title`-specific
-  reject. Put the `title` on the referenced definition.
-- Multiple `title`s applicable to one node after an [[allOf]] merge (P6) →
-  dedup; **conflicting** titles after dedup → **reject** (P7.1,
-  ambiguous). Mirrors [[default]]'s merged-conflict handling.
+- `title` as a **sibling of `$ref`** is **not** rejected: a
+  sibling-bearing `$ref` is rewritten to an implicit `allOf` and **merged**
+  (see [[ref]]), so a use-site `title` folds into the merged schema under
+  the [[allOf]] rule below — deduped against the target's own `title` when
+  identical, and when they differ the use-site `title` **wins** (it is last
+  in the rewrite; see [[ref]]).
+- Multiple `title`s applicable to one node after an [[allOf]] merge (P6),
+  whether from an explicit `allOf` or a `$ref` sibling → **last-wins**:
+  identical values dedup, and when they differ the **last-merged** `title`
+  survives (see [[allOf]]). A differing title is a deterministic override,
+  never a reject. Mirrors [[default]] and [[description]].
 
 ## Type mapping
 
@@ -177,6 +182,8 @@ comment. There is nothing to check at runtime and nothing to test at the
 | Title on a property | `properties:{email:{title:"Email address", type:"string"}}` → field doc summary |
 | Title + description | `{title:"User", description:"A registered user.", type:"object"}` → summary + body |
 | Title on a scalar member | `{title:"Age in years", type:"integer"}` |
+| Title sibling of a `$ref` (merged, last-wins) | `{$ref:"#/$defs/User", title:"Account"}` → the use-site `title` overrides the target's when they differ (see [[ref]]) |
+| Differing merged titles (last-wins) | `allOf:[{title:"A"},{title:"B"}]` → `"B"` (see [[allOf]]) |
 
 ### Rejected at load time (negative)
 
@@ -185,8 +192,6 @@ comment. There is nothing to check at runtime and nothing to test at the
 | Non-string value | `{title:42}`, `{title:["a"]}` |
 | Empty / whitespace-only | `{title:""}`, `{title:"  "}` |
 | Multi-line (prose in a label) | `{title:"User\naccount"}` (use `description`) |
-| Sibling of `$ref` (see [[ref]]) | `{$ref:"#/$defs/User", title:"User"}` |
-| Conflicting merged titles (P7.1) | two [[allOf]] branches with different `title`s on the same node |
 
 ### Runtime fixtures
 
@@ -204,11 +209,14 @@ covered by generation-snapshot tests, not runtime fixtures.
   deliberately does **not** participate in. A property's `title`
   decorates the generated member's doc comment; it never renames the
   member (the name stays the property key, per the resolved policy).
-- **[[ref]]**: `title` as a `$ref` sibling is rejected under the
-  no-siblings rule; carry the `title` on the referenced definition, which
-  supplies the type's doc summary.
-- **[[allOf]]**: merges (P6) can bring multiple `title`s onto one node;
-  dedup, and reject conflicting values (P7.1).
+- **[[ref]]**: a `title` **sibling** of a `$ref` is not rejected — the
+  `$ref` and its siblings are rewritten to an implicit [[allOf]] and merged
+  (see [[ref]]); because the rewrite puts the siblings last, a use-site
+  `title` **overrides** the referenced target's under the last-wins rule
+  below.
+- **[[allOf]]**: merges (P6) — explicit or via a `$ref` sibling — can bring
+  multiple `title`s onto one node; identical values dedup, differing ones
+  resolve **last-wins** (see [[allOf]]), never a reject.
 - **[[services]]**: the Nexus envelope decorates services/operations with
   `description` (see the envelope's recognized members); `title` is a
   **schema** annotation and applies to the types under `$defs` and their
@@ -258,7 +266,8 @@ instead (and keeps the `title` as its doc summary).
   doc-comment machinery.
 - [[properties]] — owns the field/type naming policy `title` deliberately
   does not touch.
-- [[ref]] — `title` as a `$ref` sibling is rejected under no-siblings.
+- [[ref]] — a `title` sibling of a `$ref` merges via the implicit-`allOf`
+  rewrite; use-site value wins (last-wins).
 - [[default]] — the other basic-metadata annotation (§9.2); unlike
   `title` it carries operational semantics (omit-unset, materialize-on-
   read), whereas `title` is purely a doc comment.

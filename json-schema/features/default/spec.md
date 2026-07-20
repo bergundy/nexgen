@@ -103,8 +103,11 @@ Loader behavior:
   `nil`/`None`/`null`/`undefined` and `<Field>OrDefault()` returning `nil`
   adds nothing. Mirrors [[const]]'s `const: null` rejection.
 - Multiple `default` occurrences applicable to one sub-instance (via
-  merged schemas) → dedup per spec; conflicting values after dedup →
-  reject (P7.1, ambiguous).
+  merged schemas) → **last-wins**: identical values dedup per spec; when
+  they differ, the value from the **last-merged** schema survives — a
+  later [[allOf]] branch, or a `$ref` use-site sibling overriding the
+  target (see [[allOf]]/[[ref]]). A differing default is a deterministic
+  override, not a conflict; nothing is rejected.
 
 ## Type mapping
 
@@ -201,6 +204,7 @@ Three consequences that the count specs already encode:
 | Optional integer default | `{type:"integer", default:0}` |
 | Optional boolean default | `{type:"boolean", default:false}` |
 | Optional + nullable with scalar default | `{oneOf:[{type:"string"},{type:"null"}], default:"x"}` |
+| Differing merged defaults (last-wins) | `allOf:[{default:"a"},{default:"b"}]` → `"b"`; `{$ref:"#/$defs/X", default:"local"}` overrides X's default (see [[allOf]]/[[ref]]) |
 
 ### Rejected at load time (negative)
 
@@ -213,7 +217,6 @@ Three consequences that the count specs already encode:
 | **Array default (deferred)** | `{type:"array", items:{type:"string"}, default:["a"]}` |
 | `default: null` (degenerate) | `{oneOf:[{type:"string"},{type:"null"}], default:null}` |
 | With `const` | `{type:"string", const:"v1", default:"v1"}` |
-| Conflicting merged defaults | two applicable `default`s with different values |
 | Synthesized-name collision (P15) | a field `nickname` with a `default` **and** a sibling member mapping to `NicknameOrDefault` (Go field/method clash); two `DEFAULT_<FIELD>` consts that case-map the same (TS) |
 
 ### Runtime fixtures (validator / adapters)

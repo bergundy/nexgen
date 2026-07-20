@@ -114,9 +114,16 @@ Ref-branch specifics:
 
 ## Merge algorithm
 
-The merge folds branches pairwise; it is associative and
-order-independent (intersection is commutative), so the result does not
-depend on branch order. Per keyword:
+The merge folds branches pairwise. **Constraint** merging is associative
+and order-independent (intersection is commutative), so the *validation
+semantics* never depend on branch order. The one order-sensitive part is
+**metadata-annotation selection** ([[title]], [[description]],
+[[default]]): these carry no validation effect, so instead of rejecting a
+conflict the merge keeps the **last** branch's value (**last-wins**) — a
+deterministic override, not an ambiguity. The `$ref`-with-siblings rewrite
+places the `$ref` **first** and the use-site siblings **last** (see
+[[ref]]), so an annotation written next to a `$ref` overrides the
+referenced target's. Per keyword:
 
 ### Type and value sets
 
@@ -127,7 +134,7 @@ depend on branch order. Per keyword:
 | `enum` | **set intersection** of the members (kept in first-seen order) | the intersection is **empty** |
 | `const` + `enum` | the `const` must be a member of the `enum`; result is the `const` | the `const` is not in the `enum` |
 | `format` | identical → dedupe | two **different** `format`s (no single value is two formats) |
-| `default` | identical → dedupe; a lone `default` is kept | two branches carry **different** `default`s → ambiguous (**P7.1**) |
+| `title` / `description` / `default` | **last-wins**: identical values dedupe; when they differ the **last** branch's value survives (metadata, no validation effect); the `$ref`-sibling rewrite makes the use-site value override the target's. A lone value is kept. | never — a differing metadata value is an override, not a conflict |
 
 ### Numeric bounds ([[minimum]] / [[maximum]] / exclusives / [[multipleOf]])
 
@@ -304,6 +311,7 @@ loader. Reason strings come from the owning constraint families
 | Closed base + extension (footgun-fixed) | `{allOf:[{properties:{a},additionalProperties:false},{properties:{b}}]}` → closed to `{a,b}` |
 | Nested `allOf` flattened | `{allOf:[{allOf:[{minimum:1}]},{maximum:9}]}` |
 | Identity branch dropped | `{allOf:[{type:string,minLength:3},true]}` |
+| Differing metadata annotation (last-wins) | `{allOf:[{default:1},{default:2}]}` → `2`; likewise `title`/`description` take the last branch's value (use-site sibling overrides a `$ref` target) |
 
 ### Rejected at load time (negative)
 
@@ -315,7 +323,6 @@ loader. Reason strings come from the owning constraint families
 | Disagreeing `const` | `{allOf:[{const:1},{const:2}]}` |
 | `const` violates a sibling | `{allOf:[{const:5},{maximum:4}]}` |
 | Differing `format` | `{allOf:[{format:email},{format:uri}]}` |
-| Differing `default` (ambiguous, P7.1) | `{allOf:[{default:1},{default:2}]}` |
 | Distinct `pattern`s (no single regex) | `{allOf:[{pattern:'^a'},{pattern:'z$'}]}` |
 | Distinct `contains` (two existentials) | `{allOf:[{contains:{const:1}},{contains:{const:2}}]}` |
 | `false` branch (unsatisfiable) | `{allOf:[{type:object},false]}` |
