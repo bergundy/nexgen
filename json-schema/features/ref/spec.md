@@ -75,9 +75,34 @@ fix-it:
 - **`$id` anywhere** (root or nested) → reject. Fix-it: "remove `$id`;
   refs resolve by file path + JSON pointer." (local-file-only — no URI resolution.)
 - **HTTP/URI ref**, `$anchor` fragment, `$dynamicRef`, `$dynamicAnchor`
-  → reject (local-file-only / P6; the `$dynamic*` keywords have their own specs).
+  → reject (local-file-only / P6). These anchor and dynamic-reference
+  keywords are owned by this spec — see Anchors & dynamic references below.
 - **Unresolvable target** (missing file, missing `$defs` entry) → reject.
   (`..` segments are resolved, not rejected — see Resolution.)
+
+### Anchors & dynamic references — rejected
+
+The 2020-12 anchoring keywords all name a target by some route **other**
+than the `$defs` key + JSON Pointer this spec is built on, and each opens
+a resolution surface the strict subset avoids (**P6**). They live here,
+alongside `$id`, because they are reference-mechanism variants — not
+standalone applicators — and share one rationale:
+
+- **`$anchor`** declares a plain-name fragment (`{"$anchor":"foo"}`,
+  referenced as `#foo`). It is a *second* way to name a subschema that is
+  not the `$defs` key our type-name derivation reads (see Type-name
+  derivation), and in practice travels with `$id` re-basing. Accepting it
+  would fork naming into two mechanisms with no added expressiveness →
+  **reject**. Fix-it: "put the target in `$defs` and reference it by
+  `#/$defs/<Name>`."
+- **`$dynamicRef` / `$dynamicAnchor`** resolve *at validation time*
+  against the dynamic scope — the same `$dynamicRef` binds to whichever
+  `$dynamicAnchor` is outermost on the current evaluation path, so it
+  denotes **different schemas for different instances**. There is no single
+  static target to lower to a named type at codegen time (**P6/P7** — no
+  decidable typed lowering) → **reject**. Fix-it: "use a static
+  `#/$defs/<Name>` reference; the generated types are resolved once, not
+  per-instance."
 
 ## Resolution & the input set
 
@@ -238,7 +263,7 @@ helper is emitted — the named-type machinery already in place
 | Pointer into non-`$defs` | `{"$ref": "#/properties/x/items"}` — not nameable (P7) |
 | `$id` present | root or nested `$id` — no URI resolution (local-file-only) |
 | HTTP ref | `{"$ref": "https://example.com/s.json"}` — not local (local-file-only) |
-| `$dynamicRef` / `$anchor` fragment | not in subset (P6) |
+| `$anchor` / `$dynamicRef` / `$dynamicAnchor` | not in subset (P6) — see Anchors & dynamic references |
 | Unresolvable | missing file or missing `$defs` entry |
 | Unsatisfiable cycle | every edge required + non-nullable + single-valued |
 | Type-name collision | two targets → same identifier in an emitted language (per-target, P15) |

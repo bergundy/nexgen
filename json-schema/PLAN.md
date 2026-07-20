@@ -527,11 +527,15 @@ decisions:
   `generated-file-layout.md`). Named-targets-only, local-file-only, no
   siblings, no `$id`; single flat package per language; cyclic types hoist
   (not merge; P14); unsatisfiable-cycle reject.
-- Remaining: `$schema`, `$id` (the document-level rules are already
-  settled — `$schema` 2020-12-only/assumed in [[input-files]]; `$id`
-  reject in [[ref]] + restated in [[input-files]] — so these keyword specs
-  should defer to those rather than restate),
-  `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$vocabulary`, `$comment`.
+- ✅ `$comment` — landed (`features/comment/spec.md`). Known core
+  keyword whose spec-mandated behavior is "ignore": accepted and silently
+  dropped (non-string → reject), never surfaced as a doc comment (the line
+  that separates it from [[description]]).
+- Folded into their owning docs (no standalone spec, no restatement):
+  `$schema` (dialect, [[input-files]]), `$id` (reject, [[ref]] + restated
+  in [[input-files]]), `$anchor` / `$dynamicRef` / `$dynamicAnchor`
+  (reference-mechanism rejects, promoted to a named subsection in [[ref]]),
+  `$vocabulary` (meta-schema-only reject, [[input-files]]).
 
 **Metadata / annotations:**
 - `format` — high priority, codegen-relevant (e.g. `date-time` →
@@ -569,11 +573,7 @@ decisions:
    land with those constraint features.
 
 ### `input-files.md`
-1. **Standalone `$schema` / `$id` keyword specs defer here** — the
-   dialect rule (2020-12 only / assumed-when-absent) and the `$id` reject
-   are settled in this doc + [[ref]]; those keyword specs should point
-   here rather than restate.
-2. **Widening the `nexusrpc` version range** — v1 pins `"1.0.0"`; the
+1. **Widening the `nexusrpc` version range** — v1 pins `"1.0.0"`; the
    reject path is forward-compatible but the acceptance policy for
    `>1.0.0` is deferred (P13.2).
 

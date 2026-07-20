@@ -55,6 +55,7 @@ from any file in the closure ([[ref]]).
 | `nexusrpc` | selects mode | **Presence selects Nexus-document mode and is required to enable `services`.** Accepts **exactly** the string `"1.0.0"`. Any other value — a different version (`"1.1.0"`, `"2.0.0"`, `"0.9.0"`), a malformed string (`"1.0"`, `"v1"`), or a non-string (`1`, `1.0`) → reject (P13 — see below). |
 | `$schema` | both | **Optional.** If present, must be exactly `"https://json-schema.org/draft/2020-12/schema"` (P5). Absent → 2020-12 assumed. Any other dialect URI → reject. Applies in **both** modes (a Nexus document's `$defs` are 2020-12 too). |
 | `$id` | both | **Rejected anywhere** (root or nested) — refs resolve by file path + JSON pointer, with no URI re-basing. Owned by [[ref]]. |
+| `$vocabulary` | both | **Rejected anywhere.** A meta-schema-only keyword (it declares which vocabularies a *dialect* requires); it has no meaning in an instance-validating type schema, and the dialect here is fixed to 2020-12 (`$schema`). Presence → reject with a fix-it ("remove `$vocabulary`; the dialect is pinned to 2020-12"). |
 | `description` | both | Optional; the document/type doc comment, per the usual annotation handling. |
 
 ### `nexusrpc` — the version marker
@@ -90,6 +91,13 @@ authored against a different draft. This rule is the document-level home
 of the dialect decision; any standalone `$schema` keyword spec **defers
 to this doc**, and any standalone `$id` keyword spec **defers to [[ref]]**
 (the reject is owned there) — neither restates the rule.
+
+The companion meta keyword **`$vocabulary`** is owned here too: it belongs
+only to a *meta-schema* (a schema declaring which vocabularies its dialect
+requires), never to an instance-validating type schema, and the dialect is
+pinned to 2020-12 regardless. It is therefore **rejected anywhere** it
+appears (row above) rather than parsed — there is no custom-dialect surface
+for it to configure (P5/P6).
 
 ## Stray `services` guard (P7.1)
 
@@ -148,6 +156,7 @@ see those specs for the detail.
 | Wrong `$schema` dialect | `$schema: ".../draft-07/schema#"` → fix-it naming the 2020-12 URI |
 | Schema-shaped root in a Nexus document | root `type`/`properties`/`additionalProperties` alongside `nexusrpc` → "move the type into `$defs`" |
 | `$id` present (anywhere) | root or nested `$id` — owned by [[ref]] |
+| `$vocabulary` present | root `$vocabulary` — meta-schema-only keyword, no place in a type schema (P5/P6) |
 
 ## Interactions
 
