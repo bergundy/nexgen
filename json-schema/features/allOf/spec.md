@@ -98,6 +98,20 @@ spellings behave the same; there is no spelling that a user can write which
 the other spelling would reject. (This supersedes [[ref]]'s former
 sibling-reject rule, which existed only because `allOf` was rejected.)
 
+**Keywords sibling to `allOf` fold in the same way** — the `$ref` case is
+just its most common instance. A node may carry keywords *alongside* its
+`allOf`: `{allOf: [A, B], type: "object", description: "D"}`. Per JSON
+Schema every keyword in a node applies conjunctively, so those siblings
+are one more conjunct — the node is equivalent to
+`allOf: [A, B, {…siblings}]`, with the node's **own** keywords folded as
+the **final** branch. `$ref`, `allOf`, and plain siblings compose into one
+canonical fold: `{$ref: R, allOf: [A], …S}` → `allOf: [{$ref: R}, A, {…S}]`.
+The node's own keywords go **last** for a reason — under the metadata
+**last-wins** rule (below) the local declaration then overrides any
+[[title]]/[[description]]/[[default]] pulled in from a branch or a `$ref`
+target, which is the intuitive "use-site wins" precedence. Constraints are
+unaffected by the position (intersection is order-independent).
+
 Ref-branch specifics:
 - Resolution reuses [[ref]] entirely: named-targets-only, local-file-only,
   no `$id`, no HTTP. An unresolvable branch is [[ref]]'s reject.
@@ -232,8 +246,9 @@ object is closed to the union; if all are open, it stays open (**P13**).
   wrapper; fix-it: inline the branch), mirroring the single-branch
   [[oneOf]] reject.
 - Flatten nested `allOf`, resolve `$ref` branches ([[ref]] rules; cycle →
-  unsatisfiable reject), rewrite `$ref`-with-siblings to `allOf`, drop
-  `true`/`{}` branches.
+  unsatisfiable reject), rewrite `$ref`-with-siblings to `allOf`, fold any
+  keywords **sibling to `allOf`** in as a final branch, drop `true`/`{}`
+  branches.
 - `false` branch, or a branch that is a `oneOf`/`anyOf`/`not`/`if`
   combinator → reject.
 - Fold per *Merge algorithm*. Reject the unmergeable pairs: disjoint
@@ -308,6 +323,7 @@ loader. Reason strings come from the owning constraint families
 | Overlapping property merged recursively | `{allOf:[{properties:{n:{minLength:2}}},{properties:{n:{maxLength:8}}}]}` |
 | Base-type extension via `$ref` | `Widget` example above |
 | `$ref`-with-siblings (implicit allOf) | `{$ref:'#/$defs/Base', minProperties:1}` |
+| `allOf`-with-siblings (node keywords fold in, last) | `{allOf:[{$ref:'#/$defs/Base'}], properties:{extra:{type:string}}, required:[extra], description:"D"}` → `allOf:[{$ref:Base},{properties:{extra},required:[extra],description:"D"}]`; siblings extend Base, local `description` wins |
 | Closed base + extension (footgun-fixed) | `{allOf:[{properties:{a},additionalProperties:false},{properties:{b}}]}` → closed to `{a,b}` |
 | Nested `allOf` flattened | `{allOf:[{allOf:[{minimum:1}]},{maximum:9}]}` |
 | Identity branch dropped | `{allOf:[{type:string,minLength:3},true]}` |
