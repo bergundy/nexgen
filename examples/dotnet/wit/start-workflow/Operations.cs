@@ -67,9 +67,8 @@ namespace NexGen.StartWorkflowService
         private static async Task<StartedWorkflow> StartWorkflowAsync(StartWorkflowRequest request)
         {
             var client = Workflow.CreateNexusWorkflowClient<IStartWorkflowService>(StartWorkflowServiceEndpoint);
-            var wireRequest = request.ToProto();
-            var result = await client.ExecuteNexusOperationAsync<Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionResponse>(svc => svc.StartWorkflow(wireRequest)).ConfigureAwait(true);
-            return new StartedWorkflow(wireRequest.Namespace, request.WorkflowId, string.IsNullOrEmpty(result.RunId) ? null : result.RunId);
+            var result = await client.ExecuteNexusOperationAsync<StartWorkflowResult>(svc => svc.StartWorkflow(request)).ConfigureAwait(true);
+            return new StartedWorkflow(request.Namespace, request.WorkflowId, string.IsNullOrEmpty(result.RunId) ? null : result.RunId);
         }
 
         /// <param name="workflow">The workflow value.</param>
@@ -104,9 +103,8 @@ namespace NexGen.StartWorkflowService
         private static async Task<StartedWorkflow> RestartWorkflowAsync(StartWorkflowRequest request)
         {
             var client = Workflow.CreateNexusWorkflowClient<IStartWorkflowService>(StartWorkflowServiceEndpoint);
-            var wireRequest = request.ToProto();
-            var result = await client.ExecuteNexusOperationAsync<Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionResponse>(svc => svc.RestartWorkflow(wireRequest)).ConfigureAwait(true);
-            return new StartedWorkflow(wireRequest.Namespace, request.WorkflowId, string.IsNullOrEmpty(result.RunId) ? null : result.RunId);
+            var result = await client.ExecuteNexusOperationAsync<RestartWorkflowResult>(svc => svc.RestartWorkflow(request)).ConfigureAwait(true);
+            return new StartedWorkflow(request.Namespace, request.WorkflowId, string.IsNullOrEmpty(result.RunId) ? null : result.RunId);
         }
 
         /// <param name="workflow">The workflow value.</param>
@@ -138,25 +136,16 @@ namespace NexGen.StartWorkflowService
         }
 
         [GeneratedCode("nex-gen", null)]
-        public static async Task<Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse> CancelWorkflowAsync(Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionRequest request)
+        private static async Task<CancelWorkflowResponse> CancelWorkflowAsync(CancelWorkflowRequest request)
         {
             var client = Workflow.CreateNexusWorkflowClient<IStartWorkflowService>(StartWorkflowServiceEndpoint);
-            var result = await client.ExecuteNexusOperationAsync<Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse>(svc => svc.CancelWorkflow(request)).ConfigureAwait(true);
-            return result;
-        }
-
-        [GeneratedCode("nex-gen", null)]
-        private static async Task<Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse> CancelWorkflowAsync(CancelWorkflowRequest request)
-        {
-            var client = Workflow.CreateNexusWorkflowClient<IStartWorkflowService>(StartWorkflowServiceEndpoint);
-            var wireRequest = request.ToProto();
-            var result = await client.ExecuteNexusOperationAsync<Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse>(svc => svc.CancelWorkflow(wireRequest)).ConfigureAwait(true);
+            var result = await client.ExecuteNexusOperationAsync<CancelWorkflowResponse>(svc => svc.CancelWorkflow(request)).ConfigureAwait(true);
             return result;
         }
 
         /// <param name="options">Options for the operation.</param>
         [GeneratedCode("nex-gen", null)]
-        public static Task<Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse> CancelWorkflowAsync(CancelWorkflowOptions options)
+        public static Task<CancelWorkflowResponse> CancelWorkflowAsync(CancelWorkflowOptions options)
         {
             var request = new CancelWorkflowRequest(options.WorkflowExecution)
             {

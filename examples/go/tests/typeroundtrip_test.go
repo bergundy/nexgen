@@ -41,33 +41,6 @@ func TestTypeRoundtripSuite(t *testing.T) {
 	suite.Run(t, new(TypeRoundtripTestSuite))
 }
 
-func (s *TypeRoundtripTestSuite) TestRetryPolicyOperation() {
-	policy := temporal.RetryPolicy{MaximumAttempts: 3}
-	protoPolicy := &commonpb.RetryPolicy{MaximumAttempts: 3}
-
-	s.env.OnNexusOperation(
-		typeRoundtripServiceName,
-		nexus.NewOperationReference[*commonpb.RetryPolicy, *commonpb.RetryPolicy]("RetryPolicyOperation"),
-		mock.Anything,
-		mock.Anything,
-	).Return(
-		&nexus.HandlerStartOperationResultSync[*commonpb.RetryPolicy]{
-			Value: protoPolicy,
-		},
-		nil,
-	)
-
-	s.env.ExecuteWorkflow(func(ctx workflow.Context) (*temporal.RetryPolicy, error) {
-		return getFutureResult[temporal.RetryPolicy](ctx, tr.RetryPolicyOperation(ctx, policy))
-	})
-
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-	var result temporal.RetryPolicy
-	s.NoError(s.env.GetWorkflowResult(&result))
-	s.Equal(int32(3), result.MaximumAttempts)
-}
-
 func (s *TypeRoundtripTestSuite) TestActivityOptionsOperation() {
 	policy := temporal.RetryPolicy{MaximumAttempts: 3}
 	priority := temporal.Priority{
@@ -137,12 +110,6 @@ func (s *TypeRoundtripIntegrationSuite) SetupTest() {
 	s.env = s.NewTestWorkflowEnvironment()
 	s.calls = nil
 
-	retryPolicyOp := nexus.NewSyncOperation("RetryPolicyOperation",
-		func(ctx context.Context, input *commonpb.RetryPolicy, opts nexus.StartOperationOptions) (*commonpb.RetryPolicy, error) {
-			s.calls = append(s.calls, testCall{"RetryPolicyOperation", input})
-			return input, nil
-		})
-
 	activityOptionsOp := nexus.NewSyncOperation("ActivityOptionsOperation",
 		func(ctx context.Context, input *activitypb.ActivityOptions, opts nexus.StartOperationOptions) (*activitypb.ActivityOptions, error) {
 			s.calls = append(s.calls, testCall{"ActivityOptionsOperation", input})
@@ -150,31 +117,12 @@ func (s *TypeRoundtripIntegrationSuite) SetupTest() {
 		})
 
 	service := nexus.NewService(typeRoundtripServiceName)
-	s.NoError(service.Register(retryPolicyOp, activityOptionsOp))
+	s.NoError(service.Register(activityOptionsOp))
 	s.env.RegisterNexusService(service)
 }
 
 func TestTypeRoundtripIntegrationSuite(t *testing.T) {
 	suite.Run(t, new(TypeRoundtripIntegrationSuite))
-}
-
-func (s *TypeRoundtripIntegrationSuite) TestRetryPolicyOperation() {
-	policy := temporal.RetryPolicy{MaximumAttempts: 3}
-
-	s.env.ExecuteWorkflow(func(ctx workflow.Context) (*temporal.RetryPolicy, error) {
-		return getFutureResult[temporal.RetryPolicy](ctx, tr.RetryPolicyOperation(ctx, policy))
-	})
-
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-	var result temporal.RetryPolicy
-	s.NoError(s.env.GetWorkflowResult(&result))
-	s.Equal(int32(3), result.MaximumAttempts)
-
-	s.Require().Len(s.calls, 1)
-	s.Equal("RetryPolicyOperation", s.calls[0].Operation)
-	handlerInput := s.calls[0].Input.(*commonpb.RetryPolicy)
-	s.Equal(int32(3), handlerInput.GetMaximumAttempts())
 }
 
 func (s *TypeRoundtripIntegrationSuite) TestActivityOptionsOperation() {

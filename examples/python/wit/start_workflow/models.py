@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
+
 import collections.abc
 import dataclasses
 import typing
@@ -10,10 +12,14 @@ import temporalio.api.common.v1.message_pb2
 import temporalio.api.workflowservice.v1.request_response_pb2
 
 from ._support import (
+    duration_from_proto,
     duration_to_proto,
+    payloads_from_proto,
     payloads_to_proto,
+    task_queue_from_proto,
     task_queue_to_proto,
     workflow_namespace,
+    workflow_type_from_proto,
     workflow_type_to_proto,
 )
 
@@ -25,8 +31,34 @@ class StartWorkflowRequest:
     workflow_id: str
     task_queue: str
     workflow_start_delay: datetime.timedelta | None = None
+    namespace: str = dataclasses.field(default_factory=workflow_namespace)
 
-    def to_proto(
+    @classmethod
+    def _temporal_from_intermediate(
+        cls,
+        proto: temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionRequest,
+    ) -> StartWorkflowRequest:
+        if not proto.HasField("workflow_type"):
+            raise ValueError("missing required field StartWorkflowRequest.workflow")
+        workflow = workflow_type_from_proto(proto.workflow_type)
+        if not proto.workflow_id:
+            raise ValueError("missing required field StartWorkflowRequest.workflow_id")
+        workflow_id = proto.workflow_id
+        if not proto.HasField("task_queue"):
+            raise ValueError("missing required field StartWorkflowRequest.task_queue")
+        task_queue = task_queue_from_proto(proto.task_queue)
+        return cls(
+            workflow=workflow,
+            args=payloads_from_proto(proto.input) if proto.HasField("input") else None,
+            workflow_id=workflow_id,
+            task_queue=task_queue,
+            workflow_start_delay=duration_from_proto(proto.workflow_start_delay)
+            if proto.HasField("workflow_start_delay")
+            else None,
+            namespace=proto.namespace,
+        )
+
+    def _temporal_to_intermediate(
         self,
     ) -> temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionRequest:
         message = temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionRequest()
@@ -39,23 +71,88 @@ class StartWorkflowRequest:
             message.workflow_start_delay.CopyFrom(
                 duration_to_proto(self.workflow_start_delay)
             )
-        message.namespace = workflow_namespace()
+        message.namespace = self.namespace
         return message
 
 
 @dataclasses.dataclass(slots=True)
+class StartWorkflowResult:
+    run_id: str | None = None
+
+    @classmethod
+    def _temporal_from_intermediate(
+        cls,
+        proto: temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse,
+    ) -> StartWorkflowResult:
+        return cls(
+            run_id=proto.run_id if bool(proto.run_id) else None,
+        )
+
+    def _temporal_to_intermediate(
+        self,
+    ) -> temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse:
+        message = temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse()
+        if self.run_id is not None:
+            message.run_id = self.run_id
+        return message
+
+
+@dataclasses.dataclass(slots=True)
+class RestartWorkflowResult:
+    run_id: str | None = None
+
+    @classmethod
+    def _temporal_from_intermediate(
+        cls,
+        proto: temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse,
+    ) -> RestartWorkflowResult:
+        return cls(
+            run_id=proto.run_id if bool(proto.run_id) else None,
+        )
+
+    def _temporal_to_intermediate(
+        self,
+    ) -> temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse:
+        message = temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse()
+        if self.run_id is not None:
+            message.run_id = self.run_id
+        return message
+
+
+@dataclasses.dataclass(slots=True, kw_only=True)
 class CancelWorkflowRequest:
+    namespace: str = dataclasses.field(default_factory=workflow_namespace)
     workflow_execution: WorkflowExecution
     reason: str | None = None
 
-    def to_proto(
+    @classmethod
+    def _temporal_from_intermediate(
+        cls,
+        proto: temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionRequest,
+    ) -> CancelWorkflowRequest:
+        if not proto.HasField("workflow_execution"):
+            raise ValueError(
+                "missing required field CancelWorkflowRequest.workflow_execution"
+            )
+        workflow_execution = WorkflowExecution._temporal_from_intermediate(
+            proto.workflow_execution
+        )
+        return cls(
+            namespace=proto.namespace,
+            workflow_execution=workflow_execution,
+            reason=proto.reason if bool(proto.reason) else None,
+        )
+
+    def _temporal_to_intermediate(
         self,
     ) -> temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionRequest:
         message = temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionRequest()
-        message.workflow_execution.CopyFrom(self.workflow_execution.to_proto())
+        message.namespace = self.namespace
+        message.workflow_execution.CopyFrom(
+            self.workflow_execution._temporal_to_intermediate()
+        )
         if self.reason is not None:
             message.reason = self.reason
-        message.namespace = workflow_namespace()
         return message
 
 
@@ -65,7 +162,7 @@ class WorkflowExecution:
     run_id: str | None = None
 
     @classmethod
-    def from_proto(
+    def _temporal_from_intermediate(
         cls,
         proto: temporalio.api.common.v1.message_pb2.WorkflowExecution,
     ) -> WorkflowExecution:
@@ -74,10 +171,12 @@ class WorkflowExecution:
         workflow_id = proto.workflow_id
         return cls(
             workflow_id=workflow_id,
-            run_id=proto.run_id,
+            run_id=proto.run_id if bool(proto.run_id) else None,
         )
 
-    def to_proto(self) -> temporalio.api.common.v1.message_pb2.WorkflowExecution:
+    def _temporal_to_intermediate(
+        self,
+    ) -> temporalio.api.common.v1.message_pb2.WorkflowExecution:
         message = temporalio.api.common.v1.message_pb2.WorkflowExecution()
         message.workflow_id = self.workflow_id
         if self.run_id is not None:
@@ -88,13 +187,13 @@ class WorkflowExecution:
 @dataclasses.dataclass(slots=True)
 class CancelWorkflowResponse:
     @classmethod
-    def from_proto(
+    def _temporal_from_intermediate(
         cls,
-        _proto: temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
+        _wire: temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse,
     ) -> CancelWorkflowResponse:
         return cls()
 
-    def to_proto(
+    def _temporal_to_intermediate(
         self,
     ) -> temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse:
         message = temporalio.api.workflowservice.v1.request_response_pb2.RequestCancelWorkflowExecutionResponse()

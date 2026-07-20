@@ -12,7 +12,57 @@ namespace NexGen.StartWorkflowService
 {
 
     [GeneratedCode("nex-gen", null)]
-    internal class CancelWorkflowRequest
+    internal class RestartWorkflowResult : NexGen.Support.ITemporalIntermediate
+    {
+        public string? RunId { get; init; }
+
+        public static RestartWorkflowResult TemporalFromIntermediate(Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionResponse wire, Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            return new RestartWorkflowResult()
+            {
+                RunId = string.IsNullOrEmpty(wire.RunId) ? null : wire.RunId,
+            };
+        }
+
+        public object TemporalToIntermediate(Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            var proto = new Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionResponse();
+            if (RunId is { } runId)
+            {
+                proto.RunId = runId;
+            }
+            return proto;
+        }
+
+    }
+
+    [GeneratedCode("nex-gen", null)]
+    internal class StartWorkflowResult : NexGen.Support.ITemporalIntermediate
+    {
+        public string? RunId { get; init; }
+
+        public static StartWorkflowResult TemporalFromIntermediate(Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionResponse wire, Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            return new StartWorkflowResult()
+            {
+                RunId = string.IsNullOrEmpty(wire.RunId) ? null : wire.RunId,
+            };
+        }
+
+        public object TemporalToIntermediate(Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            var proto = new Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionResponse();
+            if (RunId is { } runId)
+            {
+                proto.RunId = runId;
+            }
+            return proto;
+        }
+
+    }
+
+    [GeneratedCode("nex-gen", null)]
+    internal class CancelWorkflowRequest : NexGen.Support.ITemporalIntermediate
     {
         internal CancelWorkflowRequest(WorkflowExecution workflowExecution)
         {
@@ -21,12 +71,26 @@ namespace NexGen.StartWorkflowService
 
         public WorkflowExecution WorkflowExecution { get; }
         public string? Reason { get; init; }
+        private string? _namespace;
+        public string Namespace
+        {
+            get => _namespace ?? NexGen.Support.TemporalWorkflowContext.WorkflowNamespace();
+            init => _namespace = value;
+        }
 
-        public Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionRequest ToProto()
+        public static CancelWorkflowRequest TemporalFromIntermediate(Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionRequest wire, Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            return new CancelWorkflowRequest(WorkflowExecution.TemporalFromIntermediate(wire.WorkflowExecution, payloadConverter))
+            {
+                Reason = string.IsNullOrEmpty(wire.Reason) ? null : wire.Reason,
+            };
+        }
+
+        public object TemporalToIntermediate(Temporalio.Converters.IPayloadConverter? payloadConverter = null)
         {
             var proto = new Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionRequest();
-            proto.Namespace = NexGen.Support.TemporalWorkflowContext.WorkflowNamespace();
-            proto.WorkflowExecution = WorkflowExecution.ToProto();
+            proto.Namespace = Namespace;
+            proto.WorkflowExecution = (Temporalio.Api.Common.V1.WorkflowExecution)WorkflowExecution.TemporalToIntermediate(payloadConverter);
             if (Reason is { } reason)
             {
                 proto.Reason = reason;
@@ -37,9 +101,14 @@ namespace NexGen.StartWorkflowService
     }
 
     [GeneratedCode("nex-gen", null)]
-    internal class CancelWorkflowResponse
+    public class CancelWorkflowResponse : NexGen.Support.ITemporalIntermediate
     {
-        public Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse ToProto()
+        public static CancelWorkflowResponse TemporalFromIntermediate(Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse wire, Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            return new CancelWorkflowResponse();
+        }
+
+        public object TemporalToIntermediate(Temporalio.Converters.IPayloadConverter? payloadConverter = null)
         {
             var proto = new Temporalio.Api.WorkflowService.V1.RequestCancelWorkflowExecutionResponse();
             return proto;
@@ -48,7 +117,7 @@ namespace NexGen.StartWorkflowService
     }
 
     [GeneratedCode("nex-gen", null)]
-    internal class StartWorkflowRequest
+    internal class StartWorkflowRequest : NexGen.Support.ITemporalIntermediate
     {
         internal StartWorkflowRequest(string workflow, string workflowId, string taskQueue)
         {
@@ -65,18 +134,33 @@ namespace NexGen.StartWorkflowService
         public string WorkflowId { get; }
         public string TaskQueue { get; }
         public System.TimeSpan? WorkflowStartDelay { get; init; }
+        private string? _namespace;
+        public string Namespace
+        {
+            get => _namespace ?? NexGen.Support.TemporalWorkflowContext.WorkflowNamespace();
+            init => _namespace = value;
+        }
 
-        public Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionRequest ToProto()
+        public static StartWorkflowRequest TemporalFromIntermediate(Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionRequest wire, Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            return new StartWorkflowRequest(NexGen.Support.ProtoExtensions.FromWorkflowTypeProto(wire.WorkflowType, payloadConverter), wire.WorkflowId, NexGen.Support.ProtoExtensions.FromTaskQueueProto(wire.TaskQueue, payloadConverter))
+            {
+                Args = wire.Input == null ? null : NexGen.Support.ProtoExtensions.FromPayloads(wire.Input, payloadConverter),
+                WorkflowStartDelay = wire.WorkflowStartDelay == null ? null : NexGen.Support.ProtoExtensions.FromDurationProto(wire.WorkflowStartDelay, payloadConverter),
+            };
+        }
+
+        public object TemporalToIntermediate(Temporalio.Converters.IPayloadConverter? payloadConverter = null)
         {
             var proto = new Temporalio.Api.WorkflowService.V1.StartWorkflowExecutionRequest();
-            proto.Namespace = NexGen.Support.TemporalWorkflowContext.WorkflowNamespace();
-            proto.WorkflowType = NexGen.Support.ProtoExtensions.ToWorkflowTypeProto(Workflow);
+            proto.Namespace = Namespace;
+            proto.WorkflowType = NexGen.Support.ProtoExtensions.ToWorkflowTypeProto(Workflow, payloadConverter);
             if (Args is { } args)
             {
-                proto.Input = NexGen.Support.ProtoExtensions.ToPayloads(args);
+                proto.Input = NexGen.Support.ProtoExtensions.ToPayloads(args, payloadConverter);
             }
             proto.WorkflowId = WorkflowId;
-            proto.TaskQueue = NexGen.Support.ProtoExtensions.ToTaskQueueProto(TaskQueue);
+            proto.TaskQueue = NexGen.Support.ProtoExtensions.ToTaskQueueProto(TaskQueue, payloadConverter);
             if (WorkflowStartDelay is { } workflowStartDelay)
             {
                 proto.WorkflowStartDelay = workflowStartDelay.ToProto();
@@ -87,7 +171,7 @@ namespace NexGen.StartWorkflowService
     }
 
     [GeneratedCode("nex-gen", null)]
-    public class WorkflowExecution
+    public class WorkflowExecution : NexGen.Support.ITemporalIntermediate
     {
         public WorkflowExecution(string workflowId)
         {
@@ -97,7 +181,15 @@ namespace NexGen.StartWorkflowService
         public string WorkflowId { get; }
         public string? RunId { get; init; }
 
-        public Temporalio.Api.Common.V1.WorkflowExecution ToProto()
+        public static WorkflowExecution TemporalFromIntermediate(Temporalio.Api.Common.V1.WorkflowExecution wire, Temporalio.Converters.IPayloadConverter? payloadConverter = null)
+        {
+            return new WorkflowExecution(wire.WorkflowId)
+            {
+                RunId = string.IsNullOrEmpty(wire.RunId) ? null : wire.RunId,
+            };
+        }
+
+        public object TemporalToIntermediate(Temporalio.Converters.IPayloadConverter? payloadConverter = null)
         {
             var proto = new Temporalio.Api.Common.V1.WorkflowExecution();
             proto.WorkflowId = WorkflowId;

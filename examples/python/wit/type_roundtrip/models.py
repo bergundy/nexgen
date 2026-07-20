@@ -27,7 +27,7 @@ class ActivityOptions:
     priority: temporalio.common.Priority | None = None
 
     @classmethod
-    def from_proto(
+    def _temporal_from_intermediate(
         cls,
         proto: temporalio.api.activity.v1.message_pb2.ActivityOptions,
     ) -> ActivityOptions:
@@ -49,7 +49,9 @@ class ActivityOptions:
             else None,
         )
 
-    def to_proto(self) -> temporalio.api.activity.v1.message_pb2.ActivityOptions:
+    def _temporal_to_intermediate(
+        self,
+    ) -> temporalio.api.activity.v1.message_pb2.ActivityOptions:
         message = temporalio.api.activity.v1.message_pb2.ActivityOptions()
         if self.task_queue is not None:
             message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))

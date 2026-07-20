@@ -8,7 +8,7 @@ dependencies = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "ruff>=0.15.12",
-    "temporalio==1.26.0",
+    "temporalio",
     "typing_extensions>=4.15.0",
 ]
 
@@ -25,6 +25,9 @@ target-version = "py310"
 
 [tool.basedpyright]
 exclude = [".venv"]
+stubPath = "typings"
 reportAny = false
 reportExplicitAny = false
+reportPrivateUsage = false
+reportUnknownMemberType = false
 reportUnnecessaryTypeIgnoreComment = "error"
