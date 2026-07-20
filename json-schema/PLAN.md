@@ -529,7 +529,7 @@ decisions:
 **Core / structural:**
 - ✅ `$ref`, ✅ `$defs` — landed (`features/ref/spec.md` +
   `generated-file-layout.md`). Named-targets-only, local-file-only, no
-  siblings, no `$id`; single flat package per language; cyclic types hoist
+  siblings, no `$id`; nested package tree per language (Go flattens); cyclic types hoist
   (not merge; P14); unsatisfiable-cycle reject.
 - ✅ `$comment` — landed (`features/comment/spec.md`). Known core
   keyword whose spec-mandated behavior is "ignore": accepted and silently

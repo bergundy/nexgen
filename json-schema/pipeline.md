@@ -32,7 +32,7 @@ flowchart TD
       JV["Java"]
     end
 
-    OUT["One flat package per language<br/>Models + shared Validators + definitions/aggregator"]
+    OUT["Package per language — nested tree (Py/TS/Java), flat (Go)<br/>Models + shared Validators + definitions/aggregator"]
 
     F --> LOADER --> IR --> GEN --> OUT
 ```

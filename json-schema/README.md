@@ -130,7 +130,7 @@ the loader, so all four targets accept exactly the same schemas.
    │   Go   Java   Python   TS   │
    └─────────────┬───────────────┘
                  │
-   one flat package per language:
+   package per language (nested tree mirroring inputs; Go flattens):
    models + one shared validator core + (for ≥2 inputs) an aggregator
 ```
 
@@ -168,7 +168,9 @@ the loader, so all four targets accept exactly the same schemas.
 The **type model** records each field's shape, whether it is *optional*
 (may be absent) vs *nullable* (may be `null`) — two distinct axes — plus
 constraints, `const`, and `default`. The generator lowers that model to one
-**flat package per language**: the model types, a single shared validator
+**package per language** — a nested tree mirroring the input directories,
+except Go which flattens every input into a single package (its packages
+cannot form import cycles): the model types, a single shared validator
 core (error types + spec-number helpers + the (de)serialize scaffolding),
 and — when more than one input file is involved — an aggregator that
 re-exports everything.

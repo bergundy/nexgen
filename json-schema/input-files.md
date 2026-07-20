@@ -44,7 +44,7 @@ property:
 
 The mode is a property of the file, not of the run: a single generator
 input set may mix Nexus documents and pure JSON Schema files freely. Both
-modes contribute types to the one flat package ([[generated-file-layout]]),
+modes contribute types to the one output package ([[generated-file-layout]]),
 and a Nexus document's `$defs` are ordinary types reachable by `$ref`
 from any file in the closure ([[ref]]).
 
@@ -177,10 +177,10 @@ see those specs for the detail.
   service/operation grammar, names, I/O, emission.
 - [[ref]] — `$id` reject, input-set/closure, type-name derivation that
   build on the per-file mode.
-- [[generated-file-layout]] — per-input module computation, the one
-  flat package, the collision pass every file feeds.
+- [[generated-file-layout]] — per-input module computation, the nested
+  package tree (flat for Go), the collision pass every file feeds.
 - [[pipeline]] — the loader stage these document-level checks run in.
 - [[PRINCIPLES.md]] — **P5** (2020-12 base), **P6** (strict subset),
   **P7/P7.1** (strict schema, reject loudly with fix-its), **P13/P13.2**
-  (forward compatibility), **P14/P15** (one file per input; one
+  (forward compatibility), **P14/P15** (one module per input file; one
   identifier namespace).
