@@ -54,7 +54,7 @@ Conditional shape has no coherent lowering across the four targets:
   says "this object has one set of required fields/constraints under
   condition C and a different set otherwise." This is the same wall
   [[dependentSchemas]] hits (it is literally `if {required:[…]} then
-  <subschema>`) and the reason [[anyOf]] and `not` are rejected. The only
+  <subschema>`) and the reason [[anyOf]] and [[not]] are rejected. The only
   lowerings are to forfeit typing or to synthesize conditional variants that
   do not round-trip identically across languages (**P1**).
 - **P7 / P7.1 (reject ambiguity loudly).** A schema whose shape depends on
@@ -123,7 +123,7 @@ generation.
   shapes — a discriminated union. Most `if`/`then`/`else` written to switch
   an object's shape on a tag value should be a `oneOf` with a `const`-tag
   discriminator.
-- **[[anyOf]]** / `not`: the other boolean-logic applicators rejected per
+- **[[anyOf]]** / [[not]]: the other boolean-logic applicators rejected per
   **P6**; `if`/`then`/`else` is the *conditional* member of that rejected
   family, [[anyOf]] the *inclusive-or* member.
 - **[[allOf]]** / **[[oneOf]]**: the two admitted applicators — an

@@ -115,7 +115,7 @@ generation.
   it merges/flattens to one schema at load.
 - **[[nullability]]**: nullability is expressed with the two-branch
   `oneOf:[{T},{null}]` pattern, never `anyOf`.
-- **[[dependentSchemas]]** / `not` / `if`/`then`/`else`: the other
+- **[[dependentSchemas]]** / [[not]] / `if`/`then`/`else`: the other
   boolean-logic / conditional applicators rejected per **P6**; see
   [[if-then-else]] for the conditional-shape rationale.
 

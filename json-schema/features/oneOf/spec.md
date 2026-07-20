@@ -8,7 +8,7 @@ validates against **exactly one** branch. Among the boolean-logic
 applicators, `oneOf` and [[allOf]] are the two the subset admits — but by
 different mechanisms: `allOf` (intersection) collapses to a single
 materialized schema at load ([[allOf]]), whereas `oneOf` is *retained* as a
-closed sum type. [[anyOf]], `not`, [[if-then-else]] stay **rejected** per
+closed sum type. [[anyOf]], [[not]], [[if-then-else]] stay **rejected** per
 **P6** (see [[dependentSchemas]] for the same rationale). `oneOf` earns its
 place because "exactly one" is a *sum
 type*, which lowers coherently to all four targets — **but only when the
@@ -519,11 +519,11 @@ than being written (real teeth where construction is unchecked).
   merge/flatten), so it disappears downstream, whereas `oneOf` is retained
   and emits a union. An `allOf` branch that is itself a `oneOf` is rejected
   ([[allOf]]): an intersection with a union does not collapse.
-- **[[anyOf]] / [[dependentSchemas]] / `not` / [[if-then-else]]**: the
+- **[[anyOf]] / [[dependentSchemas]] / [[not]] / [[if-then-else]]**: the
   boolean-logic / conditional applicators that stay **rejected** per
   **P6**. `oneOf` is admitted because "exactly one" is a *closed sum type*
   with a decidable selector, which inclusive-or ([[anyOf]]), negation
-  (`not`), and runtime shape-forking ([[if-then-else]] / [[dependentSchemas]])
+  ([[not]]), and runtime shape-forking ([[if-then-else]] / [[dependentSchemas]])
   are not.
 
 ## Ecosystem variance

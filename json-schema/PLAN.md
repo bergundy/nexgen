@@ -493,7 +493,11 @@ decisions:
   points at `oneOf` / `dependentRequired` / unconditional
   `properties`+`required`. A stray `then`/`else` without `if` rejects as a
   no-op.
-- `not` — remaining; reject per P6, document rationale and rewrite hints.
+- ✅ `not` — spec'd (`features/not/spec.md`). P6-reject: negation names an
+  open complement (no positive type/member/shape); fix-it points at a
+  positive `type`/constraint, an `enum`/`const` closed value set, or the
+  complementary `exclusiveMinimum`/`exclusiveMaximum` bound. `not:{}`/`true`
+  rejects as unsatisfiable; `not:false` as a no-op.
 - ✅ `allOf` — spec'd (`features/allOf/spec.md`). Admitted as a **load-time
   merge/flatten**, not a retained combinator: branches fold into a single
   materialized schema that the ordinary keyword loaders then lower (no
