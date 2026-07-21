@@ -116,12 +116,14 @@ identical in both directions (a pure predicate over the decoded value — the
 scalar matcher predicate — the same shared predicate the matcher's own
 keywords define ([[const]]/[[enum]] equality, [[minimum]]/[[maximum]]
 range, [[pattern]] regex, [[minLength]]/[[maxLength]], [[multipleOf]]) —
-and the scan **short-circuits on the first match** — *when neither
-[[minContains]] nor [[maxContains]] is present*: no [[unevaluatedItems]]
-annotation consumes the full index set, so there is nothing to collect past
-the first hit. When a count bound is present the scan instead tallies **all**
-matches (the exact count is what the bound compares — see [[maxContains]]).
-If no element matches, one `Violation` is pushed.
+and the scan **short-circuits on the first match** — *unless a
+[[maxContains]] or a [[minContains]] ≥ 2 is present*: a plain `contains`
+(or the equivalent `minContains:1`) needs only one hit, and no
+[[unevaluatedItems]] annotation consumes the full index set, so there is
+nothing to collect past the first. When a bound needs the exact tally (a
+[[maxContains]], or [[minContains]] ≥ 2) the scan instead counts **all**
+matches (see [[maxContains]]). If no element matches, one `Violation` is
+pushed.
 
 | Language | Strategy |
 |---|---|

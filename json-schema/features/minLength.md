@@ -131,7 +131,9 @@ than being written. See [[maxLength]] serialize note (symmetric).
   combined-length satisfiability rules live in [[maxLength]].
 - **[[pattern]]**: independent; both apply and aggregate. No
   regex-vs-length satisfiability cross-check (see [[maxLength]]).
-- **[[type]]**: gates applicability; the emitted type stays `string`.
+- **[[type]]**: gates applicability; `minLength` never changes the emitted
+  type — `string`, unless a materializing sibling ([[format]] /
+  [[contentEncoding]]) governs it.
 - **[[const]] / [[default]] / [[enum]]**: a supplied string literal MUST
   satisfy `minLength` at load (rule above). Closes the string-length
   portion of the deferred literal-vs-constraint obligation (see

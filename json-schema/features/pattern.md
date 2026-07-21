@@ -208,7 +208,9 @@ question below; mirrors [[multipleOf]]'s fractional-divisor deferral and
 
 ## Type mapping
 
-None. The emitted field type is [[type]]'s `string`; the regex lives only
+None. `pattern` never changes the emitted field type — [[type]]'s
+`string`, unless a materializing sibling ([[format]] / [[contentEncoding]])
+governs it; the regex lives only
 in the validator, emitted as a **compiled constant** (below) rather than
 recompiled per call.
 
@@ -305,8 +307,10 @@ Fixtures outside the corpus (validator integration, not pure matching):
   length, but general regex-length reasoning is undecidable and out of
   scope) — each is checked on its own.
 - **[[type]]**: gates applicability — `pattern` is meaningful only for
-  `string`; a mismatch is a load reject (**P7.1**). The emitted type stays
-  `string`.
+  `string`; a mismatch is a load reject (**P7.1**). `pattern` does not
+  force the emitted type to `string`: a materializing sibling ([[format]] /
+  [[contentEncoding]]) may replace it with a native construct while the
+  regex still checks the wire string.
 - **[[const]] / [[default]] / [[enum]]**: a supplied string literal MUST
   match `pattern` at load (rule above) — the regex half of the deferred
   literal-vs-constraint obligation.

@@ -84,8 +84,10 @@ Loader behavior:
 
 ## Type mapping
 
-None. The emitted field type is [[type]]'s `string`; the bound lives only
-in the validator.
+None. The bound lives only in the validator and never changes the emitted
+field type — [[type]]'s `string`, unless a materializing sibling
+([[format]] temporal / [[contentEncoding]] bytes) governs it (the bound
+then checks the encoded wire string).
 
 ## Validator mapping
 
@@ -172,8 +174,11 @@ and direction-agnostic.
   a length bound (a pattern *can* imply a minimum length, but reasoning
   about it is undecidable in general and out of scope — see [[pattern]]).
 - **[[type]]**: gates applicability — `maxLength` is meaningful only for
-  `string`; a mismatch is a load reject (**P7.1**). The emitted type is
-  `string`; `maxLength` never narrows it.
+  `string`; a mismatch is a load reject (**P7.1**). `maxLength` never
+  narrows the emitted type and does not force it to `string`: a
+  materializing sibling ([[format]] / [[contentEncoding]]) may replace it
+  with a native construct while the bound still checks the encoded wire
+  string.
 - **[[const]] / [[default]] / [[enum]]**: a string literal supplied by one
   of these on the **same node** MUST satisfy `maxLength` at load (rule
   above) — the string-length half of the deferred literal-vs-constraint
