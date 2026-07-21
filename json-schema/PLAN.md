@@ -399,9 +399,11 @@ example at `features/type.md`:
     short-circuits Pydantic's own field validation; use `mode='wrap'`
     for P11 aggregation across both error sources.
   - A key injected into the input dict by a `model_validator(mode='before')`
-    lands in `model_fields_set` — Pydantic treats it as provided. This
-    is what lets `const` auto-fill and emit through the generic omit-unset
-    serializer with no special keep-set.
+    lands in `model_fields_set` — Pydantic treats it as provided. We
+    deliberately do **not** use this to auto-fill `const`: a required+const
+    is a genuinely required field, so an absent value is a required
+    violation (not healed), and the consumer-set value emits through the
+    generic omit-unset serializer with no special keep-set.
   - Jackson's default `Long` deserializer silently truncates `1.5` to `1`.
     Custom deserializer is mandatory.
   - Jackson is fail-fast: the first field's `MismatchedInputException`

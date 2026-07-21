@@ -10,9 +10,9 @@ assertion** — a single-value [[enum]] — checked in both directions by
 the shared `Validate` layer (**P12**): any value other than the fixed
 one is **rejected** (**P13.1**). It carries **no serialize-side
 special-casing**: the value reaches the wire because it is *set in
-memory* (by the TS literal type, by the Java value constant, by a Python
-`before`-validator inject, or by the Go consumer), not because the
-serializer rewrites it.
+memory* (by the TS literal type, by the Java value constant, or by the
+consumer in Go and Python — a required+const is a required field), not
+because the serializer rewrites it.
 
 ## Spec summary
 
@@ -333,7 +333,7 @@ adapter rewrites it:
 
 | declaration | in-memory | serialize |
 |---|---|---|
-| required + const | always set (by type / `final` / `before`-inject / consumer) | emitted by the normal encode path |
+| required + const | always set (by type / `final` / consumer) | emitted by the normal encode path |
 | optional + const | present iff the consumer opts the member in | emitted **if set**, omitted if unset (normal omit-unset) |
 
 How each language guarantees "set in memory" — and validates on the way
@@ -343,7 +343,7 @@ in:
 |---|---|
 | Go | Field typed with the defined type (`Kind UserEventKind`), set idiomatically via the typed value constant (`UserEvent{Kind: UserEventKindUser}`). A forgotten field is the zero value (`UserEventKind("")`), which the shared `Validate` rejects **loudly** on serialize — consistent with how Go treats every required field. optional+const uses a pointer to the defined type + `,omitempty`, validated when non-nil. |
 | TypeScript | The field is the closed literal (`kind: "user"`); a wrong value is a compile error, so a required+const is always correct in memory and emitted by the normal `toIntermediate`. optional+const emits when not `undefined`. |
-| Python | The generated `@model_serializer(mode='wrap')` keeps `model_fields_set`. A `model_validator(mode='before')` injects the value when absent (`data[field]="user"`) — marking it *provided* so it enters `model_fields_set` and emits under plain `to_json` (the **default Temporal converter** path) — and enforces `== "user"` when present. A genuinely-absent optional field stays omitted. |
+| Python | Presence follows [[required]] like any field — **no auto-fill**: a required+const absent on the wire is a required violation (Pydantic's own missing-field error), an optional+const absent stays omitted, and a `model_validator` enforces `== "user"` whenever the value is present. A required+const is set by the consumer, so it is already in `model_fields_set` and emits under plain `to_json` (the **default Temporal converter** path); the generated `@model_serializer(mode='wrap')` re-validates it before emit. |
 | Java | `private final UserEventKind kind = UserEventKind.USER;` for required+const, getter only. The value class can only hold a known constant, so the getter (via `@JsonValue`) emits `"user"` by the normal path. On the way in, the collecting deserializer's membership lookup records a `Violation` for a non-`"user"` wire value. optional+const is a `@Nullable UserEventKind` constructor parameter, validated if non-null. Numeric/boolean consts use their value classes the same way. |
 
 The serialize equality check has teeth only where a wrong value can be
@@ -389,8 +389,8 @@ so the check is effectively a deserialize-direction guard there.
 - required+const **absent on the wire** → required violation (see
   [[required]]), reported as a presence error, not a const error.
 - Serialize of a correctly-set required const → the fixed value on the
-  wire (TS/Java cannot be wrong; Python before-inject guarantees it; Go
-  set via the value constant).
+  wire (TS/Java cannot be wrong; Python requires the field, so the
+  consumer sets it; Go set via the value constant).
 - Serialize of a Go zero-value / bypassed required const
   (`Kind == UserEventKind("")`) → rejected **loudly** by `Validate`, not
   silently rewritten (the generator never force-writes the value).

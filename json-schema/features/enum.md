@@ -68,10 +68,10 @@ Rationale (citing [[PRINCIPLES.md]]):
 - **No auto-emit.** Like [[const]], `enum` is validated, not
   force-written: the generator validates that the value is one of the set
   on every model — constructed in-language or deserialized — and never
-  force-writes a value on serialize. Unlike `const`, there is **no single
-  value to inject** on absence, so an absent required enum is a
-  [[required]] violation (never auto-filled); presence is governed by
-  [[required]] like every other field.
+  force-writes a value on serialize. As with `const`, an absent required
+  enum is a [[required]] violation (never auto-filled — for enum there is
+  no single value to pick anyway); presence is governed by [[required]]
+  like every other field.
 
 Loader behavior:
 - The array **MUST be non-empty** — an empty `enum: []` is statically
@@ -302,9 +302,9 @@ rewrites it:
 | required + enum | always set (by type / `final` / consumer) | emitted by the normal encode path |
 | optional + enum | present iff the consumer opts the member in | emitted **if set**, omitted if unset (normal omit-unset) |
 
-Unlike [[const]], there is **no `before`-inject on absence** — the
-generator cannot pick which member to fill — so an absent required enum is
-a [[required]] violation, and Python has no auto-fill step. The serialize
+As with [[const]], there is **no auto-inject on absence** — so an absent
+required enum is a [[required]] violation, and Python has no auto-fill step
+(for enum the generator could not pick which member to fill in any case). The serialize
 membership check has teeth wherever an out-of-set value can be set in
 memory before emit: an optional+enum mutated to a wrong value, a Go
 zero-value/mutated field (`Color("")` is not a member), or a Python
@@ -352,7 +352,7 @@ deserialize-direction guard there.
   "purple"`).
 - required+enum **absent on the wire** → required violation (see
   [[required]]), reported as a presence error, not an enum error (there is
-  no auto-fill, unlike [[const]]).
+  no auto-fill, the same as [[const]]).
 - Serialize of a correctly-set enum → that value on the wire (TS/Java
   cannot be out of set; Go set via a value constant).
 - Serialize of a Go zero-value / bypassed required enum (`Color("")`, not a
@@ -379,7 +379,7 @@ deserialize-direction guard there.
   type / value class over `type`'s primitive mapping (**P13.1**).
 - **[[required]]**: owns presence entirely. required+enum is always set in
   memory (so always emitted); optional+enum is validated-if-present and
-  emit-if-set. Unlike [[const]] there is no value to inject on absence, so
+  emit-if-set. As with [[const]], no value is injected on absence, so
   an absent required enum is a required violation. `enum` adds no serialize
   behavior; it only asserts membership.
 - **[[default]]**: **compatible** (unlike [[const]], which is mutually
