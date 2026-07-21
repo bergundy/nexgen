@@ -50,27 +50,49 @@ portable full-input anchor:
 - .NET: `\A…\z` + `RegexOptions.ECMAScript`
 - Rust gate: `^…$` (compile = RE2-safety proof; also matches)
 
-`corpus.json` — 67 `(value, expect)` pairs. Run: `python3 compare.py`
+`corpus.json` — 72 `(value, expect)` pairs. Run: `python3 compare.py`
 
-**Result: all 7 engines COMPILE the pinned regex and AGREE on all 67 values,
-matching the intended verdict exactly (67/67, 0 divergences, 0 compile
+**Result: all 7 engines COMPILE the pinned regex and AGREE on all 72 values,
+matching the intended verdict exactly (72/72, 0 divergences, 0 compile
 failures).** Backtracking engines (Python/Java/JS/.NET/Ruby) run in linear time
 — the alternations are unambiguous (pct-encoded starts with `%`, disjoint from
 the char classes), so there is no ReDoS (verified to 50k-char adversarial
 near-miss inputs, sub-millisecond).
 
+Fresh transcript (`python3 compare.py`):
+
+```
+total pairs: 72
+--- (a) compile-acceptance: all 7 engines compile the pinned regex ---
+  OK: rust/go/js/python/java/ruby/dotnet all compiled the pinned pattern.
+--- (b) match-agreement: all 7 engines agree per value ---
+  OK: all 7 engines agreed on every corpus value.
+--- (c) expectation check: agreed verdict == corpus `expect` ---
+  OK: agreed verdict matched `expect` for every value.
+--- summary ---
+  compile failures:     0
+  match divergences:    0
+  fully agreeing pairs: 72/72
+VERDICT: PASS - pinned check is identical across all 7 engines
+```
+
 `pinned_body_uriref.json` — the `uri-reference` variant (scheme optional +
 relative-ref with `segment-nz-nc`). Also compiles in all 7 engines; a clean
 derivation from the same building blocks.
 
-### Fidelity limits (deliberate, documented)
+### IPv6 IP-literal host is validated semantically
 
-The one place the pinned check is more permissive than strict RFC 3986: the
-**IP-literal host is structural** — `\[[0-9A-Fa-f:.]+\]` checks brackets + the
-allowed inner byte class but NOT that the bytes form a valid IPv6 address, so
-`http://[1::2::3]` (double `::`) is accepted. A faithful IPv6 grammar is huge and
-already exists as the separate `ipv6` format's pinned check; it could be spliced
-in if wanted. Everything else tested is faithful: scheme rules, pct-encoding
+The bracketed IPv6 IP-literal host is checked with the **full RFC 4291 IPv6
+grammar** (full, `::`-compressed, and IPv4-tail forms), spliced in VERBATIM from
+the pinned `ipv6` format check in `research/format_conformance/` so the URI check
+and the standalone `ipv6` check agree byte-for-byte on what a valid IPv6 address
+is. Consequences: `http://[zzzz]` (bad hex), `http://[1::2::3]` (double `::`),
+and `http://[1:2:3:4:5:6:7:8:9]` (nine groups) are **rejected**, while
+`http://[2001:db8::1]`, `http://[::1]`, `http://[fe80::1]`, and IPv4-tail
+`http://[::ffff:192.0.2.1]` pass. The combined pattern stays RE2-safe and
+compiles under the Rust `regex` gate and all six other engines. The IPvFuture
+alternative (`\[v…\]`) remains permissive/structural (RFC 3986 leaves its payload
+version-defined). Everything else tested is faithful: scheme rules, pct-encoding
 (`%HEXDIG HEXDIG` only), reg-name/sub-delims/pchar char classes, port `*DIGIT`,
 the `//authority` vs path-absolute vs path-rootless hier-part split, ASCII-only
 (non-ASCII = IRI, rejected), and `999.999.999.999` correctly accepted as a

@@ -14,9 +14,16 @@ Components (spaces added for readability; the emitted pattern has none):
   pct        : %[0-9A-Fa-f][0-9A-Fa-f]
   userinfo   : (?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*
   host       : one of
-                 IP-literal  : \[[0-9A-Fa-f:.]+\]           (IPv6)   -- permissive
+                 IP-literal  : \[IPV6\]                     (IPv6)   -- SEMANTIC
                               | \[v[0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+\]  (IPvFuture) -- permissive
                  reg-name/IPv4 : (?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*
+               where IPV6 is the RFC 4291 IPv6 grammar (full, ::-compressed, and
+               IPv4-tail forms) spliced in VERBATIM from the pinned `ipv6` format
+               check (research/format_conformance/) so the two checks agree byte-
+               for-byte on what a valid IPv6 address is. `http://[zzzz]`,
+               `http://[1::2::3]` (double `::`), and `http://[1:2:3:4:5:6:7:8:9]`
+               (too many groups) are now REJECTED; `http://[2001:db8::1]`,
+               `http://[::1]`, and IPv4-tail `http://[::ffff:192.0.2.1]` PASS.
   port       : [0-9]*
   authority  : (?:USERINFO@)?HOST(?::PORT)?
   pchar      : (?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])
@@ -34,11 +41,16 @@ Components (spaces added for readability; the emitted pattern has none):
   URI        : SCHEME : HIER-PART (?:\?QUERY)? (?:#FRAGMENT)?
 
 FIDELITY LIMITS (documented, deliberate):
-  * IP-literal host is PERMISSIVE: it checks bracket structure and the allowed
-    inner byte class, NOT that the bytes form a valid IPv6/IPvFuture address.
-    (A faithful IPv6 grammar is enormous; ipv6 format already has its own pinned
-    check. `http://[zzzz]` would pass here. Acceptable: it is still bracket-well-
-    formed and ASCII, and distinguishing it needs the ipv6 grammar.)
+  * IPv6 IP-literal host is SEMANTIC: the bracketed bytes must form a valid RFC
+    4291 IPv6 address. The check reuses the pinned `ipv6` format grammar verbatim
+    (research/format_conformance/), bracket-wrapped, so the URI check and the
+    standalone `ipv6` check agree byte-for-byte. `http://[zzzz]` (bad hex),
+    `http://[1::2::3]` (two `::`), and `http://[1:2:3:4:5:6:7:8:9]` (nine groups)
+    are rejected. The grammar is large and alternation-heavy but stays RE2-safe
+    and compiles under the Rust `regex` crate and every other target engine.
+  * IPvFuture IP-literal (`\[v...\]`) stays PERMISSIVE/structural: it checks
+    bracket + `v` + hex + `.` + allowed byte class, not any deeper semantics.
+    (RFC 3986 leaves IPvFuture's payload version-defined; no fixed grammar.)
   * reg-name does NOT reject an all-numeric-but-invalid IPv4 (e.g. 999.1.1.1);
     RFC 3986 lets such a string be a reg-name anyway, so this is actually faithful.
   * No enforcement that path after `//authority` is empty-or-absolute beyond the

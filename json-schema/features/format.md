@@ -90,10 +90,9 @@ annotated — the assertion behavior is self-documenting rather than implicit.
   - `ipv4` — dotted-quad, each octet `0–255`, no leading zeros.
   - `ipv6` — RFC 4291 (full, `::`-compressed, and IPv4-tail forms).
   - `uri`, `uri-reference` — RFC 3986, ASCII-only, at high fidelity
-    (`research/format_uri/`, 67 pairs, 7/7 agree — that run predates the
-    IP-literal tightening below, which must be re-proven against the corpus).
-    The IP-literal host `[…]` is validated semantically by splicing in the
-    pinned `ipv6` grammar (below).
+    (`research/format_uri/`, 72 pairs, 7/7 agree, including the IP-literal
+    tightening below). The IP-literal host `[…]` is validated semantically by
+    splicing in the pinned `ipv6` grammar (below).
 - **Pinned regex + a length guard** (RE2 has no total-length lookahead, so
   a cheap `code_point_count` check rides alongside the regex in the shared
   `Validate`):
@@ -455,7 +454,7 @@ compiled constant; the load gate proves it compiles, so the emitted
 
 Per-format accept/reject is exercised by the conformance corpora
 (`research/format_conformance/` 124, `format_email/` 56, `format_hostname/`
-41, `format_duration/` 68, `format_uri/` 67); the materialization round-trips
+41, `format_duration/` 68, `format_uri/` 72); the materialization round-trips
 by `research/format_materialize_clock/` and
 `research/format_materialize_duration/` (the clock corpus proves the current
 offset-preserving, no-truncation behavior — 0 mismatches across Go / Java /
@@ -548,11 +547,6 @@ get divergent verdicts across the seven native URI parsers.
    time-only type (`PlainTime` would drop the offset). If Temporal later adds
    one — or if a schema's `time` is known offset-less — `PlainTime` could
    materialize it. Ruby (prospective) likewise has no time-of-day type.
-4. **Re-prove `format_uri` with the spliced `ipv6` grammar.** The 67-pair
-   `research/format_uri/` run predates the IP-literal tightening (the host `[…]`
-   now validated by the pinned `ipv6` grammar). The corpus and pinned pattern
-   must be regenerated to confirm `http://[1::2::3]` now rejects and valid
-   literals (`[::1]`, `[2001:db8::1]`) still pass, 7/7 across targets.
 
 ## See also
 
