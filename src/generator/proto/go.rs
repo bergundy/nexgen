@@ -16,8 +16,8 @@ use crate::generator::go::{
     PlannedOperationOutput, PlannedOperationResourceReturn, PlannedScalarType, PlannedTypeInfo,
     PlannedValueType, RenderedModel, RenderedService, go_authored_type_annotation, go_field_name,
     go_replacement_type_name, go_string_literal, go_unexported_name, operation_output,
-    planned_field, planned_field_kind, planned_message_type, record_for_model_key,
-    render_operation_future_adapter, render_operation_future_return_type,
+    planned_field, planned_field_kind, planned_message_type, public_default_punning_zero_for_field,
+    record_for_model_key, render_operation_future_adapter, render_operation_future_return_type,
     resolve_resource_field_kind, split_go_type_decl_name,
 };
 
@@ -602,13 +602,17 @@ struct RenderedResourceReturn {
 
 #[derive(Debug)]
 struct RenderedResourceFieldInitializer {
-    field_name: String,
     expr: String,
 }
 
 impl OperationBinding {
-    pub(in crate::generator) fn uses_native_future_adapter(&self) -> bool {
-        self.output_from_proto.is_some() || self.resource_return.is_some()
+    pub(in crate::generator) fn requires_fmt(&self) -> bool {
+        self.output_returns_pointer
+    }
+    pub(in crate::generator) fn returned_resource_type_name(&self) -> Option<&str> {
+        self.resource_return
+            .as_ref()
+            .map(|resource| resource.resource_type_name.as_str())
     }
 }
 
@@ -790,6 +794,7 @@ impl ModelBackend {
 /// the SDK call and deserializes the proto response afterwards.
 pub(in crate::generator) fn render_operation_function_proto(
     output: &mut String,
+    service: &crate::generator::go::RenderedService<'_>,
     operation: &crate::generator::go::RenderedOperation<'_>,
     binding: &OperationBinding,
     package: &GoPackageContext,
@@ -800,8 +805,6 @@ pub(in crate::generator) fn render_operation_function_proto(
     output.push_str(&operation.func_name);
     output.push_str("(ctx ");
     output.push_str(&package.workflow_context_type());
-    output.push_str(", client ");
-    output.push_str(&package.workflow_nexus_client_type());
     output.push_str(", request ");
     output.push_str(&operation.input_type);
     output.push_str(") ");
@@ -812,9 +815,24 @@ pub(in crate::generator) fn render_operation_function_proto(
     output.push_str(&binding.input_to_proto);
     output.push('\n');
     output.push_str("\tif err != nil {\n");
-    output.push_str("\t\treturn nexGenFailedNexusOperationFuture(ctx, err)\n");
+    output.push_str("\t\tresult, resultSettable := ");
+    output.push_str(&package.new_future());
+    output.push_str("(ctx)\n");
+    output.push_str("\t\tresultSettable.SetError(err)\n");
+    output.push_str("\t\treturn result\n");
     output.push_str("\t}\n");
-    output.push_str("\tfut := client.ExecuteOperation(ctx, ");
+    let endpoint = service
+        .endpoint
+        .as_deref()
+        .expect("operations require endpoint");
+    output.push_str("\tc := ");
+    output.push_str(&package.new_nexus_client());
+    output.push('(');
+    output.push_str(&go_string_literal(endpoint));
+    output.push_str(", ");
+    output.push_str(&go_string_literal(service.wire_name));
+    output.push_str(")\n");
+    output.push_str("\tfut := c.ExecuteOperation(ctx, ");
     output.push_str(&operation_name);
     output.push_str(", requestProto");
     output.push_str(", ");
@@ -843,13 +861,15 @@ pub(in crate::generator) fn render_operation_function_proto(
             } else {
                 output.push_str("\t\tif err := fut.Get(ctx, nil); err != nil {\n");
             }
-            output.push_str("\t\t\treturn err\n");
+            output.push_str("\t\t\tresultSettable.SetError(err)\n");
+            output.push_str("\t\t\treturn\n");
             output.push_str("\t\t}\n");
             output.push_str("\t\tvalue, err := ");
             output.push_str(transform_expr);
             output.push('\n');
             output.push_str("\t\tif err != nil {\n");
-            output.push_str("\t\t\treturn err\n");
+            output.push_str("\t\t\tresultSettable.SetError(err)\n");
+            output.push_str("\t\t\treturn\n");
             output.push_str("\t\t}\n");
         });
     } else if let (Some(output_type), Some(proto_value_type), Some(from_proto)) = (
@@ -870,13 +890,15 @@ pub(in crate::generator) fn render_operation_function_proto(
                 output.push_str(proto_value_type);
                 output.push('\n');
                 output.push_str("\t\tif err := fut.Get(ctx, &result); err != nil {\n");
-                output.push_str("\t\t\treturn err\n");
+                output.push_str("\t\t\tresultSettable.SetError(err)\n");
+                output.push_str("\t\t\treturn\n");
                 output.push_str("\t\t}\n");
                 output.push_str("\t\tvalue, err := ");
                 output.push_str(from_proto);
                 output.push('\n');
                 output.push_str("\t\tif err != nil {\n");
-                output.push_str("\t\t\treturn err\n");
+                output.push_str("\t\t\tresultSettable.SetError(err)\n");
+                output.push_str("\t\t\treturn\n");
                 output.push_str("\t\t}\n");
             },
         );
@@ -897,24 +919,24 @@ pub(in crate::generator) fn render_operation_function_proto(
                 output.push_str(proto_value_type);
                 output.push('\n');
                 output.push_str("\t\tif err := fut.Get(ctx, &result); err != nil {\n");
-                output.push_str("\t\t\treturn err\n");
+                output.push_str("\t\t\tresultSettable.SetError(err)\n");
+                output.push_str("\t\t\treturn\n");
                 output.push_str("\t\t}\n");
                 for line in &resource_return.local_lines {
                     output.push_str("\t\t");
                     output.push_str(line);
                     output.push('\n');
                 }
-                output.push_str("\t\tvalue := ");
+                output.push_str("\t\tvalue := New");
                 output.push_str(&resource_return.resource_type_name);
-                output.push_str("{\n");
-                for initializer in &resource_return.field_initializers {
-                    output.push_str("\t\t\t");
-                    output.push_str(&initializer.field_name);
-                    output.push_str(": ");
+                output.push('(');
+                for (index, initializer) in resource_return.field_initializers.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
                     output.push_str(&initializer.expr);
-                    output.push_str(",\n");
                 }
-                output.push_str("\t\t}\n");
+                output.push_str(")\n");
             },
         );
     } else {
@@ -979,7 +1001,7 @@ fn build_rendered_resource_return(
                     binding.field_name
                 ),
             })?;
-        let expr = match &binding.source {
+        let (mut expr, constructor_needs_pointer_unpack) = match &binding.source {
             ResolvedResourceBindingSource::RequestField {
                 field_name,
                 proto_field_name,
@@ -1002,9 +1024,9 @@ fn build_rendered_resource_return(
                         reason,
                     })?;
                     local_lines.extend(lines);
-                    expr
+                    (expr, false)
                 } else {
-                    format!("request.{}", go_field_name(field_name))
+                    (format!("request.{}", go_field_name(field_name)), true)
                 }
             }
             ResolvedResourceBindingSource::ResultField {
@@ -1026,14 +1048,29 @@ fn build_rendered_resource_return(
                     reason,
                 })?;
                 local_lines.extend(lines);
-                expr
+                (expr, false)
             }
         };
 
-        field_initializers.push(RenderedResourceFieldInitializer {
-            field_name: go_field_name(&binding.field_name),
-            expr,
-        });
+        let field_kind = planned_field_kind(&field.kind, api_plan);
+        let internal_type = resolve_resource_field_kind(&field_kind, field.optional, package);
+        if constructor_needs_pointer_unpack
+            && field.optional
+            && public_default_punning_zero_for_field(&field_kind, &internal_type).is_some()
+        {
+            let value_type = internal_type.trim_start_matches('*');
+            let constructor_value = format!(
+                "{}ConstructorValue",
+                resource_return_local_name(&field.name)
+            );
+            local_lines.push(format!("var {constructor_value} {value_type}"));
+            local_lines.push(format!("if {expr} != nil {{"));
+            local_lines.push(format!("\t{constructor_value} = *{expr}"));
+            local_lines.push("}".to_string());
+            expr = constructor_value;
+        }
+
+        field_initializers.push(RenderedResourceFieldInitializer { expr });
     }
 
     Ok(RenderedResourceReturn {
@@ -1055,7 +1092,11 @@ fn resource_return_proto_field_source(
     let proto_field = go_proto_field_name(proto_field_name);
     let getter = format!("{source}.Get{proto_field}()");
     let field_kind = planned_field_kind(&field.kind, api_plan);
-    let native_type = resolve_resource_field_kind(&field_kind, field.optional, package);
+    let mut native_type = resolve_resource_field_kind(&field_kind, field.optional, package);
+    if field.optional && public_default_punning_zero_for_field(&field_kind, &native_type).is_some()
+    {
+        native_type = native_type.trim_start_matches('*').to_string();
+    }
 
     match &field_kind {
         PlannedFieldKind::Singular(value) => {
@@ -1187,6 +1228,15 @@ fn resource_return_singular_proto_source(
 ) -> (Vec<String>, String) {
     let converted = (conversion.from_proto)(getter);
     let uses_pointer = field.optional && native_type.starts_with('*');
+
+    if matches!(
+        conversion.kind,
+        GoConversionKind::Scalar | GoConversionKind::Enum
+    ) && !uses_pointer
+        && !conversion.fallible
+    {
+        return (Vec::new(), converted);
+    }
 
     match conversion.kind {
         GoConversionKind::OverrideConverter => {
@@ -1372,13 +1422,39 @@ fn build_field_conversion(
                 field_is_pointer,
                 "return nil, err",
             );
-            let from_lines = singular_from_proto_lines(
+            let mut from_lines = singular_from_proto_lines(
                 &conversion,
                 &proto_field,
                 &go_field,
                 field_is_pointer,
                 "return value, err",
             );
+            if field
+                .flattened_annotation_override
+                .as_ref()
+                .and_then(|annotation| annotation.for_language(Language::Go))
+                .is_some()
+                && !conversion.from_proto_returns_pointer
+            {
+                from_lines = vec![
+                    format!("if proto.Get{proto_field}() != nil {{"),
+                    format!(
+                        "\tconverted, err := {}",
+                        (conversion.from_proto)(&format!("proto.Get{proto_field}()"))
+                    ),
+                    "\tif err != nil {".to_string(),
+                    "\t\treturn value, err".to_string(),
+                    "\t}".to_string(),
+                    format!("\ttyped, ok := converted.({native_go_type})"),
+                    "\tif !ok {".to_string(),
+                    format!(
+                        "\t\treturn value, fmt.Errorf(\"nex-gen decoded field {go_field} has unexpected type %T\", converted)"
+                    ),
+                    "\t}".to_string(),
+                    format!("\tvalue.{go_field} = typed"),
+                    "}".to_string(),
+                ];
+            }
             Ok(RenderedFieldConversion {
                 to_proto_lines: to_lines,
                 from_proto_lines: from_lines,
