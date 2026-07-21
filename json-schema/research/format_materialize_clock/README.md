@@ -1,69 +1,99 @@
 # Materializing `date` / `time` / `date-time` as language constructs
 
-Empirical study for a proposed extension of `features/format`: can the three
-**temporal** formats be **materialized** — emitted as an idiomatic in-memory
-typed construct in the generated model (Go `time.Time`, Java
-`OffsetDateTime`/`LocalDate`/`LocalTime`, Python `datetime`/`date`/`time`,
-TS `Date`) — instead of the current `string` field, while keeping the **wire
-bytes byte-identical across every materializing language** (PRINCIPLES **P1**)?
+Empirical corpus for `features/format` **Materialization (type mapping)**: can
+the three **temporal** formats be **materialized** — emitted as an idiomatic
+in-memory typed construct in the generated model (Go `time.Time`, Java
+`OffsetDateTime`/`OffsetTime`/`LocalTime`/`LocalDate`, Python
+`datetime`/`date`/`time`, TS `string` / `Temporal.*` / legacy `Date`) instead of
+a bare `string` — while keeping the **wire bytes byte-identical across every
+equally-capable materializing language** (PRINCIPLES **P1**)?
 
-This is the follow-up the [`format` spec's Type-mapping][spec] and
-[`research/format_typed_repr/`][typed] left open (open question #4). That prior
-study answered a **stricter** question — *"can ALL 7 languages build a typed
-value on stdlib AND round-trip the EXACT original wire bytes?"* — and correctly
-said **no** (Rust has no temporal std type; native re-emit normalizes offsets
-and precision). This study relaxes two of those constraints in line with the
-user's ask:
+This corpus proves the **CURRENT** spec behavior, which is **no truncation**:
 
-1. **Only the 4 model targets** (Go/Java/Python/TS) need to materialize — Rust
-   is the load-time gate, not a model target. Ruby/.NET are prospective.
-   Materializing in only SOME languages (others keep `string`) is acceptable.
-2. **Truncation/normalization is acceptable IF it is consistent across
-   languages** — we do **not** require the re-emitted bytes to equal the
-   *original* wire bytes; we require every materializing language to emit the
-   **same canonical bytes** for the same logical value. That is the real P1
-   bar for a materialized field.
+> Preserve the original UTC offset and the full sub-second precision to the
+> extent each native type can hold them. Loss happens **only** at a type's
+> genuine capacity limit, never as an artificial common-denominator floor.
 
-Validation is **unchanged**: the owned pinned regex + calendar predicate
-([`research/format_conformance/`][conf]) still decides accept/reject. This
-study only concerns (b) the parse path (validated string → typed) and (c) the
-serialize path (typed → canonical wire).
+(It replaces an earlier probe that proved a now-obsolete UTC-normalized,
+millisecond-floored, offset-dropping canonical form — see the git history / the
+NOTES "What changed" section.)
 
-## The canonical serialization under test
+## Generator-owned serialized form
 
-The canonical form is **dictated by the least-capable materializer, JS
-`Date`**, which stores a UTC instant at **millisecond** resolution and whose
-`toISOString()` **always** emits exactly `YYYY-MM-DDTHH:MM:SS.sssZ` (3
-fractional digits, `Z`, offset lost). So:
+Every runner parses the validated wire string into its native construct and
+**re-serializes** via a **generator-owned serializer** (NOT the language's
+native `toString`/`Format`, which disagree on fractional-zero trimming — see
+NOTES §2):
 
-| Format | Canonical wire (materialized) | Truncation / normalization applied |
+- **RFC 3339**, the **original offset preserved**, with `+00:00` / `-00:00`
+  normalized to `Z`.
+- `T` / `Z` **uppercased on the parse path** (the pinned grammar accepts
+  lowercase; Go/Python/Ruby native parsers reject it).
+- fractional seconds at the **value's own precision** with **trailing zeros
+  trimmed** (`.250`→`.25`, `.500`→`.5`, `.120`→`.12`); **no fractional part when
+  zero**.
+- **`time` keeps its offset** when present (RFC 3339 makes it optional; an
+  offset-less value stays offset-less).
+
+## Per-target round-trip fidelity (what the corpus proves)
+
+| Target | Type | date-time round-trip |
 |---|---|---|
-| `date-time` | `YYYY-MM-DDTHH:MM:SS.sssZ` | UTC-normalized (offset folded into the instant, then dropped); **millisecond** floor; always `Z`; always exactly 3 fractional digits |
-| `date` | `YYYY-MM-DD` | none (lossless) |
-| `time` | `HH:MM:SS.sss` | offset **dropped** (wall clock); millisecond floor; always 3 fractional digits |
+| Go | `time.Time` | offset + **nanosecond** preserved — lossless |
+| Java | `OffsetDateTime` | offset + **nanosecond** preserved — lossless |
+| Python | `datetime` (aware) | offset preserved; **sub-µs truncated** (native microsecond resolution) |
+| TS `js-string` (default) | `string` | generator-serialized string — lossless |
+| TS `js-temporal` | `Temporal.ZonedDateTime` | offset + **nanosecond** preserved — lossless |
+| TS `js-date` (legacy) | `Date` | UTC **instant** at millisecond — offset folded to UTC, sub-ms lost (**LOSSY, expected**) |
+| Ruby\* | `DateTime` | offset + nanosecond preserved (Rational) — lossless |
+| .NET\* | `DateTimeOffset` | offset preserved; **100-ns tick** resolution (rounds a 9-digit input to 7) |
 
-Every runner parses the validated wire string into its stdlib typed construct
-and re-emits **this** canonical form. The harness checks byte-equality across
-languages.
+`date` (`YYYY-MM-DD`) and `time` (offset preserved) round-trip **losslessly**
+everywhere their type exists. `\*` = prospective.
+
+**The equally-capable set** — the languages that must agree **byte-for-byte** —
+is **`go`, `java`, `py`, `js-string`, `js-temporal`**. The harness's PASS/FAIL
+is over exactly this set. Documented, non-failure divergences reported
+separately: Python sub-µs truncation, the `js-date` UTC fold, and the
+leap-second skip.
+
+## The three JS representations (`--js-temporal-repr`)
+
+The single `runner.mjs` models all three modes as separate harness engines:
+
+- **`js-string`** (default) — every temporal is the generator-serialized
+  `string`; must match Go/Java/Python. Built via `Temporal.ZonedDateTime` for
+  full precision, then serialized with the generator rules.
+- **`js-temporal`** — `Temporal.ZonedDateTime` (date-time), `Temporal.PlainDate`
+  (date); **`time` stays a `string`** (Temporal has no offset-bearing time-only
+  type). Lossless.
+- **`js-date`** — legacy `Date`, **date-time only**; `date`/`time` unsupported.
+  UTC-instant fold at millisecond — the one lossy TS mode (reported separately,
+  never a failure).
+
+Temporal is **not** a Node global in this build (Node v25; the `--harmony-temporal`
+flag does not expose it either), so the runner uses the **`@js-temporal/polyfill`**
+installed locally (`npm install` in this dir).
 
 ## Files
 
-- `corpus.json` — validated wire strings spanning the axes (offset ±, `+00:00`,
-  `-00:00`, fractional 1/3/6/9 digits, lowercase `t`/`z`, midnight, leap
-  `:60`, `date` bounds, `time` local/offset/frac).
-- `runner.go`, `runner.mjs`, `runner.py`, `Runner.java` — the 4 model targets.
+- `corpus.json` — validated wire strings spanning the axes: offset ±, `+00:00`,
+  `-00:00`, lowercase `t`/`z`, fractional 1/3/6/9 digits, trailing-zero trim,
+  nanosecond with offset, midnight, leap `:60`; `date` bounds; `time`
+  local/offset/frac/`Z`/`±00:00`.
+- `runner.go`, `runner.mjs`, `runner.py`, `Runner.java` — the 4 model targets
+  (`runner.mjs` emits the three `js-*` engines).
 - `runner.rb`, `dotnet_runner/` — prospective Ruby / .NET.
-- `compare.py` — runs the runners, collects each emitted canonical string, and
-  checks byte-equality across every materializing language. Flags `MISMATCH`
-  (materializers disagree on bytes — a P1 break) and `PARTIAL` (a model target
-  materializes a row another model target rejects — the "some string, some
-  typed" case).
+- `compare.py` — runs the runners, collects each emitted serialized string, and
+  asserts the equally-capable set agrees byte-for-byte; reports the documented
+  divergences separately. Report-only (exit 0) with a PASS/FAIL summary line.
 
 ## Run
 
 ```sh
 cd json-schema/research/format_materialize_clock
-python3 compare.py                       # go / js / python / java (the 4 model targets)
+npm install                              # once, for the js-temporal polyfill
+python3 compare.py                       # go / node(js-string,js-temporal,js-date) / python / java
 python3 compare.py --with-ruby --with-dotnet
 ```
 
@@ -72,22 +102,33 @@ Each runner is standalone: `go run runner.go corpus.json`,
 `java Runner.java corpus.json`, `ruby runner.rb corpus.json`,
 `dotnet run --project dotnet_runner -- corpus.json`.
 
-## Result (summary — full detail in NOTES.md)
+Toolchains as-run: go 1.26, node v25.2 (+ `@js-temporal/polyfill`), python 3.13,
+java 21, ruby 2.6, dotnet 8.
 
-- **`date-time` and `date` materialize with ZERO byte mismatches** across all
-  4 model targets (and prospective Ruby/.NET) for every non-leap row —
-  including offset folding (`+02:00`→`Z`), `±00:00`→`Z`, fractional truncation
-  (6/9→3 digits), and lowercase `t`/`z` (after a case-normalize on the parse
-  path in Go/Python, whose native parsers reject lowercase).
-- **`time` materializes in Go/Java/Python/.NET but NOT in TS or Ruby** (no
-  time-of-day type). So `time` is a **partial** materializer: it must stay
-  `string` in TS. Whether to materialize it at all is a policy call (see NOTES).
-- **Leap second `:60` cannot be materialized.** All 4 model targets' native
-  temporal parsers **reject** `:60`; **Ruby silently CLAMPS** it to `:59` (the
-  probe emits `2021-12-31T23:59:59.000Z` for the `:60` input — a *different
-  instant*, no error). Materializing therefore **forces narrowing the grammar
-  to reject `:60`**. See NOTES for the recommendation.
+## Result (summary — full detail + the harness transcript in NOTES.md)
 
-[spec]: ../../features/format/spec.md
-[typed]: ../format_typed_repr/NOTES.md
+- **`date-time`, `date`, and `time` materialize with ZERO byte mismatches**
+  across the equally-capable set (`go`, `java`, `py`, `js-string`, `js-temporal`)
+  for every non-leap row — offset **preserved** (`+02:00` stays `+02:00`),
+  `+00:00`/`-00:00`→`Z`, lowercase `t`/`z` uppercased, trailing fractional zeros
+  trimmed, and full nanosecond precision on the `.123456789` rows in
+  Go/Java/js-string/js-temporal.
+- **Python truncates sub-microsecond** date-time (`.123456789`→`.123456`) — the
+  one Python-side loss, exactly as the spec tabulates (2 rows).
+- **`js-date` folds** every date-time to a UTC instant at millisecond (offset
+  gone, 3 digits) — the expected legacy loss (16 rows).
+- **Leap `:60`** is rejected by every native parser / the materialized grammar →
+  non-materializing (SKIP, 2 rows).
+
+### Spec discrepancies found (see NOTES §5)
+
+- **`time` offset is preserved and lossless in TS-string / TS-temporal** — the
+  spec text is correct, and the OLD notes claiming "`time` can't materialize in
+  TS" are obsolete (it is a `string` in both modes, carrying the offset).
+- **JS Temporal and Ruby SILENTLY CLAMP leap `:60`→`:59`** (not "reject", even
+  with `{overflow:'reject'}`). The spec's "every native parser rejects `:60`"
+  is inaccurate for these two; safety comes from the **validator** rejecting
+  `:60` before the parse, which the runners model with an explicit guard.
+
+[spec]: ../../features/format.md
 [conf]: ../format_conformance/README.md

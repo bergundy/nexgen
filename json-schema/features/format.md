@@ -78,6 +78,11 @@ generator-owned check. Everything outside the subset — including the
 spec-default annotation-only fallthrough — is **rejected at load**
 (deferred, *not* a categorical **P6** exclusion).
 
+The opt-in is made **explicit**: the `*.nexusrpc.yaml` IDE-support schema
+declares the `format-assertion` vocabulary in its `$vocabulary` (mapped to
+`true`), so tooling reads that these formats are *validated*, not merely
+annotated — the assertion behavior is self-documenting rather than implicit.
+
 **Asserted (v1)** — grouped by the shape of the owned check:
 
 - **Pinned regex only** (the syntax fully captures validity):
@@ -85,8 +90,10 @@ spec-default annotation-only fallthrough — is **rejected at load**
   - `ipv4` — dotted-quad, each octet `0–255`, no leading zeros.
   - `ipv6` — RFC 4291 (full, `::`-compressed, and IPv4-tail forms).
   - `uri`, `uri-reference` — RFC 3986, ASCII-only, at high fidelity
-    (`research/format_uri/`, 67 pairs, 7/7 agree). One documented gap: the
-    IP-literal host is checked structurally, not semantically (below).
+    (`research/format_uri/`, 67 pairs, 7/7 agree — that run predates the
+    IP-literal tightening below, which must be re-proven against the corpus).
+    The IP-literal host `[…]` is validated semantically by splicing in the
+    pinned `ipv6` grammar (below).
 - **Pinned regex + a length guard** (RE2 has no total-length lookahead, so
   a cheap `code_point_count` check rides alongside the regex in the shared
   `Validate`):
@@ -137,10 +144,14 @@ value, which the full RFC 3339 / ISO 8601 grammar does not always allow. So a
 **materialized** node asserts a **narrower** grammar than a **string-opt-out**
 node (below):
 - **Leap second `:60` is rejected** on a materialized `date-time` / `time`
-  node. No stdlib temporal type can store `:60`; every native parser rejects
-  it and **Ruby silently clamps** `:60`→`:59` (corruption). Rejecting it at
-  validation, uniformly, is the only portable choice. A **string-opt-out**
-  node keeps accepting `:60` (the current pure-assertion contract).
+  node. No stdlib temporal type can store `:60`, and native parsers **split**
+  on it: Go / Java / Python / .NET *reject*, while **JS `Temporal` and Ruby
+  silently clamp** `:60`→`:59` (corruption — `Temporal` clamps even with
+  `{overflow:'reject'}`) (`research/format_materialize_clock/`). Since the
+  owned validator rejects `:60` before any native parse runs, no target ever
+  reaches the clamp — but the split is exactly why we reject uniformly rather
+  than delegate. A **string-opt-out** node keeps accepting `:60` (the current
+  pure-assertion contract).
 - **`duration` is narrowed to a time-only duration** — `PT`-forms of hours /
   minutes / seconds only. The calendar components (years, months, weeks,
   days) are **rejected** on a materialized node, because no stdlib
@@ -182,9 +193,10 @@ these because we own the check:
   the cap keeps every engine safe (RE2 engines are already linear/immune).
 - **`uri` / `uri-reference`**: RFC 3986 faithful for scheme, percent-encoding
   (`%HEXDIG HEXDIG` only), the authority/path split, and ASCII-only
-  enforcement. **One deliberate gap:** the IP-literal host `[…]` is validated
-  *structurally*, so `http://[1::2::3]` (double `::`) is accepted; bounded,
-  closable later by splicing in `ipv6`'s grammar.
+  enforcement. The IP-literal host `[…]` is validated *semantically* — the
+  pinned `ipv6` grammar is spliced into the authority production, so
+  `http://[1::2::3]` (double `::`) is **rejected** like a bare `ipv6` would be
+  (`IPvFuture` literals stay structural).
 
 ## Materialization (type mapping)
 
@@ -232,7 +244,13 @@ fractional part when zero). `Temporal.ZonedDateTime` preserves the offset too
 (serialized with `.toString({ timeZoneName: 'never' })`, then the same
 `+00:00`→`Z` normalization). The **one** target that cannot carry an offset is
 TS `date-time` under `--js-temporal-repr=date`, whose `Date.toISOString()`
-folds to a UTC instant (always 3 digits).
+folds to a UTC instant (always 3 digits). The serializer is **owned, not
+native**, because the stdlib emitters disagree
+(`research/format_materialize_clock/`): Java `OffsetDateTime.toString` pads to
+fixed 3/6/9-digit groups (no trailing-zero trim), and Python `isoformat` emits
+`.500000` and `+00:00` rather than `.5` / `Z` — only Go `RFC3339Nano` and
+Temporal's `.toString({ fractionalSecondDigits: 'auto' })` already match the
+rules above.
 
 **`date-time` per-target round-trip fidelity:**
 
@@ -250,6 +268,9 @@ So `2021-06-15T12:30:45.123456789+02:00` keeps its offset and nanoseconds in Go
 Python, and folds to `…Z` (also to ms) only in the legacy TS `date` mode. Any
 input up to **microsecond** precision with any offset round-trips
 **byte-identically across Go / Java / Python / TS `string` / TS `temporal`**.
+(Prospective .NET adds a third resolution tier: `DateTimeOffset` is 100-ns and
+**rounds** rather than truncates — `.123456789`→`.1234568` — so it would need
+its own row if promoted to a model target.)
 
 **`time` preserves the offset** — its native types carry one (Go `time.Time`
 zone, Java `OffsetTime`, Python aware `time`) — and keeps sub-second precision
@@ -339,7 +360,7 @@ with the normalized anchors):
 | `ipv6` | RFC 4291 — see `research/format_conformance/` (authoritative form) | — |
 | `hostname` | `^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$` | length ≤253 |
 | `email` | ASCII dot-atom — see `research/format_email/` | length ≤254 (runs **first**) |
-| `uri` / `uri-reference` | RFC 3986 ASCII — see `research/format_uri/pinned_body.json` | — |
+| `uri` / `uri-reference` | RFC 3986 ASCII — see `research/format_uri/pinned_body.json` | IP-literal host: pinned `ipv6` grammar |
 
 For a **materialized temporal**, the pinned regex + calendar/range predicate
 run in the **parse adapter over the wire string** (that is where `:60`,
@@ -436,13 +457,16 @@ Per-format accept/reject is exercised by the conformance corpora
 (`research/format_conformance/` 124, `format_email/` 56, `format_hostname/`
 41, `format_duration/` 68, `format_uri/` 67); the materialization round-trips
 by `research/format_materialize_clock/` and
-`research/format_materialize_duration/` (the clock corpus is regenerated for
-the offset-preserving, no-truncation behavior — see Open questions).
+`research/format_materialize_duration/` (the clock corpus proves the current
+offset-preserving, no-truncation behavior — 0 mismatches across Go / Java /
+Python / TS `string` / TS `temporal`, with Python sub-µs truncation, the legacy
+TS `date` UTC fold, and the `:60` skip landing exactly as tabulated).
 Representative cases:
 
 - **String formats** — `uuid` canonical OK, wrong length/non-hex → fail;
   `ipv4` `256.0.0.1` / `01.2.3.4` → fail; `email` `user@localhost` → fail;
-  `uri` truncated `%2` / non-ASCII → fail; `http://[1::2::3]` accepted (gap).
+  `uri` truncated `%2` / non-ASCII → fail; `http://[1::2::3]` (double `::`) →
+  fail (spliced `ipv6` grammar); `http://[::1]` / `http://[2001:db8::1]` → OK.
 - **`date-time` round-trip** (offset & precision preserved to each type's
   limit): `2021-06-15T12:30:45.123456+02:00` → **verbatim** in Go / Java /
   Python / TS `string` / TS `temporal` (`ZonedDateTime`);
@@ -497,7 +521,8 @@ Representative cases:
 **Why native validators / parsers can't serve as the oracle** (empirical, in
 the corpora): they diverge and/or mutate, so delegating would break **P1** or
 the wire round-trip. Highlights: JS `Date` accepts `2021-02-30` and a missing
-offset; Ruby clamps `:60`→`:59`; `.NET MailAddress` accepts `user@localhost`
+offset; JS `Temporal` and Ruby clamp `:60`→`:59` (`Temporal` even with
+`{overflow:'reject'}`); `.NET MailAddress` accepts `user@localhost`
 and full IDN; `.NET Uri.CheckHostName` accepts underscores/trailing dots;
 Java `Duration.parse`/`Period.parse` disagree on Y/M and `P1W`; `.NET
 XmlConvert` collapses `P1Y`→365d and rolls `PT24H`→`P1D`; 27/57 tricky URIs
@@ -523,20 +548,11 @@ get divergent verdicts across the seven native URI parsers.
    time-only type (`PlainTime` would drop the offset). If Temporal later adds
    one — or if a schema's `time` is known offset-less — `PlainTime` could
    materialize it. Ruby (prospective) likewise has no time-of-day type.
-4. **Close the `uri` IP-literal semantic gap** — splice in `ipv6`'s grammar.
-5. **Declaring `format-assertion`.** The IDE-support schema for
-   `*.nexusrpc.yaml` could reference the `format-assertion` vocabulary in
-   `$vocabulary`; today the assertion behavior is implicit.
-6. **No-truncation round-trip corpus.** `research/format_materialize_clock/`
-   was built against an earlier UTC-normalized, millisecond-floored form. It
-   must be regenerated to prove the current behavior: offset **preserved**
-   (`date-time` **and** `time`), sub-second retained at each type's native
-   resolution (Go/Java nanosecond, Python microsecond), trailing-zero fractional
-   trimmed, byte-identical across Go/Java/Python/TS `string`/TS `temporal`
-   wherever the types are equally capable, and the bounded per-target loss
-   (Python sub-µs; legacy TS `date` UTC fold) landing exactly as tabulated. It
-   must also cover the `--js-temporal-repr=temporal` types (`ZonedDateTime` with
-   an offset zone, `PlainDate`, `Duration`).
+4. **Re-prove `format_uri` with the spliced `ipv6` grammar.** The 67-pair
+   `research/format_uri/` run predates the IP-literal tightening (the host `[…]`
+   now validated by the pinned `ipv6` grammar). The corpus and pinned pattern
+   must be regenerated to confirm `http://[1::2::3]` now rejects and valid
+   literals (`[::1]`, `[2001:db8::1]`) still pass, 7/7 across targets.
 
 ## See also
 
