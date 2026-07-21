@@ -100,13 +100,16 @@ form; Go/TS/Java hand-build the equivalent. The rest of the numeric family
 ([[minimum]], [[exclusiveMaximum]], [[exclusiveMinimum]], [[multipleOf]])
 follows the same convention with its own operator/word.
 
-**Cross-language exactness (integer field vs float bound).** Comparing a
-capped integer field against a numeric bound is **lossless** because the
-integer cap `±(2^53−1)` is exactly representable as an IEEE double: the
-probe confirms `(double)cap == cap` and `(double)cap <= 5.5 == false`.
-So the Java `long ≤ double` promotion and the Go `float64(v) ≤ max`
-conversion both agree with the TS/Python comparisons value-for-value —
-the same cap guarantee the integer runtime helpers lean on in [[type]].
+**Cross-language exactness (integer field).** An `integer` field's bound is
+itself integer-valued (loader rule above), so Go and Java compare the
+decoded `int64`/`long` against the integer bound directly — exact, no
+promotion. TypeScript has only IEEE doubles, so it necessarily performs the
+comparison in `double`; this still agrees value-for-value because both the
+capped value and the bound lie within `±(2^53−1)`, which is exactly
+representable as a double — the probe confirms `(double)cap == cap` (and
+e.g. `(double)cap <= 5.5 == false`). Python normalizes the wire value to
+`int` (`SpecInt`) before `Le`, so it too compares exactly. This is the same
+cap guarantee the integer runtime helpers lean on in [[type]].
 (This is *why* an integer-field bound is required to be integer-valued: it
 keeps even the mixed integer/float comparison exact and unambiguous.)
 

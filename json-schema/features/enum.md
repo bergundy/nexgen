@@ -58,9 +58,9 @@ Rationale (citing [[PRINCIPLES.md]]):
   constant per value in Java. Adding a value is a backward-compatible
   widening only for producers; for a consumer on the older schema an
   unrecognized value is **rejected**, not silently preserved — a changed
-  value set is a contract change and surfaces as one (**P9.1**: the wire is
+  value set is a contract change and surfaces as one (**P13.2**: the wire is
   forward-compatible for unknown *fields*, **not** for unknown
-  `const`/`enum` *values*). An **open enum** (accept-and-preserve unknown
+  `const`/`enum` *values* — **P13.1**). An **open enum** (accept-and-preserve unknown
   members, e.g. TS `"red" | (string & {})`) was prototyped
   (`research/const_open_enum_probe.py`) and **rejected**: P13.1 governs, so
   the value set is closed in every language and the unknown value is a
