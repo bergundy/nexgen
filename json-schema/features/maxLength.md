@@ -127,6 +127,16 @@ the [[type]] integer-cap re-check and the [[maximum]] bound re-check). No
 parse-adapter-only or encode-adapter-only logic: the comparison is pure
 and direction-agnostic.
 
+**On a materialized node** ([[format]] temporal / [[contentEncoding]]
+bytes) the decoded value is not a `string`, so the bound is a predicate
+over the **canonical wire string** instead: on parse it checks the
+incoming wire string, and on serialize it checks the wire string the
+encode adapter re-serializes the native value to, **before emit** — so the
+teeth hold there too (an in-memory bytes value whose base64 exceeds
+`maxLength`, or a temporal whose canonical form does, fails serialize).
+Still one predicate, still identical in both directions; the wire string
+is simply projected from the native value on the encode side.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

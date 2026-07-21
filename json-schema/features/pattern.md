@@ -257,6 +257,13 @@ emitting an invalid value. Real teeth in the statically-typed targets,
 where in-memory construction is unchecked. No parse-adapter-only or
 encode-adapter-only logic: the match is pure and direction-agnostic.
 
+**On a materialized node** ([[format]] temporal / [[contentEncoding]]
+bytes) the decoded value is not a `string`, so the regex matches the
+**canonical wire string** instead: the incoming wire string on parse, and
+the encode adapter's re-serialized wire string on serialize, **before
+emit**. Still one predicate, identical in both directions; the wire string
+is projected from the native value on the encode side.
+
 ## Property-testing matrix
 
 ### Accepted (positive)

@@ -392,10 +392,13 @@ compiled constant; the load gate proves it compiles, so the emitted
 - **Materialized temporals:** the model field is a **native type that cannot
   hold an invalid value** (a `time.Time` is always a valid instant; a
   `time.Duration` always a valid duration), so the type system replaces the
-  serialize-side validator — there is no invalid state to catch. Serialize is
-  therefore a pure **re-serialization** (typed → wire, offset & precision
-  preserved to the type's resolution), the one place `format` has genuine
-  encode-adapter logic. The only parse-side guard
+  serialize-side *format* validator — there is no invalid *format* state to
+  catch. Serialize is therefore a pure **re-serialization** (typed → wire,
+  offset & precision preserved to the type's resolution), the one place
+  `format` has genuine encode-adapter logic. A co-occurring [[minLength]] /
+  [[maxLength]] / [[pattern]] is **not** subsumed by the type, though — the
+  re-serialized wire string can still be too long or off-pattern — so that
+  predicate re-runs over it **before emit** (**P12**). The only parse-side guard
   beyond validation is a **duration overflow check** (the regex caps no digit
   count, so an adversarial `PT999999999999H` that overflows the native type
   pushes a `Violation`).

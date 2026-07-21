@@ -207,10 +207,14 @@ the emitted `MustCompile` / `Pattern.compile` is unconditional.
 The materialized field is a **native bytes value that cannot hold an
 invalid encoding** — any `[]byte` / `byte[]` / `bytes` / `Uint8Array`
 re-encodes to valid base64 — so the type system replaces the
-serialize-side validator, exactly as [[format]]'s materialized temporals
-do. Serialize is therefore a pure **canonicalization** (bytes →
+serialize-side *encoding* validator, exactly as [[format]]'s materialized
+temporals do. Serialize is therefore a pure **canonicalization** (bytes →
 canonical base64/base64url per the node's encoding), the one place
-`contentEncoding` has genuine encode-adapter logic.
+`contentEncoding` has genuine encode-adapter logic. A co-occurring
+[[maxLength]] / [[minLength]] / [[pattern]] is **not** subsumed by the
+type, though — the canonical base64 can still be too long or off-pattern —
+so that predicate re-runs over the canonicalized wire string **before
+emit** (**P12**), as those specs describe.
 
 ## Property-testing matrix
 
