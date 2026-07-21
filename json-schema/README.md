@@ -295,7 +295,7 @@ per keyword under [features/](features). Highlights of the current subset (WIP):
 | `uniqueItems` | scalar elements | element distinctness for scalar `items`; composite (object/array) elements deferred; `false` is a no-op |
 | `contains` | scalar matcher | existential "≥ 1 element matches" over scalar `items`; composite matchers/elements deferred |
 | `minContains` / `maxContains` | yes | bound the number of `contains` matches; `minContains:0` relaxes the existential (needs `maxContains`) |
-| `format` | curated subset | `uuid` / `ipv4` / `ipv6` / `hostname` / `email` / `uri` / `uri-reference` asserted as validated strings; `date-time` / `date` / `time` / `duration` **materialized** as native typed fields (canonical wire, lossy round-trip; string opt-out); `idn-*` / `iri*` / niche + unknown formats rejected (deferred) |
+| `format` | curated subset | `uuid` / `ipv4` / `ipv6` / `hostname` / `email` / `uri` / `uri-reference` asserted as validated strings; `date-time` / `date` / `time` / `duration` **materialized** as native typed fields (offset & precision preserved, no truncation; `date-time` round-trip lossy only at a target type's limit — a bounded P1 exception; TS repr for all temporals via `--js-temporal-repr` = `string` (default) / `date` / `temporal`; string opt-out); `idn-*` / `iri*` / niche + unknown formats rejected (deferred) |
 | `services` | yes | Nexus documents only |
 
 ### IDE support
