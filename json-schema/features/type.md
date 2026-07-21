@@ -23,8 +23,13 @@ a schema's assertions are meaningful for a given instance.
 **Support:** partial — single-string form only.
 
 We accept `type: "<primitive>"` for all seven primitive type names. We
-**reject** schemas where `type` is an array, and **reject** schemas with no
-`type` keyword.
+**reject** schemas where `type` is an array. A **leaf** schema — one that
+must describe its own shape — with no `type` keyword is also **rejected**;
+a typeless schema is legal only when its shape comes from a supported
+combinator or reference: a [[oneOf]] (including the nullability
+`oneOf:[{type:T},{type:null}]`), an [[allOf]] (merged/flattened at load),
+or a [[ref]], where the type is supplied by the branches, the merged
+result, or the referenced target respectively.
 
 Rationale (citing [[PRINCIPLES.md]]):
 - **P6 (strict subset)**: Multi-type unions don't lower coherently across
@@ -35,13 +40,18 @@ Rationale (citing [[PRINCIPLES.md]]):
 - **P8 (optional ≠ nullable)**: The `["T","null"]` idiom collapses two
   different concerns; model nullability through the dedicated
   `oneOf:[{type:T},{type:null}]` convention instead (see [[nullability]]).
-- Absent `type` makes field shape undecidable, violating **P7**.
+- Absent `type` on a **leaf** schema makes its shape undecidable,
+  violating **P7** — a [[oneOf]] / [[allOf]] / [[ref]] schema is exempt,
+  since its shape is fixed by the branches, the merge, or the reference
+  rather than a top-level `type`.
 
 Loader behavior:
 - Array `type` → reject with diagnostic naming the schema location and
   pointing at the nullability convention.
-- Missing `type` → reject with diagnostic; require explicit type on every
-  schema.
+- Missing `type` on a **leaf** schema → reject with a diagnostic requiring
+  an explicit type. A schema whose shape is supplied by [[oneOf]] /
+  [[allOf]] / [[ref]] carries no top-level `type` and is **accepted** — the
+  type comes from the branches / merged result / referenced target.
 - Unknown type name (`"int"`, `"date"`, etc.) → reject.
 - `type: "object"` with no `properties`, `patternProperties`, or
   `additionalProperties` → reject (P7.1). Per spec this is "any object",
@@ -220,6 +230,7 @@ omit/emit-`null` rules owned by [[nullability]].
 | Shape | Values |
 |---|---|
 | Single primitive | `"null"`, `"boolean"`, `"object"`, `"array"`, `"number"`, `"string"`, `"integer"` |
+| Typeless via combinator/reference | `{"oneOf":[{"type":"string"},{"type":"null"}]}`, `{"allOf":[…]}`, `{"$ref":"#/$defs/X"}` — shape from the branches / merge / target (see [[oneOf]] / [[allOf]] / [[ref]]) |
 
 ### Rejected at load time (negative tests)
 
@@ -228,7 +239,7 @@ Loader must produce a clear, located diagnostic for each.
 | Reason | Values |
 |---|---|
 | Array form (P6/P7) | `["string","null"]`, `["integer","number"]`, full 7-element union, `[]`, `["string"]` |
-| Absent `type` (P7) | `{}`, `{"description":"…"}` |
+| Absent `type` on a **leaf** schema (P7) | `{}`, `{"description":"…"}` (no `oneOf`/`allOf`/`$ref` to supply the shape) |
 | Object without shape (P7.1) | `{"type":"object"}` with no `properties`, `patternProperties`, or `additionalProperties` (spec says "any object"; we require explicit intent) |
 | `"null"` standalone | `{"type":"null"}` anywhere except as a branch of the [[nullability]] `oneOf` pattern |
 | Unknown type name | `"int"`, `"float"`, `"date"`, `"any"`, `"bigint"`, `"String"`, `"INTEGER"` |
