@@ -53,6 +53,13 @@ jobs:
           go-version-file: examples/go/go.mod
           cache-dependency-path: examples/go/go.sum
 
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
       - name: Install Python dependencies
         working-directory: examples/python
         run: uv sync --locked
@@ -88,3 +95,11 @@ jobs:
       - name: Run Go tests
         working-directory: examples/go
         run: go test ./...
+
+      - name: Run Python tests
+        working-directory: examples/python
+        run: uv run pytest
+
+      - name: Run Java tests
+        working-directory: examples/java
+        run: ./gradlew build --no-daemon

@@ -24,6 +24,7 @@ fn generate_to_string_with_inputs(
         output_path: output_path.clone(),
         format: false,
         generate_native_api: true,
+        ts_date_time_types: Default::default(),
     })?;
     let rendered = if output_path.is_file() {
         fs::read_to_string(&output_path)?
@@ -469,6 +470,110 @@ fn go_examples_generation_matches_checked_in_output() {
         let expected = read_go_output_files(&go_output_path(&root, &example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
         fs::remove_dir_all(temp_root).unwrap();
+    }
+}
+
+#[test]
+fn go_json_generation_matches_checked_in_output() {
+    let root = project_root();
+    for example_id in ["chat", "kb", "showcase", "temporal"] {
+        for (mode, native_api) in [("definitions", false), ("api", true)] {
+            let temp_dir = unique_output_path(&format!("go-json-{example_id}-{mode}"));
+            fs::create_dir_all(&temp_dir).unwrap();
+            fs::write(temp_dir.join("go.mod"), "module examples/go\n\ngo 1.24.0\n").unwrap();
+            let output_path = temp_dir
+                .join("json_schema")
+                .join(mode)
+                .join(go_package_name(example_id));
+            generate_formatted_go_json_output(&root, example_id, &output_path, native_api);
+
+            let expected = read_go_output_files(&go_json_output_path(&root, mode, example_id));
+            let actual = read_go_output_files(&output_path);
+            assert_eq!(
+                actual, expected,
+                "go JSON {example_id} {mode} output changed"
+            );
+
+            let generated_file = PathBuf::from(format!("{example_id}.go"));
+            let generated = actual
+                .get(&generated_file)
+                .unwrap_or_else(|| panic!("{} should be generated", generated_file.display()));
+            if native_api {
+                match example_id {
+                    "chat" => {
+                        assert!(generated.contains("var ChatService = struct"));
+                        assert!(generated.contains("type ChatServiceClient struct"));
+                        assert!(generated.contains("func NewChatServiceClient(endpoint string)"));
+                        assert!(generated.contains(
+                            "nexus.OperationReference[SendMessageInput, SendMessageOutput]"
+                        ));
+                        assert!(generated.contains(
+                            "func (c *ChatServiceClient) Ping(ctx workflow.Context) workflow.Future"
+                        ));
+                    }
+                    "kb" => {
+                        assert!(generated.contains("var KnowledgeBaseService = struct"));
+                        assert!(generated.contains("type KnowledgeBaseServiceClient struct"));
+                        assert!(
+                            generated
+                                .contains("func NewKnowledgeBaseServiceClient(endpoint string)")
+                        );
+                        assert!(generated.contains("nexus.OperationReference[GetPageInput, Page]"));
+                        assert!(
+                            generated.contains("nexus.OperationReference[Block, PutBlockOutput]")
+                        );
+                        assert!(generated.contains(
+                            "func (c *KnowledgeBaseServiceClient) GetPage(ctx workflow.Context, request GetPageInput) workflow.Future"
+                        ));
+                    }
+                    // showcase is a pure JSON Schema file (no service), so even
+                    // in native-api mode it emits only models, no service glue.
+                    "showcase" => {
+                        assert!(generated.contains("type Showcase struct"));
+                        assert!(generated.contains("func (m Showcase) RetriesOrDefault() int64"));
+                        // Scalar defaults of every kind materialize on read.
+                        assert!(
+                            generated.contains("func (m Showcase) GreetingOrDefault() string {")
+                        );
+                        assert!(generated.contains("return \"hello\""));
+                        assert!(generated.contains("func (m Showcase) DebugOrDefault() bool {"));
+                        // `title` → name-led doc summary; `deprecated` → godoc marker.
+                        assert!(generated.contains("// Retries Retry budget"));
+                        assert!(generated.contains("// Deprecated: This field is deprecated."));
+                        // `x-go-name` override (Stage 4): the emitted identifier
+                        // is the forced initialism while the wire name is pinned.
+                        assert!(
+                            generated.contains("LegacyID *string `json:\"legacyId,omitempty\"`")
+                        );
+                        assert!(
+                            generated
+                                .contains("marshalField(out, \"legacyId\", *m.LegacyID, &errs)")
+                        );
+                        assert!(!generated.contains("LegacyId "));
+                        assert!(!generated.contains("Service = struct"));
+                        assert!(!generated.contains("ServiceClient"));
+                    }
+                    // temporal is a pure JSON Schema file materializing the four
+                    // temporal formats into native Go types.
+                    "temporal" => {
+                        assert!(generated.contains("type Temporal struct"));
+                        assert!(generated.contains("CreatedAt time.Time"));
+                        assert!(generated.contains("Timeout time.Duration"));
+                        assert!(generated.contains("func formatDuration(d time.Duration) string"));
+                        assert!(!generated.contains("Service = struct"));
+                        assert!(!generated.contains("ServiceClient"));
+                    }
+                    _ => unreachable!(),
+                }
+            } else {
+                assert!(!generated.contains("Service = struct"));
+                assert!(!generated.contains("ServiceClient"));
+                assert!(!generated.contains("github.com/nexus-rpc/sdk-go/nexus"));
+                assert!(!generated.contains("go.temporal.io/sdk/workflow"));
+            }
+
+            fs::remove_dir_all(temp_dir).unwrap();
+        }
     }
 }
 
@@ -1127,6 +1232,83 @@ interface doc-service {
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
+#[test]
+fn go_rejects_inputs_flattening_to_the_same_module_file() {
+    // Two distinct input files -- `full_name.json` at the root and
+    // `full/name.json` in a subdirectory -- flatten to the same Go module file
+    // `full_name.go`. Go collapses the whole closure into one flat package, so
+    // the emit layer rejects the collision (specs/json-schema/generated-file-layout.md).
+    let temp_dir = unique_output_path("go-json-flatten-collision");
+    fs::create_dir_all(temp_dir.join("full")).unwrap();
+    let schema = |title: &str| {
+        format!(
+            "{{\n  \"title\": \"{title}\",\n  \"type\": \"object\",\n  \"properties\": {{ \"id\": {{ \"type\": \"string\" }} }}\n}}\n"
+        )
+    };
+    fs::write(temp_dir.join("full_name.json"), schema("FlatThing")).unwrap();
+    fs::write(
+        temp_dir.join("full").join("name.json"),
+        schema("NestedThing"),
+    )
+    .unwrap();
+    let output_path = temp_dir.join("output");
+
+    let result = generate_to_file(&GenerateRequest {
+        language: nex_gen::language::Language::Go,
+        input_paths: vec![temp_dir.clone()],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path,
+        format: false,
+        generate_native_api: false,
+        ts_date_time_types: Default::default(),
+    });
+
+    let error = result
+        .expect_err("inputs flattening to the same Go module file should be rejected")
+        .to_string();
+    assert!(error.contains("full_name.go"), "{error}");
+    assert!(
+        error.contains("conflicts with another generated file"),
+        "{error}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn go_rejects_reserved_generated_name_collision() {
+    // An input file whose module segment is `definitions` would collide with the
+    // schema-independent runtime file `definitions.go`. The loader rejects it up
+    // front as a reserved module name (before the Go emit layer would raise a
+    // `GeneratedFileConflict`). Two inputs are used so the reserved file carries a
+    // real module segment rather than flattening to the root `api.go`.
+    let temp_dir = unique_output_path("go-json-reserved-name");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let schema =
+        "{\n  \"type\": \"object\",\n  \"properties\": { \"id\": { \"type\": \"string\" } }\n}\n";
+    fs::write(temp_dir.join("definitions.json"), schema).unwrap();
+    fs::write(temp_dir.join("other.json"), schema).unwrap();
+    let output_path = temp_dir.join("output");
+
+    let result = generate_to_file(&GenerateRequest {
+        language: nex_gen::language::Language::Go,
+        input_paths: vec![temp_dir.clone()],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path,
+        format: false,
+        generate_native_api: false,
+        ts_date_time_types: Default::default(),
+    });
+
+    let error = result
+        .expect_err("an input mapping to the reserved `definitions` module should be rejected")
+        .to_string();
+    assert!(error.contains("reserved module name"), "{error}");
+    assert!(error.contains("definitions"), "{error}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
 fn json_input_path(root: &Path, example_id: &str) -> PathBuf {
     let dir_path = root.join("examples/json-inputs").join(example_id);
     if dir_path.is_dir() {
@@ -1178,80 +1360,4 @@ fn generate_formatted_go_json_output(
         .status()
         .unwrap();
     assert!(format_status.success());
-}
-
-#[test]
-fn go_json_generation_matches_checked_in_output() {
-    let root = project_root();
-    for example_id in ["chat", "kb"] {
-        for (mode, native_api) in [("definitions", false), ("api", true)] {
-            let temp_dir = unique_output_path(&format!("go-json-{example_id}-{mode}"));
-            fs::create_dir_all(&temp_dir).unwrap();
-            fs::write(temp_dir.join("go.mod"), "module examples/go\n\ngo 1.24.0\n").unwrap();
-            let output_path = temp_dir
-                .join("json_schema")
-                .join(mode)
-                .join(go_package_name(example_id));
-            generate_formatted_go_json_output(&root, example_id, &output_path, native_api);
-
-            let expected = read_go_output_files(&go_json_output_path(&root, mode, example_id));
-            let actual = read_go_output_files(&output_path);
-            assert_eq!(
-                actual, expected,
-                "go JSON {example_id} {mode} output changed"
-            );
-
-            let generated_file = if example_id == "kb" {
-                PathBuf::from("kb/kb.go")
-            } else {
-                PathBuf::from(format!("{example_id}.go"))
-            };
-            let generated = actual
-                .get(&generated_file)
-                .unwrap_or_else(|| panic!("{} should be generated", generated_file.display()));
-            if native_api {
-                match example_id {
-                    "chat" => {
-                        assert!(generated.contains("var ChatService = struct"));
-                        assert!(generated.contains("type ChatServiceClient struct"));
-                        assert!(generated.contains("func NewChatServiceClient(endpoint string)"));
-                        assert!(generated.contains(
-                            "nexus.OperationReference[SendMessageInput, SendMessageOutput]"
-                        ));
-                        assert!(generated.contains(
-                            "func (c *ChatServiceClient) Ping(ctx workflow.Context) workflow.Future"
-                        ));
-                    }
-                    "kb" => {
-                        assert!(generated.contains("var KnowledgeBaseService = struct"));
-                        assert!(generated.contains("type KnowledgeBaseServiceClient struct"));
-                        assert!(
-                            generated
-                                .contains("func NewKnowledgeBaseServiceClient(endpoint string)")
-                        );
-                        assert!(
-                            generated
-                                .contains("nexus.OperationReference[GetPageInput, content.Page]")
-                        );
-                        assert!(
-                            generated.contains(
-                                "nexus.OperationReference[content.Block, PutBlockOutput]"
-                            )
-                        );
-                        assert!(generated.contains(
-                            "func (c *KnowledgeBaseServiceClient) GetPage(ctx workflow.Context, request GetPageInput) workflow.Future"
-                        ));
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                assert!(!generated.contains("Service = struct"));
-                assert!(!generated.contains("ServiceClient"));
-                assert!(!generated.contains("github.com/nexus-rpc/sdk-go/nexus"));
-                assert!(!generated.contains("go.temporal.io/sdk/workflow"));
-            }
-
-            fs::remove_dir_all(temp_dir).unwrap();
-        }
-    }
 }

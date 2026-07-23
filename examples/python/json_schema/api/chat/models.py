@@ -6,10 +6,10 @@ import typing
 import pydantic
 import pydantic_core
 
-from ._json import (
+from ._definitions import (
     SpecInt,
-    emit_set_fields,
-    reject_explicit_null,
+    _emit_set_fields,
+    _reject_explicit_null,
 )
 
 
@@ -25,7 +25,7 @@ class GetRoomInput(pydantic.BaseModel):
         self,
         handler: typing.Callable[[pydantic.BaseModel], typing.Any],
     ) -> dict[str, object]:
-        return emit_set_fields(self, handler)
+        return _emit_set_fields(self, handler)
 
 
 class Labels(pydantic.BaseModel):
@@ -34,8 +34,6 @@ class Labels(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
         strict=True, populate_by_name=True, extra="allow"
     )
-
-    _MAX_PROPERTIES: typing.ClassVar[int] = 50
 
     @pydantic.model_validator(mode="after")
     def _validate_extras(self) -> typing.Any:
@@ -52,14 +50,14 @@ class Labels(pydantic.BaseModel):
                         input=value,
                     )
                 )
-        if len(extra) > self._MAX_PROPERTIES:
+        if len(extra) > 50:
             errors.append(
                 pydantic_core.InitErrorDetails(
                     type=pydantic_core.PydanticCustomError(
                         "too_many_properties",
                         typing.cast(
                             typing.Any,
-                            f"at most {self._MAX_PROPERTIES} properties allowed",
+                            f"must have at most 50 properties, got {len(extra)}",
                         ),
                     ),
                     loc=(),
@@ -119,7 +117,7 @@ class Message(pydantic.BaseModel):
         self,
         handler: typing.Callable[[pydantic.BaseModel], typing.Any],
     ) -> dict[str, object]:
-        return emit_set_fields(self, handler)
+        return _emit_set_fields(self, handler)
 
 
 class Room(pydantic.BaseModel):
@@ -151,14 +149,14 @@ class Room(pydantic.BaseModel):
         data: object,
         handler: typing.Callable[[object], typing.Any],
     ) -> typing.Any:
-        return reject_explicit_null(cls, data, handler)
+        return _reject_explicit_null(cls, data, handler)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
         self,
         handler: typing.Callable[[pydantic.BaseModel], typing.Any],
     ) -> dict[str, object]:
-        return emit_set_fields(self, handler)
+        return _emit_set_fields(self, handler)
 
 
 class SendMessageInput(pydantic.BaseModel):
@@ -177,7 +175,7 @@ class SendMessageInput(pydantic.BaseModel):
         self,
         handler: typing.Callable[[pydantic.BaseModel], typing.Any],
     ) -> dict[str, object]:
-        return emit_set_fields(self, handler)
+        return _emit_set_fields(self, handler)
 
 
 class SendMessageOutput(pydantic.BaseModel):
@@ -192,4 +190,4 @@ class SendMessageOutput(pydantic.BaseModel):
         self,
         handler: typing.Callable[[pydantic.BaseModel], typing.Any],
     ) -> dict[str, object]:
-        return emit_set_fields(self, handler)
+        return _emit_set_fields(self, handler)
