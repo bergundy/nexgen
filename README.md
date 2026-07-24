@@ -100,17 +100,17 @@ interface user-service {
 Generate Python:
 
 ```bash
-cargo run -- generate \
-  --lang python \
+cargo run -- python \
   --input examples/inputs/user-service.wit \
   --output /tmp/user_service
 ```
 
 Generate TypeScript:
 
+(`ts` is an alias for `typescript`.)
+
 ```bash
-cargo run -- generate \
-  --lang typescript \
+cargo run -- typescript \
   --input examples/inputs/user-service.wit \
   --output /tmp/user-service
 ```
@@ -118,8 +118,7 @@ cargo run -- generate \
 Generate Go:
 
 ```bash
-cargo run -- generate \
-  --lang go \
+cargo run -- go \
   --input examples/inputs/user-service.wit \
   --output /tmp/userservice
 ```
@@ -127,13 +126,13 @@ cargo run -- generate \
 Generate .NET:
 
 ```bash
-cargo run -- generate \
-  --lang dotnet \
+cargo run -- dotnet \
   --input examples/inputs/user-service.wit \
   --output /tmp/user-service-dotnet
 ```
 
-Add `--format` to run a formatter after generation:
+Generation produces definitions by default. Add `--native-api` to also generate
+native API bindings. Add `--format` to run a formatter after generation:
 
 - Python: `ruff format`
 - TypeScript: `prettier --write`
@@ -169,14 +168,13 @@ used as the package name and the full path is used to remove self-imports.
 Input WIT files can add support code with `@nexus.support`. Python support fragments are copied into the generated private `_support` package, TypeScript support fragments are emitted as `support.ts` next to the generated `index.ts`, and .NET support fragments are copied under `Support/`.
 
 Support code can also be supplied outside WIT with repeatable `--support-file`
-arguments on `generate`. Explicit support files apply to the selected
-`--lang`, are appended after WIT-declared support, and use the same generated
+arguments on the language subcommand. Explicit support files apply to the
+selected language, are appended after WIT-declared support, and use the same generated
 layout as `@nexus.support` fragments. .NET support files infer their support
 namespace from the C# `namespace` declaration in the file:
 
 ```bash
-cargo run -- generate \
-  --lang python \
+cargo run -- python \
   --input examples/inputs/user-service.wit \
   --support-file /path/to/custom_support.py \
   --output /tmp/user_service
@@ -249,11 +247,11 @@ interface workflow-service {
 Generate a proto-backed example:
 
 ```bash
-cargo run -- generate \
-  --lang python \
+cargo run -- python \
   --input examples/inputs/workflow-service.wit \
   --input examples/inputs/deps \
   --descriptors examples/descriptors/temporal_api.bin \
+  --native-api \
   --output /tmp/workflow_service
 ```
 
