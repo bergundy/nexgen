@@ -350,6 +350,11 @@ impl<F: TypeNameFamily> TypeDeclSpec<F> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServiceSpec<F: TypeNameFamily = AuthoredNames> {
     pub name: String,
+    /// A per-language verbatim override of the emitted service code identifier
+    /// (`x-<lang>-name` on a JSON-schema `services:` entry). Empty for a language
+    /// with no override, in which case the identifier is derived as usual. Never
+    /// affects `wire_name`.
+    pub code_name: LanguageStringSpec,
     pub wire_name: String,
     pub doc: LanguageStringSpec,
     pub namespace: LanguageStringSpec,
@@ -381,6 +386,7 @@ impl<F: TypeNameFamily> ServiceSpec<F> {
         let data = map.map_service_data(&self.name, self.data);
         ServiceSpec {
             name: self.name,
+            code_name: self.code_name,
             wire_name: self.wire_name,
             doc: self.doc,
             namespace: self.namespace,
@@ -427,6 +433,11 @@ pub struct SupportFragmentSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperationSpec<F: TypeNameFamily = AuthoredNames> {
     pub name: String,
+    /// A per-language verbatim override of the emitted operation code identifier
+    /// (`x-<lang>-name` on a JSON-schema `operations:` entry). Empty for a
+    /// language with no override, in which case the identifier is derived as
+    /// usual. Never affects `wire_name`.
+    pub code_name: LanguageStringSpec,
     pub wire_name: String,
     pub experimental: bool,
     pub doc: LanguageStringSpec,
@@ -458,6 +469,7 @@ impl<F: TypeNameFamily> OperationSpec<F> {
         let data = map.map_operation_data(&self.name, self.data);
         OperationSpec {
             name: self.name,
+            code_name: self.code_name,
             wire_name: self.wire_name,
             experimental: self.experimental,
             doc: self.doc,

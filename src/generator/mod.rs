@@ -208,7 +208,7 @@ pub(crate) fn generate_files_for_tree_with_mode_and_options(
     options: GenerateFilesOptions,
 ) -> Result<GeneratedFiles> {
     validate_tree_specs(&tree.root, descriptors, language)?;
-    let planned_tree = match tree.root {
+    let mut planned_tree = match tree.root {
         ApiSpecNode::Leaf(leaf) => {
             let planned = build_leaf_api_plan_with_mode(
                 leaf.spec,
@@ -229,6 +229,13 @@ pub(crate) fn generate_files_for_tree_with_mode_and_options(
             build_api_plans_for_tree_with_mode(tree, descriptors, planning_mode(mode), language)?
         }
     };
+    // Resolve every emitted type identifier once against the name manifest and
+    // adopt it as each JSON model's `model_name`, so every consumer — the JSON
+    // model backends, the outer service/file-name/I/O emitters — reads the same
+    // (override-applied) identifier. This is the single resolution point per
+    // language; the per-backend `$ref` fixups then only re-route ref recasing.
+    // A no-op for non-JSON (WIT/proto) inputs.
+    json_schema::apply_name_manifest_to_planned_tree(&mut planned_tree.root, language)?;
     generate_files_from_planned_tree(language, &planned_tree, support, mode, options)
 }
 

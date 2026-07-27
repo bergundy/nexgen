@@ -258,7 +258,13 @@ fn leaf_export_names(
 
     match mode {
         GenerationMode::DefinitionsOnly => {
-            model_names.extend(plan.services.iter().map(|service| service.name.clone()));
+            model_names.extend(plan.services.iter().map(|service| {
+                service
+                    .code_name
+                    .for_language(Language::Python)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| service.name.clone())
+            }));
             model_names
         }
         GenerationMode::NativeApi => {
@@ -266,17 +272,28 @@ fn leaf_export_names(
                 plan.services
                     .iter()
                     .filter(|service| service.endpoint.is_none())
-                    .map(|service| format!("{}Client", service.name)),
+                    .map(|service| {
+                        format!(
+                            "{}Client",
+                            service
+                                .code_name
+                                .for_language(Language::Python)
+                                .unwrap_or(&service.name)
+                        )
+                    }),
             );
             model_names.extend(
                 plan.services
                     .iter()
                     .filter(|service| service.endpoint.is_some())
                     .flat_map(|service| {
-                        service
-                            .operations
-                            .iter()
-                            .map(|operation| python_ident(&operation.name.to_snake_case()))
+                        service.operations.iter().map(|operation| {
+                            operation
+                                .code_name
+                                .for_language(Language::Python)
+                                .map(str::to_string)
+                                .unwrap_or_else(|| python_ident(&operation.name.to_snake_case()))
+                        })
                     }),
             );
             model_names
@@ -518,7 +535,10 @@ impl<'a> ApiPlanner<'a> {
                     .collect::<Result<Vec<_>>>()?;
 
                 Ok(RenderedService {
-                    name: &service.name,
+                    name: service
+                        .code_name
+                        .for_language(Language::Python)
+                        .unwrap_or(&service.name),
                     wire_name: &service.wire_name,
                     doc: service
                         .doc
@@ -1184,7 +1204,11 @@ impl<'a> ApiPlanner<'a> {
         Ok(RenderedOperation {
             name: operation.name.as_str(),
             wire_name: operation.wire_name.as_str(),
-            attr_name: python_ident(&operation.name.to_snake_case()),
+            attr_name: operation
+                .code_name
+                .for_language(Language::Python)
+                .map(str::to_string)
+                .unwrap_or_else(|| python_ident(&operation.name.to_snake_case())),
             experimental: operation.experimental,
             doc: operation
                 .doc
