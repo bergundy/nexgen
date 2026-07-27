@@ -696,7 +696,9 @@ impl JavaContext<'_> {
                     ".." => {
                         segments.pop();
                     }
-                    other => segments.push(strip_extension(other).to_string()),
+                    other => {
+                        segments.push(crate::parser::strip_json_schema_extension(other).to_string())
+                    }
                 }
             }
             segments
@@ -719,15 +721,6 @@ impl JavaContext<'_> {
             class,
         )
     }
-}
-
-fn strip_extension(name: &str) -> &str {
-    for extension in [".json", ".yaml", ".yml"] {
-        if let Some(stripped) = name.strip_suffix(extension) {
-            return stripped;
-        }
-    }
-    name
 }
 
 #[derive(Debug, Clone)]
