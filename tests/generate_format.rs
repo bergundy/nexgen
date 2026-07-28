@@ -1,5 +1,7 @@
-#[cfg(unix)]
-mod tests {
+// The `--format`/`--descriptors` CLI surface lives behind the `advanced`
+// feature; the option-rejection checks are feature-agnostic.
+#[cfg(all(unix, feature = "advanced"))]
+mod format_tests {
     use std::env;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -56,13 +58,11 @@ mod tests {
         let output_path = temp_dir.join("output");
         write_formatter_script(&temp_dir, "ruff", "# formatted by test");
 
-        let status = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
+        let status = Command::new(env!("CARGO_BIN_EXE_nexgen"))
             .env("PATH", formatter_path_env(&temp_dir))
             .args([
                 "python",
-                "--input",
                 sample_input_path(&root).to_str().unwrap(),
-                "--input",
                 linked_inputs_path(&root).to_str().unwrap(),
                 "--descriptors",
                 descriptor_path(&root).to_str().unwrap(),
@@ -89,13 +89,11 @@ mod tests {
         let output_path = temp_dir.join("output");
         write_formatter_script(&temp_dir, "prettier", "// formatted by test");
 
-        let status = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
+        let status = Command::new(env!("CARGO_BIN_EXE_nexgen"))
             .env("PATH", formatter_path_env(&temp_dir))
             .args([
                 "ts",
-                "--input",
                 sample_input_path(&root).to_str().unwrap(),
-                "--input",
                 linked_inputs_path(&root).to_str().unwrap(),
                 "--descriptors",
                 descriptor_path(&root).to_str().unwrap(),
@@ -113,28 +111,33 @@ mod tests {
 
         let _ = fs::remove_dir_all(temp_dir);
     }
+}
+
+#[cfg(unix)]
+mod reject_tests {
+    use std::process::Command;
 
     #[test]
     fn cli_rejects_legacy_and_target_specific_options() {
-        let binary = env!("CARGO_BIN_EXE_nex-gen");
+        let binary = env!("CARGO_BIN_EXE_nexgen");
 
         assert!(
             !Command::new(binary)
-                .args(["generate", "--lang", "python"])
+                .args(["--lang", "python"])
                 .status()
                 .unwrap()
                 .success()
         );
         assert!(
             !Command::new(binary)
-                .args(["generate", "python", "--date-time-types", "date"])
+                .args(["python", "--date-time-types", "date"])
                 .status()
                 .unwrap()
                 .success()
         );
         assert!(
             !Command::new(binary)
-                .args(["generate", "python", "--no-native-api"])
+                .args(["python", "--no-native-api"])
                 .status()
                 .unwrap()
                 .success()

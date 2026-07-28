@@ -1,3 +1,6 @@
+// The `add-rpc` CLI surface lives behind the `advanced` feature.
+#![cfg(feature = "advanced")]
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -58,7 +61,7 @@ fn parse(language: Language, wit: &str, path: &str) -> ApiSpec {
 #[test]
 fn cli_add_rpc_generates_standalone_wit_for_signal_with_start() {
     let root = project_root();
-    let output = Command::new(env!("CARGO_BIN_EXE_nex-gen"))
+    let output = Command::new(env!("CARGO_BIN_EXE_nexgen"))
         .args([
             "add-rpc",
             "--descriptors",
