@@ -85,12 +85,12 @@ final class JsonSchemaRoundTripTest {
     @Test
     void chatFixturesRoundTrip() throws IOException {
         Message minimal = roundTrip("chat", "message-minimal.json", Message.class);
-        assertEquals("text", minimal.getKind());
+        assertEquals("text", minimal.getKind().getValue());
         assertEquals("hi", minimal.getBody());
         assertNull(minimal.getReplyToId());
         assertNull(minimal.getPriority());
         assertEquals(0L, minimal.getPriorityOrDefault());
-        assertEquals("text", Message.KIND);
+        assertEquals("text", Message.Kind.KIND.getValue());
 
         // message-full carries replyToId: null (optional+nullable), which Java
         // collapses on the way out, so only deserialization is checked.
