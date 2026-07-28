@@ -748,6 +748,20 @@ enum JavaType {
     /// A materialized `contentEncoding` (native `byte[]`; the wire is a JSON
     /// string carrying the encoded form). See `contentEncoding.md`.
     Bytes(crate::json_schema::content_encoding::Encoding),
+    /// A closed value-set (`const`/`enum`) rendered as a nested value class:
+    /// a private constructor, one known constant per member, and Jackson
+    /// `@JsonCreator`/`@JsonValue` over the underlying scalar `wire` type. The
+    /// class is the boxed type of the owning field; it can only ever hold a
+    /// known constant, so it is a compile-time closed contract (P13.1). See
+    /// `specs/json-schema/features/{const,enum}.md`.
+    ClosedValue {
+        /// The nested value-class name (`Kind`, `Status`), derived from the
+        /// owning member and scoped inside the enclosing POJO.
+        class: String,
+        /// The underlying scalar the value class wraps (String/Long/Double/
+        /// Boolean); the wire form and the `getValue()`/`@JsonCreator` type.
+        wire: Box<JavaType>,
+    },
 }
 
 impl JavaType {
@@ -762,6 +776,9 @@ impl JavaType {
             JavaType::Union { class } => class.clone(),
             JavaType::Temporal(kind) => java_temporal_type(*kind).to_string(),
             JavaType::Bytes(_) => "byte[]".to_string(),
+            // The value class is the field's boxed type; it is always a
+            // reference (never a stored primitive), even when required.
+            JavaType::ClosedValue { class, .. } => class.clone(),
         }
     }
 
@@ -780,6 +797,7 @@ impl JavaType {
                 refs.insert((package.clone(), class.clone()));
             }
             JavaType::List(inner) => inner.collect_refs(refs),
+            // A closed value class is nested in the same file — no import.
             _ => {}
         }
     }
@@ -1357,6 +1375,10 @@ fn resolve_model_kind(
             } else {
                 Vec::new()
             };
+            let java_name = property
+                .x_java_name
+                .clone()
+                .unwrap_or_else(|| json_name.to_lower_camel_case());
             // A union-typed field: an inline `oneOf` (nested interface +
             // wrappers) or a `$ref` to a named union def.
             let (ty, union) = if property.one_of.is_some() && is_java_union_schema(property) {
@@ -1378,14 +1400,23 @@ fn resolve_model_kind(
                 let target = decode_schema(&all_models[strip_ref(reference)])?;
                 let union = classify_java_union(&class, false, &target, all_models, context);
                 (java_type_for(property, context)?, union)
+            } else if !closed_values.is_empty() {
+                // A `const`/`enum` member is a nested value class over its
+                // underlying scalar (P13.1). The class name follows the member
+                // (`x-java-name` moves it, per the properties resolved policy).
+                let wire = java_type_for(property, context)?;
+                (
+                    JavaType::ClosedValue {
+                        class: upper_first(&java_name),
+                        wire: Box::new(wire),
+                    },
+                    None,
+                )
             } else {
                 (java_type_for(property, context)?, None)
             };
             fields.push(FieldPlan {
-                java_name: property
-                    .x_java_name
-                    .clone()
-                    .unwrap_or_else(|| json_name.to_lower_camel_case()),
+                java_name,
                 json_name: json_name.clone(),
                 ty,
                 required: required.contains(json_name),
@@ -1806,6 +1837,19 @@ fn assemble_file(
             imports.insert(import.to_string());
         }
     }
+    // Closed value-set (`const`/`enum`) value classes carry Jackson
+    // `@JsonCreator`/`@JsonValue` for the standalone/interop wire mapping.
+    for (needle, import) in [
+        (
+            "@JsonCreator",
+            "com.fasterxml.jackson.annotation.JsonCreator",
+        ),
+        ("@JsonValue", "com.fasterxml.jackson.annotation.JsonValue"),
+    ] {
+        if body.contains(needle) {
+            imports.insert(import.to_string());
+        }
+    }
 
     for import in &imports {
         output.push_str("import ");
@@ -1936,24 +1980,18 @@ fn render_object_class(
         }
     }
 
-    // Closed value-set (const/enum) named constants.
+    // Closed value-set (const/enum) nested value classes.
     for field in fields {
-        for value in &field.closed_values {
-            output.push_str(&format!(
-                "    public static final {} {} = {};\n",
-                java_closed_const_type(&field.ty),
-                java_const_name(
-                    &field.closed_overrides,
-                    &field.java_name,
-                    &field.closed_values,
-                    value
-                ),
-                java_closed_literal(&field.ty, value)
-            ));
+        if let JavaType::ClosedValue { class, wire } = &field.ty {
+            render_closed_value_class(
+                output,
+                class,
+                wire,
+                &field.java_name,
+                &field.closed_values,
+                &field.closed_overrides,
+            );
         }
-    }
-    if fields.iter().any(|field| !field.closed_values.is_empty()) {
-        output.push('\n');
     }
 
     // Compiled `pattern` regexes (compiled once at class init; the load-time
@@ -2140,11 +2178,9 @@ fn render_equals_hashcode_tostring(
 
 /// True when a field carries a constraint the serialize path must re-check over
 /// the in-memory value (P12, both directions). Mirrors the dispatch in
-/// `render_java_serialize_field_check`.
+/// `render_java_serialize_field_check`. A closed value (`const`/`enum`) needs no
+/// serialize check: its value class can only hold a known constant.
 fn field_has_serialize_check(field: &FieldPlan) -> bool {
-    if !field.closed_values.is_empty() {
-        return true;
-    }
     match &field.ty {
         JavaType::String => !field.string_length.is_empty(),
         JavaType::Long | JavaType::Double => !field.numeric.is_empty(),
@@ -2163,41 +2199,10 @@ fn object_needs_serialize_validation(schema: &Schema, fields: &[FieldPlan]) -> b
         || fields.iter().any(field_has_serialize_check)
 }
 
-/// Emits the closed value-set membership predicate over `accessor` (a typed
-/// in-memory value) for the serialize path, pushing the same informative
-/// Violation as the deserializer.
-fn render_java_serialize_closed_check(
-    output: &mut String,
-    ty: &JavaType,
-    accessor: &str,
-    json: &str,
-    field_java_name: &str,
-    values: &[Value],
-    overrides: &ClosedNameOverrides,
-    indent: &str,
-) {
-    let is_string = matches!(ty, JavaType::String);
-    let matches = values
-        .iter()
-        .map(|value| {
-            let name = java_const_name(overrides, field_java_name, values, value);
-            if is_string {
-                format!("{name}.equals({accessor})")
-            } else {
-                format!("{accessor} == {name}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" || ");
-    let reason = java_closed_reason(values, accessor);
-    output.push_str(&format!(
-        "{indent}if (!({matches})) {{\n{indent}    violations.add(new Violation({json}, {reason}));\n{indent}}}\n"
-    ));
-}
-
 /// Emits the per-field constraint checks over an in-memory field value for the
 /// serialize path, reusing the same emitters as the deserializer (numeric /
-/// string-length / pattern / format / array / enum / const). Boxed values are
+/// string-length / pattern / format / array). Closed values (`const`/`enum`) are
+/// omitted — their value class can only hold a known constant. Boxed values are
 /// guarded non-null; the check locals live in their own block so the reused
 /// emitters' locals (`length`, `matchCount`, …) never collide across fields.
 fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, indent: &str) {
@@ -2205,18 +2210,7 @@ fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, ind
     let accessor = format!("value.{}", field.java_name);
     let inner = format!("{indent}    ");
     let mut body = String::new();
-    if !field.closed_values.is_empty() {
-        render_java_serialize_closed_check(
-            &mut body,
-            &field.ty,
-            &accessor,
-            &json,
-            &field.java_name,
-            &field.closed_values,
-            &field.closed_overrides,
-            &inner,
-        );
-    } else {
+    {
         match &field.ty {
             JavaType::String if !field.string_length.is_empty() => render_java_string_checks(
                 &mut body,
@@ -2514,6 +2508,11 @@ fn write_value_statement(ty: &JavaType, json: &str, accessor: &str, indent: &str
                 "{indent}gen.writeFieldName({json});\n{indent}serializers.defaultSerializeValue({accessor}, gen);\n"
             )
         }
+        // A closed value writes its underlying scalar via `getValue()`; the
+        // value class can only hold a known constant, so no membership check.
+        JavaType::ClosedValue { wire, .. } => {
+            write_value_statement(wire, json, &format!("{accessor}.getValue()"), indent)
+        }
     }
 }
 
@@ -2730,10 +2729,11 @@ fn render_parse_value(
     array: &ArrayConstraints,
     indent: &str,
 ) {
-    if !closed_values.is_empty() {
+    if let JavaType::ClosedValue { class, wire } = ty {
         render_java_closed_parse(
             output,
-            ty,
+            class,
+            wire,
             target,
             json,
             field_java_name,
@@ -2904,6 +2904,8 @@ fn render_parse_value(
                 "{indent}violations.add(new Violation({json}, \"unsupported union\"));\n"
             ));
         }
+        // Closed values are handled by the early return above.
+        JavaType::ClosedValue { .. } => unreachable!("closed value handled above"),
     }
 }
 
@@ -3012,6 +3014,11 @@ fn render_parse_element(
             ));
             output.push_str(&format!("{indent}    if (parsed != null) {{\n{indent}        {list}.add(parsed);\n{indent}    }}\n"));
             output.push_str(&format!("{indent}}}\n"));
+        }
+        // Array items are never a closed value (const/enum lives at the
+        // property level, not on array elements).
+        JavaType::ClosedValue { .. } => {
+            unreachable!("closed value cannot be an array element")
         }
     }
 }
@@ -3122,6 +3129,11 @@ fn render_parse_map_value(
             ));
             output.push_str(&format!("{indent}    if (parsed != null) {{\n{indent}        {map}.put({key_var}, parsed);\n{indent}    }}\n"));
             output.push_str(&format!("{indent}}}\n"));
+        }
+        // Typed-map values are never a closed value (const/enum lives at the
+        // property level, not on `additionalProperties`).
+        JavaType::ClosedValue { .. } => {
+            unreachable!("closed value cannot be a typed-map value")
         }
     }
 }
@@ -3281,6 +3293,156 @@ fn write_map_value(value: &JavaType) -> String {
             "                gen.writeStringField(entry.getKey(), Base64Support.{}(entry.getValue()));\n",
             java_content_encoding_format_fn(*encoding)
         ),
+        // Typed-map values are never a closed value.
+        JavaType::ClosedValue { .. } => {
+            unreachable!("closed value cannot be a typed-map value")
+        }
+    }
+}
+
+/// Renders a nested closed value-set class (`const`/`enum`) inside the enclosing
+/// POJO: one known constant per member, a private constructor, a `@JsonCreator`
+/// factory (throws on the standalone/interop path), and a `@JsonValue` accessor
+/// over the underlying scalar. The private constructor makes the known constants
+/// the only obtainable instances — a value outside the set cannot be constructed
+/// (P13.1). See `specs/json-schema/features/{const,enum}.md`.
+fn render_closed_value_class(
+    output: &mut String,
+    class: &str,
+    wire: &JavaType,
+    field_java_name: &str,
+    values: &[Value],
+    overrides: &ClosedNameOverrides,
+) {
+    let const_type = java_closed_const_type(wire);
+    output.push_str(&format!("    public static final class {class} {{\n"));
+
+    // Known constants — the only obtainable instances.
+    for value in values {
+        output.push_str(&format!(
+            "        public static final {class} {} = new {class}({});\n",
+            java_const_name(overrides, field_java_name, values, value),
+            java_closed_literal(wire, value),
+        ));
+    }
+    output.push('\n');
+
+    output.push_str(&format!("        private final {const_type} value;\n\n"));
+    output.push_str(&format!(
+        "        private {class}({const_type} value) {{\n            this.value = value;\n        }}\n\n"
+    ));
+
+    render_closed_value_creator(output, class, wire, field_java_name, values, overrides);
+
+    output.push_str(&format!(
+        "        @JsonValue\n        public {const_type} getValue() {{\n            return value;\n        }}\n\n"
+    ));
+
+    render_closed_value_object_methods(output, class, wire);
+
+    output.push_str("    }\n\n");
+}
+
+/// Emits the value class's `@JsonCreator` factory: a fail-fast lookup used on the
+/// standalone/interop decode path (the aggregating per-POJO deserializer uses its
+/// own non-throwing lookup instead). Returns the matching constant or throws
+/// `IllegalArgumentException` naming the expected set and the offending value.
+fn render_closed_value_creator(
+    output: &mut String,
+    class: &str,
+    wire: &JavaType,
+    field_java_name: &str,
+    values: &[Value],
+    overrides: &ClosedNameOverrides,
+) {
+    let is_string = matches!(wire, JavaType::String);
+    let (factory, param_type) = match wire {
+        JavaType::Long => ("fromLong", "long"),
+        JavaType::Double => ("fromDouble", "double"),
+        JavaType::Boolean => ("fromBoolean", "boolean"),
+        _ => ("fromString", "String"),
+    };
+    // Only the reference-typed (`String`) wire can be null; a primitive factory
+    // parameter never is, so its return type is non-null.
+    let return_type = if is_string {
+        format!("@Nullable {class}")
+    } else {
+        class.to_string()
+    };
+    output.push_str(&format!(
+        "        @JsonCreator\n        public static {return_type} {factory}({param_type} value) {{\n"
+    ));
+    if is_string {
+        output.push_str(
+            "            if (value == null) {\n                return null;\n            }\n",
+        );
+    }
+    for member in values {
+        let name = java_const_name(overrides, field_java_name, values, member);
+        let test = if is_string {
+            format!("{}.equals(value)", java_closed_literal(wire, member))
+        } else {
+            format!("value == {}", java_closed_literal(wire, member))
+        };
+        output.push_str(&format!(
+            "            if ({test}) {{\n                return {name};\n            }}\n"
+        ));
+    }
+    output.push_str(&format!(
+        "            throw new IllegalArgumentException({});\n        }}\n\n",
+        java_closed_throw_message(values, is_string),
+    ));
+}
+
+/// Emits the value class's value-based `equals`/`hashCode`/`toString`.
+fn render_closed_value_object_methods(output: &mut String, class: &str, wire: &JavaType) {
+    output.push_str("        @Override\n        public boolean equals(@Nullable Object other) {\n");
+    output.push_str(
+        "            if (this == other) {\n                return true;\n            }\n",
+    );
+    output.push_str(&format!(
+        "            if (!(other instanceof {class})) {{\n                return false;\n            }}\n"
+    ));
+    output.push_str(&format!("            {class} that = ({class}) other;\n"));
+    if matches!(wire, JavaType::String) {
+        output.push_str("            return Objects.equals(this.value, that.value);\n");
+    } else {
+        output.push_str("            return this.value == that.value;\n");
+    }
+    output.push_str("        }\n\n");
+
+    output.push_str(
+        "        @Override\n        public int hashCode() {\n            return Objects.hash(value);\n        }\n\n",
+    );
+
+    output.push_str(&format!(
+        "        @Override\n        public String toString() {{\n            return \"{class}[\" + value + \"]\";\n        }}\n"
+    ));
+}
+
+/// The Java expression for the `@JsonCreator` throw message: names the expected
+/// value (`const`) or set (`enum`) and the offending value, mirroring the
+/// deserializer's `Violation` reason (`must equal "user", got "admin"` /
+/// `must be one of ["a", "b"], got "c"`).
+fn java_closed_throw_message(values: &[Value], is_string: bool) -> String {
+    let lead = if values.len() == 1 {
+        let text = match &values[0] {
+            Value::String(string) => format!("must equal {string:?}"),
+            Value::Bool(flag) => format!("must equal {flag}"),
+            Value::Number(number) => format!("must equal {number}"),
+            _ => "must equal <const>".to_string(),
+        };
+        text
+    } else {
+        format!("must be one of [{}]", java_closed_set_display(values))
+    };
+    if is_string {
+        format!(
+            "{} + value + \"\\\"\"",
+            java_string_literal(&format!("{lead}, got \""))
+        )
+    } else {
+        format!("{} + value", java_string_literal(&format!("{lead}, got ")))
     }
 }
 
@@ -3389,12 +3551,15 @@ fn java_closed_reason(values: &[Value], target: &str) -> String {
     }
 }
 
-/// Emits the collecting-deserializer parse + closed-value check (const equality
-/// / enum membership) — a non-throwing membership lookup that records a
-/// Violation for an off-set value so multiple bad fields aggregate.
+/// Emits the collecting-deserializer parse + closed-value lookup (const equality
+/// / enum membership) — a non-throwing lookup that maps the wire scalar to the
+/// value-class constant, or records a Violation for an off-set value so multiple
+/// bad fields aggregate. `target` is the value-class-typed field local; `wire`
+/// is the underlying scalar the value class wraps.
 fn render_java_closed_parse(
     output: &mut String,
-    ty: &JavaType,
+    class: &str,
+    wire: &JavaType,
     target: &str,
     json: &str,
     field_java_name: &str,
@@ -3402,39 +3567,38 @@ fn render_java_closed_parse(
     overrides: &ClosedNameOverrides,
     indent: &str,
 ) {
-    let is_string = matches!(ty, JavaType::String);
-    let names = values
-        .iter()
-        .map(|value| java_const_name(overrides, field_java_name, values, value))
-        .collect::<Vec<_>>();
-    let matches = names
-        .iter()
-        .map(|name| {
-            if is_string {
-                format!("{name}.equals({target})")
-            } else {
-                format!("{target} == {name}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" || ");
-    let reason = java_closed_reason(values, target);
+    let is_string = matches!(wire, JavaType::String);
+    let temp = format!("{field_java_name}Value");
     let inner = format!("{indent}    ");
-    let emit_check = |o: &mut String, ind: &str| {
-        o.push_str(&format!("{ind}if (!({matches})) {{\n"));
+    // The membership lookup assigns the matching constant, else records the
+    // off-value Violation — the same informative reason in both directions.
+    let emit_lookup = |o: &mut String, ind: &str| {
+        for (index, value) in values.iter().enumerate() {
+            let keyword = if index == 0 { "if" } else { "} else if" };
+            let literal = java_closed_literal(wire, value);
+            let test = if is_string {
+                format!("{literal}.equals({temp})")
+            } else {
+                format!("{temp} == {literal}")
+            };
+            let name = java_const_name(overrides, field_java_name, values, value);
+            o.push_str(&format!("{ind}{keyword} ({test}) {{\n"));
+            o.push_str(&format!("{ind}    {target} = {class}.{name};\n"));
+        }
+        o.push_str(&format!("{ind}}} else {{\n"));
         o.push_str(&format!(
-            "{ind}    violations.add(new Violation({json}, {reason}));\n"
+            "{ind}    violations.add(new Violation({json}, {}));\n",
+            java_closed_reason(values, &temp)
         ));
         o.push_str(&format!("{ind}}}\n"));
     };
-    match ty {
+    match wire {
         JavaType::Long => {
             output.push_str(&format!(
-                "{indent}Long numberValue = SpecNumbers.specLong(field, {json}, violations);\n"
+                "{indent}Long {temp} = SpecNumbers.specLong(field, {json}, violations);\n"
             ));
-            output.push_str(&format!("{indent}if (numberValue != null) {{\n"));
-            output.push_str(&format!("{inner}{target} = numberValue;\n"));
-            emit_check(output, &inner);
+            output.push_str(&format!("{indent}if ({temp} != null) {{\n"));
+            emit_lookup(output, &inner);
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Double => {
@@ -3443,8 +3607,8 @@ fn render_java_closed_parse(
                 "{inner}violations.add(new Violation({json}, \"expected number\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
-            output.push_str(&format!("{inner}{target} = field.doubleValue();\n"));
-            emit_check(output, &inner);
+            output.push_str(&format!("{inner}double {temp} = field.doubleValue();\n"));
+            emit_lookup(output, &inner);
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Boolean => {
@@ -3453,8 +3617,8 @@ fn render_java_closed_parse(
                 "{inner}violations.add(new Violation({json}, \"expected boolean\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
-            output.push_str(&format!("{inner}{target} = field.booleanValue();\n"));
-            emit_check(output, &inner);
+            output.push_str(&format!("{inner}boolean {temp} = field.booleanValue();\n"));
+            emit_lookup(output, &inner);
             output.push_str(&format!("{indent}}}\n"));
         }
         _ => {
@@ -3463,8 +3627,8 @@ fn render_java_closed_parse(
                 "{inner}violations.add(new Violation({json}, \"expected string\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
-            output.push_str(&format!("{inner}{target} = field.textValue();\n"));
-            emit_check(output, &inner);
+            output.push_str(&format!("{inner}String {temp} = field.textValue();\n"));
+            emit_lookup(output, &inner);
             output.push_str(&format!("{indent}}}\n"));
         }
     }

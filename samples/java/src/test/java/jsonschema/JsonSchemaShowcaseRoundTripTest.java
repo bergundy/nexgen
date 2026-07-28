@@ -79,17 +79,18 @@ final class JsonSchemaShowcaseRoundTripTest {
     @Test
     void showcaseFixturesRoundTrip() throws IOException {
         Showcase minimal = roundTrip("showcase-minimal.json", Showcase.class);
-        assertEquals("showcase", minimal.getKind());
-        assertEquals("showcase", Showcase.KIND);
+        assertEquals("showcase", minimal.getKind().getValue());
+        assertEquals("showcase", Showcase.Kind.KIND.getValue());
         // Closed value-set fields (const on integer/boolean, enum on string/
-        // integer/number) round-trip to their in-memory constants.
-        assertEquals(1L, minimal.getRevision());
-        assertEquals(1L, Showcase.REVISION_JAVA);
-        assertTrue(minimal.getEnabled());
-        assertEquals("active", minimal.getStatus());
-        assertEquals(Showcase.ACTIVE_JAVA, minimal.getStatus());
-        assertEquals(1L, minimal.getTier());
-        assertEquals(1.5, minimal.getScale());
+        // integer/number) round-trip to their in-memory value-class constants.
+        assertEquals(1L, minimal.getRevision().getValue());
+        assertEquals(1L, Showcase.Revision.REVISION_JAVA.getValue());
+        assertEquals(Showcase.Revision.REVISION_JAVA, minimal.getRevision());
+        assertTrue(minimal.getEnabled().getValue());
+        assertEquals("active", minimal.getStatus().getValue());
+        assertEquals(Showcase.Status.ACTIVE_JAVA, minimal.getStatus());
+        assertEquals(1L, minimal.getTier().getValue());
+        assertEquals(1.5, minimal.getScale().getValue());
         assertEquals("Widget", minimal.getName());
         assertEquals(3L, minimal.getCount());
         assertTrue(minimal.getActive());
@@ -593,15 +594,18 @@ final class JsonSchemaShowcaseRoundTripTest {
      * under serialize-side test; every other optional member is left unset.
      */
     private static Showcase showcaseWith(
-            String status,
-            long revision,
             String code,
             String sku,
             String requestId,
             Long priority,
             java.util.List<String> aliases) {
+        // Closed value-set members can only hold a known value-class constant —
+        // a wrong value cannot be constructed (private constructor), so these
+        // fields are always the valid constants here.
         return new Showcase(
-                "showcase", revision, true, status, 1L, 1.5, "w", 1L, true,
+                Showcase.Kind.KIND, Showcase.Revision.REVISION_JAVA, Showcase.Enabled.ENABLED,
+                Showcase.Status.ACTIVE_JAVA, Showcase.Tier.TIER_1, Showcase.Scale.SCALE_1_5,
+                "w", 1L, true,
                 null, code, sku, null, requestId, null, null, null, null,
                 null, null, null, null, null, null, null, null, "tools",
                 priority, null, null, null, null, aliases, null, null, null,
@@ -617,46 +621,40 @@ final class JsonSchemaShowcaseRoundTripTest {
     @Test
     void invalidInMemoryValuesRejectedOnSerialize() {
         // A valid baseline serializes cleanly (no false rejection).
-        Showcase valid = showcaseWith("active", 1L, null, null, null, null, null);
+        Showcase valid = showcaseWith(null, null, null, null, null);
         CONVERTER.toPayload(valid).orElseThrow(AssertionError::new);
 
         // Numeric bound: an in-memory value past `maximum` fails to serialize.
         RuntimeException numeric = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("active", 1L, null, null, null, 42L, null)));
+                CONVERTER.toPayload(showcaseWith(null, null, null, 42L, null)));
         assertTrue(messageChain(numeric).contains("must be <= 10, got 42"), messageChain(numeric));
 
         // String length: an in-memory over-long string fails to serialize.
         RuntimeException length = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("active", 1L, "abcdef", null, null, null, null)));
+                CONVERTER.toPayload(showcaseWith("abcdef", null, null, null, null)));
         assertTrue(messageChain(length).contains("must have length <= 5, got 6"), messageChain(length));
 
         // Pattern: an in-memory off-pattern value fails to serialize.
         RuntimeException pattern = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("active", 1L, null, "xyz", null, null, null)));
+                CONVERTER.toPayload(showcaseWith(null, "xyz", null, null, null)));
         assertTrue(messageChain(pattern).contains("must match pattern"), messageChain(pattern));
 
         // Format: an in-memory malformed uuid fails to serialize.
         RuntimeException format = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("active", 1L, null, null, "nope", null, null)));
+                CONVERTER.toPayload(showcaseWith(null, null, "nope", null, null)));
         assertTrue(messageChain(format).contains("must be a valid uuid, got nope"), messageChain(format));
 
         // Array: an in-memory duplicate (uniqueItems) fails to serialize.
         RuntimeException array = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("active", 1L, null, null, null, null,
+                CONVERTER.toPayload(showcaseWith(null, null, null, null,
                         java.util.Arrays.asList("dup", "dup"))));
         assertTrue(messageChain(array).contains("duplicate items: element at index 1 equals index 0"), messageChain(array));
 
-        // Closed value-set: a mutated enum member fails to serialize.
-        RuntimeException enumMember = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("archived", 1L, null, null, null, null, null)));
-        assertTrue(
-                messageChain(enumMember).contains("must be one of [\"active\", \"inactive\", \"pending\"], got archived"),
-                messageChain(enumMember));
-
-        // const: a mutated integer const fails to serialize.
-        RuntimeException constMember = assertThrows(RuntimeException.class, () ->
-                CONVERTER.toPayload(showcaseWith("active", 2L, null, null, null, null, null)));
-        assertTrue(messageChain(constMember).contains("must equal 1"), messageChain(constMember));
+        // Closed value-set (const/enum) members carry no serialize-side check:
+        // their value class can only hold a known constant, so an out-of-set
+        // value cannot be constructed in memory (a compile-time guarantee). The
+        // membership check is therefore a deserialize-direction guard only —
+        // exercised in invalidValuesAreRejected (badRevision/badStatus/etc.).
 
         // allOf-merged bound: an in-memory `size` past the tightened maximum fails.
         RuntimeException widget = assertThrows(RuntimeException.class, () ->
