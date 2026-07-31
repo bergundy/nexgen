@@ -1312,6 +1312,56 @@ signal-with-start-workflow: func(...) -> ...;
 
 ---
 
+### @nexus.serialization-context
+
+**Placement:** Operation (function)
+**Syntax:** `@nexus.serialization-context python="<support-helper>"`
+
+Supplies a support helper that returns the serialization context to use when
+encoding operation inputs. Use this when the generated operation request
+contains user payloads that should be serialized for a context other than the
+Nexus operation itself, such as signal-with-start payloads that will be received
+by the target workflow.
+
+The generated operation registry stores the helper alongside the operation
+definition. SDKs use that registry entry to call the helper with the operation
+request and construct the target serialization context before converting user
+payloads.
+
+The helper is invoked with the actual generated operation request model. In
+Python examples below, the request is annotated as `typing.Any` because support
+files are shared inputs that do not import the generated model class from each
+output package. The runtime value is still the generated request model, and the
+helper must return a `temporalio.converter.SerializationContext`.
+
+```wit
+/// @nexus.operation name="SignalWithStartWorkflowExecution"
+/// @nexus.serialization-context python="signal_with_start_workflow_serialization_context"
+signal-with-start-workflow: func(
+  request: signal-with-start-workflow-request,
+) -> signal-with-start-workflow-response;
+```
+
+```python
+import typing
+
+import temporalio.converter
+
+
+def signal_with_start_workflow_serialization_context(
+    request: typing.Any,
+) -> temporalio.converter.WorkflowSerializationContext:
+    # At runtime, request is the actual generated operation request model.
+    return temporalio.converter.WorkflowSerializationContext(
+        namespace=request.namespace,
+        workflow_id=request.id,
+    )
+```
+
+The referenced helper must be provided through `@nexus.support`.
+
+---
+
 ### @nexus.output-transform
 
 **Placement:** Operation (function)

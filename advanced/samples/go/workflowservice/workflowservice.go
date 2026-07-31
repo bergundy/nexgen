@@ -28,7 +28,6 @@ type signalWithStartWorkflowRequest struct {
 	WorkflowExecutionTimeout *time.Duration
 	WorkflowRunTimeout       *time.Duration
 	WorkflowTaskTimeout      *time.Duration
-	RequestId                *string
 	WorkflowIdReusePolicy    *enums.WorkflowIdReusePolicy
 	WorkflowIdConflictPolicy *enums.WorkflowIdConflictPolicy
 	RetryPolicy              *temporal.RetryPolicy
@@ -93,9 +92,6 @@ func (m signalWithStartWorkflowRequest) toProto(ctx workflow.Context) (*workflow
 			return nil, err
 		}
 		message.WorkflowTaskTimeout = converted
-	}
-	if m.RequestId != nil {
-		message.RequestId = (*m.RequestId)
 	}
 	if m.WorkflowIdReusePolicy != nil {
 		message.WorkflowIdReusePolicy = enums.WorkflowIdReusePolicy((*m.WorkflowIdReusePolicy))
@@ -293,9 +289,6 @@ type SignalWithStartWorkflowOptions struct {
 	// Timeout of a single workflow task.
 	WorkflowTaskTimeout time.Duration
 	// Optional.
-	// Request ID used to deduplicate workflow start requests.
-	RequestId string
-	// Optional.
 	// Behavior when a closed workflow with the same ID exists. Default is allow-duplicate.
 	WorkflowIdReusePolicy enums.WorkflowIdReusePolicy
 	// Optional.
@@ -358,10 +351,6 @@ func SignalWithStartWorkflow(
 	if opts.WorkflowTaskTimeout != 0 {
 		workflowTaskTimeout = &opts.WorkflowTaskTimeout
 	}
-	var requestId *string
-	if opts.RequestId != "" {
-		requestId = &opts.RequestId
-	}
 	var workflowIdReusePolicy *enums.WorkflowIdReusePolicy
 	if opts.WorkflowIdReusePolicy != 0 {
 		workflowIdReusePolicy = &opts.WorkflowIdReusePolicy
@@ -402,7 +391,6 @@ func SignalWithStartWorkflow(
 		WorkflowExecutionTimeout: workflowExecutionTimeout,
 		WorkflowRunTimeout:       workflowRunTimeout,
 		WorkflowTaskTimeout:      workflowTaskTimeout,
-		RequestId:                requestId,
 		WorkflowIdReusePolicy:    workflowIdReusePolicy,
 		WorkflowIdConflictPolicy: workflowIdConflictPolicy,
 		RetryPolicy:              opts.RetryPolicy,
@@ -444,10 +432,6 @@ func SignalWithStartWorkflowTyped[WorkflowArg any, WorkflowResult any](
 	if opts.WorkflowTaskTimeout != 0 {
 		workflowTaskTimeout = &opts.WorkflowTaskTimeout
 	}
-	var requestId *string
-	if opts.RequestId != "" {
-		requestId = &opts.RequestId
-	}
 	var workflowIdReusePolicy *enums.WorkflowIdReusePolicy
 	if opts.WorkflowIdReusePolicy != 0 {
 		workflowIdReusePolicy = &opts.WorkflowIdReusePolicy
@@ -482,7 +466,6 @@ func SignalWithStartWorkflowTyped[WorkflowArg any, WorkflowResult any](
 		WorkflowExecutionTimeout: workflowExecutionTimeout,
 		WorkflowRunTimeout:       workflowRunTimeout,
 		WorkflowTaskTimeout:      workflowTaskTimeout,
-		RequestId:                requestId,
 		WorkflowIdReusePolicy:    workflowIdReusePolicy,
 		WorkflowIdConflictPolicy: workflowIdConflictPolicy,
 		RetryPolicy:              opts.RetryPolicy,

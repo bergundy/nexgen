@@ -12,8 +12,9 @@ import temporalio.common as temporalio_common
 import temporalio.nexus.system
 
 
-def _current_payload_converter() -> temporalio_converter.PayloadConverter:
-    return temporalio.nexus.system.current_user_payload_converter()
+class SignalWithStartWorkflowModelRequest(typing.Protocol):
+    namespace: str
+    id: str
 
 
 def retry_policy_from_proto(
@@ -78,16 +79,33 @@ def workflow_namespace() -> str:
     return info().namespace
 
 
+def signal_with_start_workflow_serialization_context(
+    request: SignalWithStartWorkflowModelRequest,
+) -> temporalio_converter.WorkflowSerializationContext:
+    return temporalio_converter.WorkflowSerializationContext(
+        namespace=request.namespace,
+        workflow_id=request.id,
+    )
+
+
 def payloads_to_proto(
     values: collections.abc.Sequence[typing.Any],
 ) -> common_pb2.Payloads:
-    return _current_payload_converter().to_payloads_wrapper(values)
+    return (
+        temporalio.nexus.system._current_user_payload_converter().to_payloads_wrapper(
+            values
+        )
+    )
 
 
 def payloads_from_proto(
     proto: common_pb2.Payloads,
 ) -> list[object]:
-    return list(_current_payload_converter().from_payloads_wrapper(proto))
+    return list(
+        temporalio.nexus.system._current_user_payload_converter().from_payloads_wrapper(
+            proto
+        )
+    )
 
 
 def _clone_payload(payload: common_pb2.Payload) -> common_pb2.Payload:
@@ -102,7 +120,11 @@ def _value_to_payload(
     if isinstance(value, common_pb2.Payload):
         return _clone_payload(value)
 
-    payloads = _current_payload_converter().to_payloads_wrapper([value])
+    payloads = (
+        temporalio.nexus.system._current_user_payload_converter().to_payloads_wrapper(
+            [value]
+        )
+    )
     return _clone_payload(payloads.payloads[0])
 
 
@@ -114,7 +136,9 @@ def _payload_to_value(
 
     return typing.cast(
         object,
-        _current_payload_converter().from_payloads_wrapper(wrapper)[0],
+        temporalio.nexus.system._current_user_payload_converter().from_payloads_wrapper(
+            wrapper
+        )[0],
     )
 
 
