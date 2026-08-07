@@ -13,18 +13,50 @@ use wit_parser_crate::{
 use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata, RpcMetadata};
 use crate::error::{Error, Result};
 use crate::parser::{
-    LinkedWitMetadata, find_proto_name_for_type, find_proto_name_for_type_def,
-    load_linked_wit_metadata_from_inputs, parse_wit_with_inputs, select_world,
+    directive, directive_value, find_proto_name_for_type, find_proto_name_for_type_def,
+    parse_directives, parse_wit_with_inputs, resolve_function_signature_args, select_world,
     wire_operation_name_from_docs,
 };
 
 const DEFAULT_PACKAGE_NAME: &str = "temporal:nexus@1.0.0";
 const DEFAULT_WORLD_NAME: &str = "system";
 const DEFAULT_ENDPOINT_PLACEHOLDER: &str = "__REPLACE_ME__";
+const LINKED_WIT_ROOT: &str = "package temporary:root@0.0.0;\n\nworld system {}\n";
+const LINKED_WIT_ROOT_PATH: &str = "add-rpc-linked-root.wit";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkedTypeMetadata {
+    wit_name: String,
+    record_fields: Option<BTreeMap<String, LinkedRecordFieldMetadata>>,
+    is_variant: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkedRecordFieldMetadata {
+    wit_name: String,
+    type_expr: String,
+    explicit_proto_field: bool,
+    omitted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkedWitMetadata {
+    proto_types: BTreeMap<String, LinkedTypeMetadata>,
+    type_compatibility: BTreeMap<String, BTreeSet<String>>,
+    type_covered_fields: BTreeMap<String, BTreeSet<String>>,
+    type_use_paths: BTreeMap<String, String>,
+}
 
 pub struct AddRpcRequest {
     pub descriptor_paths: Vec<PathBuf>,
     pub rpc_name: String,
+    pub input_paths: Vec<PathBuf>,
+    pub output_path: Option<PathBuf>,
+}
+
+pub struct AddMessageRequest {
+    pub descriptor_paths: Vec<PathBuf>,
+    pub message_name: String,
     pub input_paths: Vec<PathBuf>,
     pub output_path: Option<PathBuf>,
 }
@@ -70,6 +102,48 @@ pub fn add_rpc_to_file(request: &AddRpcRequest) -> Result<()> {
     Ok(())
 }
 
+pub fn add_message_to_string(
+    descriptor_paths: &[PathBuf],
+    message_name: &str,
+    input_paths: &[PathBuf],
+) -> Result<String> {
+    let descriptors = DescriptorIndex::load_many(descriptor_paths)?;
+    let message = descriptors.resolve_message(message_name)?;
+    let (input_path, linked_input_paths) = add_rpc_input_parts(input_paths);
+    if let Some(input_path) = input_path {
+        let input = fs::read_to_string(input_path).map_err(|source| Error::ReadFile {
+            path: input_path.to_path_buf(),
+            source,
+        })?;
+        generate_add_message_wit_with_input(
+            &descriptors,
+            message,
+            input_path,
+            &input,
+            linked_input_paths,
+        )
+    } else {
+        generate_add_message_wit(&descriptors, message, input_paths)
+    }
+}
+
+pub fn add_message_to_file(request: &AddMessageRequest) -> Result<()> {
+    let output = add_message_to_string(
+        &request.descriptor_paths,
+        &request.message_name,
+        &request.input_paths,
+    )?;
+    if let Some(path) = &request.output_path {
+        fs::write(path, output).map_err(|source| Error::WriteFile {
+            path: path.clone(),
+            source,
+        })?;
+    } else {
+        print!("{output}");
+    }
+    Ok(())
+}
+
 fn add_rpc_input_parts(input_paths: &[PathBuf]) -> (Option<&Path>, &[PathBuf]) {
     if let Some((first, rest)) = input_paths.split_first()
         && (first.is_file()
@@ -92,6 +166,240 @@ pub fn generate_add_rpc_wit(
     AddRpcBuilder::new(descriptors, rpc, linked_wit)
         .build()
         .map(|rendered| rendered.render_standalone())
+}
+
+fn load_linked_wit_metadata_from_inputs(input_paths: &[PathBuf]) -> Result<LinkedWitMetadata> {
+    let parsed = parse_wit_with_inputs(
+        LINKED_WIT_ROOT,
+        Path::new(LINKED_WIT_ROOT_PATH),
+        input_paths,
+    )?;
+    let mut proto_types = BTreeMap::new();
+    let mut type_compatibility = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut type_covered_fields = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut type_use_paths = BTreeMap::new();
+
+    for (package_id, package) in parsed.resolve.packages.iter() {
+        if package_id == parsed.package_id {
+            continue;
+        }
+
+        let package_name = if let Some(version) = &package.name.version {
+            format!(
+                "{}:{}@{}",
+                package.name.namespace, package.name.name, version
+            )
+        } else {
+            format!("{}:{}", package.name.namespace, package.name.name)
+        };
+        let origin_path = parsed
+            .package_origins
+            .get(&package_id)
+            .cloned()
+            .or_else(|| input_paths.first().cloned())
+            .unwrap_or_else(|| PathBuf::from("<input>"));
+
+        for interface_id in package.interfaces.values() {
+            let interface = &parsed.resolve.interfaces[*interface_id];
+            let Some(interface_name) = interface.name.as_deref() else {
+                continue;
+            };
+            let use_path = if let Some(version) = &package.name.version {
+                format!(
+                    "{}:{}/{}@{}",
+                    package.name.namespace, package.name.name, interface_name, version
+                )
+            } else {
+                format!(
+                    "{}:{}/{}",
+                    package.name.namespace, package.name.name, interface_name
+                )
+            };
+
+            for type_id in interface.types.values() {
+                let type_def = &parsed.resolve.types[*type_id];
+                let Some(type_name) = type_def.name.as_deref() else {
+                    continue;
+                };
+                let context =
+                    format!("linked WIT type `{package_name}.{interface_name}.{type_name}`");
+                let directives =
+                    parse_directives(type_def.docs.contents.as_deref(), &origin_path, &context)?;
+
+                for directive in &directives {
+                    if directive.name() != "add-rpc-compatible-with" {
+                        continue;
+                    }
+                    let Some(target) = directive.value("value") else {
+                        return Err(Error::InvalidWitDirective {
+                            path: origin_path.join("model.wit"),
+                            context: context.clone(),
+                            directive: "@nexus.add-rpc-compatible-with".to_string(),
+                            reason: "missing compatibility target".to_string(),
+                        });
+                    };
+                    type_compatibility
+                        .entry(type_name.to_string())
+                        .or_default()
+                        .insert(target.to_string());
+                }
+
+                for directive in &directives {
+                    if directive.name() != "function" {
+                        continue;
+                    }
+                    let Some(signature_name) = directive.value("signature") else {
+                        continue;
+                    };
+                    let covered_field = if let Some(args_field) = directive.value("args-field") {
+                        args_field.to_string()
+                    } else {
+                        resolve_function_signature_args(
+                            &parsed.resolve,
+                            type_def,
+                            signature_name,
+                            &origin_path,
+                            &context,
+                        )?
+                        .0
+                    }
+                    .replace('-', "_");
+                    type_covered_fields
+                        .entry(type_name.to_string())
+                        .or_default()
+                        .insert(covered_field);
+                }
+
+                if let Some(existing) =
+                    type_use_paths.insert(type_name.to_string(), use_path.clone())
+                    && existing != use_path
+                {
+                    return Err(Error::InvalidWit {
+                        path: origin_path.join("model.wit"),
+                        reason: format!(
+                            "linked WIT type `{type_name}` is declared under multiple use paths"
+                        ),
+                    });
+                }
+
+                let Some(proto_name) =
+                    directive_value(&directives, "proto", &origin_path, &context, "value")?
+                else {
+                    continue;
+                };
+
+                let record_fields = if let TypeDefKind::Record(record) = &type_def.kind {
+                    let mut fields = BTreeMap::new();
+                    for field in &record.fields {
+                        let field_context = format!("{context} field `{}`", field.name);
+                        let field_directives = parse_directives(
+                            field.docs.contents.as_deref(),
+                            &origin_path,
+                            &field_context,
+                        )?;
+                        let explicit_proto_name = directive_value(
+                            &field_directives,
+                            "proto-field",
+                            &origin_path,
+                            &field_context,
+                            "value",
+                        )?;
+                        let field_proto_name = explicit_proto_name
+                            .clone()
+                            .unwrap_or_else(|| field.name.replace('-', "_"));
+                        fields.insert(
+                            field_proto_name,
+                            LinkedRecordFieldMetadata {
+                                wit_name: field.name.clone(),
+                                type_expr: render_wit_type(&parsed.resolve, &field.ty),
+                                explicit_proto_field: explicit_proto_name.is_some(),
+                                omitted: directive(
+                                    &field_directives,
+                                    "omit",
+                                    &origin_path,
+                                    &field_context,
+                                )?
+                                .is_some(),
+                            },
+                        );
+                    }
+                    Some(fields)
+                } else {
+                    None
+                };
+
+                if let Some(existing) = proto_types.insert(
+                    proto_name.clone(),
+                    LinkedTypeMetadata {
+                        wit_name: type_name.to_string(),
+                        record_fields,
+                        is_variant: matches!(type_def.kind, TypeDefKind::Variant(_)),
+                    },
+                ) {
+                    return Err(Error::InvalidWit {
+                        path: origin_path.join("model.wit"),
+                        reason: format!(
+                            "duplicate linked `@nexus.proto` mapping for `{proto_name}` (`{}` and `{type_name}`)",
+                            existing.wit_name
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(LinkedWitMetadata {
+        proto_types,
+        type_compatibility,
+        type_covered_fields,
+        type_use_paths,
+    })
+}
+
+fn generate_add_message_wit(
+    descriptors: &DescriptorIndex,
+    message: &MessageMetadata,
+    input_paths: &[PathBuf],
+) -> Result<String> {
+    let linked_wit = load_linked_wit_metadata_from_inputs(input_paths)?;
+    MessageTreeBuilder::new(descriptors, message, linked_wit)
+        .build()
+        .map(|rendered| rendered.render_standalone())
+}
+
+fn generate_add_message_wit_with_input(
+    descriptors: &DescriptorIndex,
+    message: &MessageMetadata,
+    input_path: &Path,
+    input: &str,
+    linked_input_paths: &[PathBuf],
+) -> Result<String> {
+    let linked_wit = load_linked_wit_metadata_from_inputs(linked_input_paths)?;
+    let existing = ExistingWitDocument::load(input_path, input, linked_input_paths)?;
+    if existing.interfaces.len() != 1 {
+        return Err(Error::UnsupportedAddMessage {
+            context: message.full_name.clone(),
+            reason: format!(
+                "existing WIT world `{}` must export exactly one interface, but exports {}",
+                existing.world_name,
+                existing.interfaces.len()
+            ),
+        });
+    }
+    let interface = existing
+        .interfaces
+        .values()
+        .next()
+        .expect("checked for exactly one interface");
+    let rendered = MessageTreeBuilder::new(descriptors, message, linked_wit)
+        .with_existing_interface(interface)
+        .build()?;
+    let additions =
+        render_interface_additions(&rendered.linked_uses, &rendered.rendered_definitions);
+    if additions.is_empty() {
+        return Ok(input.to_string());
+    }
+    insert_into_named_block(input, "interface", &interface.name, &additions)
 }
 
 pub fn generate_add_rpc_wit_with_input(
@@ -177,10 +485,12 @@ impl ExistingWitDocument {
 
 #[derive(Debug, Clone, Default)]
 struct ExistingInterface {
+    name: String,
     function_names: BTreeSet<String>,
     function_names_by_wire_name: BTreeMap<String, String>,
     functions: BTreeMap<String, ExistingFunction>,
     records_by_proto: BTreeMap<String, ExistingRecord>,
+    variant_proto_names: BTreeSet<String>,
     type_names_by_proto: BTreeMap<String, String>,
     type_names_in_scope: BTreeSet<String>,
 }
@@ -199,6 +509,7 @@ impl ExistingInterface {
         let mut type_names_by_proto = BTreeMap::new();
         let mut type_names_in_scope = BTreeSet::new();
         let mut records_by_proto = BTreeMap::new();
+        let mut variant_proto_names = BTreeSet::new();
 
         for (function_name, function) in &interface.functions {
             let context = format!("interface `{export_name}` function `{function_name}`");
@@ -220,6 +531,8 @@ impl ExistingInterface {
                     proto_name,
                     ExistingRecord::from_resolve(resolve, type_name, record),
                 );
+            } else if matches!(type_def.kind, TypeDefKind::Variant(_)) {
+                variant_proto_names.insert(proto_name);
             }
         }
         if let Some(interface_source) = interface_source {
@@ -227,10 +540,12 @@ impl ExistingInterface {
         }
 
         Ok(Self {
+            name: export_name,
             function_names,
             function_names_by_wire_name,
             functions,
             records_by_proto,
+            variant_proto_names,
             type_names_by_proto,
             type_names_in_scope,
         })
@@ -342,16 +657,33 @@ struct ExistingField {
 
 struct AddRpcBuilder<'a> {
     descriptors: &'a DescriptorIndex,
-    rpc: &'a RpcMetadata,
+    rpc: Option<&'a RpcMetadata>,
+    context: String,
     linked_wit: LinkedWitMetadata,
     linked_uses: BTreeMap<String, BTreeSet<String>>,
     available_type_names: BTreeMap<String, String>,
+    existing_records_by_proto: BTreeMap<String, ExistingRecord>,
+    existing_variant_proto_names: BTreeSet<String>,
     reserved_type_names: BTreeSet<String>,
     rendered_types: BTreeSet<String>,
     rendered_definitions: Vec<String>,
 }
 
 impl<'a> AddRpcBuilder<'a> {
+    fn unsupported(&self, context: impl Into<String>, reason: impl Into<String>) -> Error {
+        if self.rpc.is_some() {
+            Error::UnsupportedAddRpc {
+                context: context.into(),
+                reason: reason.into(),
+            }
+        } else {
+            Error::UnsupportedAddMessage {
+                context: context.into(),
+                reason: reason.into(),
+            }
+        }
+    }
+
     fn new(
         descriptors: &'a DescriptorIndex,
         rpc: &'a RpcMetadata,
@@ -359,10 +691,33 @@ impl<'a> AddRpcBuilder<'a> {
     ) -> Self {
         Self {
             descriptors,
-            rpc,
+            rpc: Some(rpc),
+            context: rpc.full_name.clone(),
             linked_wit,
             linked_uses: BTreeMap::new(),
             available_type_names: BTreeMap::new(),
+            existing_records_by_proto: BTreeMap::new(),
+            existing_variant_proto_names: BTreeSet::new(),
+            reserved_type_names: BTreeSet::new(),
+            rendered_types: BTreeSet::new(),
+            rendered_definitions: Vec::new(),
+        }
+    }
+
+    fn for_message(
+        descriptors: &'a DescriptorIndex,
+        message: &MessageMetadata,
+        linked_wit: LinkedWitMetadata,
+    ) -> Self {
+        Self {
+            descriptors,
+            rpc: None,
+            context: message.full_name.clone(),
+            linked_wit,
+            linked_uses: BTreeMap::new(),
+            available_type_names: BTreeMap::new(),
+            existing_records_by_proto: BTreeMap::new(),
+            existing_variant_proto_names: BTreeSet::new(),
             reserved_type_names: BTreeSet::new(),
             rendered_types: BTreeSet::new(),
             rendered_definitions: Vec::new(),
@@ -371,22 +726,25 @@ impl<'a> AddRpcBuilder<'a> {
 
     fn with_existing_interface(mut self, interface: &ExistingInterface) -> Self {
         self.available_type_names = interface.type_names_by_proto.clone();
+        self.existing_records_by_proto = interface.records_by_proto.clone();
+        self.existing_variant_proto_names = interface.variant_proto_names.clone();
         self.reserved_type_names = interface.type_names_in_scope.clone();
         self
     }
 
     fn build(mut self) -> Result<RenderedAddRpcWit> {
-        let input_type = self.render_type_reference(&self.rpc.input_type, &self.rpc.full_name)?;
-        let output_type = self.render_type_reference(&self.rpc.output_type, &self.rpc.full_name)?;
+        let rpc = self.rpc.expect("add-rpc builder must have an RPC").clone();
+        let input_type = self.render_type_reference(&rpc.input_type, &rpc.full_name)?;
+        let output_type = self.render_type_reference(&rpc.output_type, &rpc.full_name)?;
 
         Ok(RenderedAddRpcWit {
-            rpc_full_name: self.rpc.full_name.clone(),
-            interface_name: self.rpc.service_name.to_kebab_case(),
+            rpc_full_name: rpc.full_name.clone(),
+            interface_name: rpc.service_name.to_kebab_case(),
             linked_uses: self.linked_uses,
             rendered_definitions: self.rendered_definitions,
             operation: format!(
                 "  {}: func(\n    request: {},\n  ) -> {};\n",
-                self.rpc.name.to_kebab_case(),
+                rpc.name.to_kebab_case(),
                 input_type,
                 output_type
             ),
@@ -398,25 +756,33 @@ impl<'a> AddRpcBuilder<'a> {
         interface: &ExistingInterface,
         operation_name: &str,
     ) -> Result<ExistingOperationUpdate> {
-        let input_type = self.render_type_reference(&self.rpc.input_type, &self.rpc.full_name)?;
-        let output_type = self.render_type_reference(&self.rpc.output_type, &self.rpc.full_name)?;
+        let rpc = self.rpc.expect("add-rpc builder must have an RPC").clone();
+        let input_type = self.render_type_reference(&rpc.input_type, &rpc.full_name)?;
+        let output_type = self.render_type_reference(&rpc.output_type, &rpc.full_name)?;
         let Some(function) = interface.functions.get(operation_name) else {
             return Err(Error::UnsupportedAddRpc {
-                context: self.rpc.full_name.clone(),
+                context: self.context.clone(),
                 reason: format!("existing operation `{operation_name}` was not found"),
             });
         };
         self.validate_existing_function(function, operation_name, &input_type, &output_type)?;
 
         let mut record_updates = Vec::new();
-        for proto_name in [&self.rpc.input_type, &self.rpc.output_type] {
+        let mut reconciled_proto_names = BTreeSet::new();
+        for proto_name in [&rpc.input_type, &rpc.output_type] {
             let proto_name = proto_name.trim_start_matches('.');
+            if !reconciled_proto_names.insert(proto_name) {
+                continue;
+            }
             let Some(message) = self.descriptors.message(proto_name) else {
                 continue;
             };
             let Some(record) = interface.records_by_proto.get(proto_name) else {
+                if interface.type_names_by_proto.contains_key(proto_name) {
+                    continue;
+                }
                 return Err(Error::UnsupportedAddRpc {
-                    context: self.rpc.full_name.clone(),
+                    context: self.context.clone(),
                     reason: format!(
                         "existing operation `{operation_name}` uses proto `{proto_name}`, but no matching WIT record was found"
                     ),
@@ -467,11 +833,12 @@ impl<'a> AddRpcBuilder<'a> {
                 function.input_type_name.as_deref().unwrap_or("<missing>")
             ));
         }
-        if function.input_proto.as_deref() != Some(self.rpc.input_type.trim_start_matches('.')) {
+        let rpc = self.rpc.expect("add-rpc builder must have an RPC");
+        if function.input_proto.as_deref() != Some(rpc.input_type.trim_start_matches('.')) {
             conflicts.push(format!(
                 "operation request proto is `{}` instead of `{}`",
                 function.input_proto.as_deref().unwrap_or("<missing>"),
-                self.rpc.input_type.trim_start_matches('.')
+                rpc.input_type.trim_start_matches('.')
             ));
         }
         if !function.has_result {
@@ -483,11 +850,11 @@ impl<'a> AddRpcBuilder<'a> {
                 function.output_type_name.as_deref().unwrap_or("<missing>")
             ));
         }
-        if function.output_proto.as_deref() != Some(self.rpc.output_type.trim_start_matches('.')) {
+        if function.output_proto.as_deref() != Some(rpc.output_type.trim_start_matches('.')) {
             conflicts.push(format!(
                 "operation result proto is `{}` instead of `{}`",
                 function.output_proto.as_deref().unwrap_or("<missing>"),
-                self.rpc.output_type.trim_start_matches('.')
+                rpc.output_type.trim_start_matches('.')
             ));
         }
 
@@ -496,7 +863,7 @@ impl<'a> AddRpcBuilder<'a> {
         }
 
         Err(Error::UnsupportedAddRpc {
-            context: self.rpc.full_name.clone(),
+            context: self.context.clone(),
             reason: format!(
                 "existing operation `{operation_name}` conflicts with descriptor: {}",
                 conflicts.join("; ")
@@ -510,15 +877,20 @@ impl<'a> AddRpcBuilder<'a> {
         message: &MessageMetadata,
         proto_name: &str,
     ) -> Result<Vec<String>> {
-        let expected_by_proto = message
+        let oneofs = self.real_oneof_groups(message)?;
+        let mut expected_by_proto = message
             .descriptor
             .field
             .iter()
             .map(|field| field_name(field, proto_name))
-            .collect::<Result<BTreeSet<_>>>()?;
+            .collect::<Result<BTreeSet<_>>>()?
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        expected_by_proto.extend(oneofs.iter().map(|oneof| oneof.name.to_string()));
 
         for existing_proto_name in record.fields.keys() {
-            if !expected_by_proto.contains(existing_proto_name.as_str()) {
+            if !expected_by_proto.contains(existing_proto_name) {
                 return Err(Error::UnsupportedAddRpc {
                     context: proto_name.to_string(),
                     reason: format!(
@@ -529,39 +901,62 @@ impl<'a> AddRpcBuilder<'a> {
             }
         }
 
-        let mut missing = Vec::new();
-        for field in &message.descriptor.field {
-            let field_name = field_name(field, proto_name)?;
-            let Some(existing) = record.fields.get(field_name) else {
-                if self.record_has_field_covering_proto(record, field_name) {
-                    continue;
-                }
-                let expected = self.render_message_field(message, field)?;
-                missing.push(expected.line.clone());
-                continue;
-            };
-            if existing.omitted {
-                continue;
-            }
-            let expected = self.render_message_field_for_comparison(message, field)?;
-            let name_matches =
-                existing.wit_name == expected.wit_name || existing.explicit_proto_field;
-            let type_matches = self.type_is_compatible(&existing.type_expr, &expected.type_expr);
-            if !name_matches || !type_matches {
-                return Err(Error::UnsupportedAddRpc {
-                    context: format!("{proto_name}.{}", field_name),
-                    reason: format!(
-                        "existing WIT field is `{}: {}` but descriptor requires `{}: {}`",
-                        existing.wit_name,
-                        existing.type_expr,
-                        expected.wit_name,
-                        expected.type_expr
-                    ),
-                });
+        let mut oneof_by_field = BTreeMap::new();
+        for (group_index, oneof) in oneofs.iter().enumerate() {
+            for (field_index, _) in &oneof.fields {
+                oneof_by_field.insert(*field_index, group_index);
             }
         }
 
+        let mut missing = Vec::new();
+        for (field_index, field) in message.descriptor.field.iter().enumerate() {
+            if let Some(group_index) = oneof_by_field.get(&field_index) {
+                let oneof = &oneofs[*group_index];
+                if field_index != oneof.fields[0].0 {
+                    continue;
+                }
+                continue;
+            }
+
+            self.reconcile_existing_proto_field(record, message, field, &mut missing)?;
+        }
+
         Ok(missing)
+    }
+
+    fn reconcile_existing_proto_field(
+        &mut self,
+        record: &ExistingRecord,
+        message: &MessageMetadata,
+        field: &FieldDescriptorProto,
+        missing: &mut Vec<String>,
+    ) -> Result<()> {
+        let proto_name = &message.full_name;
+        let field_name = field_name(field, proto_name)?;
+        let Some(existing) = record.fields.get(field_name) else {
+            if self.record_has_field_covering_proto(record, field_name) {
+                return Ok(());
+            }
+            let expected = self.render_message_field(message, field)?;
+            missing.push(expected.line.clone());
+            return Ok(());
+        };
+        if existing.omitted {
+            return Ok(());
+        }
+        let expected = self.render_message_field_for_comparison(message, field)?;
+        let name_matches = existing.wit_name == expected.wit_name || existing.explicit_proto_field;
+        let type_matches = self.type_is_compatible(&existing.type_expr, &expected.type_expr);
+        if !name_matches || !type_matches {
+            return Err(Error::UnsupportedAddRpc {
+                context: format!("{proto_name}.{}", field_name),
+                reason: format!(
+                    "existing WIT field is `{}: {}` but descriptor requires `{}: {}`",
+                    existing.wit_name, existing.type_expr, expected.wit_name, expected.type_expr
+                ),
+            });
+        }
+        Ok(())
     }
 
     fn type_is_compatible(&self, existing: &str, expected: &str) -> bool {
@@ -607,11 +1002,40 @@ impl<'a> AddRpcBuilder<'a> {
 
     fn render_type_reference(&mut self, proto_name: &str, context: &str) -> Result<String> {
         let proto_name = proto_name.trim_start_matches('.');
-        if let Some(existing_name) = self.available_type_names.get(proto_name) {
-            return Ok(existing_name.clone());
+        if let Some(existing_name) = self.available_type_names.get(proto_name).cloned() {
+            let record = self.existing_records_by_proto.get(proto_name).cloned();
+            if record.is_some() || self.existing_variant_proto_names.contains(proto_name) {
+                self.validate_reused_oneofs(proto_name, &existing_name, record.as_ref(), context)?;
+            }
+            return Ok(existing_name);
         }
 
         if let Some(linked_type) = self.linked_wit.proto_types.get(proto_name).cloned() {
+            let record = linked_type.record_fields.map(|fields| ExistingRecord {
+                wit_name: linked_type.wit_name.clone(),
+                fields: fields
+                    .into_iter()
+                    .map(|(proto_name, field)| {
+                        (
+                            proto_name,
+                            ExistingField {
+                                wit_name: field.wit_name,
+                                type_expr: field.type_expr,
+                                explicit_proto_field: field.explicit_proto_field,
+                                omitted: field.omitted,
+                            },
+                        )
+                    })
+                    .collect(),
+            });
+            if record.is_some() || linked_type.is_variant {
+                self.validate_reused_oneofs(
+                    proto_name,
+                    &linked_type.wit_name,
+                    record.as_ref(),
+                    context,
+                )?;
+            }
             self.use_linked_type(proto_name, &linked_type.wit_name)?;
             return Ok(linked_type.wit_name);
         }
@@ -634,10 +1058,86 @@ impl<'a> AddRpcBuilder<'a> {
             return Ok(wit_name);
         }
 
-        Err(Error::UnsupportedAddRpc {
-            context: context.to_string(),
-            reason: format!("unknown proto type `{proto_name}`"),
-        })
+        Err(self.unsupported(context, format!("unknown proto type `{proto_name}`")))
+    }
+
+    fn validate_reused_oneofs(
+        &self,
+        proto_name: &str,
+        wit_name: &str,
+        record: Option<&ExistingRecord>,
+        context: &str,
+    ) -> Result<()> {
+        let Some(message) = self.descriptors.message(proto_name) else {
+            return Ok(());
+        };
+        let oneofs = self.real_oneof_groups(message)?;
+        if oneofs.is_empty() {
+            return Ok(());
+        }
+        let Some(record) = record else {
+            return Err(self.unsupported(
+                context,
+                format!(
+                    "existing WIT type `{wit_name}` is not a record, but protobuf message `{proto_name}` contains a oneof and must use grouped variant fields"
+                ),
+            ));
+        };
+
+        for oneof in oneofs {
+            let grouped = record.fields.get(oneof.name);
+            let has_individual_members = oneof.fields.iter().any(|(_, field)| {
+                field
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| record.fields.contains_key(name))
+                    || field
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| self.record_has_field_covering_proto(record, name))
+            });
+            if has_individual_members {
+                return Err(self.unsupported(
+                    format!("{}.{}", message.full_name, oneof.name),
+                    format!(
+                        "existing WIT record `{}` represents this oneof as individual fields; expected `{}: option<{}-{}>`",
+                        record.wit_name,
+                        oneof.name.to_kebab_case(),
+                        record.wit_name,
+                        oneof.name.to_kebab_case()
+                    ),
+                ));
+            }
+            let Some(grouped) = grouped else {
+                return Err(self.unsupported(
+                    format!("{}.{}", message.full_name, oneof.name),
+                    format!(
+                        "existing WIT record `{}` is missing oneof field `{}: option<{}-{}>`",
+                        record.wit_name,
+                        oneof.name.to_kebab_case(),
+                        record.wit_name,
+                        oneof.name.to_kebab_case()
+                    ),
+                ));
+            };
+            if grouped.omitted {
+                continue;
+            }
+            let wit_name = oneof.name.to_kebab_case();
+            let expected_type = format!("option<{}-{wit_name}>", record.wit_name);
+            let name_matches = grouped.wit_name == wit_name || grouped.explicit_proto_field;
+            let type_matches = self.type_is_compatible(&grouped.type_expr, &expected_type);
+            if !name_matches || !type_matches {
+                return Err(self.unsupported(
+                    format!("{}.{}", message.full_name, oneof.name),
+                    format!(
+                        "existing WIT oneof field is `{}: {}` but descriptor requires `{}: {}`",
+                        grouped.wit_name, grouped.type_expr, wit_name, expected_type
+                    ),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn render_message(&mut self, message: &MessageMetadata, wit_name: &str) -> Result<String> {
@@ -658,11 +1158,184 @@ impl<'a> AddRpcBuilder<'a> {
         &mut self,
         message: &MessageMetadata,
     ) -> Result<Vec<RenderedFieldSpec>> {
+        let oneofs = self.real_oneof_groups(message)?;
+        let mut oneof_by_field = BTreeMap::new();
+        for (group_index, oneof) in oneofs.iter().enumerate() {
+            for (field_index, _) in &oneof.fields {
+                oneof_by_field.insert(*field_index, group_index);
+            }
+        }
+
         let mut rendered_fields = Vec::new();
-        for field in &message.descriptor.field {
-            rendered_fields.push(self.render_message_field(message, field)?);
+        let mut rendered_names = BTreeSet::new();
+        for (field_index, field) in message.descriptor.field.iter().enumerate() {
+            if let Some(group_index) = oneof_by_field.get(&field_index) {
+                let oneof = &oneofs[*group_index];
+                if field_index != oneof.fields[0].0 {
+                    continue;
+                }
+                let variant_name = self.reserve_oneof_variant_name(
+                    &self.local_type_name(&message.full_name),
+                    oneof.name,
+                    &message.full_name,
+                )?;
+                let definition = self.render_oneof_variant(message, &variant_name, oneof)?;
+                self.rendered_definitions.push(definition);
+                let wit_name = oneof.name.to_kebab_case();
+                if !rendered_names.insert(wit_name.clone()) {
+                    return Err(self.unsupported(
+                        &message.full_name,
+                        format!("generated record field `{wit_name}` would collide"),
+                    ));
+                }
+                rendered_fields.push(RenderedFieldSpec {
+                    wit_name: wit_name.clone(),
+                    type_expr: format!("option<{variant_name}>"),
+                    line: format!(
+                        "    {}: option<{variant_name}>,",
+                        render_wit_identifier(&wit_name)
+                    ),
+                });
+                continue;
+            }
+
+            let rendered = self.render_message_field(message, field)?;
+            if !rendered_names.insert(rendered.wit_name.clone()) {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!(
+                        "generated record field `{}` would collide",
+                        rendered.wit_name
+                    ),
+                ));
+            }
+            rendered_fields.push(rendered);
         }
         Ok(rendered_fields)
+    }
+
+    fn real_oneof_groups<'m>(
+        &self,
+        message: &'m MessageMetadata,
+    ) -> Result<Vec<ProtoOneofGroup<'m>>> {
+        let mut fields_by_oneof = vec![Vec::new(); message.descriptor.oneof_decl.len()];
+        for (field_index, field) in message.descriptor.field.iter().enumerate() {
+            let Some(raw_index) = field.oneof_index else {
+                continue;
+            };
+            let Ok(oneof_index) = usize::try_from(raw_index) else {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!("field at index {field_index} has invalid oneof index {raw_index}"),
+                ));
+            };
+            let Some(fields) = fields_by_oneof.get_mut(oneof_index) else {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!("field at index {field_index} has unknown oneof index {raw_index}"),
+                ));
+            };
+            fields.push((field_index, field));
+        }
+
+        let mut groups = Vec::new();
+        for (oneof_index, oneof) in message.descriptor.oneof_decl.iter().enumerate() {
+            let fields = std::mem::take(&mut fields_by_oneof[oneof_index]);
+            if fields.len() == 1 && fields[0].1.proto3_optional.unwrap_or(false) {
+                continue;
+            }
+            if fields.is_empty() {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!("oneof declaration at index {oneof_index} has no fields"),
+                ));
+            }
+            if fields
+                .iter()
+                .any(|(_, field)| field.proto3_optional.unwrap_or(false))
+            {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!("oneof declaration at index {oneof_index} is malformed"),
+                ));
+            }
+            let Some(name) = oneof.name.as_deref() else {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!("oneof declaration at index {oneof_index} is missing a name"),
+                ));
+            };
+            groups.push(ProtoOneofGroup { name, fields });
+        }
+        Ok(groups)
+    }
+
+    fn reserve_oneof_variant_name(
+        &mut self,
+        message_wit_name: &str,
+        oneof_name: &str,
+        context: &str,
+    ) -> Result<String> {
+        let name = format!("{message_wit_name}-{}", oneof_name.to_kebab_case());
+        if !self.reserved_type_names.insert(name.clone()) {
+            return Err(self.unsupported(
+                context,
+                format!("generated oneof variant name `{name}` would collide with a WIT type"),
+            ));
+        }
+        Ok(name)
+    }
+
+    fn render_oneof_variant(
+        &mut self,
+        message: &MessageMetadata,
+        wit_name: &str,
+        oneof: &ProtoOneofGroup<'_>,
+    ) -> Result<String> {
+        let mut cases = Vec::new();
+        let mut case_names = BTreeSet::new();
+        for (_, field) in &oneof.fields {
+            let proto_name = field_name(field, &message.full_name)?;
+            let case_name = proto_name.to_kebab_case();
+            if !case_names.insert(case_name.clone()) {
+                return Err(self.unsupported(
+                    &message.full_name,
+                    format!("generated variant case `{case_name}` would collide"),
+                ));
+            }
+            let payload = self.render_oneof_case_type(field, &message.full_name, proto_name)?;
+            cases.push((case_name, payload));
+        }
+
+        let mut rendered = String::new();
+        rendered.push_str(&format!(
+            "  /// Protobuf oneof `{}.{}`.\n",
+            message.full_name, oneof.name
+        ));
+        rendered.push_str(&format!("  variant {wit_name} {{\n"));
+        for (case_name, payload) in cases {
+            rendered.push_str(&format!(
+                "    {}({payload}),\n",
+                render_wit_identifier(&case_name)
+            ));
+        }
+        rendered.push_str("  }\n");
+        Ok(rendered)
+    }
+
+    fn render_oneof_case_type(
+        &mut self,
+        field: &FieldDescriptorProto,
+        parent_type: &str,
+        field_name: &str,
+    ) -> Result<String> {
+        let context = format!("{parent_type}.{field_name}");
+        let label = Label::try_from(field.label.unwrap_or(Label::Optional as i32))
+            .map_err(|_| self.unsupported(&context, "unknown field label"))?;
+        if label == Label::Repeated {
+            return Err(self.unsupported(&context, "oneof fields cannot be repeated"));
+        }
+        self.render_field_base_type(field, parent_type, field_name)
     }
 
     fn render_message_field(
@@ -676,7 +1349,10 @@ impl<'a> AddRpcBuilder<'a> {
         Ok(RenderedFieldSpec {
             wit_name: wit_field_name.clone(),
             type_expr: wit_field_type.clone(),
-            line: format!("    {wit_field_name}: {wit_field_type},"),
+            line: format!(
+                "    {}: {wit_field_type},",
+                render_wit_identifier(&wit_field_name)
+            ),
         })
     }
 
@@ -711,10 +1387,9 @@ impl<'a> AddRpcBuilder<'a> {
         rendered.push_str(&format!("  enum {wit_name} {{\n"));
         for value in &enumeration.descriptor.value {
             let Some(name) = value.name.as_deref() else {
-                return Err(Error::UnsupportedAddRpc {
-                    context: enumeration.full_name.clone(),
-                    reason: "enum value is missing a name".to_string(),
-                });
+                return Err(
+                    self.unsupported(&enumeration.full_name, "enum value is missing a name")
+                );
             };
             rendered.push_str(&format!("    {},\n", name.to_kebab_case()));
         }
@@ -729,40 +1404,12 @@ impl<'a> AddRpcBuilder<'a> {
         field_name: &str,
     ) -> Result<String> {
         let context = format!("{parent_type}.{field_name}");
-        let label =
-            Label::try_from(field.label.unwrap_or(Label::Optional as i32)).map_err(|_| {
-                Error::UnsupportedAddRpc {
-                    context: context.clone(),
-                    reason: "unknown field label".to_string(),
-                }
-            })?;
-        let field_type = Type::try_from(field.r#type.unwrap_or_default()).map_err(|_| {
-            Error::UnsupportedAddRpc {
-                context: context.clone(),
-                reason: "unknown field type".to_string(),
-            }
-        })?;
+        let label = Label::try_from(field.label.unwrap_or(Label::Optional as i32))
+            .map_err(|_| self.unsupported(&context, "unknown field label"))?;
+        let field_type = Type::try_from(field.r#type.unwrap_or_default())
+            .map_err(|_| self.unsupported(&context, "unknown field type"))?;
 
-        let base_type = match field_type {
-            Type::Double => "f64".to_string(),
-            Type::Float => "f32".to_string(),
-            Type::Int64 | Type::Sint64 | Type::Sfixed64 => "s64".to_string(),
-            Type::Uint64 | Type::Fixed64 => "u64".to_string(),
-            Type::Int32 | Type::Sint32 | Type::Sfixed32 => "s32".to_string(),
-            Type::Uint32 | Type::Fixed32 => "u32".to_string(),
-            Type::Bool => "bool".to_string(),
-            Type::String => "string".to_string(),
-            Type::Bytes => "list<u8>".to_string(),
-            Type::Message | Type::Group | Type::Enum => {
-                let Some(type_name) = field.type_name.as_deref() else {
-                    return Err(Error::UnsupportedAddRpc {
-                        context,
-                        reason: "field is missing a referenced type name".to_string(),
-                    });
-                };
-                self.render_type_reference(type_name, parent_type)?
-            }
-        };
+        let base_type = self.render_field_base_type(field, parent_type, field_name)?;
 
         if label == Label::Repeated {
             return Ok(format!("list<{base_type}>"));
@@ -777,6 +1424,36 @@ impl<'a> AddRpcBuilder<'a> {
         Ok(base_type)
     }
 
+    fn render_field_base_type(
+        &mut self,
+        field: &FieldDescriptorProto,
+        parent_type: &str,
+        field_name: &str,
+    ) -> Result<String> {
+        let context = format!("{parent_type}.{field_name}");
+        let field_type = Type::try_from(field.r#type.unwrap_or_default())
+            .map_err(|_| self.unsupported(&context, "unknown field type"))?;
+        Ok(match field_type {
+            Type::Double => "f64".to_string(),
+            Type::Float => "f32".to_string(),
+            Type::Int64 | Type::Sint64 | Type::Sfixed64 => "s64".to_string(),
+            Type::Uint64 | Type::Fixed64 => "u64".to_string(),
+            Type::Int32 | Type::Sint32 | Type::Sfixed32 => "s32".to_string(),
+            Type::Uint32 | Type::Fixed32 => "u32".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::String => "string".to_string(),
+            Type::Bytes => "list<u8>".to_string(),
+            Type::Message | Type::Group | Type::Enum => {
+                let Some(type_name) = field.type_name.as_deref() else {
+                    return Err(
+                        self.unsupported(context, "field is missing a referenced type name")
+                    );
+                };
+                self.render_type_reference(type_name, parent_type)?
+            }
+        })
+    }
+
     fn reserve_local_type_name(&mut self, proto_name: &str, context: &str) -> Result<String> {
         if let Some(existing_name) = self.available_type_names.get(proto_name) {
             return Ok(existing_name.clone());
@@ -784,12 +1461,10 @@ impl<'a> AddRpcBuilder<'a> {
 
         let wit_name = self.local_type_name(proto_name);
         if self.reserved_type_names.contains(&wit_name) {
-            return Err(Error::UnsupportedAddRpc {
-                context: context.to_string(),
-                reason: format!(
-                    "generated type name `{wit_name}` would collide with an existing WIT type"
-                ),
-            });
+            return Err(self.unsupported(
+                context,
+                format!("generated type name `{wit_name}` would collide with an existing WIT type"),
+            ));
         }
 
         self.available_type_names
@@ -800,10 +1475,10 @@ impl<'a> AddRpcBuilder<'a> {
 
     fn use_linked_type(&mut self, proto_name: &str, wit_name: &str) -> Result<()> {
         let Some(use_path) = self.linked_wit.type_use_paths.get(wit_name) else {
-            return Err(Error::UnsupportedAddRpc {
-                context: self.rpc.full_name.clone(),
-                reason: format!("linked WIT type `{wit_name}` was not found in linked metadata"),
-            });
+            return Err(self.unsupported(
+                &self.context,
+                format!("linked WIT type `{wit_name}` was not found in linked metadata"),
+            ));
         };
 
         let already_in_scope = self.reserved_type_names.contains(wit_name);
@@ -833,11 +1508,56 @@ impl<'a> AddRpcBuilder<'a> {
     }
 }
 
+struct MessageTreeBuilder<'a> {
+    builder: AddRpcBuilder<'a>,
+    message: &'a MessageMetadata,
+}
+
+impl<'a> MessageTreeBuilder<'a> {
+    fn new(
+        descriptors: &'a DescriptorIndex,
+        message: &'a MessageMetadata,
+        linked_wit: LinkedWitMetadata,
+    ) -> Self {
+        Self {
+            builder: AddRpcBuilder::for_message(descriptors, message, linked_wit),
+            message,
+        }
+    }
+
+    fn with_existing_interface(mut self, interface: &ExistingInterface) -> Self {
+        self.builder = self.builder.with_existing_interface(interface);
+        self
+    }
+
+    fn build(mut self) -> Result<RenderedAddMessageWit> {
+        self.builder
+            .render_type_reference(&self.message.full_name, &self.message.full_name)?;
+        Ok(RenderedAddMessageWit {
+            message_full_name: self.message.full_name.clone(),
+            interface_name: self
+                .message
+                .full_name
+                .rsplit('.')
+                .next()
+                .unwrap_or(&self.message.full_name)
+                .to_kebab_case(),
+            linked_uses: self.builder.linked_uses,
+            rendered_definitions: self.builder.rendered_definitions,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RenderedFieldSpec {
     wit_name: String,
     type_expr: String,
     line: String,
+}
+
+struct ProtoOneofGroup<'a> {
+    name: &'a str,
+    fields: Vec<(usize, &'a FieldDescriptorProto)>,
 }
 
 struct ExistingOperationUpdate {
@@ -882,6 +1602,34 @@ struct RenderedAddRpcWit {
     linked_uses: BTreeMap<String, BTreeSet<String>>,
     rendered_definitions: Vec<String>,
     operation: String,
+}
+
+struct RenderedAddMessageWit {
+    message_full_name: String,
+    interface_name: String,
+    linked_uses: BTreeMap<String, BTreeSet<String>>,
+    rendered_definitions: Vec<String>,
+}
+
+impl RenderedAddMessageWit {
+    fn render_standalone(&self) -> String {
+        let mut rendered = String::new();
+        rendered.push_str(&format!(
+            "/// WIT scaffold generated from `{}`.\n",
+            self.message_full_name
+        ));
+        rendered.push_str(&format!("package {DEFAULT_PACKAGE_NAME};\n\n"));
+        rendered.push_str(&format!("world {DEFAULT_WORLD_NAME} {{\n"));
+        rendered.push_str(&format!("  export {};\n", self.interface_name));
+        rendered.push_str("}\n\n");
+        rendered.push_str(&format!("interface {} {{\n", self.interface_name));
+        rendered.push_str(&render_interface_additions(
+            &self.linked_uses,
+            &self.rendered_definitions,
+        ));
+        rendered.push_str("}\n");
+        rendered
+    }
 }
 
 impl RenderedAddRpcWit {
@@ -1216,6 +1964,60 @@ fn option_inner_type(type_expr: &str) -> Option<&str> {
         .and_then(|inner| inner.strip_suffix('>'))
 }
 
+fn render_wit_identifier(name: &str) -> String {
+    if matches!(
+        name,
+        "use"
+            | "type"
+            | "func"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "s8"
+            | "s16"
+            | "s32"
+            | "s64"
+            | "f32"
+            | "f64"
+            | "char"
+            | "record"
+            | "resource"
+            | "own"
+            | "borrow"
+            | "flags"
+            | "variant"
+            | "enum"
+            | "bool"
+            | "string"
+            | "option"
+            | "result"
+            | "future"
+            | "stream"
+            | "error-context"
+            | "list"
+            | "map"
+            | "_"
+            | "as"
+            | "from"
+            | "static"
+            | "interface"
+            | "tuple"
+            | "import"
+            | "export"
+            | "world"
+            | "package"
+            | "constructor"
+            | "async"
+            | "include"
+            | "with"
+    ) {
+        format!("%{name}")
+    } else {
+        name.to_string()
+    }
+}
+
 fn base_type_expr(type_expr: &str) -> &str {
     option_inner_type(type_expr).unwrap_or(type_expr)
 }
@@ -1246,4 +2048,47 @@ fn descriptor_relative_name(full_name: &str, package: &str) -> String {
         .strip_prefix(&format!("{package}."))
         .unwrap_or(full_name.trim_start_matches('.'));
     relative.replace('.', "-").to_kebab_case()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::load_linked_wit_metadata_from_inputs;
+
+    #[test]
+    fn loads_linked_wit_metadata_from_temporal_type_input() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let input_path = root.join("advanced/samples/inputs/deps");
+        let linked_types = load_linked_wit_metadata_from_inputs(&[input_path]).unwrap();
+
+        assert_eq!(
+            linked_types
+                .proto_types
+                .get("temporal.api.common.v1.Payload")
+                .map(|type_metadata| type_metadata.wit_name.as_str()),
+            Some("payload")
+        );
+        assert_eq!(
+            linked_types
+                .proto_types
+                .get("temporal.api.taskqueue.v1.TaskQueue")
+                .map(|type_metadata| type_metadata.wit_name.as_str()),
+            Some("task-queue")
+        );
+        assert_eq!(
+            linked_types
+                .type_use_paths
+                .get("workflow-function")
+                .map(String::as_str),
+            Some("nexus:temporal-types/model@1.0.0")
+        );
+        assert_eq!(
+            linked_types
+                .type_use_paths
+                .get("signal-function")
+                .map(String::as_str),
+            Some("nexus:temporal-types/model@1.0.0")
+        );
+    }
 }

@@ -279,12 +279,35 @@ when extending an existing WIT file, put that file first. A linked input can be 
 single WIT file, a WIT package directory, or a directory containing WIT package
 directories, so `advanced/samples/inputs/deps` links every package under it.
 
+`add-message` follows the same input convention. It emits the selected message
+and all reachable proto message/enum types without adding an operation. When
+extending an existing WIT file, its world must export exactly one interface.
+
+### Oneof scaffolding
+
+Both scaffold commands render real protobuf `oneof` declarations as WIT
+variants. Every message remains a record, with an optional synthesized variant
+field for each oneof—even when the message contains only one oneof. Synthetic
+oneofs used to represent `proto3 optional` fields remain ordinary optional
+fields. Existing WIT mappings must use the same grouped-record shape. These
+variants are scaffold shapes only; automatic protobuf conversion for WIT
+variants is not yet generated.
+
 Generate WIT for a proto RPC from a descriptor set:
 
 ```bash
 cargo run --features advanced -- add-rpc \
   --descriptors advanced/samples/descriptors/temporal_api.bin \
   --rpc SignalWithStartExecution \
+  --input advanced/samples/inputs/deps
+```
+
+Generate WIT for a standalone proto message tree:
+
+```bash
+cargo run --features advanced -- add-message \
+  --descriptors advanced/samples/descriptors/temporal_api.bin \
+  --message WorkflowExecutionInfo \
   --input advanced/samples/inputs/deps
 ```
 
