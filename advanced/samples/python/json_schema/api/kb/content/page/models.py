@@ -18,25 +18,17 @@ class PageMeta(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     author: str = pydantic.Field()
 
     word_count: SpecInt | None = pydantic.Field(default=None, alias="wordCount")
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"wordCount", "word_count"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("word_count", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(

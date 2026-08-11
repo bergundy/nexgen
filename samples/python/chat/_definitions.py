@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import collections.abc
 import datetime
 import math
 import re
@@ -302,55 +301,18 @@ Base64UrlField: typing.TypeAlias = typing.Annotated[
 ]
 
 
-def _reject_explicit_null(
-    cls: type[pydantic.BaseModel],
-    data: object,
-    handler: typing.Callable[[object], typing.Any],
-) -> typing.Any:
-    null_fields = typing.cast(
-        frozenset[str], getattr(cls, "_OPTIONAL_NON_NULLABLE_FIELDS")
-    )
-    raw_data = data
-    pre_errors: list[pydantic_core.InitErrorDetails] = []
-    if isinstance(data, dict):
-        values = typing.cast(dict[str, object], data)
-        pre_errors = [
-            pydantic_core.InitErrorDetails(
-                type=pydantic_core.PydanticCustomError(
-                    "null_for_nonnullable", "explicit null not allowed"
-                ),
-                loc=(field,),
-                input=None,
-            )
-            for field in null_fields
-            if field in values and values[field] is None
-        ]
-    try:
-        instance = handler(raw_data)
-    except pydantic.ValidationError as error:
-        field_errors: list[pydantic_core.InitErrorDetails] = []
-        for error_detail in typing.cast(list[dict[str, object]], error.errors()):
-            loc: tuple[str | int, ...] = tuple(
-                typing.cast(collections.abc.Iterable[str | int], error_detail["loc"])
-            )
-            field_errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        typing.cast(typing.Any, error_detail["type"]),
-                        typing.cast(typing.Any, error_detail["msg"]),
-                    ),
-                    loc=loc,
-                    input=error_detail.get("input"),
-                )
-            )
-        raise pydantic.ValidationError.from_exception_data(
-            title=cls.__name__, line_errors=pre_errors + field_errors
-        ) from None
-    if pre_errors:
-        raise pydantic.ValidationError.from_exception_data(
-            title=cls.__name__, line_errors=pre_errors
+def _reject_explicit_null(value: object) -> object:
+    """Rejects an explicit `null` on an optional, non-nullable field.
+
+    Wired as a per-field after-validator, so it fires on both the parse path
+    and on assignment (`validate_assignment`). An omitted field never reaches
+    it — Pydantic does not validate defaults.
+    """
+    if value is None:
+        raise pydantic_core.PydanticCustomError(
+            "null_for_nonnullable", "explicit null not allowed"
         )
-    return instance
+    return value
 
 
 def _emit_set_fields(

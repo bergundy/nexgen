@@ -24,7 +24,7 @@ class Temporal(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     created_at: DateTimeField = pydantic.Field(alias="createdAt")
@@ -63,26 +63,12 @@ class Temporal(pydantic.BaseModel):
     archived_on: DateField | None = pydantic.Field(default=None, alias="archivedOn")
     """Optional and nullable date."""
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {
-            "expiresOn",
-            "expires_on",
-            "reminder",
-            "retryDelay",
-            "retry_delay",
-            "updatedAt",
-            "updated_at",
-        }
+    @pydantic.field_validator(
+        "expires_on", "reminder", "retry_delay", "updated_at", mode="after"
     )
-
-    @pydantic.model_validator(mode="wrap")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(

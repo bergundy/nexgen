@@ -15,7 +15,7 @@ from ._definitions import (
 
 class GetRoomInput(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     room_id: str = pydantic.Field(alias="roomId")
@@ -32,7 +32,7 @@ class Labels(pydantic.BaseModel):
     """Arbitrary string key/value labels."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     @pydantic.model_validator(mode="after")
@@ -82,7 +82,7 @@ class Message(pydantic.BaseModel):
     """A chat message."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     kind: typing.Literal["text"] = pydantic.Field(default="text")
@@ -124,7 +124,7 @@ class Room(pydantic.BaseModel):
     """A chat room. Open to forward-compatible extension."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     room_id: str = pydantic.Field(alias="roomId")
@@ -138,18 +138,10 @@ class Room(pydantic.BaseModel):
 
     labels: Labels | None = pydantic.Field(default=None)
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"labels", "members"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("labels", "members", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -163,7 +155,7 @@ class SendMessageInput(pydantic.BaseModel):
     """Request to post a message."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     room_id: str = pydantic.Field(alias="roomId")
@@ -180,7 +172,7 @@ class SendMessageInput(pydantic.BaseModel):
 
 class SendMessageOutput(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     message_id: str = pydantic.Field(alias="messageId")

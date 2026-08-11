@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- JSON Schema, Python: generated models now set `validate_assignment=True`, so
+  mutating a field after construction is validated like the parse path. An
+  invalid assignment previously passed locally and was refused only at the wire.
+- JSON Schema, Python: the optional-non-nullable explicit-`null` check moved from
+  a model-level `model_validator(mode="wrap")` to a per-field after-validator, so
+  it covers assignment as well as parsing and rejects the value before it is
+  written.
+
 ### Security
 
 ## [0.2.1] - 2026-07-31

@@ -23,7 +23,7 @@ class Address(pydantic.BaseModel):
     """A nested object, open to forward-compatible extension."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     street: str = pydantic.Field()
@@ -32,18 +32,10 @@ class Address(pydantic.BaseModel):
 
     zip: SpecInt | None = pydantic.Field(default=None)
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"city", "zip"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("city", "zip", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -60,7 +52,7 @@ class Attributes(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     @pydantic.model_validator(mode="after")
@@ -139,7 +131,7 @@ class Circle(pydantic.BaseModel):
     """A circle branch of the Shape tagged union."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     kind: typing.Literal["circle"] = pydantic.Field(default="circle")
@@ -181,7 +173,7 @@ class ContactPy(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     email: str | None = pydantic.Field(default=None)
@@ -240,18 +232,10 @@ class ContactPy(pydantic.BaseModel):
             )
         return self
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"email", "shippingStreet", "shippingZip", "shipping_street", "shipping_zip"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("email", "shipping_street", "shipping_zip", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -265,7 +249,7 @@ class Labels(pydantic.BaseModel):
     """Arbitrary string key/value labels (typed map)."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     @pydantic.model_validator(mode="after")
@@ -315,25 +299,17 @@ class Settings(pydantic.BaseModel):
     """A closed object; unknown members are rejected."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     theme: str | None = pydantic.Field(default=None)
 
     font_size: SpecInt | None = pydantic.Field(default=None, alias="fontSize")
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"fontSize", "font_size", "theme"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("font_size", "theme", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -352,7 +328,7 @@ class Showcase(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     kind: typing.Literal["showcase"] = pydantic.Field(default="showcase")
@@ -763,51 +739,39 @@ class Showcase(pydantic.BaseModel):
             )
         return self
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {
-            "address",
-            "aliases",
-            "attributes",
-            "blob",
-            "code",
-            "contact",
-            "contactEmail",
-            "contact_email",
-            "gateway",
-            "homepage",
-            "host",
-            "idOrName",
-            "id_or_name",
-            "labels",
-            "legacyId",
-            "legacy_id_py",
-            "level",
-            "nickname",
-            "phrase",
-            "priority",
-            "ratio",
-            "requestId",
-            "request_id",
-            "roles",
-            "settings",
-            "shape",
-            "sku",
-            "step",
-            "tags",
-            "urlBlob",
-            "url_blob",
-            "verbose",
-        }
+    @pydantic.field_validator(
+        "address",
+        "aliases",
+        "attributes",
+        "blob",
+        "code",
+        "contact",
+        "contact_email",
+        "gateway",
+        "homepage",
+        "host",
+        "id_or_name",
+        "labels",
+        "legacy_id_py",
+        "level",
+        "nickname",
+        "phrase",
+        "priority",
+        "ratio",
+        "request_id",
+        "roles",
+        "settings",
+        "shape",
+        "sku",
+        "step",
+        "tags",
+        "url_blob",
+        "verbose",
+        mode="after",
     )
-
-    @pydantic.model_validator(mode="wrap")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -819,7 +783,7 @@ class Showcase(pydantic.BaseModel):
 
 class GetShowcaseInput(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     id: str = pydantic.Field()
@@ -836,7 +800,7 @@ class Square(pydantic.BaseModel):
     """A square branch of the Shape tagged union."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     kind: typing.Literal["square"] = pydantic.Field(default="square")
@@ -876,7 +840,7 @@ class Widget(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     id: str = pydantic.Field()
@@ -888,18 +852,10 @@ class Widget(pydantic.BaseModel):
     size: SpecInt | None = pydantic.Field(default=None, ge=10, le=20)
     """Optional integer with two allOf branches tightened to [10, 20]."""
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"kind", "size"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("kind", "size", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -915,23 +871,17 @@ class WidgetBase(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="allow"
     )
 
     id: str = pydantic.Field()
 
     kind: str | None = pydantic.Field(default=None)
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset({"kind"})
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("kind", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(

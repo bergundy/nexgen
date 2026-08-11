@@ -23,7 +23,7 @@ class Block(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     block_id: str = pydantic.Field(alias="blockId")
@@ -42,18 +42,10 @@ class Block(pydantic.BaseModel):
     Optional + nullable, so this edge terminates.
     """
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"style", "text"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("style", "text", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -70,7 +62,7 @@ class Page(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     page_id: str = pydantic.Field(alias="pageId")
@@ -84,18 +76,10 @@ class Page(pydantic.BaseModel):
     is the terminating edge of the cycle.
     """
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"blocks"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("blocks", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(

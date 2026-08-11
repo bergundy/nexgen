@@ -481,6 +481,94 @@ def test_object_constraints_roundtrip_and_reject() -> None:
     assert ok.shipping_zip == "90210"
 
 
+def test_mutation_is_validated_like_construction() -> None:
+    # `validate_assignment=True` puts post-construction mutation under the same
+    # constraints as the parse path: without it an invalid value assigned to a
+    # field passes locally and is only caught at the wire.
+    base = {
+        "kind": "showcase",
+        "name": "w",
+        "count": 1,
+        "active": True,
+        "category": "tools",
+        "status": "active",
+        "tier": 1,
+        "scale": 1.5,
+    }
+
+    # Per-field constraints are checked before the attribute is written, so a
+    # rejected assignment leaves the model exactly as it was: it neither takes
+    # the value nor marks the field as set (which would emit it on the wire).
+    field_level_cases: list[tuple[str, object, str]] = [
+        ("name", "", "at least 1 character"),
+        ("code", "a", "at least 2 characters"),
+        ("sku", "xx", "must match pattern"),
+        ("priority", 99, "less than or equal to 10"),
+        ("ratio", 7.0, "must be a multiple of 5, got 7"),
+        ("count", "3", "expected integer, got str"),
+        ("tags", [], "at least 1 item"),
+        ("homepage", "not a url", "must be a valid uri"),
+        ("blob", "!!!", "must be base64-encoded"),
+    ]
+    for field, value, reason in field_level_cases:
+        model = Showcase.model_validate(base)
+        before = typing.cast(object, getattr(model, field))
+        was_set = field in model.model_fields_set
+        with pytest.raises(ValidationError) as excinfo:
+            setattr(model, field, value)
+        assert reason in str(excinfo.value)
+        assert getattr(model, field) == before
+        assert (field in model.model_fields_set) is was_set
+
+    # Enum membership (a `mode="before"` model validator) and the array
+    # assertions (a `mode="after"` one) reject the assignment too. Pydantic runs
+    # model validators after writing the attribute, so for these the raise is the
+    # signal — the value is not rolled back.
+    model_level_cases: list[tuple[str, object, str]] = [
+        ("status", "archived", "must be one of"),
+        ("aliases", ["a", "a"], "duplicate items"),
+        ("roles", ["user"], "too few matching items: at least 1, got 0"),
+    ]
+    for field, value, reason in model_level_cases:
+        model = Showcase.model_validate(base)
+        with pytest.raises(ValidationError) as excinfo:
+            setattr(model, field, value)
+        assert reason in str(excinfo.value)
+
+    # An optional, non-nullable field rejects an explicit null on assignment the
+    # same way it does on the parse path, and stays omitted on serialize.
+    model = Showcase.model_validate(base)
+    with pytest.raises(ValidationError) as excinfo:
+        model.nickname = None
+    assert "explicit null not allowed" in str(excinfo.value)
+    assert "nickname" not in model.model_fields_set
+    assert "nickname" not in model.model_dump(by_alias=True)
+
+    # A nullable field still accepts an explicit null and emits it.
+    model.middle_name = None
+    assert model.model_dump(by_alias=True)["middleName"] is None
+
+    # The null check is keyed on the Python attribute name, so an aliased field
+    # is covered on both paths (wire key `fontSize`, attribute `font_size`).
+    with pytest.raises(ValidationError) as excinfo:
+        _ = Settings.model_validate({"fontSize": None})
+    assert "explicit null not allowed" in str(excinfo.value)
+    settings = Settings.model_validate({"theme": "dark", "fontSize": 14})
+    with pytest.raises(ValidationError) as excinfo:
+        settings.font_size = None
+    assert "explicit null not allowed" in str(excinfo.value)
+
+    # A valid mutation is accepted and re-serializes through the converter.
+    model = Showcase.model_validate(base)
+    model.name = "renamed"
+    model.code = "a😀b"
+    converter = pydantic_data_converter.payload_converter
+    encoded = converter.to_payloads([model])
+    assert encoded is not None
+    assert json.loads(encoded[0].data)["name"] == "renamed"
+    assert json.loads(encoded[0].data)["code"] == "a😀b"
+
+
 def test_all_of_merged_widget() -> None:
     # Widget is an allOf base-type extension (WidgetBase folded in + an extension
     # branch): a flat standalone object with the union of properties ({id, kind,

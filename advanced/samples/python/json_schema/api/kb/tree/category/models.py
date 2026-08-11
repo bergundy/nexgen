@@ -17,7 +17,7 @@ class Category(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     id: str = pydantic.Field()
@@ -29,18 +29,10 @@ class Category(pydantic.BaseModel):
     is the terminating edge, so it stays in this module.
     """
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"children"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("children", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
@@ -56,7 +48,7 @@ class Palette(pydantic.BaseModel):
     """
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     swatches: list[str] = pydantic.Field()

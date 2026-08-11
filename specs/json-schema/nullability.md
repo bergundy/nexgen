@@ -308,7 +308,7 @@ absent) and **null acceptance** (non-nullable = reject `null`; nullable
 | State | Java | Go | TS | Python |
 |---|---|---|---|---|
 | **Required, non-nullable** — must be present, must be T | type is `long`/`String`/etc.; emit `field == null` reject + type binding | type is `int64`/`string`/etc.; shadow `*T` field, reject on `nil` | type is `x: T`; emit `parsed.x === undefined \|\| parsed.x === null` reject | Pydantic field with no default → strict mode raises automatically |
-| **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | strict-variant custom deserializer (see strategy below) | shadow `*json.RawMessage` with explicit `bytes.Equal(*raw, []byte("null"))` reject | `parsed.x === null` rejected; `=== undefined` OK | `model_validator(mode='wrap')` rejects keys present with `None` |
+| **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | strict-variant custom deserializer (see strategy below) | shadow `*json.RawMessage` with explicit `bytes.Equal(*raw, []byte("null"))` reject | `parsed.x === null` rejected; `=== undefined` OK | per-field after-validator rejects a supplied `None` (defaults are not validated, so absence never reaches it) |
 | **Optional + nullable** — absent OK, `null` OK, T OK | type is `@Nullable Long`/`String`/etc.; no extra check beyond type binding | type is `*int64`/`*string`/etc.; no extra check beyond type binding | type is `x?: T \| null`; both `undefined` and `null` accepted | `Optional[T] = None`; both forms accepted |
 | **Required + nullable** — must be present, `null` OK, T OK, absent rejected | base (non-strict) deserializer accepts `null`; presence enforced (`field`-present check / required-field machinery) | shadow `*json.RawMessage`; reject on absent (`nil` shadow), accept `null` token | type is `x: T \| null`; emit `parsed.x === undefined` reject; `null` accepted | `Optional[T]` with **no** default → required, accepts `None` |
 
@@ -404,75 +404,49 @@ No runtime helper needed.
 
 ### Python
 
-A model-level `model_validator(mode='wrap')` wraps Pydantic's
-field-validation pass. It pre-scans the raw input dict for
-optional-non-nullable keys present with `None`, runs the inner
-handler, and combines any pre-errors with field-validation errors
-into a single `ValidationError` — preserving P11 aggregation across
-both sources.
-
-Each generated model carries a `ClassVar[frozenset]` listing the
-affected field names. The `ClassVar` annotation is required —
-without it Pydantic treats `_NAME` as a private model attribute and
-the validator can't iterate it.
+A **per-field after-validator** rejects the `None`. Pydantic does not
+validate defaults (`validate_default` is off), so the validator runs
+only for a value the caller actually supplied: an absent key never
+reaches it, an explicit `null` does — the absent-vs-explicit-`None`
+distinction the check needs, without inspecting the raw dict. All
+generated models share one runtime helper:
 
 ```python
-from typing import ClassVar, Optional
-from pydantic import BaseModel, ValidationError, model_validator
-from pydantic_core import InitErrorDetails, PydanticCustomError
+from typing import Optional
+from pydantic import BaseModel, field_validator
+from pydantic_core import PydanticCustomError
+
+def _reject_explicit_null(value: object) -> object:
+    if value is None:
+        raise PydanticCustomError(
+            "null_for_nonnullable", "explicit null not allowed"
+        )
+    return value
 
 class User(BaseModel):
     id: SpecInt
     nickname: Optional[SpecInt] = None        # optional, non-nullable
     bio: Optional[str] = None                 # optional + nullable
 
-    _OPTIONAL_NON_NULLABLE: ClassVar[frozenset] = frozenset({"nickname"})
-
-    @model_validator(mode="wrap")
+    @field_validator("nickname", mode="after")
     @classmethod
-    def _reject_explicit_null(cls, data, handler):
-        pre_errs = []
-        if isinstance(data, dict):
-            pre_errs = [
-                InitErrorDetails(
-                    type=PydanticCustomError(
-                        "null_for_nonnullable", "explicit null not allowed"
-                    ),
-                    loc=(f,),
-                    input=None,
-                )
-                for f in cls._OPTIONAL_NON_NULLABLE
-                if f in data and data[f] is None
-            ]
-        try:
-            instance = handler(data)
-        except ValidationError as e:
-            field_errs = [
-                InitErrorDetails(
-                    type=PydanticCustomError(err["type"], err["msg"]),
-                    loc=err["loc"],
-                    input=err.get("input"),
-                )
-                for err in e.errors()
-            ]
-            raise ValidationError.from_exception_data(
-                title=cls.__name__, line_errors=pre_errs + field_errs
-            ) from None
-        if pre_errs:
-            raise ValidationError.from_exception_data(
-                title=cls.__name__, line_errors=pre_errs
-            )
-        return instance
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 ```
 
-Why `mode='wrap'` rather than `mode='before'`: a `mode='before'`
-validator that raises short-circuits Pydantic's own field validation,
-breaking P11 aggregation across error sources. `mode='wrap'` lets us
-run the inner handler, catch its errors, and combine.
+The validator is keyed on the **Python attribute name**, so an aliased
+field is covered whichever key the wire carried (`populate_by_name`);
+Pydantic reports the violation under the key it actually read. The error
+lands in the same `ValidationError` as every other field error, so P11
+aggregation is native — no pre-error merging.
 
-Why not a `BeforeValidator` per field: `BeforeValidator` receives
-only the value, not "was the key present" — the absent-vs-explicit-
-`None` distinction is only recoverable at the dict level.
+Why per-field rather than a model-level validator that pre-scans the raw
+input dict: the field validator is the only form that also covers
+**assignment** (`validate_assignment`, PRINCIPLES Python §4). Pydantic
+runs it before committing the value, so `user.nickname = None` raises and
+leaves the model untouched — a model-level validator sees the raw dict on
+the parse path but an already-mutated model on the assignment path, which
+would let a mutation to `None` stick despite the error.
 
 ## See also
 

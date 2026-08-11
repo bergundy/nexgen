@@ -120,7 +120,7 @@ many input files that package aggregates.
   `_parse_spec_integer` (Python), `SpecNumbers.specLong` (Java), TS's
   safe-integer check.
 - Shared (de)serialize scaffolding — the **P12** three-layer base, the
-  Python optional-non-nullable `model_validator` helper. Java's
+  Python optional-non-nullable `_reject_explicit_null` helper. Java's
   collecting (de)serializer stays per-class, but the shared `Violation` /
   `ValidationException` / `SpecNumbers` classes live here.
 

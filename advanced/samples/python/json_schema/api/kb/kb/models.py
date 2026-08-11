@@ -13,7 +13,7 @@ from .._definitions import (
 
 class GetCategoryTreeInput(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     root_id: str = pydantic.Field(alias="rootId")
@@ -28,7 +28,7 @@ class GetCategoryTreeInput(pydantic.BaseModel):
 
 class GetPageInput(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     page_id: str = pydantic.Field(alias="pageId")
@@ -43,7 +43,7 @@ class GetPageInput(pydantic.BaseModel):
 
 class PutBlockOutput(pydantic.BaseModel):
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     block_id: str = pydantic.Field(alias="blockId")

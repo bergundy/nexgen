@@ -77,7 +77,7 @@ dependent is also present.
 |---|---|
 | Go | The cross-field check is a predicate in the shared `Validate`, which `UnmarshalJSON` calls after decoding the shadow: for each present trigger, each dependent's shadow must be non-`nil`; a missing one → `Violation{Path:dependent, Reason: fmt.Sprintf("property %q is required when %q is present", dependent, trigger)}`, collected into one `ValidationError`. |
 | TypeScript | the shared `Validate` predicate: for each present trigger key, each dependent must be `!== undefined`; a missing one → push ``Violation{path, reason: `property "${dependent}" is required when "${trigger}" is present`}``, throw one `ValidationError`. |
-| Python | `model_validator(mode='wrap')` reading the raw dict: for each present trigger, raise `InitErrorDetails` (message `property "<dependent>" is required when "<trigger>" is present`) for each absent dependent, merged into the aggregated `pydantic.ValidationError`. Dependency map stored as a `ClassVar` constant (per the `ClassVar` pattern in [[nullability]]). |
+| Python | `model_validator(mode='after')` over `model_fields_set` (the exact wire-key set): for each present trigger, raise `InitErrorDetails` (message `property "<dependent>" is required when "<trigger>" is present`) for each absent dependent, merged into the aggregated `pydantic.ValidationError`. |
 | Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): over the parsed tree's present-key set, for each present trigger push a `Violation{path:dependent, "property \"" + dependent + "\" is required when \"" + trigger + "\" is present"}` per missing dependent into the single `ValidationException`. |
 
 ### Serialize-side (P12)

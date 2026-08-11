@@ -16,25 +16,17 @@ class BlockStyle(pydantic.BaseModel):
     """Non-cyclic helper; stays in the content_block module. All members optional."""
 
     model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
+        strict=True, populate_by_name=True, validate_assignment=True, extra="forbid"
     )
 
     bold: bool | None = pydantic.Field(default=None)
 
     indent: SpecInt | None = pydantic.Field(default=None, ge=0)
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"bold", "indent"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
+    @pydantic.field_validator("bold", "indent", mode="after")
     @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+    def _reject_null(cls, value: object) -> object:
+        return _reject_explicit_null(value)
 
     @pydantic.model_serializer(mode="wrap")
     def _serialize(
