@@ -1158,6 +1158,43 @@ record activity-options { ... }
 
 ---
 
+### @nexus.type-parameter
+
+**Placement:** Type alias
+**Syntax:** `@nexus.type-parameter` (no arguments)
+
+Declares an opaque model type parameter. Records and variants infer their
+ordered generic parameters from public fields and case payloads, including
+parameters reached through lists, maps, tuples, results, nested records, and
+nested variants. Reusing the same alias correlates the parameter through nested
+models and operation inputs and outputs.
+
+```wit
+/// @nexus.type-parameter
+type context-t = placeholder;
+
+record request {
+  context: context-t,
+  previous: list<context-t>,
+}
+```
+
+This generates `Request[ContextT]`-style models in Python, TypeScript, Go, and
+.NET. A language-specific field-level `@nexus.type` override replaces that
+field occurrence and therefore removes it from generic inference for that
+target.
+
+Type parameters are not currently supported in proto-backed records,
+resources, map keys, function-signature metadata, or resource-bound generic
+operations. Go type parameters use an `any` constraint.
+
+Generic variants retain each target's normal tagged representation: tagged
+tuples in Python, tagged object unions in TypeScript, sealed interfaces and
+case structs in Go, and nested records in .NET. References to generic variants
+are closed automatically wherever they occur.
+
+---
+
 ### @nexus.proto-field
 
 **Placement:** Record field (within a `@nexus.proto` record)

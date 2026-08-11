@@ -961,6 +961,22 @@ pub struct FieldDefaultSpec {
     pub enum_value: i32,
 }
 
+/// A WIT alias marked with `@nexus.type-parameter`.
+///
+/// `full_name` is the stable alias identity used when correlating occurrences
+/// through nested models and operation inputs/outputs. `name` is the emitted
+/// language identifier derived from the authored alias name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TypeParameterSpec {
+    pub name: String,
+    pub full_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParameterUsage {
+    pub parameter: TypeParameterSpec,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeSpec<F: TypeNameFamily = AuthoredNames> {
     Bool,
@@ -976,6 +992,7 @@ pub enum TypeSpec<F: TypeNameFamily = AuthoredNames> {
         ok: Option<Box<TypeSpec<F>>>,
         err: Option<Box<TypeSpec<F>>>,
     },
+    TypeParameter(TypeParameterSpec),
     Record(F::Record),
     Enum(F::Enum),
     Flags(F::Flags),
@@ -1037,6 +1054,7 @@ impl<F: TypeNameFamily> TypeSpec<F> {
                 ok: ok.map(|ok| Box::new(ok.map_names_with(map))),
                 err: err.map(|err| Box::new(err.map_names_with(map))),
             },
+            TypeSpec::TypeParameter(parameter) => TypeSpec::TypeParameter(parameter),
             TypeSpec::Record(type_name) => TypeSpec::Record(map.map_record(type_name)),
             TypeSpec::Enum(type_name) => TypeSpec::Enum(map.map_enum(type_name)),
             TypeSpec::Flags(type_name) => TypeSpec::Flags(map.map_flags(type_name)),
@@ -1116,6 +1134,7 @@ where
                 (None, Some(err)) => format!("result<_, {}>", err.to_type_string()),
                 (None, None) => "result".to_string(),
             },
+            TypeSpec::TypeParameter(parameter) => parameter.name.clone(),
             TypeSpec::Record(type_name) => type_name.as_ref().to_string(),
             TypeSpec::Enum(type_name) => type_name.as_ref().to_string(),
             TypeSpec::Flags(type_name) => type_name.as_ref().to_string(),
@@ -1165,6 +1184,165 @@ where
 
     pub(crate) fn to_type_string(&self) -> String {
         self.reference().unwrap_or_default().to_string()
+    }
+}
+
+impl<F> ApiSpec<F>
+where
+    F: TypeNameFamily,
+    F::Record: AsRef<str>,
+    F::Variant: AsRef<str>,
+{
+    /// Returns the model parameters in first-use order. Language-specific
+    /// field annotations are authoritative, so an overridden field does not
+    /// contribute parameters for that language.
+    pub(crate) fn record_type_parameters(
+        &self,
+        record_name: &str,
+        language: Language,
+    ) -> Vec<TypeParameterUsage> {
+        let mut parameters = IndexMap::<String, TypeParameterUsage>::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        self.collect_record_type_parameters(record_name, language, &mut visiting, &mut parameters);
+        parameters.into_values().collect()
+    }
+
+    /// Returns a variant's parameters in first-use order, recursively walking
+    /// case payload containers and referenced records/variants.
+    pub(crate) fn variant_type_parameters(
+        &self,
+        variant_name: &str,
+        language: Language,
+    ) -> Vec<TypeParameterUsage> {
+        let mut parameters = IndexMap::<String, TypeParameterUsage>::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        self.collect_variant_type_parameters(
+            variant_name,
+            language,
+            &mut visiting,
+            &mut parameters,
+        );
+        parameters.into_values().collect()
+    }
+
+    pub(crate) fn type_parameters(
+        &self,
+        value: &TypeSpec<F>,
+        language: Language,
+    ) -> Vec<TypeParameterUsage> {
+        let mut parameters = IndexMap::<String, TypeParameterUsage>::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        self.collect_type_parameters(value, language, &mut visiting, &mut parameters);
+        parameters.into_values().collect()
+    }
+
+    fn collect_record_type_parameters(
+        &self,
+        record_name: &str,
+        language: Language,
+        visiting: &mut std::collections::BTreeSet<String>,
+        parameters: &mut IndexMap<String, TypeParameterUsage>,
+    ) {
+        if !visiting.insert(record_name.to_string()) {
+            return;
+        }
+        if let Some(record) = self.record(record_name) {
+            for field in record.fields.values() {
+                if field.visibility == RecordFieldVisibility::Omitted
+                    || field
+                        .annotation
+                        .as_ref()
+                        .is_some_and(|annotation| annotation.for_language(language).is_some())
+                {
+                    continue;
+                }
+                self.collect_type_parameters(&field.field_type, language, visiting, parameters);
+            }
+        }
+        visiting.remove(record_name);
+    }
+
+    fn collect_variant_type_parameters(
+        &self,
+        variant_name: &str,
+        language: Language,
+        visiting: &mut std::collections::BTreeSet<String>,
+        parameters: &mut IndexMap<String, TypeParameterUsage>,
+    ) {
+        if !visiting.insert(variant_name.to_string()) {
+            return;
+        }
+        if let Some(variant) = self.variant(variant_name) {
+            for case in &variant.cases {
+                if let Some(payload) = &case.payload {
+                    self.collect_type_parameters(payload, language, visiting, parameters);
+                }
+            }
+        }
+        visiting.remove(variant_name);
+    }
+
+    fn collect_type_parameters(
+        &self,
+        value: &TypeSpec<F>,
+        language: Language,
+        visiting: &mut std::collections::BTreeSet<String>,
+        parameters: &mut IndexMap<String, TypeParameterUsage>,
+    ) {
+        match value {
+            TypeSpec::TypeParameter(parameter) => {
+                if !parameters.contains_key(&parameter.full_name) {
+                    parameters.insert(
+                        parameter.full_name.clone(),
+                        TypeParameterUsage {
+                            parameter: parameter.clone(),
+                        },
+                    );
+                }
+            }
+            TypeSpec::Option(inner) | TypeSpec::List(inner) => {
+                self.collect_type_parameters(inner, language, visiting, parameters)
+            }
+            TypeSpec::Tuple(items) => {
+                for item in items {
+                    self.collect_type_parameters(item, language, visiting, parameters);
+                }
+            }
+            TypeSpec::Map(key, value) => {
+                self.collect_type_parameters(key, language, visiting, parameters);
+                self.collect_type_parameters(value, language, visiting, parameters);
+            }
+            TypeSpec::Result { ok, err } => {
+                if let Some(ok) = ok {
+                    self.collect_type_parameters(ok, language, visiting, parameters);
+                }
+                if let Some(err) = err {
+                    self.collect_type_parameters(err, language, visiting, parameters);
+                }
+            }
+            TypeSpec::Record(record) => {
+                self.collect_record_type_parameters(record.as_ref(), language, visiting, parameters)
+            }
+            TypeSpec::Variant(variant) => self.collect_variant_type_parameters(
+                variant.as_ref(),
+                language,
+                visiting,
+                parameters,
+            ),
+            TypeSpec::External(ExternalTypeSpec::Alias { target, .. }) => {
+                self.collect_type_parameters(target, language, visiting, parameters)
+            }
+            TypeSpec::Bool
+            | TypeSpec::Int(_)
+            | TypeSpec::Float
+            | TypeSpec::String
+            | TypeSpec::Bytes
+            | TypeSpec::Enum(_)
+            | TypeSpec::Flags(_)
+            | TypeSpec::Resource(_)
+            | TypeSpec::External(ExternalTypeSpec::Proto(_))
+            | TypeSpec::External(ExternalTypeSpec::Json(_)) => {}
+        }
     }
 }
 

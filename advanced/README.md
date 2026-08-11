@@ -174,6 +174,7 @@ The WIT file defines the public surface. `@nexus` directives carry the parts WIT
 - flattened API-only field types
 - sourced field expressions
 - function conversion metadata
+- generic model parameters declared with `@nexus.type-parameter` aliases
 - output transforms
 - explicit resource method operation bindings
 - experimental service, operation, and record warnings

@@ -101,7 +101,7 @@ fn api_spec_from_wit(
         services.push(build_service(resolve, key, interface, &path, language)?);
     }
 
-    Ok(ApiSpec {
+    let spec = ApiSpec {
         module_path: crate::spec::ModulePath::default(),
         data: (),
         version: package
@@ -113,7 +113,9 @@ fn api_spec_from_wit(
         support,
         services,
         types,
-    })
+    };
+    crate::validation::validate_generic_model_semantics(&spec, &path, language)?;
+    Ok(spec)
 }
 
 pub fn write_prepared_wit_directory(input_paths: &[PathBuf], output_path: &Path) -> Result<()> {
@@ -763,6 +765,7 @@ fn collect_interface_types(
         .to_string();
     for type_id in interface.types.values() {
         let type_def = &resolve.types[*type_id];
+        validate_type_parameter_directive(resolve, *type_id, type_def, path)?;
         if let Some(record) =
             build_wit_record_spec(resolve, *type_id, type_def, path, &interface_name, language)?
         {
@@ -844,6 +847,46 @@ fn collect_interface_types(
     Ok(())
 }
 
+fn validate_type_parameter_directive(
+    resolve: &Resolve,
+    type_id: TypeId,
+    type_def: &TypeDef,
+    path: &Path,
+) -> Result<()> {
+    let context = format!("type `{}`", wit_type_full_name(resolve, type_id));
+    let directives = parse_directives(type_def.docs.contents.as_deref(), path, &context)?;
+    let Some(parameter) = directive(&directives, "type-parameter", path, &context)? else {
+        return Ok(());
+    };
+    if !parameter.args.is_empty() {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context,
+            directive: "@nexus.type-parameter".to_string(),
+            reason: "does not take arguments".to_string(),
+        });
+    }
+    if !matches!(type_def.kind, TypeDefKind::Type(_)) {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context,
+            directive: "@nexus.type-parameter".to_string(),
+            reason: "is only supported on WIT type aliases".to_string(),
+        });
+    }
+    for conflict in ["proto", "type", "function"] {
+        if directive(&directives, conflict, path, &context)?.is_some() {
+            return Err(Error::InvalidWitDirective {
+                path: path.to_path_buf(),
+                context,
+                directive: "@nexus.type-parameter".to_string(),
+                reason: format!("cannot be combined with `@nexus.{conflict}`"),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn build_wit_enum_spec(resolve: &Resolve, type_id: TypeId, type_def: &TypeDef) -> Option<EnumSpec> {
     let TypeDefKind::Enum(enumeration) = &type_def.kind else {
         return None;
@@ -904,33 +947,29 @@ fn build_wit_variant_spec(
 
     let type_name = type_def.name.as_deref().unwrap_or("unnamed-type");
     let context = format!("type `{}`", wit_type_full_name(resolve, type_id));
+    let cases = variant
+        .cases
+        .iter()
+        .map(|case| {
+            let case_context = format!("{context} case `{}`", case.name);
+            let payload = case
+                .ty
+                .as_ref()
+                .map(|ty| {
+                    resolve_authored_field_type_spec(resolve, ty, path, &case_context)
+                        .map(|field_type| authored_field_type_for_language(field_type, language))
+                })
+                .transpose()?;
+            Ok(VariantCaseSpec {
+                name: case.name.clone(),
+                payload,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(Some(VariantSpec {
         name: type_name.to_upper_camel_case(),
         full_name: wit_type_full_name(resolve, type_id),
-        cases: variant
-            .cases
-            .iter()
-            .map(|case| {
-                Ok(VariantCaseSpec {
-                    name: case.name.clone(),
-                    payload: case
-                        .ty
-                        .as_ref()
-                        .map(|ty| {
-                            resolve_authored_field_type_spec(
-                                resolve,
-                                ty,
-                                path,
-                                &format!("{context} case `{}`", case.name),
-                            )
-                            .map(|field_type| {
-                                authored_field_type_for_language(field_type, language)
-                            })
-                        })
-                        .transpose()?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?,
+        cases,
     }))
 }
 
@@ -1096,6 +1135,7 @@ fn build_fields_from_record(
     for field in &record.fields {
         let field_context = format!("{context} field `{}`", field.name);
         let directives = parse_directives(field.docs.contents.as_deref(), path, &field_context)?;
+        reject_misplaced_type_parameter(&directives, path, &field_context)?;
         let generated_field_name = directive(&directives, "name", path, &field_context)?
             .and_then(|directive| directive_language_value(directive, language))
             .unwrap_or(&field.name)
@@ -1348,6 +1388,12 @@ fn resolve_authored_field_type_spec(
             let type_context = format!("{context} type `{type_name}`");
             let directives =
                 parse_directives(type_def.docs.contents.as_deref(), path, &type_context)?;
+            if directive(&directives, "type-parameter", path, &type_context)?.is_some() {
+                return Ok(TypeSpec::TypeParameter(TypeParameterSpec {
+                    name: type_name.to_upper_camel_case(),
+                    full_name: wit_type_full_name(resolve, *id),
+                }));
+            }
             if let Some(proto_name) = find_proto_name_for_type_def(type_def, path, &type_context)? {
                 if let Some(resource_name) =
                     find_owned_resource_name_for_type_def(resolve, type_def)
@@ -2429,6 +2475,7 @@ fn build_service(
     let interface_name = interface_export_name(key, interface);
     let context = format!("interface `{interface_name}`");
     let directives = parse_directives(interface.docs.contents.as_deref(), path, &context)?;
+    reject_misplaced_type_parameter(&directives, path, &context)?;
     let endpoint = directive_value_for_language(&directives, "endpoint", path, &context, language)?;
     let service_name = interface_name.to_upper_camel_case();
     let wire_service_name = build_wire_service_name(&directives, path, &context, &service_name)?;
@@ -2555,6 +2602,15 @@ fn build_resource(
     let constructor = interface.functions.values().find(
         |function| matches!(function.kind, FunctionKind::Constructor(id) if id == resource_id),
     );
+    if let Some(constructor) = constructor {
+        let constructor_context = format!("{context} constructor");
+        let directives = parse_directives(
+            constructor.docs.contents.as_deref(),
+            path,
+            &constructor_context,
+        )?;
+        reject_misplaced_type_parameter(&directives, path, &constructor_context)?;
+    }
     let fields = match constructor {
         Some(constructor) => constructor
             .params
@@ -2627,6 +2683,7 @@ fn build_resource_method(
         method_name.to_upper_camel_case()
     );
     let directives = parse_directives(function.docs.contents.as_deref(), path, &context)?;
+    reject_misplaced_type_parameter(&directives, path, &context)?;
     let params = function
         .params
         .iter()
@@ -2732,6 +2789,7 @@ fn build_operation(
     let operation_name = function.name.to_upper_camel_case();
     let context = format!("{service_context} operation `{operation_name}`");
     let directives = parse_directives(function.docs.contents.as_deref(), path, &context)?;
+    reject_misplaced_type_parameter(&directives, path, &context)?;
     let wire_operation_name =
         build_wire_operation_name(&directives, path, &context, &operation_name)?;
     let experimental = experimental_directive(&directives, path, &context)?;
@@ -3170,6 +3228,22 @@ pub(crate) fn directive<'a>(
     Ok(first)
 }
 
+fn reject_misplaced_type_parameter(
+    directives: &[Directive],
+    path: &Path,
+    context: &str,
+) -> Result<()> {
+    if directive(directives, "type-parameter", path, context)?.is_some() {
+        return Err(Error::InvalidWitDirective {
+            path: path.to_path_buf(),
+            context: context.to_string(),
+            directive: "@nexus.type-parameter".to_string(),
+            reason: "is only supported on WIT type aliases".to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn directive_language_value<'a>(directive: &'a Directive, language: Language) -> Option<&'a str> {
     directive.value(language_key(language))
 }
@@ -3387,6 +3461,15 @@ mod tests {
         .unwrap()
     }
 
+    fn parse_result(language: Language, wit: &str) -> Result<ApiSpec, Error> {
+        crate::parser::parse_api_spec_from_wit_for_language_with_inputs(
+            language,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[linked_inputs_path()],
+        )
+    }
+
     fn validate(language: Language, wit: &str) -> Result<(), Error> {
         let spec = parse(language, wit);
         let descriptors = descriptors();
@@ -3399,6 +3482,233 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("nex-gen-{label}-{unique}"))
+    }
+
+    const GENERIC_WIT: &str = r#"
+package temporal:nexus@1.0.0;
+
+world system { export generic-service; }
+
+interface generic-service {
+  use nexus:temporal-types/model@1.0.0.{placeholder};
+
+  /// @nexus.type-parameter
+  type context-t = placeholder;
+
+  /// @nexus.type-parameter
+  type output-t = placeholder;
+
+  record inner { value: context-t, }
+
+  record request {
+    nested: inner,
+    values: list<context-t>,
+  }
+
+  record response {
+    context: context-t,
+    output: output-t,
+  }
+
+  complete: func(request: request) -> response;
+}
+"#;
+
+    #[test]
+    fn parses_and_inferrs_generic_record_parameters_by_alias_identity() {
+        let spec = parse(Language::TypeScript, GENERIC_WIT);
+        let request = spec.record("generic-service.request").unwrap();
+        let request_parameters =
+            spec.record_type_parameters(&request.full_name, Language::TypeScript);
+        assert_eq!(request_parameters.len(), 1);
+        assert_eq!(request_parameters[0].parameter.name, "ContextT");
+        assert_eq!(
+            request_parameters[0].parameter.full_name,
+            "generic-service.context-t"
+        );
+
+        let response = spec.record("generic-service.response").unwrap();
+        let response_parameters =
+            spec.record_type_parameters(&response.full_name, Language::TypeScript);
+        assert_eq!(
+            response_parameters
+                .iter()
+                .map(|usage| usage.parameter.name.as_str())
+                .collect::<Vec<_>>(),
+            ["ContextT", "OutputT"]
+        );
+    }
+
+    #[test]
+    fn rejects_type_parameter_directive_on_records_and_fields() {
+        let record = GENERIC_WIT.replace(
+            "record inner { value: context-t, }",
+            "/// @nexus.type-parameter\n  record inner { value: context-t, }",
+        );
+        assert!(parse_result(Language::Python, &record).is_err());
+
+        let field = GENERIC_WIT.replace(
+            "nested: inner,",
+            "/// @nexus.type-parameter\n    nested: inner,",
+        );
+        assert!(parse_result(Language::Python, &field).is_err());
+    }
+
+    #[test]
+    fn rejects_generic_map_key_parameters() {
+        let wit = GENERIC_WIT.replace(
+            "/// @nexus.type-parameter\n  type output-t = placeholder;",
+            "/// @nexus.type-parameter\n  type output-t = placeholder;\n\n  /// @nexus.type-parameter\n  type key-t = string;\n\n  type keyed-values = map<key-t, string>;",
+        ).replace(
+            "values: list<context-t>,",
+            "values: list<context-t>,\n    by-key: keyed-values,",
+        );
+        assert!(parse_result(Language::Go, &wit).is_err());
+    }
+
+    #[test]
+    fn language_type_overrides_and_omitted_fields_do_not_infer_parameters() {
+        let wit = GENERIC_WIT.replace(
+            "record inner { value: context-t, }",
+            r#"record inner { value: context-t, }
+
+  record overridden {
+    /// @nexus.type typescript="string"
+    value: context-t,
+    /// @nexus.omit
+    hidden: output-t,
+  }"#,
+        );
+        let typescript = parse(Language::TypeScript, &wit);
+        assert!(
+            typescript
+                .record_type_parameters("generic-service.overridden", Language::TypeScript)
+                .is_empty()
+        );
+
+        let python = parse(Language::Python, &wit);
+        let parameters =
+            python.record_type_parameters("generic-service.overridden", Language::Python);
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(parameters[0].parameter.name, "ContextT");
+    }
+
+    #[test]
+    fn infers_type_parameters_through_nested_variants_and_rejects_resources() {
+        let variant = GENERIC_WIT
+            .replace(
+                "/// @nexus.type-parameter\n  type output-t = placeholder;",
+                "/// @nexus.type-parameter\n  type output-t = placeholder;\n\n  /// @nexus.type-parameter\n  type key-t = string;",
+            )
+            .replace(
+                "record inner { value: context-t, }",
+                "variant inner-result { value(context-t), }\n\n  variant outer-result {\n    nested(inner-result),\n    keyed(map<string, key-t>),\n    output(output-t),\n  }\n\n  record inner { value: context-t, }",
+            )
+            .replace(
+                "context: context-t,\n    output: output-t,",
+                "result-value: outer-result,\n    repeated: context-t,",
+            );
+        let spec = parse(Language::Go, &variant);
+        let inner = spec.variant_type_parameters("generic-service.inner-result", Language::Go);
+        assert_eq!(inner[0].parameter.name, "ContextT");
+        let outer = spec.variant_type_parameters("generic-service.outer-result", Language::Go);
+        assert_eq!(
+            outer
+                .iter()
+                .map(|usage| usage.parameter.name.as_str())
+                .collect::<Vec<_>>(),
+            ["ContextT", "KeyT", "OutputT"]
+        );
+        let response = spec.record_type_parameters("generic-service.response", Language::Go);
+        assert_eq!(
+            response
+                .iter()
+                .map(|usage| usage.parameter.name.as_str())
+                .collect::<Vec<_>>(),
+            ["ContextT", "KeyT", "OutputT"]
+        );
+
+        let resource = GENERIC_WIT.replace(
+            "record inner { value: context-t, }",
+            "resource holder { constructor(value: context-t); }\n\n  record inner { value: context-t, }",
+        );
+        let error = parse_result(Language::Dotnet, &resource).unwrap_err();
+        assert!(error.to_string().contains("resource"));
+    }
+
+    #[test]
+    fn rejects_generated_parameter_name_collisions_in_variants_and_operations() {
+        let base = r#"
+package temporal:nexus@1.0.0;
+
+world system { export generic-service; }
+
+interface left {
+  use nexus:temporal-types/model@1.0.0.{placeholder};
+  /// @nexus.type-parameter
+  type value-t = placeholder;
+  record payload { value: value-t, }
+}
+
+interface right {
+  use nexus:temporal-types/model@1.0.0.{placeholder};
+  /// @nexus.type-parameter
+  type value-t = placeholder;
+  record payload { value: value-t, }
+}
+
+interface generic-service {
+  use left.{payload as left-payload};
+  use right.{payload as right-payload};
+  record request { value: left-payload, }
+  record response { value: right-payload, }
+  execute: func(request: request) -> response;
+}
+"#;
+        let operation_error = parse_result(Language::TypeScript, base).unwrap_err();
+        assert!(operation_error.to_string().contains("operation `Execute`"));
+
+        let variant = base.replace(
+            "record request { value: left-payload, }",
+            "variant collision { left(left-payload), right(right-payload), }\n  record request { value: left-payload, }",
+        );
+        let variant_error = parse_result(Language::TypeScript, &variant).unwrap_err();
+        assert!(
+            variant_error
+                .to_string()
+                .contains("variant `generic-service.collision`")
+        );
+    }
+
+    #[test]
+    fn rejects_type_parameter_arguments_and_conflicting_directives() {
+        let arguments = GENERIC_WIT.replace(
+            "@nexus.type-parameter\n  type context-t",
+            "@nexus.type-parameter name=\"T\"\n  type context-t",
+        );
+        assert!(parse_result(Language::Go, &arguments).is_err());
+
+        let conflict = GENERIC_WIT.replace(
+            "@nexus.type-parameter\n  type context-t",
+            "@nexus.type-parameter\n  /// @nexus.type typescript=\"string\"\n  type context-t",
+        );
+        assert!(parse_result(Language::TypeScript, &conflict).is_err());
+    }
+
+    #[test]
+    fn rejects_generic_proto_backed_records_transitively() {
+        let wit = GENERIC_WIT
+            .replace(
+                "record inner { value: context-t, }",
+                "record inner { value: context-t, }\n\n  variant wrapped { inner(inner), }",
+            )
+            .replace("nested: inner,", "nested: wrapped,")
+            .replace(
+                "record request {",
+                "/// @nexus.proto \"example.GenericRequest\"\n  record request {",
+            );
+        let error = parse_result(Language::Dotnet, &wit).unwrap_err();
+        assert!(error.to_string().contains("proto-backed record"));
     }
 
     #[test]
