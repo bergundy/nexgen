@@ -114,7 +114,6 @@ fn api_spec_from_wit(
         services,
         types,
     };
-    crate::validation::validate_generic_model_semantics(&spec, &path, language)?;
     Ok(spec)
 }
 
@@ -2869,9 +2868,27 @@ fn find_operation_type_spec(
     if let Some(resource_name) = find_owned_resource_name_for_type(resolve, ty) {
         let wire_type = find_proto_name_for_type(resolve, ty, path, context)?
             .map(|proto_name| ExternalTypeSpec::Proto(Symbol::new(proto_name)));
+        let alias = match ty {
+            Type::Id(type_id)
+                if resolve.types[*type_id].name.is_some()
+                    && !matches!(resolve.types[*type_id].kind, TypeDefKind::Resource) =>
+            {
+                let type_def = &resolve.types[*type_id];
+                Some(DeclaredTypeName {
+                    name: type_def
+                        .name
+                        .as_deref()
+                        .expect("type name checked above")
+                        .to_upper_camel_case(),
+                    full_name: wit_type_full_name(resolve, *type_id),
+                })
+            }
+            _ => None,
+        };
         return Ok(Some(TypeSpec::Resource(AuthoredResourceType {
             name: Symbol::new(resource_name),
             wire_type,
+            alias,
         })));
     }
     if let Some(proto_name) = find_proto_name_for_type(resolve, ty, path, context)? {
@@ -3432,10 +3449,11 @@ mod tests {
     use crate::descriptors::DescriptorIndex;
     use crate::error::Error;
     use crate::language::Language;
+    use crate::spec::CompilerPass;
 
     use super::{
-        ApiSpec, AuthoredResourceType, ExternalTypeSpec, FunctionArgSpec, FunctionArgsSpec, Symbol,
-        TypeSpec, directive, parse_directives,
+        ApiSpec, AuthoredResourceType, DeclaredTypeName, ExternalTypeSpec, FunctionArgSpec,
+        FunctionArgsSpec, Symbol, TypeSpec, directive, parse_directives,
     };
 
     fn root() -> PathBuf {
@@ -3471,9 +3489,11 @@ mod tests {
     }
 
     fn validate(language: Language, wit: &str) -> Result<(), Error> {
-        let spec = parse(language, wit);
+        let spec = parse_result(language, wit)?;
         let descriptors = descriptors();
-        crate::validation::validate_external_type_bindings(&spec, &descriptors, language)
+        crate::planning::AuthoredValidationPass::new(&descriptors, language)
+            .apply(crate::spec::ApiSpecTree::single(spec))
+            .map(|_| ())
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -3594,7 +3614,7 @@ interface generic-service {
     }
 
     #[test]
-    fn infers_type_parameters_through_nested_variants_and_rejects_resources() {
+    fn infers_type_parameters_through_nested_variants() {
         let variant = GENERIC_WIT
             .replace(
                 "/// @nexus.type-parameter\n  type output-t = placeholder;",
@@ -3627,57 +3647,6 @@ interface generic-service {
                 .collect::<Vec<_>>(),
             ["ContextT", "KeyT", "OutputT"]
         );
-
-        let resource = GENERIC_WIT.replace(
-            "record inner { value: context-t, }",
-            "resource holder { constructor(value: context-t); }\n\n  record inner { value: context-t, }",
-        );
-        let error = parse_result(Language::Dotnet, &resource).unwrap_err();
-        assert!(error.to_string().contains("resource"));
-    }
-
-    #[test]
-    fn rejects_generated_parameter_name_collisions_in_variants_and_operations() {
-        let base = r#"
-package temporal:nexus@1.0.0;
-
-world system { export generic-service; }
-
-interface left {
-  use nexus:temporal-types/model@1.0.0.{placeholder};
-  /// @nexus.type-parameter
-  type value-t = placeholder;
-  record payload { value: value-t, }
-}
-
-interface right {
-  use nexus:temporal-types/model@1.0.0.{placeholder};
-  /// @nexus.type-parameter
-  type value-t = placeholder;
-  record payload { value: value-t, }
-}
-
-interface generic-service {
-  use left.{payload as left-payload};
-  use right.{payload as right-payload};
-  record request { value: left-payload, }
-  record response { value: right-payload, }
-  execute: func(request: request) -> response;
-}
-"#;
-        let operation_error = parse_result(Language::TypeScript, base).unwrap_err();
-        assert!(operation_error.to_string().contains("operation `Execute`"));
-
-        let variant = base.replace(
-            "record request { value: left-payload, }",
-            "variant collision { left(left-payload), right(right-payload), }\n  record request { value: left-payload, }",
-        );
-        let variant_error = parse_result(Language::TypeScript, &variant).unwrap_err();
-        assert!(
-            variant_error
-                .to_string()
-                .contains("variant `generic-service.collision`")
-        );
     }
 
     #[test]
@@ -3693,22 +3662,6 @@ interface generic-service {
             "@nexus.type-parameter\n  /// @nexus.type typescript=\"string\"\n  type context-t",
         );
         assert!(parse_result(Language::TypeScript, &conflict).is_err());
-    }
-
-    #[test]
-    fn rejects_generic_proto_backed_records_transitively() {
-        let wit = GENERIC_WIT
-            .replace(
-                "record inner { value: context-t, }",
-                "record inner { value: context-t, }\n\n  variant wrapped { inner(inner), }",
-            )
-            .replace("nested: inner,", "nested: wrapped,")
-            .replace(
-                "record request {",
-                "/// @nexus.proto \"example.GenericRequest\"\n  record request {",
-            );
-        let error = parse_result(Language::Dotnet, &wit).unwrap_err();
-        assert!(error.to_string().contains("proto-backed record"));
     }
 
     #[test]
@@ -4393,6 +4346,10 @@ interface user-service {
                 wire_type: Some(ExternalTypeSpec::Proto(Symbol::new(
                     "acme.users.v1.UserResult"
                 ))),
+                alias: Some(DeclaredTypeName {
+                    name: "UserResult".to_string(),
+                    full_name: "user-service.user-result".to_string(),
+                }),
             }))
         );
         assert_eq!(
@@ -4417,7 +4374,14 @@ interface user-service {
         let resource_input = service.operation("ResourceInput").unwrap();
         assert_eq!(
             resource_input.input,
-            Some(TypeSpec::Resource(AuthoredResourceType::new("user")))
+            Some(TypeSpec::Resource(AuthoredResourceType {
+                name: Symbol::new("user"),
+                wire_type: None,
+                alias: Some(DeclaredTypeName {
+                    name: "UserInput".to_string(),
+                    full_name: "user-service.user-input".to_string(),
+                }),
+            }))
         );
     }
 

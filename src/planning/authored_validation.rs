@@ -1,3 +1,6 @@
+//! `AuthoredValidationPass` verifies descriptor-backed authored intent before
+//! target selection discards language alternatives.
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -10,15 +13,12 @@ use crate::generator::proto::typescript as typescript_proto;
 use crate::generator::python;
 use crate::language::Language;
 use crate::spec::{
-    ApiSpec, ExternalTypeBindingSpec, ExternalTypeSpec, FunctionArgsSpec, FunctionResultSpec,
-    RecordFieldVisibility, RecordSpec, ServiceSpec, TypeSpec,
+    ApiSpec, AuthoredFamily, ExternalTypeBindingSpec, ExternalTypeSpec, FunctionArgsSpec,
+    FunctionResultSpec, RecordFieldVisibility, RecordSpec, ServiceSpec, TypeSpec,
 };
+use crate::spec::{ApiSpecLeaf, CompilerPass};
 
-pub(crate) fn validate_generic_model_semantics(
-    spec: &ApiSpec,
-    path: &Path,
-    language: Language,
-) -> Result<()> {
+fn validate_generic_model_semantics(spec: &ApiSpec, path: &Path, language: Language) -> Result<()> {
     let invalid = |reason: String| Error::InvalidWit {
         path: path.to_path_buf(),
         reason,
@@ -164,6 +164,37 @@ struct ModelConfig<'a> {
     record: &'a RecordSpec,
 }
 
+pub(crate) struct AuthoredValidationPass<'a> {
+    descriptors: &'a DescriptorIndex,
+    language: Language,
+}
+
+impl<'a> AuthoredValidationPass<'a> {
+    pub(crate) fn new(descriptors: &'a DescriptorIndex, language: Language) -> Self {
+        Self {
+            descriptors,
+            language,
+        }
+    }
+
+    pub(crate) fn validate_spec(&self, spec: &ApiSpec) -> Result<()> {
+        validate_external_type_bindings(spec, self.descriptors, self.language)
+    }
+}
+
+impl CompilerPass<AuthoredFamily, AuthoredFamily> for AuthoredValidationPass<'_> {
+    type Error = Error;
+
+    fn transform_leaf(
+        &mut self,
+        leaf: ApiSpecLeaf<AuthoredFamily>,
+    ) -> Result<ApiSpecLeaf<AuthoredFamily>> {
+        self.validate_spec(&leaf.spec)?;
+        validate_generic_model_semantics(&leaf.spec, &leaf.source_path, self.language)?;
+        Ok(leaf)
+    }
+}
+
 impl<'a> ModelConfig<'a> {
     fn from_record(record: &'a RecordSpec) -> Self {
         Self { record }
@@ -178,7 +209,7 @@ impl<'a> ModelConfig<'a> {
     }
 }
 
-pub(crate) fn validate_external_type_bindings(
+fn validate_external_type_bindings(
     spec: &ApiSpec,
     descriptors: &DescriptorIndex,
     language: Language,
@@ -985,4 +1016,115 @@ fn field_type(field: &FieldDescriptorProto) -> Option<Type> {
     field
         .r#type
         .and_then(|field_type| Type::try_from(field_type).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn validate(language: Language, wit: &str) -> Result<()> {
+        let spec = crate::parser::parse_api_spec_from_wit_for_language_with_inputs(
+            language,
+            wit,
+            PathBuf::from("inline.wit"),
+            &[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("advanced/samples/inputs/deps")],
+        )?;
+        let descriptors = DescriptorIndex::load_many(&[])?;
+        AuthoredValidationPass::new(&descriptors, language)
+            .apply(crate::spec::ApiSpecTree::single(spec))
+            .map(|_| ())
+    }
+
+    const GENERIC_WIT: &str = r#"
+package temporal:nexus@1.0.0;
+world system { export generic-service; }
+interface generic-service {
+  use nexus:temporal-types/model@1.0.0.{placeholder};
+  /// @nexus.type-parameter
+  type context-t = placeholder;
+  /// @nexus.type-parameter
+  type output-t = placeholder;
+  record inner { value: context-t, }
+  record request { nested: inner, values: list<context-t>, }
+  record response { context: context-t, output: output-t, }
+  complete: func(request: request) -> response;
+}
+"#;
+
+    #[test]
+    fn rejects_generic_resources_and_proto_backed_records() {
+        let resource = GENERIC_WIT.replace(
+            "record inner { value: context-t, }",
+            "resource holder { constructor(value: context-t); }\n  record inner { value: context-t, }",
+        );
+        assert!(
+            validate(Language::Dotnet, &resource)
+                .unwrap_err()
+                .to_string()
+                .contains("resource")
+        );
+
+        let proto_backed = GENERIC_WIT
+            .replace(
+                "record inner { value: context-t, }",
+                "record inner { value: context-t, }\n  variant wrapped { inner(inner), }",
+            )
+            .replace("nested: inner,", "nested: wrapped,")
+            .replace(
+                "record request {",
+                "/// @nexus.proto \"example.GenericRequest\"\n  record request {",
+            );
+        assert!(
+            validate(Language::Dotnet, &proto_backed)
+                .unwrap_err()
+                .to_string()
+                .contains("proto-backed record")
+        );
+    }
+
+    #[test]
+    fn rejects_generated_type_parameter_name_collisions() {
+        let base = r#"
+package temporal:nexus@1.0.0;
+world system { export generic-service; }
+interface left {
+  use nexus:temporal-types/model@1.0.0.{placeholder};
+  /// @nexus.type-parameter
+  type value-t = placeholder;
+  record payload { value: value-t, }
+}
+interface right {
+  use nexus:temporal-types/model@1.0.0.{placeholder};
+  /// @nexus.type-parameter
+  type value-t = placeholder;
+  record payload { value: value-t, }
+}
+interface generic-service {
+  use left.{payload as left-payload};
+  use right.{payload as right-payload};
+  record request { value: left-payload, }
+  record response { value: right-payload, }
+  execute: func(request: request) -> response;
+}
+"#;
+        assert!(
+            validate(Language::TypeScript, base)
+                .unwrap_err()
+                .to_string()
+                .contains("operation `Execute`")
+        );
+
+        let variant = base.replace(
+            "record request { value: left-payload, }",
+            "variant collision { left(left-payload), right(right-payload), }\n  record request { value: left-payload, }",
+        );
+        assert!(
+            validate(Language::TypeScript, &variant)
+                .unwrap_err()
+                .to_string()
+                .contains("variant `generic-service.collision`")
+        );
+    }
 }
