@@ -583,6 +583,50 @@ func TestJSONSchemaShowcaseUnions(t *testing.T) {
 	require.Contains(t, err.Error(), "shape")
 }
 
+// TestJSONSchemaShowcaseBranchConstraints asserts that once the token selects a
+// branch, the value is held to everything that branch declares — `idOrName`'s
+// `minLength`/`minimum`, `mode`'s closed string value set — in both directions,
+// with the union's own path on the violation.
+func TestJSONSchemaShowcaseBranchConstraints(t *testing.T) {
+	dc := converter.GetDefaultDataConverter()
+
+	base := `{"kind":"showcase","revision":1,"enabled":true,"status":"active","tier":1,"scale":1.5,"name":"w","count":1,"active":true,"category":"tools"`
+	var out showcase.Showcase
+
+	// The selected string branch's own `minLength`.
+	err := dc.FromPayload(jsonPayload([]byte(base+`,"idOrName":"ab"}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "idOrName: must have length >= 3, got 2")
+
+	// The selected integer branch's own `minimum` — the other branch's
+	// constraints are irrelevant to it.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"idOrName":0}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "idOrName: must be >= 1, got 0")
+
+	// A closed value set on a branch: an unknown string is rejected naming the
+	// admissible values, while the integer branch stays unbounded above.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"mode":"turbo"}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `mode: must be one of ["auto","manual"], got "turbo"`)
+	mode := roundTripJSONEq[showcase.Showcase](t, dc, "showcase", "showcase-full.json")
+	require.Equal(t, showcase.ShowcaseModeString("auto"), mode.Mode)
+
+	// Serialize re-runs the selected branch's constraints (P12): an in-memory
+	// member violating its own branch is rejected before any bytes are written.
+	invalid := mode
+	invalid.IdOrName = showcase.ShowcaseIdOrNameString("ab")
+	_, err = dc.ToPayload(invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "idOrName: must have length >= 3, got 2")
+
+	invalid = mode
+	invalid.Mode = showcase.ShowcaseModeInteger(-1)
+	_, err = dc.ToPayload(invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mode: must be >= 0, got -1")
+}
+
 // TestJSONSchemaShowcaseFreeFormObject round-trips the free-form object in both
 // positions: the named `Extras` model and the inline object branch of the
 // `payload` union. Members are carried verbatim, so a large integer survives
@@ -787,4 +831,165 @@ func TestJSONSchemaShowcaseArrayBranchUnion(t *testing.T) {
 	err = dc.FromPayload(jsonPayload([]byte(base+`,"measurements":["x"]}`)), &out)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "measurements")
+}
+
+// TestJSONSchemaShowcaseElementUnions round-trips the union positions that are
+// not a property of their own: an array element (`shapes` at a named union,
+// `segments` at an inline one the loader names `ShowcaseSegmentsItem`) and a map
+// member (`choices`, whose inline member union is named `ChoicesValue`).
+// `encoding/json` cannot decode into a sealed interface, so each of these is
+// dispatched one value at a time, with the element index / member key threaded
+// into the violation path.
+func TestJSONSchemaShowcaseElementUnions(t *testing.T) {
+	dc := converter.GetDefaultDataConverter()
+
+	value := roundTripJSONEq[showcase.Showcase](t, dc, "showcase", "showcase-element-unions.json")
+
+	require.Len(t, value.Shapes, 2)
+	circle, ok := value.Shapes[0].(showcase.Circle)
+	require.True(t, ok, "shapes[0] should be a Circle")
+	require.Equal(t, 2.5, circle.Radius)
+	square, ok := value.Shapes[1].(showcase.Square)
+	require.True(t, ok, "shapes[1] should be a Square")
+	require.Equal(t, float64(4), square.Side)
+
+	require.Equal(
+		t,
+		[]showcase.ShowcaseSegmentsItem{
+			showcase.ShowcaseSegmentsItemString("alpha"),
+			showcase.ShowcaseSegmentsItemInteger(7),
+		},
+		value.Segments,
+	)
+
+	// Element nullability is the element's own concern: the slice stays a
+	// slice, its members become pointers, and an explicit null decodes to nil.
+	require.Len(t, value.Slots, 3)
+	require.Equal(t, "first", *value.Slots[0])
+	require.Nil(t, value.Slots[1])
+	require.Equal(t, "third", *value.Slots[2])
+
+	require.NotNil(t, value.Choices)
+	require.Len(t, value.Choices.AdditionalProperties, 2)
+	primary, ok := value.Choices.AdditionalProperties["primary"].(showcase.Circle)
+	require.True(t, ok, "choices[primary] should be a Circle")
+	require.Equal(t, float64(1), primary.Radius)
+
+	base := `{"kind":"showcase","revision":1,"enabled":true,"status":"active","tier":1,"scale":1.5,"name":"w","count":1,"active":true,"category":"tools"`
+	var out showcase.Showcase
+
+	// A bad element is reported at its own index, not at the array.
+	err := dc.FromPayload(jsonPayload([]byte(base+`,"shapes":[{"kind":"circle","radius":1},true]}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "shapes[1]")
+	require.Contains(t, err.Error(), "Circle, Square")
+
+	// An unknown discriminator inside an element is still routed by tag.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"shapes":[{"kind":"triangle"}]}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "shapes[0]")
+	require.Contains(t, err.Error(), "triangle")
+
+	// The inline element union is a closed sum type like any other.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"segments":["ok",1.5]}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "segments[1]")
+
+	// A map member's violation carries its key.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"choices":{"primary":"circle"}}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "primary")
+	require.Contains(t, err.Error(), "Circle, Square")
+
+	// Serialize re-runs each element's own branch constraints (P12).
+	invalid := value
+	invalid.Shapes = []showcase.Shape{showcase.Square{Kind: showcase.SquareKind("hexagon")}}
+	_, err = dc.ToPayload(invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "shapes[0].kind")
+}
+
+// TestJSONSchemaShowcaseInlineShapes round-trips the object shapes the schema
+// writes **inline** rather than in `$defs` — a property (`location`, with its own
+// nested `geo`), a nullable property (`audit`), an array element (`rows`), a map
+// and its member (`ledger`), and a free-form bag (`metadata`) — each of which the
+// loader names after the position it occupies and emits as an ordinary model. It
+// also covers the constraints a typed map's members carry (`quotas`, `tokens`,
+// `nicknames`) and a nested array (`grid`), both directions.
+func TestJSONSchemaShowcaseInlineShapes(t *testing.T) {
+	dc := converter.GetDefaultDataConverter()
+
+	value := roundTripJSONEq[showcase.Showcase](t, dc, "showcase", "showcase-inline-shapes.json")
+
+	require.Equal(t, [][]int64{{1, 2}, {3}}, value.Grid)
+	require.NotNil(t, value.Location)
+	require.Equal(t, "Springfield", value.Location.City)
+	require.NotNil(t, value.Location.Geo)
+	require.Equal(t, 39.8, *value.Location.Geo.Lat)
+	require.NotNil(t, value.Audit)
+	require.Equal(t, "alice", value.Audit.By)
+	require.Len(t, value.Rows, 2)
+	require.Equal(t, "a1", value.Rows[0].Cell)
+	// The member override renamed the member (`LedgerGo`); the hoisted types keep
+	// their position-derived names (`ShowcaseLedger`, `ShowcaseLedgerValue`).
+	require.NotNil(t, value.LedgerGo)
+	require.Equal(t, int64(100), value.LedgerGo.AdditionalProperties["opening"].Amount)
+	require.NotNil(t, value.Metadata)
+	require.Len(t, value.Metadata.AdditionalProperties, 2)
+	require.NotNil(t, value.Quotas)
+	require.Equal(t, int64(20), value.Quotas.AdditionalProperties["cpu"])
+	require.NotNil(t, value.Nicknames)
+	require.Equal(t, "al", *value.Nicknames.AdditionalProperties["short"])
+	require.Nil(t, value.Nicknames.AdditionalProperties["none"])
+
+	base := `{"kind":"showcase","revision":1,"enabled":true,"status":"active","tier":1,"scale":1.5,"name":"w","count":1,"active":true,"category":"tools"`
+	var out showcase.Showcase
+
+	// A hoisted shape validates like any other model: its member constraints and
+	// its required members are enforced, at the nested path.
+	err := dc.FromPayload(jsonPayload([]byte(base+`,"location":{"city":""}}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "location.city")
+
+	// An element's own model validates too. Go decodes the array as a whole, so
+	// the failure is reported at the array rather than at `rows[1].cell` — the
+	// element type is materialized either way, and elementwise dispatch for a
+	// model element is tracked with the item-constraint work.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"rows":[{"cell":"ok"},{}]}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "rows")
+
+	// A typed map's member constraints are enforced, keyed by the member.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"quotas":{"cpu":7}}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cpu")
+	require.Contains(t, err.Error(), "multiple of 5")
+
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"tokens":{"primary":"AB"}}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "primary")
+
+	// A null member of a nullable map is a member, not a violation; a present one
+	// still carries its constraint.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"nicknames":{"tiny":"a"}}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tiny")
+
+	// The free-form bag's member-count bound rides with the hoisted type.
+	err = dc.FromPayload(jsonPayload([]byte(base+`,"metadata":{"a":1,"b":2,"c":3,"d":4}}`)), &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at most 3")
+
+	// Serialize re-runs every member's own constraints before emitting (P12).
+	invalid := value
+	invalid.Quotas = &showcase.Quotas{AdditionalProperties: map[string]int64{"cpu": 7}}
+	_, err = dc.ToPayload(invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cpu")
+
+	invalid = value
+	invalid.Tokens = &showcase.Tokens{AdditionalProperties: map[string]string{"primary": "AB"}}
+	_, err = dc.ToPayload(invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "primary")
 }

@@ -24,6 +24,40 @@ static OUTPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A property whose union has one inline structured object branch (named
 /// `<Union>Object`) and one scalar branch.
+/// Unions in positions with no property of their own: an array element (inline
+/// and `$ref`), a map member (inline), plus a nullable element for contrast.
+const ELEMENT_UNION_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  segments:
+    type: array
+    items:
+      oneOf:
+        - { type: string }
+        - { type: integer }
+  choices:
+    type: array
+    items: { $ref: "#/$defs/Choice" }
+  entries: { $ref: "#/$defs/Entries" }
+  slots:
+    type: array
+    items:
+      oneOf:
+        - { type: string }
+        - { type: "null" }
+$defs:
+  Choice:
+    oneOf:
+      - { type: string }
+      - { type: boolean }
+  Entries:
+    type: object
+    additionalProperties:
+      oneOf:
+        - { type: string }
+        - { type: integer }
+"##;
+
 const INLINE_OBJECT_BRANCH_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
 type: object
 properties:
@@ -34,6 +68,22 @@ properties:
         properties:
           text: { type: string, minLength: 1 }
       - { type: string }
+"#;
+
+/// A union whose **non-object** branches each declare constraints of their own:
+/// once the wire token selects a branch, the value is held to everything that
+/// branch declares — including a closed value set — in both directions.
+const BRANCH_CONSTRAINT_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  value:
+    oneOf:
+      - { type: string, minLength: 3, pattern: "^[a-z]+$" }
+      - { type: integer, minimum: 1 }
+  listOrName:
+    oneOf:
+      - { type: array, items: { type: number }, minItems: 1, uniqueItems: true }
+      - { type: string, enum: [auto, manual] }
 "#;
 
 fn project_root() -> PathBuf {
@@ -751,5 +801,84 @@ fn python_json_names_inline_object_union_branch() {
     // The branch model is part of the module surface, like any named definition.
     let exports = fs::read_to_string(output_path.join("__init__.py")).unwrap();
     assert!(exports.contains("DetailPayloadObject"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// Every constraint a **non-object** branch declares rides inside the union
+/// member's own annotation, so Pydantic holds the value to the branch it selected
+/// — the native `Field` bounds innermost, the refinement validators wrapping
+/// them, and the `uniqueItems`/`contains` validators Pydantic has no native form
+/// for. See `specs/json-schema/features/oneOf.md` ("Validator mapping").
+#[test]
+fn python_json_validates_non_object_union_branch_constraints() {
+    let temp_dir = unique_output_path("py-json-branch-constraints");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("bc.yaml");
+    fs::write(&input_path, BRANCH_CONSTRAINT_SCHEMA).unwrap();
+    let output_path = temp_dir.join("bc");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
+
+    // The string branch: native length bound innermost, `pattern` wrapping it;
+    // the integer branch's bound is its own.
+    assert!(rendered.contains(
+        "value: typing.Annotated[typing.Annotated[str, pydantic.Field(min_length=3)], pydantic.AfterValidator(_check_pattern(\"^[a-z]+\\\\Z\"))] | typing.Annotated[SpecInt, pydantic.Field(ge=1)] | None"
+    ));
+    // The array branch: `minItems` natively, `uniqueItems` through the validator
+    // a position with no declared field of its own needs.
+    assert!(rendered.contains(
+        "typing.Annotated[typing.Annotated[list[float], pydantic.Field(min_length=1)], pydantic.AfterValidator(_check_unique_items)] | typing.Literal[\"auto\", \"manual\"] | None"
+    ));
+    // The validators are imported from the runtime module.
+    assert!(rendered.contains("_check_pattern,"));
+    assert!(rendered.contains("_check_unique_items,"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A union in an element position: the loader names it, so Python emits an
+/// ordinary union alias and Pydantic selects the branch per element. An optional
+/// field whose *elements* are nullable still needs its own `| None` — the
+/// element's `None` is not the field's.
+/// See `specs/json-schema/features/oneOf.md` ("Unions in element positions").
+#[test]
+fn python_json_annotates_element_position_unions() {
+    let temp_dir = unique_output_path("py-json-element-union");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("bag.yaml");
+    fs::write(&input_path, ELEMENT_UNION_SCHEMA).unwrap();
+    let output_path = temp_dir.join("bag");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
+
+    assert!(rendered.contains("BagSegmentsItem: typing.TypeAlias = str | SpecInt"));
+    assert!(rendered.contains("segments: list[BagSegmentsItem] | None"));
+    assert!(rendered.contains("choices: list[Choice] | None"));
+    assert!(rendered.contains("slots: list[str | None] | None"));
+    let exports = fs::read_to_string(output_path.join("__init__.py")).unwrap();
+    assert!(exports.contains("BagSegmentsItem"));
     fs::remove_dir_all(temp_dir).unwrap();
 }

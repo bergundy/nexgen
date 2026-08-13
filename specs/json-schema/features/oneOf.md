@@ -132,11 +132,15 @@ admitted for completeness, not recommended; the diagnostic on a missing
 override points at both remedies.
 
 The **free-form object** (`type: object` with `additionalProperties: true`
-and no declared `properties`) is the exception that needs no name at all: it
-declares no shape to emit, so TS and Python express it structurally
-(`Record<string, unknown>` / `dict[str, Any]`) and only Go and Java wrap it —
-as `<Union>Object` over the verbatim member map ([[additionalProperties]],
-**P13**). It is left inline rather than hoisted.
+and no declared `properties`) is the exception that needs no name at all *as
+a branch*: it declares no shape to emit, so TS and Python express it
+structurally inside the value union (`Record<string, unknown>` /
+`dict[str, Any]`) and only Go and Java wrap it — as `<Union>Object` over the
+verbatim member map ([[additionalProperties]], **P13**). It is left inline
+rather than hoisted. This is specific to the branch position: written in a
+value position of its own — a property, an element, a map member — a free-form
+object *is* named and hoisted like any other object ([[properties]] §"Naming
+an inline object shape").
 
 ### Discriminated object unions — the `const`-tag
 
@@ -214,6 +218,54 @@ TS/Python). Required-vs-optional and the nullable state remain orthogonal
 (**P8**), so all four presence/null combinations apply to a union just as
 to a scalar.
 
+### Unions in element positions
+
+A union is not always a definition or a property. It can also be the
+**element type** of a collection — an array's [[items]], a map's typed
+[[additionalProperties]] — and there it is admitted on the same terms, with
+one addition: it needs a name, for the same reason a structured object branch
+does. Go emits a union as a sealed interface plus a dispatcher, Java as an
+interface with a static `fromNode`; a `[]T` / `List<T>` over that interface
+has to name `T`.
+
+So a `oneOf` **sum type** in an element position is *named after its
+position*, moved into `$defs`, and the position rewritten to a `$ref` at it:
+
+| Position | Synthesized name |
+|---|---|
+| `items` of the property `values` on `Bag` | `BagValuesItem` |
+| `items` of `items` (nested array) | `BagValuesItemItem` |
+| `additionalProperties` of the definition `Entries` | `EntriesValue` |
+| `items` of a union's array branch | `<Union>ArrayItem` |
+
+The branch's own `x-<lang>-name` overrides the derived name, and **P15**
+rejects a collision rather than mangling — the rules every synthesized name
+follows. Because the hoist runs to a fixpoint, an inline *object branch* of a
+hoisted element union is named in turn (`BagValuesItemObject`), so the
+element position needs no `$defs` boilerplate from the author for any shape.
+An inline *object* in an element position is named by the same rule and the
+same table ([[properties]] §"Naming an inline object shape") — the positions
+and their names are shared; only what occupies them differs.
+
+Two consequences worth stating:
+
+- **The naming is uniform across targets.** An anonymous union on a
+  *property* stays inline in TS/Python (only Go/Java synthesize
+  `<Enclosing><Property>`), but an element union is a `$defs` definition
+  before any backend sees it, so all four emit the same named type. That is
+  the point: one hoist replaces four element-position emitters.
+- **The nullability `oneOf` is not hoisted.** `items: {oneOf: [{T},{null}]}`
+  has one non-null branch, so it is [[nullability]]'s degenerate pattern, not
+  a sum type: it declares nothing to name and every target expresses it on
+  the element itself (`[]*T`, `(T | null)[]`, `list[T | None]`,
+  `List<@Nullable T>` — see [[items]]).
+
+Element decoding is elementwise by necessity: a whole-collection decode
+(`json.Unmarshal` into `[]T`, `readTreeAsValue(node, T.class)`) cannot
+allocate a sealed interface. Each element/member is routed through the
+union's own dispatcher, and its index or key is threaded into the violation
+path (`shapes[1]`, `choices.primary`) per **P11**.
+
 ### Deferred (reject with a "not yet supported" diagnostic)
 
 - **The OpenAPI `discriminator: {propertyName, mapping}` object** — the
@@ -225,6 +277,23 @@ to a scalar.
   discriminator object's `$ref`-name brittleness. Until then it is rejected
   with a diagnostic pointing at the const-tag form, which needs no OpenAPI
   extension.
+
+- **A materializing keyword on a non-object branch of a sum type** — a temporal
+  [[format]] (`date-time`/`date`/`time`/`duration`) or a [[contentEncoding]].
+  Both replace the wire `string` with a native typed value (`time.Time` /
+  `OffsetDateTime` / `datetime` / `Temporal.*`; `[]byte` / `byte[]` / `bytes`),
+  and the synthesized `<Union><Kind>` wrapper has no such type: the branch would
+  materialize in Python while Go, TypeScript, and Java carried an unvalidated
+  `string`, which is exactly the silent per-target divergence **P1** forbids. So
+  it is rejected with a located diagnostic naming the keyword and the two
+  remedies — drop the keyword to keep the branch a plain (still fully validated)
+  `string`, or carry the value as a *property* of an object branch, where
+  materialization already works. Non-materializing string formats (`uuid`,
+  `email`, `hostname`, `uri`, `ipv4`, `ipv6`) are **not** deferred: they assert
+  and keep the `string`, so they ride along like any other branch constraint.
+  This is scoped to the sum type — the [[nullability]] pattern
+  `oneOf:[{T},{null}]` has a single non-null branch and synthesizes no wrapper,
+  so a materialized nullable field is unaffected.
 
 ### Rejected outright (incoherent, not merely unsupported)
 
@@ -257,10 +326,15 @@ Loader behavior:
 - A synthesized branch name already declared in `$defs`, or colliding with
   another emitted type → reject per **P15**, `x-<lang>-name` as the escape
   hatch (as for every synthesized name).
-- An **inline** object branch in a position with no derivable name (inside
-  `items`, `additionalProperties`, or a nested inline object) → reject unless
-  it is the free-form object, which needs none; the diagnostic points at
-  `$defs` + `$ref`.
+- A `oneOf` **sum type** written inline in an element position (an array's
+  `items` at any depth, an object's typed `additionalProperties`) → name it
+  after its position (below), move it into `$defs`, and rewrite the position to
+  a `$ref` at it, exactly as for an inline object branch. Its own inline object
+  branches are then named in turn.
+- An **inline** object branch in a position with no derivable name (a nested
+  inline object's property, whose enclosing shape is itself not materialized —
+  see [[properties]]) → reject unless it is the free-form object, which needs
+  none; the diagnostic points at `$defs` + `$ref`.
 - Two or more branches of the same **non-object** kind (two strings, two
   integers) → reject: a scalar same-kind choice is an [[enum]] (or `const`
   union), not a `oneOf` — diagnostic points at [[enum]].
@@ -285,7 +359,10 @@ The union type is **named** by the same rule [[const]]/[[enum]] synthesized
 types use ([[properties]] §"Synthesized type names"): a named `$defs`
 union reuses the def name; an **anonymous** inline union on a property is
 named `<EnclosingType><Property>` (Go flat / Java nested), while TS and
-Python inline the union with no synthesized name.
+Python inline the union with no synthesized name. A union in an **element
+position** is named and hoisted at load (§"Unions in element positions"), so
+by the time a backend sees it, it *is* a named `$defs` union in every
+language.
 
 Running example (named union in `$defs`):
 
@@ -568,6 +645,33 @@ branch types (`expected Widget, string, or number[]`), never a bare
 `oneOf` — per the informative-reason convention the constraint families
 use.
 
+### Branch constraints
+
+Selection is only half of it. A branch is an ordinary schema, so once the
+selector routes a value to one, that value is held to **everything that branch
+declares** — and to nothing the other branches declare. An **object** branch gets
+this for free: it is a named model ([[properties]]), so it validates through its
+own model's checks. A **non-object** branch has no model, so the type each target
+synthesizes for it carries the branch's predicates instead — the same emitters,
+with the same reasons, a *property* of that type would use (`minLength`/`maxLength`
+/`pattern`/`format`, the numeric bounds and `multipleOf`, `minItems`/`maxItems`/
+`uniqueItems`/`contains`, a `const`/`enum` value set), under the union's own
+violation path (`idOrName`, `shapes[1]`, `choices.primary`):
+
+| Language | Where a non-object branch's constraints live |
+|---|---|
+| Go | the synthesized `<Union><Kind>` wrapper's `Validate`, over a conversion back to the underlying type (`string(v)`, `[]float64(v)`). The dispatcher calls it on the selected branch, and the declaring model's `Validate` — which `MarshalJSON` runs first — calls it again before emit. A branch `pattern`/`format` compiles to a package-level regex var keyed by the wrapper type (`fooStringPattern`). |
+| TypeScript | the narrowing chain itself: each `typeof`/`Array.isArray` arm runs the branch's checks over the narrowed value, in `fromIntermediate` and again on the serialize side (a named union in its `Mapper.toIntermediate`, an inline one in the declaring model's, so a branch violation aggregates with its siblings). |
+| Python | the union member's own annotation — the native `pydantic.Field` bounds innermost (next to the type they bound), the refinement validators (`multipleOf`, `pattern`, `format`) wrapping them, and `uniqueItems`/`contains` as the AfterValidators Pydantic has no native form for. Selecting the branch *is* validating it. |
+| Java | a package-private `validate(path, violations)` on the wrapper class, with its compiled `pattern`/`format` `Pattern` statics. `fromNode` calls it on the wrapper it just built; the interface's static `validate` dispatches on the member's runtime class and is called by the declaring POJO's `Serializer` (and per element/member for a collection of unions) before any wire member is written. |
+
+A **closed value set** (`const`/`enum`) on a branch closes the *type* where the
+target can express that — a TypeScript literal union (`"auto" | "manual" | number`),
+a Python `Literal` — and is a membership check in the validator in Go and Java,
+which have no field to hang a defined type or value class off (the same treatment a
+typed map's member gets, [[additionalProperties]] §"Per-member `T` validation").
+The accepted value set is identical in all four.
+
 ### Serialize-side (P12)
 
 In the statically typed targets (Go/TS/Java) the in-memory value **is** a
@@ -593,6 +697,9 @@ than being written (real teeth where construction is unchecked).
 | Object ∪ array | `{oneOf:[{$ref:"#/$defs/Widget"},{type:array,items:{type:number}}]}` |
 | Three disjoint kinds | `{oneOf:[{$ref:"#/$defs/Widget"},{type:string},{type:array,items:{type:number}}]}` |
 | Branch constraints carried through | `{oneOf:[{type:string,minLength:3},{type:integer,minimum:0}]}` |
+| An array branch's own bounds | `{oneOf:[{type:array,items:{type:number},minItems:1,uniqueItems:true},{type:string}]}` |
+| A closed value set on a branch | `{oneOf:[{type:string,enum:[auto,manual]},{type:integer,minimum:0}]}` |
+| An asserted (non-materializing) `format` on a branch | `{oneOf:[{type:string,format:uuid},{type:integer}]}` |
 | Named `$defs` union reused by `$ref` | `{$defs:{Foo:{oneOf:[…]}}, properties:{f:{$ref:"#/$defs/Foo"}}}` |
 | Object tagged union (`const`-tag) | `{oneOf:[{$ref:"#/$defs/Cat"},{$ref:"#/$defs/Dog"}]}` with `kind:{const:…}` required in each |
 | Tagged union mixed with a scalar kind | `{oneOf:[{$ref:"#/$defs/Cat"},{$ref:"#/$defs/Dog"},{type:string}]}` (token picks object-vs-string; `const` picks Cat-vs-Dog) |
@@ -601,6 +708,9 @@ than being written (real teeth where construction is unchecked).
 | Inline free-form object ∪ scalar | `{oneOf:[{type:object,additionalProperties:true},{type:string}]}` |
 | Inline structured object ∪ scalar (branch type named `<Union>Object`) | `{oneOf:[{type:object,properties:{a:{type:string}}},{type:string}]}` |
 | Inline tagged object branches, each self-named | `{oneOf:[{Cat…, x-go-name: Cat},{Dog…, x-go-name: Dog}]}` (the key of the target being generated) |
+| Union as an array element (named) | `{type:array, items:{$ref:"#/$defs/Foo"}}` |
+| Union as an array element (inline, named `<Enclosing>Item`) | `{type:array, items:{oneOf:[{type:string},{type:integer}]}}` |
+| Union as a map member (inline, named `<Enclosing>Value`) | `{type:object, additionalProperties:{oneOf:[{$ref:"#/$defs/Cat"},{$ref:"#/$defs/Dog"}]}}` |
 
 ### Rejected at load time (negative)
 
@@ -612,10 +722,12 @@ than being written (real teeth where construction is unchecked).
 | Object branches with no shared required-`const` (no discriminator) | `{oneOf:[{$ref:"#/$defs/A"},{$ref:"#/$defs/B"}]}`, neither carrying a `const` tag |
 | Two or more inline object branches missing a per-branch `x-<lang>-name` | `{oneOf:[{type:object,required:[kind],properties:{kind:{const:cat}…}},{…kind:{const:dog}…}]}` — both derive `<Union>Object` |
 | Synthesized `<Union>Object` collides with another emitted type (P15) | a `$defs.FooObject` alongside an inline object branch of the `Foo` union |
-| Inline structured object branch with no derivable name | `{items:{oneOf:[{type:object,properties:{a:{…}}},{type:string}]}}` — a branch inside `items` |
+| Inline structured object branch with no derivable name | a branch inside a *nested inline object's* property, whose enclosing shape is itself not materialized |
 | Discriminator `const` not `required` in a branch | `{oneOf:[{Cat with kind required},{Dog with kind optional}]}` |
 | Non-distinct discriminator values | `{oneOf:[{kind:{const:"x"}…},{kind:{const:"x"}…}]}` |
 | Ambiguous discriminator (2+ qualifying properties) | two object branches sharing both `kind` and `variant` as required-`const` |
+| A materialized temporal `format` on a sum-type branch (deferred) | `{oneOf:[{type:string,format:"date-time"},{type:integer}]}` |
+| A materialized `contentEncoding` on a sum-type branch (deferred) | `{oneOf:[{type:string,contentEncoding:base64},{type:integer}]}` |
 | Two same-**scalar**-kind branches (use `enum`) | `{oneOf:[{type:string,const:"a"},{type:string,const:"b"}]}` → [[enum]] |
 | `integer`+`number` overlap (unsatisfiable, P7.1) | `{oneOf:[{type:integer},{type:number}]}` |
 | Duplicate `null` branches | `{oneOf:[{type:string},{type:"null"},{type:"null"}]}` (same-kind, and a tautology) |
@@ -646,8 +758,22 @@ than being written (real teeth where construction is unchecked).
   as the null state (required+nullable) / omitted-or-null per the
   [[nullability]] serialize table (optional); `null` against a
   non-nullable union → one `Violation`.
+- A branch constraint is enforced **only for the branch the token selected**:
+  `"ab"` against `{oneOf:[{type:string,minLength:3},{type:integer,minimum:1}]}`
+  → one length `Violation`; `0` against the same union → one `minimum`
+  `Violation` (never the string branch's).
+- An array branch's own bounds: `[]` against
+  `{type:array,minItems:1,uniqueItems:true}` → one `minItems` `Violation`;
+  `[1.5,1.5]` → one duplicate-items `Violation`.
+- A `const`/`enum` branch: an off-set string → one `Violation` naming the
+  admissible values, while the sibling numeric branch stays unbounded.
 - Serialize of an in-memory member violating its branch's own constraints
-  → rejected before emit (**P12**).
+  → rejected before emit (**P12**), aggregated with any failing sibling field.
+- A union-typed array element / map member: each value routed
+  independently, with a failing one reported under its index or key
+  (`shapes[1]`, `choices.primary`) and the rest still checked (**P11**).
+- Serialize of an array of union members: each member's own branch
+  constraints re-run before emit (**P12**).
 - A failing union combined with a failing sibling field → **both**
   reported in one shot (**P11**).
 

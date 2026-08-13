@@ -9,8 +9,11 @@ import {
   DEFAULT_RETRIES,
   ExtrasMapper,
   LabelsMapper,
+  NicknamesMapper,
+  QuotasMapper,
   SettingsMapper,
   ShowcaseMapper,
+  TokensMapper,
   ValidationError,
   WidgetMapper,
   type LinkNote,
@@ -468,6 +471,74 @@ describe("json-schema showcase generated definitions", () => {
     ).toThrow(/unknown discriminator kind triangle/);
   });
 
+  test("holds a union member to the constraints of the branch it selects", () => {
+    const base = {
+      kind: "showcase",
+      revision: 1,
+      enabled: true,
+      status: "active",
+      tier: 1,
+      scale: 1.5,
+      name: "w",
+      count: 1,
+      active: true,
+      category: "tools",
+    } as const;
+    const mapper = new ShowcaseMapper();
+
+    // The string branch's own `minLength` and the integer branch's own
+    // `minimum` — each enforced only for the branch the token selects.
+    expect(mapper.fromIntermediate({ ...base, idOrName: "abc" }).idOrName).toBe("abc");
+    expect(mapper.fromIntermediate({ ...base, idOrName: 1 }).idOrName).toBe(1);
+    expect(() => mapper.fromIntermediate({ ...base, idOrName: "ab" })).toThrow(
+      /idOrName: must have length >= 3, got 2/,
+    );
+    expect(() => mapper.fromIntermediate({ ...base, idOrName: 0 })).toThrow(
+      /idOrName: must be >= 1, got 0/,
+    );
+
+    // A closed value set on a branch narrows to a literal union type, and an
+    // unknown string is a Violation.
+    expect(mapper.fromIntermediate({ ...base, mode: "manual" }).mode).toBe("manual");
+    expect(() => mapper.fromIntermediate({ ...base, mode: "turbo" })).toThrow(
+      /mode: must be one of \["auto", "manual"\]/,
+    );
+
+    // The array branch's `minItems`/`uniqueItems` and the string branch's
+    // `pattern`, on the same union.
+    expect(() => mapper.fromIntermediate({ ...base, measurements: [] })).toThrow(
+      /measurements: must have at least 1 items, got 0/,
+    );
+    expect(() =>
+      mapper.fromIntermediate({ ...base, measurements: [1.5, 1.5] }),
+    ).toThrow(/duplicate items: element at index 1 equals index 0/);
+    expect(() => mapper.fromIntermediate({ ...base, measurements: "AUTO" })).toThrow(
+      /measurements: must match pattern/,
+    );
+
+    // Serialize re-runs the selected branch's constraints (P12).
+    const valid = mapper.fromIntermediate({ ...base, idOrName: "abc" });
+    expect(() => mapper.toIntermediate({ ...valid, idOrName: "ab" })).toThrow(
+      /idOrName: must have length >= 3, got 2/,
+    );
+    expect(() => mapper.toIntermediate({ ...valid, measurements: [2, 2] })).toThrow(
+      /duplicate items: element at index 1 equals index 0/,
+    );
+
+    // A named element union validates through its own mapper, in both
+    // directions, with the element's index on the violation path.
+    expect(mapper.fromIntermediate({ ...base, segments: ["ab", 0] }).segments).toEqual([
+      "ab",
+      0,
+    ]);
+    expect(() => mapper.fromIntermediate({ ...base, segments: ["a"] })).toThrow(
+      /segments\[0\]: must have length >= 2, got 1/,
+    );
+    expect(() => mapper.toIntermediate({ ...valid, segments: [-1] })).toThrow(
+      /must be >= 0, got -1/,
+    );
+  });
+
   test("round-trips the free-form object as a union branch and a named model", () => {
     // The inline object branch of the `payload` union, and the named `Extras`
     // model: members are carried verbatim in both.
@@ -689,6 +760,64 @@ describe("json-schema showcase generated definitions", () => {
     ).toThrow(/expected one of: number\[\], string/);
   });
 
+  test("round-trips unions in element positions", () => {
+    // Three positions with no property of their own: an array element at a
+    // named union (`shapes`), an array element at an inline union the loader
+    // names `ShowcaseSegmentsItem`, and a map member at an inline union named
+    // `ChoicesValue`. Each element runs its union's own mapper, so a bad value
+    // is reported at its index / key.
+    const value = expectRoundTrip("showcase-element-unions.json", new ShowcaseMapper());
+
+    expect(value.shapes).toEqual([
+      { kind: "circle", radius: 2.5, additionalProperties: {} },
+      { kind: "square", side: 4, additionalProperties: {} },
+    ]);
+    expect(value.segments).toEqual(["alpha", 7]);
+    // Element nullability is the element's own concern: `(string | null)[]`,
+    // so an explicit null is a member rather than a violation.
+    expect(value.slots).toEqual(["first", null, "third"]);
+    expect(value.choices?.additionalProperties.primary).toEqual({
+      kind: "circle",
+      radius: 1,
+      additionalProperties: {},
+    });
+
+    const base = {
+      kind: "showcase",
+      revision: 1,
+      enabled: true,
+      status: "active",
+      tier: 1,
+      scale: 1.5,
+      name: "w",
+      count: 1,
+      active: true,
+      category: "tools",
+    } as const;
+
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({
+        ...base,
+        shapes: [{ kind: "circle", radius: 1 }, true],
+      }),
+    ).toThrow(/shapes\[1\]/);
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({
+        ...base,
+        shapes: [{ kind: "triangle" }],
+      }),
+    ).toThrow(/triangle/);
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, segments: ["ok", 1.5] }),
+    ).toThrow(/segments\[1\]/);
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({
+        ...base,
+        choices: { primary: "circle" },
+      }),
+    ).toThrow(/primary/);
+  });
+
   test("rejects invalid in-memory values on serialize (P12, both directions)", () => {
     // A valid model round-trips; mutating a single field to an out-of-spec value
     // and re-serializing (toIntermediate) is rejected before any wire object is
@@ -801,5 +930,90 @@ describe("json-schema showcase generated definitions", () => {
     expect(() =>
       new ShowcaseMapper().fromIntermediate({ ...base, urlBlob: "aGk=" }),
     ).toThrow(/must be base64url-encoded, got "aGk="/);
+  });
+
+  test("round-trips object shapes written inline", () => {
+    // An object written inline in a value position is named after that position
+    // and emitted as an ordinary model: a property (`location`, with its own
+    // nested `geo`), a nullable property (`audit`), an array element (`rows`), a
+    // map and its member (`ledger`), and a free-form bag (`metadata`). The same
+    // fixture covers a typed map's member constraints (`quotas`, `tokens`,
+    // `nicknames`) and a nested array (`grid`).
+    const value = expectRoundTrip("showcase-inline-shapes.json", new ShowcaseMapper());
+
+    expect(value.grid).toEqual([[1, 2], [3]]);
+    expect(value.location).toEqual({
+      city: "Springfield",
+      geo: { lat: 39.8, lon: -89.6, additionalProperties: {} },
+      additionalProperties: {},
+    });
+    expect(value.audit).toEqual({ by: "alice", additionalProperties: {} });
+    expect(value.rows?.[0]).toEqual({ cell: "a1", additionalProperties: {} });
+    // The member override renamed the member (`ledgerTs`); the hoisted types keep
+    // their position-derived names.
+    expect(value.ledgerTs?.additionalProperties.opening).toEqual({
+      amount: 100,
+      additionalProperties: {},
+    });
+    expect(value.metadata?.additionalProperties).toEqual({
+      source: "import",
+      batch: 7,
+    });
+    expect(value.quotas?.additionalProperties).toEqual({ cpu: 20, memory: 100 });
+    // A null member of a nullable map is a member, not a violation.
+    expect(value.nicknames?.additionalProperties).toEqual({ short: "al", none: null });
+
+    const base = {
+      kind: "showcase",
+      revision: 1,
+      enabled: true,
+      status: "active",
+      tier: 1,
+      scale: 1.5,
+      name: "w",
+      count: 1,
+      active: true,
+      category: "tools",
+    } as const;
+
+    // A hoisted shape validates like any other model, at the nested path.
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, location: { city: "" } }),
+    ).toThrow(/location\.city/);
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, rows: [{ cell: "ok" }, {}] }),
+    ).toThrow(/rows\[1\]\.cell/);
+    // A nested array reports the failing element at its own two-dimensional index.
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, grid: [[1], [2, 1.5]] }),
+    ).toThrow(/grid\[1\]\[1\]/);
+    // A typed map's member constraints are enforced, keyed by the member.
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, quotas: { cpu: 7 } }),
+    ).toThrow(/cpu/);
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, tokens: { primary: "AB" } }),
+    ).toThrow(/primary/);
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({ ...base, nicknames: { tiny: "a" } }),
+    ).toThrow(/tiny/);
+    // The free-form bag's member-count bound rides with the hoisted type.
+    expect(() =>
+      new ShowcaseMapper().fromIntermediate({
+        ...base,
+        metadata: { a: 1, b: 2, c: 3, d: 4 },
+      }),
+    ).toThrow(/at most 3/);
+
+    // Serialize re-runs every member's own constraints before emitting (P12).
+    expect(() =>
+      new QuotasMapper().toIntermediate({ additionalProperties: { cpu: 7 } }),
+    ).toThrow(/cpu/);
+    expect(() =>
+      new TokensMapper().toIntermediate({ additionalProperties: { primary: "AB" } }),
+    ).toThrow(/primary/);
+    expect(() =>
+      new NicknamesMapper().toIntermediate({ additionalProperties: { tiny: "a" } }),
+    ).toThrow(/tiny/);
   });
 });

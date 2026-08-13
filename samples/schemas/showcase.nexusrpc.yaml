@@ -270,12 +270,25 @@ $defs:
         maxContains: 2
       idOrName:
         description: >-
-          Disjoint-kind union (oneOf sum type): the wire value is either a string or
-          an integer, selected by its JSON token. Not a member of a discriminated
-          union — the token itself is the selector.
+          Disjoint-kind union (oneOf sum type): the wire value is either a string of
+          at least 3 code points or an integer of at least 1, selected by its JSON
+          token. Not a member of a discriminated union — the token itself is the
+          selector. Each branch also carries its **own constraints**: once the token
+          selects a branch, the value is held to everything that branch declares, in
+          both directions, with the union's path on the violation.
         oneOf:
-          - { type: string }
-          - { type: integer }
+          - { type: string, minLength: 3 }
+          - { type: integer, minimum: 1 }
+      mode:
+        description: >-
+          A union whose string branch is a **closed value set**: either one of two
+          named modes or an unbounded non-negative integer. The branch narrows to
+          its own admissible values (a Go/Java membership check, a TypeScript
+          literal union, a Python `Literal`), so an unknown string is a Violation
+          while any non-negative integer is accepted.
+        oneOf:
+          - { type: string, enum: [auto, manual] }
+          - { type: integer, minimum: 0 }
       payload:
         description: >-
           Mixed-kind union whose object branch is an inline free-form object: the
@@ -310,22 +323,144 @@ $defs:
           position (`ShowcaseShapeOrName` / nested `Showcase.ShapeOrName`), and
           it reuses the `Circle`/`Square` branches of `shape` — a branch type
           may belong to more than one union (Go gains a second marker method,
-          Java a second implemented interface).
+          Java a second implemented interface). The scalar branch carries a
+          length bound of its own; the object branches validate through their
+          own models.
         oneOf:
           - { $ref: "#/$defs/Circle" }
           - { $ref: "#/$defs/Square" }
-          - { type: string }
+          - { type: string, maxLength: 32 }
       measurements:
         description: >-
-          Mixed-kind union with an array branch: the wire value is either a list
-          of numbers or a string, selected by its JSON token. An array branch has
-          no definition to take a name from, so Go and Java emit it as the
-          synthesized `<Union>Array` variant (a defined type / a `@JsonValue`
-          wrapper) while TypeScript and Python carry it structurally as
-          `number[]` / `list[float]`.
+          Mixed-kind union with an array branch: the wire value is either a
+          non-empty list of distinct numbers or a lowercase preset name, selected
+          by its JSON token. An array branch has no definition to take a name
+          from, so Go and Java emit it as the synthesized `<Union>Array` variant
+          (a defined type / a `@JsonValue` wrapper) while TypeScript and Python
+          carry it structurally as `number[]` / `list[float]`. Both branches
+          carry their own constraints — the array's `minItems`/`uniqueItems` and
+          the string's `pattern` — so the array-vs-string choice is validated as
+          well as selected.
         oneOf:
-          - { type: array, items: { type: number } }
-          - { type: string }
+          - { type: array, items: { type: number }, minItems: 1, uniqueItems: true }
+          - { type: string, pattern: "^[a-z]+$" }
+      shapes:
+        description: >-
+          A list whose element type is a named union: every element is routed to
+          exactly one branch by the union's own selector, and its index carries
+          into the violation path (`shapes[1]`). Go and Java cannot decode a
+          sealed interface as a whole, so the element decodes through the
+          union's dispatcher one at a time.
+        type: array
+        items: { $ref: "#/$defs/Shape" }
+      segments:
+        description: >-
+          A list whose element union is written **inline**. An element has no
+          name of its own, so the union is named after its position —
+          `ShowcaseSegmentsItem` — moved into `$defs`, and the element becomes a
+          `$ref` at it; from there it is an ordinary named union in every
+          language.
+        type: array
+        items:
+          oneOf:
+            - { type: string, minLength: 2 }
+            - { type: integer, minimum: 0 }
+      slots:
+        description: >-
+          A list of **nullable elements** — the two-branch nullability `oneOf`
+          rather than a sum type, so nothing is named: the elements themselves
+          become nullable (`[]*string`, `(string | null)[]`, `list[str | None]`,
+          `List<@Nullable String>`) while the list stays a list.
+        type: array
+        items:
+          oneOf:
+            - { type: string }
+            - { type: "null" }
+      grid:
+        description: >-
+          A nested array: `items` at depth two. Each level decodes elementwise, so
+          a bad element is reported at its own two-dimensional index
+          (`grid[1][0]`).
+        type: array
+        items:
+          type: array
+          items: { type: integer }
+      location:
+        description: >-
+          An object written **inline** on the property rather than in `$defs`. It
+          is named after the position it occupies — `ShowcaseLocation` — moved
+          into `$defs`, and the property becomes a `$ref` at it, so it emits as
+          the ordinary named model an authored definition would produce, member
+          constraints and all. Its own nested inline object is named against that
+          name in turn (`ShowcaseLocationGeo`), so nesting needs no `$defs`
+          boilerplate at any depth.
+        type: object
+        required: [city]
+        properties:
+          city: { type: string, minLength: 1 }
+          geo:
+            type: object
+            properties:
+              lat: { type: number }
+              lon: { type: number }
+      audit:
+        description: >-
+          A nullable inline object. The nullability wrapper emits no type of its
+          own, so the object inside it takes the property's name —
+          `ShowcaseAudit`, the same name it would take written plainly: adding or
+          removing nullability never renames the type.
+        oneOf:
+          - type: object
+            required: [by]
+            properties:
+              by: { type: string, minLength: 1 }
+          - { type: "null" }
+      rows:
+        description: >-
+          A list whose element is an inline object, named after its position
+          (`ShowcaseRowsItem`) exactly as an inline element *union* is.
+        type: array
+        items:
+          type: object
+          required: [cell]
+          properties:
+            cell: { type: string, minLength: 1 }
+      ledger:
+        description: >-
+          A typed map written inline on the property: the map itself is named
+          `ShowcaseLedger` and its inline member shape `ShowcaseLedgerValue`, so
+          both the map and its members are ordinary named models. Also exercises
+          the member-name override on a hoisted property — `x-<lang>-name` keeps
+          naming the *member* (Go `LedgerGo`, TS `ledgerTs`, Python `ledger_py`,
+          Java `ledgerJava`) while the type keeps its position-derived name.
+        type: object
+        additionalProperties:
+          type: object
+          required: [amount]
+          properties:
+            amount: { type: integer, minimum: 0 }
+        x-go-name: LedgerGo
+        x-ts-name: ledgerTs
+        x-py-name: ledger_py
+        x-java-name: ledgerJava
+      metadata:
+        description: >-
+          A free-form object written inline. Even this is named
+          (`ShowcaseMetadata`): every object emits as a named aggregate holding
+          its members in a catch-all, so adding `properties` to it later only
+          adds fields rather than changing the emitted type's kind, and its
+          member-count bound rides along with it.
+        type: object
+        additionalProperties: true
+        maxProperties: 3
+      quotas:
+        $ref: "#/$defs/Quotas"
+      tokens:
+        $ref: "#/$defs/Tokens"
+      nicknames:
+        $ref: "#/$defs/Nicknames"
+      choices:
+        $ref: "#/$defs/Choices"
       extras:
         $ref: "#/$defs/Extras"
       shape:
@@ -408,6 +543,51 @@ $defs:
     type: object
     additionalProperties: { type: string }
     maxProperties: 50
+  Quotas:
+    description: >-
+      A typed map whose members carry their own constraints: every member is a
+      non-negative multiple of 5, at most 100. A member is held to exactly what a
+      declared field of that type is held to, in both directions, with the
+      offending member's key as the violation path.
+    type: object
+    additionalProperties:
+      type: integer
+      minimum: 0
+      maximum: 100
+      multipleOf: 5
+  Tokens:
+    description: >-
+      A typed map with a refined *string* member: 2 to 8 code points of lowercase
+      ASCII. Exercises the member-level `minLength`/`maxLength`/`pattern` in every
+      language.
+    type: object
+    additionalProperties:
+      type: string
+      minLength: 2
+      maxLength: 8
+      pattern: "^[a-z]+$"
+  Nicknames:
+    description: >-
+      A typed map of **nullable** members: a member may be an explicit null,
+      which is kept as a null member rather than dropped from the map, while a
+      present member still carries its own constraint.
+    type: object
+    additionalProperties:
+      oneOf:
+        - { type: string, minLength: 2 }
+        - { type: "null" }
+  Choices:
+    description: >-
+      A map whose *member* type is a union written inline in
+      `additionalProperties`. Like an element union it has no name of its own,
+      so it is named after its position — `ChoicesValue` — and moved into
+      `$defs`; each member then decodes through that union's selector, with the
+      member key carrying into the violation path.
+    type: object
+    additionalProperties:
+      oneOf:
+        - { $ref: "#/$defs/Circle" }
+        - { $ref: "#/$defs/Square" }
   Extras:
     description: >-
       A free-form object (`additionalProperties: true` with no declared
