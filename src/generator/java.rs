@@ -24,6 +24,23 @@ pub(crate) fn generate(
 
     let mut leaves = Vec::new();
     collect_leaves(&tree.root, &mut leaves);
+    for leaf in &leaves {
+        if let Some((_, record)) = leaf
+            .spec
+            .records()
+            .find(|(_, record)| record.data.proto.is_some())
+        {
+            return Err(Error::UnsupportedJavaProtoModel {
+                message: record
+                    .data
+                    .proto
+                    .as_ref()
+                    .expect("checked above")
+                    .full_name
+                    .clone(),
+            });
+        }
+    }
 
     // Registry from each model's canonical `full_name` (the string that appears
     // in planned `$ref` values) to its Java (package, class).

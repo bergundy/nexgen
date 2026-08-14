@@ -48,7 +48,7 @@ struct ResourceBindingMapper {
 }
 
 impl ApiSpecTransform<SelectedFamily, ResourceBoundFamily> for ResourceBindingMapper {
-    fn map_spec_data(&mut self, _: ()) -> ResourceBoundData {
+    fn map_spec_data(&mut self, _data: ()) -> ResourceBoundData {
         self.data.clone()
     }
     fn map_record(&mut self, value: Symbol) -> Symbol {

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added grouped protobuf `oneof` authoring and bidirectional Python conversion,
+  including required and optional oneofs, scaffolding through `add-rpc` and
+  `add-message`, and explicit diagnostics for unsupported target backends.
+- Python proto-backed generic records may use Temporal `Payload` and `Payloads`
+  fields (including oneof members) as runtime value carriers.
 - JSON Schema: An object `oneOf` branch may now be written **inline**, whatever
   its shape. A structured branch (declared `properties`, or a typed
   `additionalProperties`) is named — `<Union>Object` for a lone branch, or the
@@ -34,9 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Protobuf-backed models now consistently generate conversions in both
+  directions whenever they are reachable. Go and TypeScript emit previously
+  suppressed complementary helpers, operation-free exported models receive the
+  same validation as operation-used models, and Java now reports its existing
+  lack of protobuf model support instead of silently dropping protobuf
+  operation types.
 - JSON Schema: An `x-<lang>-name` alongside a `$ref` is no longer merged as an
   implicit-`allOf` conjunct, which cloned the referenced target into the use site.
-  It names the *member* the reference is bound to and leaves the reference intact
+  It names the _member_ the reference is bound to and leaves the reference intact
   — the one sibling keyword treated this way, because it asserts nothing about the
   value, and the only way to rename a member whose type is a `$ref` (a member
   named `class` was otherwise unfixable in Python and Java).
@@ -110,19 +121,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   map member** in Python, for want of a native Pydantic form. Both now ride in the
   member's annotation as AfterValidators, with the same reasons the property
   position emits (and the same mechanism now serves a `oneOf` branch).
-- JSON Schema: A typed map's members were validated against their type *token*
+- JSON Schema: A typed map's members were validated against their type _token_
   only, so every constraint the member type declared was silently dropped — a
   string's `minLength`/`maxLength`/`pattern`/`format`, a number's bounds and
   `multipleOf`, an array's `minItems`/`uniqueItems`/`contains`, a `const`/`enum`
   value set. Every member is now held to everything its type declares, in both
   directions, with the member's key as the violation path. Python additionally
-  validated only that a member was a *string*, leaving an object, union, or
+  validated only that a member was a _string_, leaving an object, union, or
   numeric member unchecked and unmaterialized; members now validate and
   materialize through the member type's own annotation, so `model_extra` holds the
   declared type (an `Inner`, an `int` parsed from `1.0`, a `datetime`, `bytes`) and
   re-encodes through it on the way out. TypeScript checked members on the way in
   but not on the way out, and dropped a nullable value's constraints in both
-  positions (a member's *and* a declared field's).
+  positions (a member's _and_ a declared field's).
 - JSON Schema: A **nullable** typed-map member (`additionalProperties` as the
   nullability `oneOf`) was mishandled: Go typed the member `T` and dropped a
   `null` member from the map entirely, and Java rejected it. A null member is now
@@ -130,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching TypeScript's `Record<string, T | null>` and Python's `T | None`.
 - Java: A **nested array** (`items` inside `items`) and an **array-valued typed
   map member** both bound to the placeholder violation `"unsupported nested
-  array"` at runtime, though `items.md` accepts them. Both now decode elementwise,
+array"` at runtime, though `items.md` accepts them. Both now decode elementwise,
   one loop per level, with each level's index in the violation path
   (`grid[1][0]`).
 - Java: A materialized temporal `format` or `contentEncoding` in an array element
@@ -171,7 +182,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON Schema: A **nullable** array element (`items: {oneOf: [{T}, {null}]}`) was
   mishandled in every language: Go typed it `[]T` and silently decoded a wire
   `null` to `T`'s zero value, TypeScript emitted `T | null[]` (an unparenthesized
-  union under `[]` — "a T or an array of nulls"), Python dropped the *field's*
+  union under `[]` — "a T or an array of nulls"), Python dropped the _field's_
   own `| None` because the element annotation already contained one, and Java
   rejected a null element outright. All four now follow `items.md`: `[]*T`,
   `(T | null)[]`, `list[T | None]`, `List<@Nullable T>`.
@@ -197,7 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The wrappers are now declared inside the union interface.
 - Java: An array branch of a `oneOf` union parsed to `null` without a violation;
   its items are now parsed and validated elementwise.
-- JSON Schema: A free-form object *definition* generated an empty Go struct that
+- JSON Schema: A free-form object _definition_ generated an empty Go struct that
   rejected every member as an unknown field, and an empty TypeScript interface
   that dropped every member.
 - JSON Schema: A typed map whose members are not strings (for example

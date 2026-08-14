@@ -1002,6 +1002,10 @@ impl<'a> ApiPlanner<'a> {
             }
         }
 
+        for record in self.api_plan.records().map(|(_, record)| record) {
+            self.ensure_rendered_model(&planned_message_type_for_record(record))?;
+        }
+
         let visibility = compute_go_visibility(
             self.api_plan,
             &self.enums,

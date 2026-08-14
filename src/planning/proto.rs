@@ -2,16 +2,16 @@ use heck::ToUpperCamelCase;
 use prost_types::FieldDescriptorProto;
 use prost_types::field_descriptor_proto::{Label, Type};
 
-use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata};
-use crate::generator::ModelWireCapabilities;
+use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata, real_oneof_groups};
 use crate::spec::{ApiSpec, ExternalTypeSpec, IntSpec, RecordSpec, TypeSpec};
 
 use super::OperationLoweredFamily;
 
 use super::type_planning::TypePlanningContext;
 use super::{
-    PlannedProtoEnumType, PlannedProtoMessageType, PlannedProtoType, PlannedProtoTypeInfo,
-    PlannedType, materialize_selected_replacement, materialize_selected_text,
+    PlannedFieldData, PlannedProtoEnumType, PlannedProtoMessageType, PlannedProtoType,
+    PlannedProtoTypeInfo, PlannedType, PlannedWireFieldBinding, PlannedWireVariantMember,
+    materialize_selected_replacement, materialize_selected_text,
 };
 
 impl PlannedProtoTypeInfo {
@@ -105,7 +105,6 @@ fn field_type(field: &FieldDescriptorProto) -> Option<Type> {
 
 pub(super) fn planned_type_for_message(
     message: &MessageMetadata,
-    requested_capabilities: ModelWireCapabilities,
     planner: &mut TypePlanningContext<'_>,
 ) -> PlannedType {
     let planned_message = planned_message_reference(message, planner);
@@ -115,7 +114,7 @@ pub(super) fn planned_type_for_message(
         )));
     }
     if let Some(record) = planner.spec.record_for_proto(&message.full_name).cloned() {
-        return TypeSpec::Record(planner.plan_record_type(&record, requested_capabilities));
+        return TypeSpec::Record(planner.plan_record_type(&record));
     }
     TypeSpec::External(ExternalTypeSpec::Proto(PlannedProtoType::Message(
         planned_message,
@@ -172,27 +171,68 @@ pub(super) fn record_proto_info(
         .map(|message| PlannedProtoTypeInfo::from_message(message, spec))
 }
 
-pub(super) fn record_field_has_presence(
+pub(super) fn planned_record_field_data(
     record: &RecordSpec<OperationLoweredFamily>,
     field_name: &str,
-    descriptors: &DescriptorIndex,
-) -> Option<bool> {
+    planner: &mut TypePlanningContext<'_>,
+) -> Option<PlannedFieldData> {
     let proto_name = record_proto_name(record)?;
-    let message = descriptors.message(proto_name)?;
-    let field = descriptor_field_by_name(message, field_name);
-    Some(field_has_presence(field, field_type(field)))
+    let message = planner.descriptors.message(proto_name)?.clone();
+    let oneofs = real_oneof_groups(&message).ok()?;
+    if let Some(oneof) = oneofs.iter().find(|oneof| oneof.name == field_name) {
+        let members = oneof
+            .fields
+            .iter()
+            .map(|(_, member)| {
+                Some(PlannedWireVariantMember {
+                    wire_name: member.name.clone()?,
+                    wire_type: planned_wire_field_type(member, planner),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        return Some(PlannedFieldData {
+            has_presence: Some(true),
+            wire_binding: Some(PlannedWireFieldBinding::VariantMembers {
+                wire_name: oneof.name.to_string(),
+                members,
+            }),
+        });
+    }
+    let field = message
+        .descriptor
+        .field
+        .iter()
+        .find(|field| field.name.as_deref() == Some(field_name))?;
+    Some(PlannedFieldData {
+        has_presence: Some(field_has_presence(field, field_type(field))),
+        wire_binding: Some(PlannedWireFieldBinding::Value {
+            wire_name: field.name.clone()?,
+            wire_type: planned_wire_field_type(field, planner),
+        }),
+    })
 }
 
 pub(super) fn planned_record_field_type(
     record: &RecordSpec<OperationLoweredFamily>,
     field_name: &str,
-    requested_capabilities: ModelWireCapabilities,
     planner: &mut TypePlanningContext<'_>,
 ) -> Option<PlannedType> {
     let proto_name = record_proto_name(record)?;
     let message = planner.descriptors.message(proto_name)?.clone();
-    let field = descriptor_field_by_name(&message, field_name);
-    Some(planned_field_type(field, requested_capabilities, planner))
+    let Some(field) = descriptor_field_by_name(&message, field_name) else {
+        let authored_type = record.fields.get(field_name)?.field_type.without_option();
+        return Some(planner.planned_type_from_authored(authored_type));
+    };
+    if record.fields.get(field_name).is_some_and(|authored_field| {
+        matches!(
+            authored_field.field_type.without_option().validation_type(),
+            TypeSpec::TypeParameter(_)
+        )
+    }) {
+        let authored_type = record.fields.get(field_name)?.field_type.without_option();
+        return Some(planner.planned_type_from_authored(authored_type));
+    }
+    Some(planned_field_type(field, planner))
 }
 
 fn record_proto_name(record: &RecordSpec<OperationLoweredFamily>) -> Option<&str> {
@@ -205,13 +245,12 @@ fn record_proto_name(record: &RecordSpec<OperationLoweredFamily>) -> Option<&str
 fn descriptor_field_by_name<'a>(
     message: &'a MessageMetadata,
     field_name: &str,
-) -> &'a FieldDescriptorProto {
+) -> Option<&'a FieldDescriptorProto> {
     message
         .descriptor
         .field
         .iter()
         .find(|field| field.name.as_deref() == Some(field_name))
-        .expect("planned record field should exist in descriptor")
 }
 
 pub(super) fn planned_type_from_authored_proto(
@@ -244,7 +283,7 @@ pub(super) fn planned_value_type_from_authored_proto(
     planner: &mut TypePlanningContext<'_>,
 ) -> PlannedType {
     if let Some(message) = planner.descriptors.message(proto_name).cloned() {
-        planned_type_for_message(&message, ModelWireCapabilities::BIDIRECTIONAL, planner)
+        planned_type_for_message(&message, planner)
     } else if let Some(enumeration) = planner.descriptors.enumeration(proto_name).cloned() {
         TypeSpec::External(ExternalTypeSpec::Proto(PlannedProtoType::Enum(
             planned_enum_reference(&enumeration, &planner.spec),
@@ -256,14 +295,13 @@ pub(super) fn planned_value_type_from_authored_proto(
 
 fn planned_field_type(
     field: &FieldDescriptorProto,
-    requested_capabilities: ModelWireCapabilities,
     planner: &mut TypePlanningContext<'_>,
 ) -> PlannedType {
-    if let Some((key, value)) = map_field_value_types(field, requested_capabilities, planner) {
+    if let Some((key, value)) = map_field_value_types(field, planner) {
         return TypeSpec::Map(Box::new(key), Box::new(value));
     }
 
-    let value = planned_value_type(field, requested_capabilities, planner);
+    let value = planned_value_type(field, planner);
     if field_label(field) == Some(Label::Repeated) {
         TypeSpec::List(Box::new(value))
     } else {
@@ -271,9 +309,24 @@ fn planned_field_type(
     }
 }
 
-fn map_field_value_types(
+fn planned_wire_field_type(
     field: &FieldDescriptorProto,
-    requested_capabilities: ModelWireCapabilities,
+    planner: &mut TypePlanningContext<'_>,
+) -> PlannedType {
+    if let Some((key, value)) = map_wire_field_value_types(field, planner) {
+        return TypeSpec::Map(Box::new(key), Box::new(value));
+    }
+
+    let value = planned_wire_value_type(field, planner);
+    if field_label(field) == Some(Label::Repeated) {
+        TypeSpec::List(Box::new(value))
+    } else {
+        value
+    }
+}
+
+fn map_wire_field_value_types(
+    field: &FieldDescriptorProto,
     planner: &mut TypePlanningContext<'_>,
 ) -> Option<(PlannedType, PlannedType)> {
     if field_label(field) != Some(Label::Repeated) || field_type(field) != Some(Type::Message) {
@@ -304,14 +357,85 @@ fn map_field_value_types(
         .find(|field| field.name.as_deref() == Some("value"))?;
 
     Some((
-        planned_value_type(key_field, requested_capabilities, planner),
-        planned_value_type(value_field, requested_capabilities, planner),
+        planned_wire_value_type(key_field, planner),
+        planned_wire_value_type(value_field, planner),
+    ))
+}
+
+fn planned_wire_value_type(
+    field: &FieldDescriptorProto,
+    planner: &mut TypePlanningContext<'_>,
+) -> PlannedType {
+    match field_type(field) {
+        Some(Type::Double | Type::Float) => TypeSpec::Float,
+        Some(Type::Int64 | Type::Uint64 | Type::Fixed64 | Type::Sfixed64 | Type::Sint64) => {
+            TypeSpec::Int(IntSpec::I64)
+        }
+        Some(Type::Int32 | Type::Fixed32 | Type::Uint32 | Type::Sfixed32 | Type::Sint32) => {
+            TypeSpec::Int(IntSpec::I32)
+        }
+        Some(Type::Bool) => TypeSpec::Bool,
+        Some(Type::String) => TypeSpec::String,
+        Some(Type::Bytes) => TypeSpec::Bytes,
+        Some(Type::Enum) => plan_enum_type(field, planner),
+        Some(Type::Message) | Some(Type::Group) => field
+            .type_name
+            .as_deref()
+            .and_then(|type_name| {
+                planner
+                    .descriptors
+                    .message(type_name.trim_start_matches('.'))
+                    .cloned()
+            })
+            .map(|message| {
+                TypeSpec::External(ExternalTypeSpec::Proto(PlannedProtoType::Message(
+                    planned_message_reference(&message, planner),
+                )))
+            })
+            .unwrap_or(TypeSpec::String),
+        None => TypeSpec::String,
+    }
+}
+
+fn map_field_value_types(
+    field: &FieldDescriptorProto,
+    planner: &mut TypePlanningContext<'_>,
+) -> Option<(PlannedType, PlannedType)> {
+    if field_label(field) != Some(Label::Repeated) || field_type(field) != Some(Type::Message) {
+        return None;
+    }
+
+    let entry_name = field.type_name.as_deref()?.trim_start_matches('.');
+    let entry = planner.descriptors.message(entry_name)?.clone();
+    let is_map_entry = entry
+        .descriptor
+        .options
+        .as_ref()
+        .and_then(|options| options.map_entry)
+        .unwrap_or(false);
+    if !is_map_entry {
+        return None;
+    }
+
+    let key_field = entry
+        .descriptor
+        .field
+        .iter()
+        .find(|field| field.name.as_deref() == Some("key"))?;
+    let value_field = entry
+        .descriptor
+        .field
+        .iter()
+        .find(|field| field.name.as_deref() == Some("value"))?;
+
+    Some((
+        planned_value_type(key_field, planner),
+        planned_value_type(value_field, planner),
     ))
 }
 
 fn planned_value_type(
     field: &FieldDescriptorProto,
-    _requested_capabilities: ModelWireCapabilities,
     planner: &mut TypePlanningContext<'_>,
 ) -> PlannedType {
     match field_type(field) {
@@ -333,7 +457,7 @@ fn planned_value_type(
                     .message(type_name.trim_start_matches('.'))
                     .cloned()
             }) {
-                planned_type_for_message(&message, ModelWireCapabilities::BIDIRECTIONAL, planner)
+                planned_type_for_message(&message, planner)
             } else {
                 TypeSpec::String
             }

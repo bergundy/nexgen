@@ -99,7 +99,7 @@ impl CompilerPass<ResourceBoundFamily, OperationBoundFamily> for OperationBindin
 struct OperationBindingMapper;
 
 impl ApiSpecTransform<ResourceBoundFamily, OperationBoundFamily> for OperationBindingMapper {
-    fn map_spec_data(&mut self, _: ResourceBoundData) {}
+    fn map_spec_data(&mut self, _data: ResourceBoundData) {}
     fn map_record(&mut self, value: Symbol) -> Symbol {
         value
     }
