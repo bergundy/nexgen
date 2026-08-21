@@ -308,6 +308,15 @@ describe("json-schema showcase generated definitions", () => {
         roles: ["admin", "admin", "admin"],
       }),
     ).toThrow(/too many matching items: at most 2, got 3/);
+    try {
+      showcaseTransferTypeConverter.fromTransferType({ ...base, roles: [1, "admin"] });
+      throw new Error("expected validation failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).violations).toEqual([
+        { path: "roles[0]", reason: "expected string" },
+      ]);
+    }
     // Valid arrays are accepted.
     const ok = showcaseTransferTypeConverter.fromTransferType({
       ...base,
@@ -339,13 +348,44 @@ describe("json-schema showcase generated definitions", () => {
       category: "tools",
     } as const;
 
-    expect(parseViolations({ ...base, tags: [1, "b"] })).toEqual([
+    expect(parseViolations({ ...base, tags: [1] })).toEqual([
       { path: "tags[0]", reason: "expected string" },
+    ]);
+    expect(parseViolations({ ...base, aliases: [1, 2] })).toEqual([
+      { path: "aliases[0]", reason: "expected string" },
+      { path: "aliases[1]", reason: "expected string" },
+    ]);
+    expect(parseViolations({ ...base, aliases: [1, 1] })).toEqual([
+      { path: "aliases[0]", reason: "expected string" },
+      { path: "aliases[1]", reason: "expected string" },
+      {
+        path: "aliases",
+        reason: "duplicate items: element at index 1 equals index 0",
+      },
     ]);
     expect(parseViolations({ ...base, tags: ["a", null, {}] })).toEqual([
       { path: "tags[1]", reason: "expected string" },
       { path: "tags[2]", reason: "expected string" },
     ]);
+  });
+
+  test("round-trips JSON numbers by mathematical value", () => {
+    const { value, serialized } = roundTripFixture(
+      showcaseTransferTypeConverter,
+      fixtureBytes(wireFixtureDir, "showcase-number-values.json"),
+    );
+    expect(value.numberGrid?.[0]).toEqual([
+      -0,
+      5,
+      1000,
+      Number.MAX_VALUE,
+      Number.MIN_VALUE,
+    ]);
+    const actual = (serialized as { numberGrid: number[][] }).numberGrid[0];
+    const expected = (
+      loadFixture("showcase-number-values.json") as { numberGrid: number[][] }
+    ).numberGrid[0];
+    expect(actual.every((number, index) => number === expected[index])).toBe(true);
   });
 
   test("enforces pattern constraints with RE2-safe portable semantics", () => {
@@ -1163,5 +1203,80 @@ describe("json-schema showcase generated definitions", () => {
         additionalProperties: { tiny: "a" },
       }),
     ).toThrow(/tiny/);
+  });
+
+  test("recursively converts collections and rejects non-finite numbers", () => {
+    const value = expectRoundTrip(
+      "showcase-recursive-collections.json",
+      showcaseTransferTypeConverter,
+    );
+    expect(value.numberGrid).toEqual([[1, 2.5], [3]]);
+    expect(value.addresses?.[0]?.street).toBe("1 Main St");
+    expect(value.addressBook?.additionalProperties.home?.street).toBe("2 Side St");
+    expect(value.dates).toEqual(["0001-01-01", "2024-02-29"]);
+    expect(value.blobs?.[0]).toEqual(new Uint8Array([104, 105]));
+    expect(value.blobIndex?.additionalProperties.hi).toEqual(
+      new Uint8Array([104, 105]),
+    );
+
+    const base = {
+      kind: "showcase",
+      revision: 1,
+      enabled: true,
+      status: "active",
+      tier: 1,
+      scale: 1.5,
+      name: "w",
+      count: 1,
+      active: true,
+      category: "tools",
+    } as const;
+    expect(() =>
+      showcaseTransferTypeConverter.fromTransferType({
+        ...base,
+        slots: ["x"],
+        links: ["not a uri"],
+      }),
+    ).toThrow(/slots\[0\][\s\S]*links\[0\]/);
+
+    for (const [replacement, path] of [
+      [{ score: Number.NaN }, "score"],
+      [{ metricOrLabel: Number.POSITIVE_INFINITY }, "metricOrLabel"],
+      [{ measurements: [Number.NEGATIVE_INFINITY] }, "measurements[0]"],
+      [{ numberGrid: [[1, Number.NaN]] }, "numberGrid[0][1]"],
+      [
+        { metrics: { additionalProperties: { cpu: Number.POSITIVE_INFINITY } } },
+        "metrics.cpu",
+      ],
+    ] as const) {
+      expect(() =>
+        showcaseTransferTypeConverter.toTransferType({
+          ...value,
+          ...replacement,
+        } as Showcase),
+      ).toThrow(new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*finite`));
+    }
+
+    // The array branch of a union uses the ordinary model mapper: the
+    // in-memory catch-all bag is flattened back into wire members.
+    const address = addressTransferTypeConverter.fromTransferType({
+      street: "3 Branch Ave",
+      city: "Capital City",
+      district: 7,
+    });
+    const serialized = showcaseTransferTypeConverter.toTransferType({
+      ...value,
+      addressListOrLabel: [address],
+    }) as Record<string, unknown>;
+    expect(serialized.addressListOrLabel).toEqual([
+      { street: "3 Branch Ave", city: "Capital City", district: 7 },
+    ]);
+
+    expect(() =>
+      showcaseTransferTypeConverter.toTransferType({
+        ...value,
+        addressListOrLabel: [address, null],
+      } as Showcase),
+    ).toThrow(/addressListOrLabel\[1\]/);
   });
 });

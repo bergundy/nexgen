@@ -264,6 +264,117 @@ fn render_java_numeric_checks(
     }
 }
 
+/// True when an in-memory value contains a JSON Schema `number` position whose
+/// Java `double` can carry NaN or infinity. References validate in their own
+/// generated serializer; union branches validate through their dispatcher.
+fn java_type_needs_finite_check(ty: &JavaType) -> bool {
+    match ty {
+        JavaType::Double => true,
+        JavaType::List(element) => java_type_needs_finite_check(element),
+        _ => false,
+    }
+}
+
+/// True when an in-memory materialized date/date-time can carry Gregorian year
+/// zero even though the shared wire contract starts at year 0001.
+fn java_type_needs_calendar_year_check(ty: &JavaType) -> bool {
+    match ty {
+        JavaType::Temporal(
+            crate::json_schema::format::TemporalKind::Date
+            | crate::json_schema::format::TemporalKind::DateTime,
+        ) => true,
+        JavaType::List(element) => java_type_needs_calendar_year_check(element),
+        _ => false,
+    }
+}
+
+/// Emits the serialize-side finiteness predicate for every `number` reachable
+/// through `ty`. Arrays recurse elementwise and extend the violation path at
+/// each level, so nested failures surface as `field[1][2]`.
+fn render_java_finite_checks(
+    output: &mut String,
+    ty: &JavaType,
+    value_expr: &str,
+    path_expr: &str,
+    indent: &str,
+    depth: usize,
+) {
+    match ty {
+        JavaType::Double => {
+            output.push_str(&format!(
+                "{indent}if (!Double.isFinite({value_expr})) {{\n{indent}    violations.add(new Violation({path_expr}, \"must be a finite number, got \" + {value_expr}));\n{indent}}}\n"
+            ));
+        }
+        JavaType::List(element) if java_type_needs_finite_check(element) => {
+            let index = format!("finiteIndex{depth}");
+            let value = format!("finiteValue{depth}");
+            let element_path = format!("{path_expr} + \"[\" + {index} + \"]\"");
+            output.push_str(&format!(
+                "{indent}for (int {index} = 0; {index} < {value_expr}.size(); {index}++) {{\n"
+            ));
+            output.push_str(&format!(
+                "{indent}    {} {value} = {value_expr}.get({index});\n",
+                element.boxed_name()
+            ));
+            output.push_str(&format!("{indent}    if ({value} != null) {{\n"));
+            render_java_finite_checks(
+                output,
+                element,
+                &value,
+                &element_path,
+                &format!("{indent}        "),
+                depth + 1,
+            );
+            output.push_str(&format!("{indent}    }}\n{indent}}}\n"));
+        }
+        _ => {}
+    }
+}
+
+/// Emits the serialize-side year floor for materialized native dates and
+/// date-times, recursively extending array paths just like number validation.
+fn render_java_calendar_year_checks(
+    output: &mut String,
+    ty: &JavaType,
+    value_expr: &str,
+    path_expr: &str,
+    indent: &str,
+    depth: usize,
+) {
+    match ty {
+        JavaType::Temporal(kind @ crate::json_schema::format::TemporalKind::Date)
+        | JavaType::Temporal(kind @ crate::json_schema::format::TemporalKind::DateTime) => {
+            output.push_str(&format!(
+                "{indent}if ({value_expr}.getYear() < 1) {{\n{indent}    violations.add(new Violation({path_expr}, \"must be a valid {}, got \" + {value_expr} + \": year must be >= 0001\"));\n{indent}}}\n",
+                kind.name()
+            ));
+        }
+        JavaType::List(element) if java_type_needs_calendar_year_check(element) => {
+            let index = format!("calendarIndex{depth}");
+            let value = format!("calendarValue{depth}");
+            let element_path = format!("{path_expr} + \"[\" + {index} + \"]\"");
+            output.push_str(&format!(
+                "{indent}for (int {index} = 0; {index} < {value_expr}.size(); {index}++) {{\n"
+            ));
+            output.push_str(&format!(
+                "{indent}    {} {value} = {value_expr}.get({index});\n",
+                element.boxed_name()
+            ));
+            output.push_str(&format!("{indent}    if ({value} != null) {{\n"));
+            render_java_calendar_year_checks(
+                output,
+                element,
+                &value,
+                &element_path,
+                &format!("{indent}        "),
+                depth + 1,
+            );
+            output.push_str(&format!("{indent}    }}\n{indent}}}\n"));
+        }
+        _ => {}
+    }
+}
+
 /// Emits the string-length predicates (`minLength`/`maxLength`) over
 /// `value_expr` (a validated `String` in scope) into the collecting
 /// deserializer, appending `Violation`s. Length is the Unicode code-point count
@@ -575,6 +686,81 @@ fn render_java_array_checks(
                 "{indent}    violations.add(new Violation({json}, \"too many matching items: at most {max}, got \" + matchCount));\n"
             ));
             output.push_str(&format!("{indent}}}\n"));
+        }
+    }
+}
+
+/// Emits deserialize-side sibling array checks over the original Jackson
+/// array node. Element conversion may omit failed values from the typed list;
+/// `minItems`, `maxItems`, `uniqueItems`, and `contains` must not observe that
+/// shortened implementation detail.
+fn render_java_raw_array_checks(
+    output: &mut String,
+    node: &str,
+    json: &str,
+    element_ty: &JavaType,
+    constraints: &ArrayConstraints,
+    indent: &str,
+) {
+    if let Some(min) = constraints.min_items {
+        output.push_str(&format!(
+            "{indent}if ({node}.size() < {min}) {{\n{indent}    violations.add(new Violation({json}, \"must have at least {min} items, got \" + {node}.size()));\n{indent}}}\n"
+        ));
+    }
+    if let Some(max) = constraints.max_items {
+        output.push_str(&format!(
+            "{indent}if ({node}.size() > {max}) {{\n{indent}    violations.add(new Violation({json}, \"must have at most {max} items, got \" + {node}.size()));\n{indent}}}\n"
+        ));
+    }
+    if constraints.unique_items {
+        output.push_str(&format!(
+            "{indent}java.util.Map<Object, Integer> rawSeen = new java.util.HashMap<>();\n{indent}for (int rawIndex = 0; rawIndex < {node}.size(); rawIndex++) {{\n{indent}    Object rawKey = SpecNumbers.valueKey({node}.get(rawIndex));\n{indent}    Integer priorIndex = rawSeen.get(rawKey);\n{indent}    if (priorIndex != null) {{\n{indent}        violations.add(new Violation({json}, \"duplicate items: element at index \" + rawIndex + \" equals index \" + priorIndex));\n{indent}    }} else {{\n{indent}        rawSeen.put(rawKey, rawIndex);\n{indent}    }}\n{indent}}}\n"
+        ));
+    }
+    if let Some(matcher) = &constraints.contains {
+        let (guard, value) = match element_ty {
+            JavaType::String => (
+                "rawElement.isTextual()".to_string(),
+                "rawElement.textValue()",
+            ),
+            JavaType::Boolean => (
+                "rawElement.isBoolean()".to_string(),
+                "rawElement.booleanValue()",
+            ),
+            JavaType::Long => (
+                "SpecNumbers.isSpecLong(rawElement)".to_string(),
+                "rawElement.longValue()",
+            ),
+            JavaType::Double => (
+                "rawElement.isNumber() && Double.isFinite(rawElement.doubleValue())".to_string(),
+                "rawElement.doubleValue()",
+            ),
+            _ => ("false".to_string(), "rawElement"),
+        };
+        let condition = java_matcher_condition(matcher, value, element_ty);
+        let effective_min = constraints.min_contains.unwrap_or(1);
+        output.push_str(&format!(
+            "{indent}int rawMatchCount = 0;\n{indent}for (JsonNode rawElement : {node}) {{\n{indent}    if ({guard} && ({condition})) {{\n{indent}        rawMatchCount++;\n{indent}    }}\n{indent}}}\n"
+        ));
+        if effective_min > 0 {
+            output.push_str(&format!(
+                "{indent}if (rawMatchCount < {effective_min}) {{\n"
+            ));
+            if constraints.min_contains.is_some() {
+                output.push_str(&format!(
+                    "{indent}    violations.add(new Violation({json}, \"too few matching items: at least {effective_min}, got \" + rawMatchCount));\n"
+                ));
+            } else {
+                output.push_str(&format!(
+                    "{indent}    violations.add(new Violation({json}, \"no element matches the required schema\"));\n"
+                ));
+            }
+            output.push_str(&format!("{indent}}}\n"));
+        }
+        if let Some(max) = constraints.max_contains {
+            output.push_str(&format!(
+                "{indent}if (rawMatchCount > {max}) {{\n{indent}    violations.add(new Violation({json}, \"too many matching items: at most {max}, got \" + rawMatchCount));\n{indent}}}\n"
+            ));
         }
     }
 }
@@ -1228,6 +1414,10 @@ struct FieldPlan {
     numeric: NumericConstraints,
     string_length: StringLengthConstraints,
     array: ArrayConstraints,
+    /// The complete authored schema for parse-adapter checks whose wire
+    /// instance cannot be reconstructed from the Java type alone (notably
+    /// nested array siblings of `items`).
+    schema: Schema,
     /// True when the array's *elements* are nullable — the `items` subschema is
     /// the [[nullability]] `oneOf` pattern. Distinct from `nullable`, which
     /// wraps the whole collection ([[items]] §"Element nullability is the
@@ -1513,6 +1703,7 @@ fn resolve_model_kind(
                 numeric: NumericConstraints::from_schema(property),
                 string_length: StringLengthConstraints::from_schema(property),
                 array: ArrayConstraints::from_schema(property),
+                schema: property.clone(),
                 nullable_items: property.items.as_deref().is_some_and(allows_null),
                 union,
                 element_union,
@@ -1873,7 +2064,13 @@ fn render_union_read_scalar(
             }
         }
         Some(JavaType::Double) => {
-            wrap(output, &format!("{node}.doubleValue()"));
+            output.push_str(&format!(
+                "{indent}Double parsed = SpecNumbers.specDouble({node}, {path}, violations);\n"
+            ));
+            output.push_str(&format!(
+                "{indent}if (parsed == null) {{\n{indent}    return null;\n{indent}}}\n"
+            ));
+            wrap(output, "parsed");
         }
         Some(JavaType::List(item)) => {
             output.push_str(&format!(
@@ -1892,6 +2089,7 @@ fn render_union_read_scalar(
             render_parse_element(
                 output,
                 item,
+                variant.schema.items.as_deref(),
                 "items",
                 "element",
                 "elementPath",
@@ -1900,7 +2098,15 @@ fn render_union_read_scalar(
                 &format!("{indent}    "),
             );
             output.push_str(&format!("{indent}}}\n"));
-            wrap(output, "items");
+            let constraints = ArrayConstraints::from_schema(&variant.schema);
+            if !constraints.is_empty() {
+                render_java_raw_array_checks(output, node, path, item, &constraints, indent);
+            }
+            // Array-level branch constraints have just run over the original
+            // node. Re-validating the shortened typed list here would both
+            // duplicate correct violations and fabricate results after a bad
+            // element was omitted.
+            output.push_str(&format!("{indent}return new {}(items);\n", variant.class));
         }
         _ => {
             output.push_str(&format!("{indent}return null;\n"));
@@ -2524,6 +2730,12 @@ fn field_has_serialize_check(field: &FieldPlan) -> bool {
     {
         return true;
     }
+    if java_type_needs_finite_check(&field.ty) {
+        return true;
+    }
+    if java_type_needs_calendar_year_check(&field.ty) {
+        return true;
+    }
     match &field.ty {
         JavaType::String => !field.string_length.is_empty(),
         JavaType::Long | JavaType::Double => !field.numeric.is_empty(),
@@ -2554,6 +2766,8 @@ fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, ind
     let inner = format!("{indent}    ");
     let mut body = String::new();
     {
+        render_java_finite_checks(&mut body, &field.ty, &accessor, &json, &inner, 0);
+        render_java_calendar_year_checks(&mut body, &field.ty, &accessor, &json, &inner, 0);
         match &field.ty {
             JavaType::String if !field.string_length.is_empty() => render_java_string_checks(
                 &mut body,
@@ -2983,6 +3197,7 @@ fn render_field_deserialize(output: &mut String, field: &FieldPlan) {
             &field.numeric,
             &field.string_length,
             &field.array,
+            &field.schema,
             field.nullable_items,
             &format!("{indent}        "),
         );
@@ -3018,6 +3233,7 @@ fn render_parse_value(
     numeric: &NumericConstraints,
     string_length: &StringLengthConstraints,
     array: &ArrayConstraints,
+    schema: &Schema,
     nullable_items: bool,
     indent: &str,
 ) {
@@ -3100,16 +3316,15 @@ fn render_parse_value(
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Double => {
-            output.push_str(&format!("{indent}if (!field.isNumber()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({json}, \"expected number\"));\n"
+                "{indent}Double numberValue = SpecNumbers.specDouble(field, {json}, violations);\n"
             ));
-            output.push_str(&format!("{indent}}} else {{\n"));
-            output.push_str(&format!("{indent}    {target} = field.doubleValue();\n"));
+            output.push_str(&format!("{indent}if (numberValue != null) {{\n"));
+            output.push_str(&format!("{indent}    {target} = numberValue;\n"));
             if !numeric.is_empty() {
                 render_java_numeric_checks(
                     output,
-                    target,
+                    "numberValue",
                     json,
                     numeric,
                     false,
@@ -3170,6 +3385,7 @@ fn render_parse_value(
             render_parse_element(
                 output,
                 inner,
+                schema.items.as_deref(),
                 "items",
                 "element",
                 "elementPath",
@@ -3180,9 +3396,9 @@ fn render_parse_value(
             output.push_str(&format!("{indent}    }}\n"));
             output.push_str(&format!("{indent}    {target} = items;\n"));
             if !array.is_empty() {
-                render_java_array_checks(
+                render_java_raw_array_checks(
                     output,
-                    "items",
+                    "field",
                     json,
                     inner,
                     array,
@@ -3222,6 +3438,7 @@ fn element_declaration(ty: &JavaType, nullable: bool) -> String {
 fn render_parse_element(
     output: &mut String,
     ty: &JavaType,
+    schema: Option<&Schema>,
     list: &str,
     element: &str,
     path_var: &str,
@@ -3256,14 +3473,11 @@ fn render_parse_element(
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Double => {
-            output.push_str(&format!("{indent}if (!{element}.isNumber()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({path_var}, \"expected number\"));\n"
+                "{indent}Double parsed = SpecNumbers.specDouble({element}, {path_var}, violations);\n"
             ));
-            output.push_str(&format!("{indent}}} else {{\n"));
-            output.push_str(&format!(
-                "{indent}    {list}.add({element}.doubleValue());\n"
-            ));
+            output.push_str(&format!("{indent}if (parsed != null) {{\n"));
+            output.push_str(&format!("{indent}    {list}.add(parsed);\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Boolean => {
@@ -3340,6 +3554,7 @@ fn render_parse_element(
             render_parse_element(
                 output,
                 inner,
+                schema.and_then(|schema| schema.items.as_deref()),
                 &nested,
                 &format!("element{level}"),
                 &format!("path{level}"),
@@ -3348,6 +3563,19 @@ fn render_parse_element(
                 &format!("{indent}        "),
             );
             output.push_str(&format!("{indent}    }}\n"));
+            if let Some(schema) = schema {
+                let constraints = ArrayConstraints::from_schema(schema);
+                if !constraints.is_empty() {
+                    render_java_raw_array_checks(
+                        output,
+                        element,
+                        path_var,
+                        inner,
+                        &constraints,
+                        &format!("{indent}    "),
+                    );
+                }
+            }
             output.push_str(&format!("{indent}    {list}.add({nested});\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
@@ -3442,22 +3670,14 @@ fn render_parse_map_value(
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Double => {
-            output.push_str(&format!("{indent}if (!{element}.isNumber()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, \"expected number value\"));\n"
+                "{indent}Double value = SpecNumbers.specDouble({element}, {key_var}, violations);\n"
             ));
-            output.push_str(&format!("{indent}}} else {{\n"));
+            output.push_str(&format!("{indent}if (value != null) {{\n"));
             if has_checks {
-                output.push_str(&format!(
-                    "{indent}    double value = {element}.doubleValue();\n"
-                ));
                 checks(output, "value", &format!("{indent}    "));
-                output.push_str(&format!("{indent}    {map}.put({key_var}, value);\n"));
-            } else {
-                output.push_str(&format!(
-                    "{indent}    {map}.put({key_var}, {element}.doubleValue());\n"
-                ));
             }
+            output.push_str(&format!("{indent}    {map}.put({key_var}, value);\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Boolean => {
@@ -3530,6 +3750,7 @@ fn render_parse_map_value(
             render_parse_element(
                 output,
                 inner,
+                member.and_then(|schema| schema.items.as_deref()),
                 "items",
                 "item",
                 "itemPath",
@@ -3538,7 +3759,19 @@ fn render_parse_map_value(
                 &format!("{indent}        "),
             );
             output.push_str(&format!("{indent}    }}\n"));
-            checks(output, "items", &format!("{indent}    "));
+            if let Some(member) = member {
+                let constraints = ArrayConstraints::from_schema(member);
+                if !constraints.is_empty() {
+                    render_java_raw_array_checks(
+                        output,
+                        element,
+                        key_var,
+                        inner,
+                        &constraints,
+                        &format!("{indent}    "),
+                    );
+                }
+            }
             output.push_str(&format!("{indent}    {map}.put({key_var}, items);\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
@@ -3601,6 +3834,8 @@ fn render_java_member_checks(
     ty: &JavaType,
     indent: &str,
 ) {
+    render_java_finite_checks(output, ty, value_expr, key_expr, indent, 0);
+    render_java_calendar_year_checks(output, ty, value_expr, key_expr, indent, 0);
     if let Some(values) = closed_member_values(member) {
         let condition = values
             .iter()
@@ -4253,12 +4488,10 @@ fn render_java_closed_parse(
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Double => {
-            output.push_str(&format!("{indent}if (!field.isNumber()) {{\n"));
             output.push_str(&format!(
-                "{inner}violations.add(new Violation({json}, \"expected number\"));\n"
+                "{indent}Double {temp} = SpecNumbers.specDouble(field, {json}, violations);\n"
             ));
-            output.push_str(&format!("{indent}}} else {{\n"));
-            output.push_str(&format!("{inner}double {temp} = field.doubleValue();\n"));
+            output.push_str(&format!("{indent}if ({temp} != null) {{\n"));
             emit_lookup(output, &inner);
             output.push_str(&format!("{indent}}}\n"));
         }
@@ -4376,7 +4609,7 @@ pub(in crate::generator) fn render_spec_numbers_file(package: &str) -> String {
     output.push_str("import java.util.List;\n");
     output.push_str("import org.jspecify.annotations.Nullable;\n\n");
     output.push_str(
-        "/** Shared spec-number parsing enforcing the JSON Schema integer semantics. */\n",
+        "/** Shared spec-number parsing enforcing the JSON Schema numeric semantics. */\n",
     );
     output.push_str("public final class SpecNumbers {\n");
     output.push_str("    public static final long INTEGER_CAP = (1L << 53) - 1;\n\n");
@@ -4391,35 +4624,89 @@ pub(in crate::generator) fn render_spec_numbers_file(package: &str) -> String {
         .push_str("        if (value < -(double) INTEGER_CAP || value > (double) INTEGER_CAP) {\n");
     output.push_str("            violations.add(new Violation(path, \"exceeds \\u00b1(2^53-1) integer cap\"));\n            return null;\n        }\n");
     output.push_str("        return node.longValue();\n    }\n");
+    output.push_str("\n    /** Returns whether a node is an accepted spec integer without recording a violation. */\n");
+    output.push_str("    public static boolean isSpecLong(JsonNode node) {\n");
+    output.push_str("        if (!node.isNumber()) {\n            return false;\n        }\n");
+    output.push_str("        double value = node.doubleValue();\n");
+    output.push_str("        return Double.isFinite(value) && value == Math.floor(value)\n                && value >= -(double) INTEGER_CAP && value <= (double) INTEGER_CAP;\n    }\n");
+    output.push_str("\n    /**\n     * Parses a JSON number as a finite binary64 value. Adds a\n     * {@link Violation} and returns {@code null} on failure.\n     */\n");
+    output.push_str("    public static @Nullable Double specDouble(JsonNode node, String path, List<Violation> violations) {\n");
+    output.push_str("        if (!node.isNumber()) {\n            violations.add(new Violation(path, \"expected number\"));\n            return null;\n        }\n");
+    output.push_str("        double value = node.doubleValue();\n");
+    output.push_str("        if (!Double.isFinite(value)) {\n            violations.add(new Violation(path, \"must be a finite number, got \" + value));\n            return null;\n        }\n");
+    output.push_str("        return value;\n    }\n");
+    output.push_str("\n    /** Returns a JSON-value equality key, normalizing numeric spellings and signed zero. */\n");
+    output.push_str("    public static Object valueKey(JsonNode node) {\n");
+    output.push_str("        if (!node.isNumber()) {\n            return node;\n        }\n");
+    output.push_str("        double value = node.doubleValue();\n");
+    output.push_str(
+        "        return value == 0.0d ? Double.valueOf(0.0d) : Double.valueOf(value);\n    }\n",
+    );
     output.push_str("}\n");
     output
 }
 
-/// True when any property of the model materializes a temporal `format`.
+/// Recursively walks schema-bearing positions that can materialize a target
+/// type. Planned `$defs` are models of their own and are covered by the caller's
+/// all-model scan; this handles properties, arrays, nullable/sum branches, and
+/// typed-map members within each planned model.
+fn schema_uses_feature(schema: &Schema, direct: fn(&Schema) -> bool) -> bool {
+    if direct(schema) {
+        return true;
+    }
+    if schema.properties.as_ref().is_some_and(|properties| {
+        properties
+            .values()
+            .any(|value| schema_uses_feature(value, direct))
+    }) {
+        return true;
+    }
+    if schema
+        .items
+        .as_deref()
+        .is_some_and(|items| schema_uses_feature(items, direct))
+        || schema.one_of.as_ref().is_some_and(|branches| {
+            branches
+                .iter()
+                .any(|branch| schema_uses_feature(branch, direct))
+        })
+        || schema
+            .contains
+            .as_deref()
+            .is_some_and(|contains| schema_uses_feature(contains, direct))
+        || schema
+            .property_names
+            .as_deref()
+            .is_some_and(|names| schema_uses_feature(names, direct))
+    {
+        return true;
+    }
+    let Some(Value::Object(member)) = &schema.additional_properties else {
+        return false;
+    };
+    serde_json::from_value::<Schema>(Value::Object(member.clone()))
+        .is_ok_and(|member| schema_uses_feature(&member, direct))
+}
+
+/// True when any reachable position of the model materializes a temporal
+/// `format`.
 pub(in crate::generator) fn model_uses_temporal(model: &PlannedJsonType) -> bool {
     let Ok(schema) = decode_schema(model) else {
         return false;
     };
-    schema.properties.as_ref().is_some_and(|properties| {
-        properties.values().any(|property| {
-            temporal_kind_direct(property).is_some()
-                || nullable_non_null_schema(property)
-                    .is_some_and(|inner| temporal_kind_direct(inner).is_some())
-        })
+    schema_uses_feature(&schema, |candidate| {
+        temporal_kind_direct(candidate).is_some()
     })
 }
 
-/// True when any property of the model materializes a `contentEncoding`.
+/// True when any reachable position of the model materializes a
+/// `contentEncoding`.
 pub(in crate::generator) fn model_uses_content_encoding(model: &PlannedJsonType) -> bool {
     let Ok(schema) = decode_schema(model) else {
         return false;
     };
-    schema.properties.as_ref().is_some_and(|properties| {
-        properties.values().any(|property| {
-            content_encoding_direct(property).is_some()
-                || nullable_non_null_schema(property)
-                    .is_some_and(|inner| content_encoding_direct(inner).is_some())
-        })
+    schema_uses_feature(&schema, |candidate| {
+        content_encoding_direct(candidate).is_some()
     })
 }
 
@@ -4559,6 +4846,9 @@ const TEMPORAL_SUPPORT_BODY: &str = r####"    private static int daysInMonth(int
             int year = Integer.parseInt(value.substring(0, 4));
             int month = Integer.parseInt(value.substring(5, 7));
             int day = Integer.parseInt(value.substring(8, 10));
+            if (year < 1) {
+                return false;
+            }
             int max = daysInMonth(year, month);
             return max > 0 && day >= 1 && day <= max;
         } catch (NumberFormatException e) {

@@ -1006,9 +1006,9 @@ def _valid_temporal_calendar(value: str) -> bool:
         year, month, day = int(value[0:4]), int(value[5:7]), int(value[8:10])
     except ValueError:
         return False
-    # `datetime.MINYEAR` is 1, so year 0000 -- which the wire grammar admits and
-    # the other three targets materialize -- has no Python value at all. It is
-    # rejected rather than shifted into range, and `_temporal_reason` says so.
+    # `datetime.MINYEAR` is 1, which is also the shared cross-language floor.
+    # Year 0000 is rejected rather than shifted into range, and
+    # `_temporal_reason` says so.
     if year < datetime.MINYEAR:
         return False
     maximum = _days_in_month(year, month)
@@ -1018,9 +1018,8 @@ def _valid_temporal_calendar(value: str) -> bool:
 def _temporal_reason(name: str, value: str) -> str:
     """The reason a rejected temporal string is reported under.
 
-    Year 0000 earns its own clause: it is a valid wire value the other targets
-    accept, so a caller needs to read Python's floor rather than conclude the
-    timestamp was malformed.
+    Year 0000 earns its own clause so the caller sees the shared calendar floor
+    rather than only a generic malformed-timestamp reason.
     """
 
     if value[0:4] == "0000":
@@ -1306,15 +1305,39 @@ def _format_base64url(value: bytes) -> str:
 
 /// Emits the `_check_unique_items` runtime helper: asserts pairwise-distinct
 /// elements, reporting the first duplicate's index and the index it repeats --
-/// the same reason every other target emits. Comparison is by `==` over a list
-/// rather than hashing, because a generated model is a non-frozen dataclass and
-/// therefore unhashable; arrays are small and correctness beats the O(n^2) (P2).
+/// the same reason every other target emits. Comparison follows JSON value
+/// equality (notably, booleans are distinct from numbers) over a list rather
+/// than hashing; arrays are small and correctness beats the O(n^2) (P2).
 /// See `specs/json-schema/features/uniqueItems.md`.
 fn render_unique_items_helper(output: &mut String) {
     output.push_str(UNIQUE_ITEMS_HELPER_BODY);
 }
 
-const UNIQUE_ITEMS_HELPER_BODY: &str = r#"def _check_unique_items(
+const UNIQUE_ITEMS_HELPER_BODY: &str = r#"def _json_values_equal(left: typing.Any, right: typing.Any) -> bool:
+    """Compares JSON values without Python's bool-as-int equality leak."""
+
+    left_is_number = isinstance(left, (int, float)) and not isinstance(left, bool)
+    right_is_number = isinstance(right, (int, float)) and not isinstance(right, bool)
+    if left_is_number or right_is_number:
+        return left_is_number and right_is_number and left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        left_list = typing.cast("list[typing.Any]", left)
+        right_list = typing.cast("list[typing.Any]", right)
+        return len(left_list) == len(right_list) and all(
+            _json_values_equal(a, b) for a, b in zip(left_list, right_list)
+        )
+    if isinstance(left, dict):
+        left_dict = typing.cast("dict[typing.Any, typing.Any]", left)
+        right_dict = typing.cast("dict[typing.Any, typing.Any]", right)
+        return left_dict.keys() == right_dict.keys() and all(
+            _json_values_equal(left_dict[key], right_dict[key]) for key in left_dict
+        )
+    return left == right
+
+
+def _check_unique_items(
     value: list[typing.Any], path: str, violations: list[Violation]
 ) -> None:
     """Asserts an array's elements are pairwise distinct."""
@@ -1322,7 +1345,7 @@ const UNIQUE_ITEMS_HELPER_BODY: &str = r#"def _check_unique_items(
     seen: list[typing.Any] = []
     for index, element in enumerate(value):
         for earlier, previous in enumerate(seen):
-            if previous == element:
+            if _json_values_equal(previous, element):
                 violations.append(
                     Violation(
                         path=path,
@@ -1874,6 +1897,10 @@ fn py_field_needs_serialize_check(schema: &Schema) -> bool {
                 || schema.max_items.is_some()
                 || schema.unique_items == Some(true)
                 || schema.contains.is_some()
+                || schema
+                    .items
+                    .as_deref()
+                    .is_some_and(py_field_needs_serialize_check)
         }
         _ => false,
     }
@@ -1974,7 +2001,52 @@ fn render_py_field_checks(
         Some("number") | Some("integer") => {
             render_py_numeric_checks(output, value_expr, path_expr, schema, indent)
         }
-        Some("array") => render_py_array_checks(output, value_expr, path_expr, schema, indent)?,
+        Some("array") => {
+            render_py_array_checks(output, value_expr, path_expr, schema, indent)?;
+            if let Some(items) = schema.items.as_deref()
+                && py_field_needs_serialize_check(items)
+            {
+                // Validate every materialized element before the enclosing value
+                // is emitted. The depth-derived names stay distinct for nested
+                // arrays, so an inner loop cannot overwrite the outer index used
+                // to build paths such as `numberGrid[0][1]`.
+                let depth = indent.len();
+                let index = format!("item_index_{depth}");
+                let element = format!("item_element_{depth}");
+                let loop_indent = format!("{indent}    ");
+                let item_path = py_indexed_path(path_expr, &index);
+                let nullable = allows_null(items);
+                let check_indent = if nullable {
+                    format!("{loop_indent}    ")
+                } else {
+                    loop_indent.clone()
+                };
+                let mut checks = String::new();
+                render_py_field_checks(
+                    &mut checks,
+                    items,
+                    models,
+                    &element,
+                    &item_path,
+                    &check_indent,
+                )?;
+                // Some materialized schemas (for example `date`) report that
+                // they need serialize validation but their native helper proves
+                // sufficient and emits no inline predicate. Do not leave an
+                // empty loop behind in that case.
+                if !checks.is_empty() {
+                    output.push_str(indent);
+                    output.push_str(&format!(
+                        "for {index}, {element} in enumerate({value_expr}):\n"
+                    ));
+                    if nullable {
+                        output.push_str(&loop_indent);
+                        output.push_str(&format!("if {element} is not None:\n"));
+                    }
+                    output.push_str(&checks);
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -2030,7 +2102,10 @@ fn py_literal_text(expr: &str) -> Option<String> {
 fn py_indexed_path(path_expr: &str, index_var: &str) -> String {
     match py_literal_text(path_expr) {
         Some(text) => format!("f'{}[{{{index_var}}}]'", py_fstring_text(&text)),
-        None => format!("f'{{{path_expr}}}[{{{index_var}}}]'"),
+        // Concatenate a new suffix instead of interpolating the already-dynamic
+        // expression. This remains valid on Python 3.10 even when `path_expr`
+        // is itself an f-string from an outer array level.
+        None => format!("{path_expr} + f'[{{{index_var}}}]'"),
     }
 }
 
@@ -4359,10 +4434,9 @@ fn render_py_closed_value_membership(
     output.push_str(&format!("    {target} = {assignment}\n"));
 }
 
-/// Emits the elementwise parse of an array. Every element is appended, valid or
-/// not — an element that failed has already recorded a violation, so the built
-/// list only reaches the caller when it is whole (which is also what keeps a
-/// legitimately-null element from being mistaken for a failure).
+/// Emits the elementwise parse of an array. The typed list contains only
+/// successfully converted elements and never escapes when any violation exists;
+/// sibling array keywords are evaluated separately over the original wire list.
 #[allow(clippy::too_many_arguments)]
 fn render_array_parser(
     output: &mut String,
@@ -4414,6 +4488,7 @@ fn render_py_array_elements(
     let index_local = format!("{slot}_index");
     let element_local = format!("{slot}_element");
     let item_path_local = format!("{item_slot}_path");
+    let violation_count_local = format!("{item_slot}_violation_count");
     let item_type = schema
         .items
         .as_ref()
@@ -4434,6 +4509,8 @@ fn render_py_array_elements(
         "{item_path_local} = {}\n",
         py_indexed_path(path_expr, &index_local)
     ));
+    output.push_str(&loop_body);
+    output.push_str(&format!("{violation_count_local} = len(violations)\n"));
     render_py_slot_declaration(output, &loop_body, &item_slot, &item_type);
     match &schema.items {
         // Every element kind takes the same parse the value in that position
@@ -4455,8 +4532,13 @@ fn render_py_array_elements(
         }
     }
     output.push_str(&loop_body);
-    output.push_str(&format!("{list_local}.append({item_slot})\n"));
-    render_py_array_checks(output, &list_local, path_expr, schema, &body)?;
+    output.push_str(&format!("if len(violations) == {violation_count_local}:\n"));
+    output.push_str(&loop_body);
+    output.push_str(&format!("    {list_local}.append({item_slot})\n"));
+    // Array-level keywords are siblings of `items`: they inspect the original
+    // instance even when one or more elements fail conversion.
+    let raw_array = format!("typing.cast(\"list[typing.Any]\", {raw_expr})");
+    render_py_array_checks(output, &raw_array, path_expr, schema, &body)?;
     Ok(list_local)
 }
 

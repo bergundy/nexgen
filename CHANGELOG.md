@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- JSON Schema numbers round-trip by mathematical JSON value rather than token
+  spelling: whitespace, object-member order, and spellings such as `5`, `5.0`,
+  and `5e0` are not identity-bearing. Generated Java keeps idiomatic `double`
+  serialization rather than applying a Java-only spelling normalization.
+
 - Protobuf-backed models now consistently generate conversions in both
   directions whenever they are reachable. Go and TypeScript emit previously
   suppressed complementary helpers, operation-free exported models receive the
@@ -118,6 +123,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Java now rejects numeric JSON tokens outside the finite binary64 domain (for
+  example `1e400`) with an aggregated, fully pathed violation in ordinary
+  properties, union branches, nested arrays, and typed-map members.
+- JSON Schema `minItems`, `maxItems`, `uniqueItems`, and `contains` now inspect
+  the original wire array in every target even when one or more elements fail
+  `items`. Failed conversions no longer fabricate count or duplicate results;
+  indexed violations precede sibling array-keyword violations at every depth.
+
+- JSON Schema converters now apply scalar, reference, union, nested-array,
+  temporal, and content-encoding handling recursively inside array elements and
+  typed-map members. Go reports indexed/keyed violations instead of collapsing
+  them to the collection, TypeScript no longer passes a `oneOf` array branch
+  through verbatim, and required temporal/base64 runtime support is discovered
+  at every nesting depth.
+- JSON Schema `number` values now reject `NaN` and positive/negative infinity
+  with aggregated, fully pathed validation errors before serialization in every
+  target. Go also accepts every valid integer-valued JSON number spelling
+  (`1`, `1.0`, `1e2`, `1.5e1`) while continuing to reject fractional and
+  over-cap values.
+- JSON Schema temporal dates and date-times now use `0001` as their shared
+  minimum year. Year `0000` is rejected by schema-literal validation and by the
+  generated Go, TypeScript, Python, and Java runtime predicates.
 - JSON Schema: Cross-input emission and naming now follow each target's actual
   scope and `x-<lang>-name` overrides. Foreign types are imported rather than
   duplicated, empty TypeScript model modules are omitted, member-derived names

@@ -73,6 +73,20 @@ public final class ShowcaseLocationGeo {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<ShowcaseLocationGeo> {
         @Override
         public void serialize(ShowcaseLocationGeo value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            List<Violation> violations = new ArrayList<>();
+            if (value.lat != null) {
+                if (!Double.isFinite(value.lat)) {
+                    violations.add(new Violation("lat", "must be a finite number, got " + value.lat));
+                }
+            }
+            if (value.lon != null) {
+                if (!Double.isFinite(value.lon)) {
+                    violations.add(new Violation("lon", "must be a finite number, got " + value.lon));
+                }
+            }
+            if (!violations.isEmpty()) {
+                throw new ValidationException(violations);
+            }
             gen.writeStartObject();
             if (value.lat != null) {
                 gen.writeNumberField("lat", value.lat);
@@ -118,10 +132,9 @@ public final class ShowcaseLocationGeo {
                 } else if (field.isNull()) {
                     violations.add(new Violation("lat", "explicit null not allowed"));
                 } else {
-                    if (!field.isNumber()) {
-                        violations.add(new Violation("lat", "expected number"));
-                    } else {
-                        lat = field.doubleValue();
+                    Double numberValue = SpecNumbers.specDouble(field, "lat", violations);
+                    if (numberValue != null) {
+                        lat = numberValue;
                     }
                 }
             }
@@ -132,10 +145,9 @@ public final class ShowcaseLocationGeo {
                 } else if (field.isNull()) {
                     violations.add(new Violation("lon", "explicit null not allowed"));
                 } else {
-                    if (!field.isNumber()) {
-                        violations.add(new Violation("lon", "expected number"));
-                    } else {
-                        lon = field.doubleValue();
+                    Double numberValue = SpecNumbers.specDouble(field, "lon", violations);
+                    if (numberValue != null) {
+                        lon = numberValue;
                     }
                 }
             }

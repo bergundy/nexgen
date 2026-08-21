@@ -122,6 +122,30 @@ def _parse_spec_integer(
     return out
 
 
+def _json_values_equal(left: typing.Any, right: typing.Any) -> bool:
+    """Compares JSON values without Python's bool-as-int equality leak."""
+
+    left_is_number = isinstance(left, (int, float)) and not isinstance(left, bool)
+    right_is_number = isinstance(right, (int, float)) and not isinstance(right, bool)
+    if left_is_number or right_is_number:
+        return left_is_number and right_is_number and left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        left_list = typing.cast("list[typing.Any]", left)
+        right_list = typing.cast("list[typing.Any]", right)
+        return len(left_list) == len(right_list) and all(
+            _json_values_equal(a, b) for a, b in zip(left_list, right_list)
+        )
+    if isinstance(left, dict):
+        left_dict = typing.cast("dict[typing.Any, typing.Any]", left)
+        right_dict = typing.cast("dict[typing.Any, typing.Any]", right)
+        return left_dict.keys() == right_dict.keys() and all(
+            _json_values_equal(left_dict[key], right_dict[key]) for key in left_dict
+        )
+    return left == right
+
+
 def _check_unique_items(
     value: list[typing.Any], path: str, violations: list[Violation]
 ) -> None:
@@ -130,7 +154,7 @@ def _check_unique_items(
     seen: list[typing.Any] = []
     for index, element in enumerate(value):
         for earlier, previous in enumerate(seen):
-            if previous == element:
+            if _json_values_equal(previous, element):
                 violations.append(
                     Violation(
                         path=path,
@@ -220,9 +244,9 @@ def _valid_temporal_calendar(value: str) -> bool:
         year, month, day = int(value[0:4]), int(value[5:7]), int(value[8:10])
     except ValueError:
         return False
-    # `datetime.MINYEAR` is 1, so year 0000 -- which the wire grammar admits and
-    # the other three targets materialize -- has no Python value at all. It is
-    # rejected rather than shifted into range, and `_temporal_reason` says so.
+    # `datetime.MINYEAR` is 1, which is also the shared cross-language floor.
+    # Year 0000 is rejected rather than shifted into range, and
+    # `_temporal_reason` says so.
     if year < datetime.MINYEAR:
         return False
     maximum = _days_in_month(year, month)
@@ -232,9 +256,8 @@ def _valid_temporal_calendar(value: str) -> bool:
 def _temporal_reason(name: str, value: str) -> str:
     """The reason a rejected temporal string is reported under.
 
-    Year 0000 earns its own clause: it is a valid wire value the other targets
-    accept, so a caller needs to read Python's floor rather than conclude the
-    timestamp was malformed.
+    Year 0000 earns its own clause so the caller sees the shared calendar floor
+    rather than only a generic malformed-timestamp reason.
     """
 
     if value[0:4] == "0000":
