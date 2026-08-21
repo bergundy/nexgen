@@ -148,13 +148,38 @@ derived as:
   rules ([[const]]/[[enum]]/[[properties]]; nest where the language
   allows, P15 backstop).
 
-**Collision.** All type names occupy **one package-wide namespace**
+A type's emitted name is resolved once for the **whole input closure**, so
+a reference from another input file names exactly the identifier the
+declaring file's own module emits — including its `x-<lang>-name`
+override, which the referencing file does not restate.
+
+**Collision.** For Go, TypeScript and Python all type names occupy **one
+package-wide namespace** — Go flattens to a single package, and the TypeScript
+and Python barrels re-aggregate every module into one. Java and .NET resolve
+per module instead, so there the namespace is the module
 ([[generated-file-layout]]). A collision → **load reject, no mangling**;
 the escape hatch is `x-<lang>-name` / root `title` (**P15**, scope
 widened from per-object to per-package). Consistent with [[properties]],
 **collisions are evaluated per emitted target only** — a name set may be
 accepted for a Go-only run and rejected for a Java run, because
 normalization differs per language.
+
+**The derived name is the model's identity.** The one collision that is
+*not* per-target is a file-root type and a same-file `$defs` entry that
+derive the **same** name (`thing.yaml` with a root type plus
+`$defs.Thing`): the derived name is the identity every `$ref` resolves
+through and every target emits one type for, so the two schemas would
+otherwise collapse into one — the loser's shape dropped and every
+reference to it silently retargeted at the winner. It is rejected for
+**every** target, and the fix-it is a rename of the `$defs` key or of the
+file the root name derives from; an `x-<lang>-name` override does not
+resolve it, because it moves one target's *emitted identifier* and leaves
+both schemas on the one identity. A name **synthesized** for an inline
+shape ([[properties]]) is held to the same rule — a hoisted `$defs` entry
+whose name equals the root type's is rejected where the shape is hoisted,
+with a diagnostic naming the position it was written in. A file with no
+root type (a definitions-only file or a Nexus document — see
+[[input-files]]) has no root name to collide with.
 
 ## Output layout
 
@@ -216,7 +241,9 @@ the recursion-pointer rule above applies to cyclic edges. Imports follow
 
 - **Python** — `from .b import Foo`, `from ._recursive import Node`,
   `from .definitions import ValidationError`.
-- **TypeScript** — `import { Foo } from './b'`.
+- **TypeScript** — `import type { Foo } from './b'`, plus
+  `import { fooTransferTypeConverter } from './b'` since the referencing
+  type's converter delegates to the target's (PRINCIPLES TS §4).
 - **Go / Java** — same package; no import.
 
 **Bare-`$ref`-root alias.** A file root that is exactly `{"$ref":
@@ -276,6 +303,7 @@ helper is emitted — the named-type machinery already in place
 | Unresolvable | missing file or missing `$defs` entry |
 | Unsatisfiable cycle | every edge required + non-nullable + single-valued |
 | Type-name collision | two targets → same identifier in an emitted language (per-target, P15) |
+| Root/`$defs` name coincidence | a file-root type and a same-file `$defs` entry — authored or synthesized for an inline shape — derive the same name: one identity, two schemas (all targets, P15) |
 | Module-name collision | two inputs flatten to the same module name ([[generated-file-layout]]) |
 
 ### Runtime fixtures (validator)

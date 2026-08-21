@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — the one sibling keyword treated this way, because it asserts nothing about the
   value, and the only way to rename a member whose type is a `$ref` (a member
   named `class` was otherwise unfixable in Python and Java).
+- TypeScript: JSON models now export companion `TransferTypeConverter`
+  instances with `fromTransferType`/`toTransferType`, replacing the previous
+  mapper classes and intermediate-value terminology.
+- TypeScript: JSON Schema operations now attach their model converters as
+  `inputType`/`outputType` metadata. WIT-generated operations are unchanged.
 - Generating into an existing `--output` directory no longer deletes it first.
   The directory is written into instead, so pre-existing files and
   subdirectories are preserved; generated files are still overwritten in place.
@@ -103,6 +108,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- JSON Schema: Modules that own no types now import foreign `$ref` targets
+  without re-emitting duplicate declarations.
+- JSON Schema: Identifier collisions now use each target's actual emitted
+  namespace, including Go's flat package and the TypeScript/Python root barrels.
+  TypeScript service constants are checked under their emitted lower-camel names.
+- JSON Schema: Member-derived synthesized names now follow `x-<lang>-name`
+  overrides, including TypeScript default constants and Go closed-value types.
+- JSON Schema: A root model can no longer silently collapse with a same-named
+  `$defs` or synthesized model; the loader reports the conflicting origins.
 - JSON Schema: A **non-object `oneOf` branch's own constraints** were dropped in
   three of four languages: only Go carried them, in the synthesized
   `<Union><Kind>` variant's `Validate`. TypeScript cast the narrowed value
@@ -192,15 +206,18 @@ array"` at runtime, though `items.md` accepts them. Both now decode elementwise,
 - TypeScript: An array of models or unions serialized its elements verbatim, so
   an element's in-memory `additionalProperties` bag reached the wire as a literal
   member (and an element's temporal/bytes members were never re-encoded). Each
-  element now re-serializes through its own mapper, as does a typed map's member.
+  element now re-serializes through its own converter, as does a typed map's
+  member.
 - Go: A schema `description` ending a sentence with a package-like word ("one at
   a time.") added that package to the import block, and an unused import is a Go
   compile error. Package use is now read off the emitted code, not the doc
   comments.
+- JSON Schema: Cross-file `$ref` and operation references now honor the target
+  model's `x-<lang>-name` override.
 - JSON Schema: A `oneOf` with an inline object branch generated uncompilable Go
   (a marker method on an undeclared `<Union>Object` type) and uncompilable
-  TypeScript (`new Record<string, unknown>Mapper()`); Java bound the branch to
-  `null` without a violation.
+  TypeScript (a converter named after the anonymous `Record<string, unknown>`
+  branch type); Java bound the branch to `null` without a violation.
 - Java: An object branch of a union written inline on a property was silently
   dropped — the branch's class implemented nothing, and the parse arm for the
   object token was empty. The branch class now implements the nested union
@@ -224,7 +241,7 @@ array"` at runtime, though `items.md` accepts them. Both now decode elementwise,
 - JSON Schema: TypeScript serialized an object member of a property-level union
   by copying the in-memory value, so the model's `additionalProperties` member
   reached the wire as a literal key and its extras were never spread back out.
-  The union now serializes through the branch's mapper.
+  The union now serializes through the branch's converter.
 - JSON Schema: TypeScript's serializer for a mixed-kind union returned the lone
   object branch unconditionally, making the scalar/array branches unreachable;
   the object branch is now guarded by the object token, matching the parse side.

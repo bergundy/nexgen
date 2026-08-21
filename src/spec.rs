@@ -415,26 +415,68 @@ where
     }
 }
 
+/// Which module, if any, is responsible for emitting a declaration.
+///
+/// Reachability needs all three states. WIT produces one unscoped spec, so that
+/// spec emits every reachable declaration. JSON Schema produces one spec per
+/// input file: a declaration is either owned by that file and emitted there, or
+/// foreign and imported from the file that owns it. In particular, a JSON
+/// service file may own no types at all while still referencing foreign types;
+/// treating that case as unscoped would emit duplicate declarations in the
+/// service module.
+///
+/// [`Unscoped`]: ModuleExport::Unscoped
+/// [`Owned`]: ModuleExport::Owned
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ModuleExport {
+    /// No input module owns the declaration, so the containing spec must emit
+    /// it when reachable. This preserves front ends such as WIT that build one
+    /// spec without assigning declarations to source modules.
+    #[default]
+    Unscoped,
+    /// The containing spec's input module declares the type, so it both seeds
+    /// reachability and is the one module allowed to emit the declaration.
+    Owned,
+    /// Another input module owns the declaration. Keeping the declaration here
+    /// lets planning follow references to it, while this distinct state keeps a
+    /// module that owns no types from looking unscoped and re-emitting it.
+    Foreign,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDeclEntry<F: TypeFamily = AuthoredFamily> {
     pub declaration: TypeDeclSpec<F>,
     /// Whether this declaration is a public root of its containing module.
-    pub(crate) module_exported: bool,
+    pub(crate) module_export: ModuleExport,
 }
 
 impl<F: TypeFamily> TypeDeclEntry<F> {
     pub fn new(declaration: TypeDeclSpec<F>) -> Self {
         Self {
             declaration,
-            module_exported: false,
+            module_export: ModuleExport::Unscoped,
         }
     }
 
     pub(crate) fn module_export(declaration: TypeDeclSpec<F>) -> Self {
         Self {
             declaration,
-            module_exported: true,
+            module_export: ModuleExport::Owned,
         }
+    }
+
+    /// A declaration this spec references but another module emits.
+    pub(crate) fn foreign(declaration: TypeDeclSpec<F>) -> Self {
+        Self {
+            declaration,
+            module_export: ModuleExport::Foreign,
+        }
+    }
+
+    /// Whether this module declares the type (as opposed to importing it, or
+    /// belonging to a front end that does not scope by module).
+    pub(crate) fn is_module_export(&self) -> bool {
+        self.module_export == ModuleExport::Owned
     }
 
     fn map_names_with<G, M>(self, map: &mut M) -> TypeDeclEntry<G>
@@ -444,7 +486,7 @@ impl<F: TypeFamily> TypeDeclEntry<F> {
     {
         TypeDeclEntry {
             declaration: self.declaration.map_names_with(map),
-            module_exported: self.module_exported,
+            module_export: self.module_export,
         }
     }
 }

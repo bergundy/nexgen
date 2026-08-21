@@ -85,6 +85,127 @@ properties:
       - { type: string, enum: [auto, manual] }
 "#;
 
+/// A service whose two operations are each one-sided: one declares only an
+/// `input`, the other only an `output`.
+const ONE_SIDED_OPERATION_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Jobs:
+    fqn: example.jobs.v1.Jobs
+    operations:
+      accept:
+        input: { $ref: "#/$defs/Job" }
+      produce:
+        output: { $ref: "#/$defs/Job" }
+$defs:
+  Job:
+    type: object
+    properties:
+      id: { type: string }
+"##;
+
+/// An operation whose output type carries an `x-ts-name` override.
+const OPERATION_IO_TS_NAME_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Pages:
+    fqn: example.pages.v1.Pages
+    operations:
+      get:
+        input: { $ref: "#/$defs/GetInput" }
+        output: { $ref: "#/$defs/Page" }
+$defs:
+  GetInput:
+    type: object
+    properties:
+      id: { type: string }
+  Page:
+    type: object
+    x-ts-name: RenamedPage
+    properties:
+      title: { type: string }
+"##;
+
+/// The entry file of a two-file closure. `get`'s output is the model the *other*
+/// file declares, and `FindOutput.page` `$ref`s it from a property, so both
+/// cross-module reference shapes are covered.
+const CROSS_MODULE_ENTRY_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Pages:
+    fqn: example.pages.v1.Pages
+    operations:
+      get:
+        input: { $ref: "#/$defs/GetInput" }
+        output: { $ref: "content/page.json" }
+      find:
+        input: { $ref: "#/$defs/GetInput" }
+        output: { $ref: "#/$defs/FindOutput" }
+$defs:
+  GetInput:
+    type: object
+    additionalProperties: false
+    properties:
+      id: { type: string }
+  FindOutput:
+    type: object
+    additionalProperties: false
+    properties:
+      page: { $ref: "content/page.json" }
+"##;
+
+/// The referenced file. Its model carries the name override the *consuming*
+/// module has to resolve through.
+const CROSS_MODULE_PAGE_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+x-ts-name: RenamedPage
+properties:
+  title: { type: string }
+"##;
+
+/// Writes the two-file cross-module closure into `dir` and returns the input
+/// directory to generate from.
+fn write_cross_module_closure(dir: &Path) -> PathBuf {
+    let input_dir = dir.join("input");
+    fs::create_dir_all(input_dir.join("content")).unwrap();
+    fs::write(
+        input_dir.join("kb.nexusrpc.yaml"),
+        CROSS_MODULE_ENTRY_SCHEMA,
+    )
+    .unwrap();
+    fs::write(
+        input_dir.join("content/page.json"),
+        CROSS_MODULE_PAGE_SCHEMA,
+    )
+    .unwrap();
+    input_dir
+}
+
+/// A property carrying a per-language name override alongside a `default`, a
+/// `const`, and an inline object — one schema covering all three synthesized-name
+/// families at once.
+const MEMBER_DERIVED_NAME_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  retryCount:
+    type: integer
+    default: 3
+    x-ts-name: attempts
+    x-go-name: Attempts
+  kind:
+    type: string
+    const: widget
+    x-ts-name: category
+    x-go-name: Category
+  address:
+    type: object
+    x-ts-name: location
+    x-go-name: Location
+    properties:
+      street: { type: string }
+"#;
+
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -383,15 +504,52 @@ fn typescript_json_example_generation_matches_checked_in_output() {
             assert!(all.contains("export interface Extras {"));
             assert!(all.contains("additionalProperties: Record<string, unknown>;"));
             // A tagged union whose branches are written inline: each branch names
-            // itself with `x-ts-name` and is emitted as an interface + mapper.
+            // itself with `x-ts-name` and is emitted as an interface + converter.
             assert!(all.contains("export type Note = TextNote | LinkNote;"));
             assert!(all.contains("export interface TextNote {"));
-            assert!(all.contains("export class LinkNoteMapper {"));
+            assert!(all.contains(
+                "export const linkNoteTransferTypeConverter =\n  new (class implements TransferTypeConverter<LinkNote> {"
+            ));
             // The lone inline object branch of a property union derives its name
             // from the union it belongs to.
             assert!(all.contains("detail?: ShowcaseDetailObject | string;"));
             assert!(all.contains("export interface ShowcaseDetailObject {"));
             assert!(all.contains("out.detail = serializeShowcaseDetail(value.detail);"));
+            // Each operation carries its models' converters as operation type
+            // info; the `x-ts-name` override flows into the converter identifier.
+            assert!(all.contains(
+                "inputType: { transferTypeConverter: getShowcaseInputTransferTypeConverter },"
+            ));
+            assert!(
+                all.contains(
+                    "outputType: { transferTypeConverter: showcaseTransferTypeConverter },"
+                )
+            );
+            assert!(all.contains("export const contactTsTransferTypeConverter ="));
+        }
+        if example_id == "chat" {
+            let services = rendered
+                .get(std::path::Path::new("services.ts"))
+                .expect("chat services module");
+            // A void side has no value to convert, so it carries no type info.
+            assert!(services.contains("ping: nexus.operation<void, void>({ name: \"Ping\" }),"));
+            assert!(services.contains(
+                "inputType: { transferTypeConverter: sendMessageInputTransferTypeConverter },"
+            ));
+        }
+        if example_id == "kb" {
+            // A cross-module I/O model's converter imports as a value from the
+            // module that declares it, alongside the type-only model import.
+            let services = rendered
+                .get(std::path::Path::new("kb/services.ts"))
+                .expect("kb services module");
+            assert!(services.contains(
+                "import { blockTransferTypeConverter } from \"../content/block/models\";"
+            ));
+            assert!(
+                services
+                    .contains("outputType: { transferTypeConverter: pageTransferTypeConverter },")
+            );
         }
         fs::remove_dir_all(output_path).unwrap();
     }
@@ -728,9 +886,9 @@ fn typescript_renders_required_fields_and_custom_message_types() {
 }
 
 /// An inline **structured** object `oneOf` branch on a property: the branch is
-/// named `<Union>Object` and emitted as an interface with its own mapper, and the
-/// union's serialize side routes through it (the in-memory `additionalProperties`
-/// member must not reach the wire).
+/// named `<Union>Object` and emitted as an interface with its own converter, and
+/// the union's serialize side routes through it (the in-memory
+/// `additionalProperties` member must not reach the wire).
 /// See `specs/json-schema/features/oneOf.md` ("Object branches").
 #[test]
 fn typescript_json_names_inline_object_union_branch() {
@@ -756,9 +914,13 @@ fn typescript_json_names_inline_object_union_branch() {
 
     assert!(rendered.contains("payload?: DetailPayloadObject | string;"));
     assert!(rendered.contains("export interface DetailPayloadObject {"));
-    assert!(rendered.contains("export class DetailPayloadObjectMapper {"));
-    // Parse and serialize both route the object token through the branch mapper.
-    assert!(rendered.contains("new DetailPayloadObjectMapper().fromIntermediate(raw.payload)"));
+    assert!(rendered.contains(
+        "export const detailPayloadObjectTransferTypeConverter = new class implements TransferTypeConverter<DetailPayloadObject> {"
+    ));
+    // Parse and serialize both route the object token through the branch converter.
+    assert!(
+        rendered.contains("detailPayloadObjectTransferTypeConverter.fromTransferType(raw.payload)")
+    );
     assert!(rendered.contains(
         "function serializeDetailPayload(value: DetailPayloadObject | string): unknown {"
     ));
@@ -767,8 +929,8 @@ fn typescript_json_names_inline_object_union_branch() {
 }
 
 /// Every constraint a **non-object** branch declares is checked once the token
-/// narrows to it, on both sides of the mapper (P12). A `const`/`enum` branch also
-/// narrows the member *type* to its literal set, without which the narrowed
+/// narrows to it, on both sides of the converter (P12). A `const`/`enum` branch
+/// also narrows the member *type* to its literal set, without which the narrowed
 /// assignment would not even typecheck.
 /// See `specs/json-schema/features/oneOf.md` ("Validator mapping").
 #[test]
@@ -812,10 +974,10 @@ fn typescript_json_validates_non_object_union_branch_constraints() {
 }
 
 /// A union in an element position: the loader names it, so TypeScript emits an
-/// ordinary union alias plus mapper and runs it per element/member — including
-/// on the serialize side, where an element model's catch-all bag would otherwise
-/// reach the wire. A nullable element parenthesizes (`(T | null)[]`), which
-/// `T | null[]` would silently misread.
+/// ordinary union alias plus converter and runs it per element/member —
+/// including on the serialize side, where an element model's catch-all bag would
+/// otherwise reach the wire. A nullable element parenthesizes (`(T | null)[]`),
+/// which `T | null[]` would silently misread.
 /// See `specs/json-schema/features/oneOf.md` ("Unions in element positions").
 #[test]
 fn typescript_json_maps_element_position_unions() {
@@ -841,12 +1003,339 @@ fn typescript_json_maps_element_position_unions() {
 
     assert!(rendered.contains("export type BagSegmentsItem = string | number;"));
     assert!(rendered.contains("segments?: BagSegmentsItem[];"));
-    assert!(rendered.contains("new BagSegmentsItemMapper().fromIntermediate(element)"));
-    assert!(rendered.contains("new ChoiceMapper().fromIntermediate(element)"));
-    // A map member runs the member mapper in both directions.
-    assert!(rendered.contains("new EntriesValueMapper().fromIntermediate(raw[key])"));
-    assert!(rendered.contains("out[key] = new EntriesValueMapper().toIntermediate(entry);"));
+    assert!(rendered.contains("bagSegmentsItemTransferTypeConverter.fromTransferType(element)"));
+    assert!(rendered.contains("choiceTransferTypeConverter.fromTransferType(element)"));
+    // A map member runs the member converter in both directions.
+    assert!(rendered.contains("entriesValueTransferTypeConverter.fromTransferType(raw[key])"));
+    assert!(
+        rendered.contains("out[key] = entriesValueTransferTypeConverter.toTransferType(entry);")
+    );
     // Element nullability is the element's own concern, and parenthesized.
     assert!(rendered.contains("slots?: (string | null)[];"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A one-sided operation: the non-void side carries its converter as operation
+/// type info, the void side carries no field at all (there is no value to
+/// convert, so an empty `TypeInfo` would assert a conversion that does not
+/// exist). See `specs/json-schema/services.md` ("TypeScript operation type
+/// info"); the checked-in samples only cover void-on-both-sides.
+#[test]
+fn typescript_json_one_sided_operation_type_info() {
+    let temp_dir = unique_output_path("ts-json-one-sided-type-info");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("jobs.nexusrpc.yaml");
+    fs::write(&input_path, ONE_SIDED_OPERATION_SCHEMA).unwrap();
+    let output_path = temp_dir.join("jobs");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("services.ts")).unwrap();
+
+    // Input present, output omitted: `inputType` only.
+    assert!(rendered.contains(
+        "  >({ name: \"Accept\", inputType: { transferTypeConverter: jobTransferTypeConverter } }),"
+    ));
+    // The mirror: output present, input omitted.
+    assert!(rendered.contains(
+        "  >({ name: \"Produce\", outputType: { transferTypeConverter: jobTransferTypeConverter } }),"
+    ));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// An `x-ts-name` override on an operation's I/O type moves every emitted
+/// reference with the type: the operation generic, the model/converter imports,
+/// and the converter named in the operation type info (the identifier is derived
+/// from the *resolved* type name).
+#[test]
+fn typescript_json_operation_type_info_follows_ts_name_override() {
+    let temp_dir = unique_output_path("ts-json-type-info-override");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("pages.nexusrpc.yaml");
+    fs::write(&input_path, OPERATION_IO_TS_NAME_SCHEMA).unwrap();
+    let output_path = temp_dir.join("pages");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let models = fs::read_to_string(output_path.join("models.ts")).unwrap();
+    let services = fs::read_to_string(output_path.join("services.ts")).unwrap();
+
+    assert!(models.contains("export interface RenamedPage {"));
+    assert!(models.contains("export const renamedPageTransferTypeConverter = new class"));
+    assert!(services.contains("import { getInputTransferTypeConverter, renamedPageTransferTypeConverter } from './models';"));
+    assert!(services.contains("import type { GetInput, RenamedPage } from './models';"));
+    assert!(services.contains("    RenamedPage\n"));
+    assert!(
+        services.contains(
+            "outputType: { transferTypeConverter: renamedPageTransferTypeConverter } }),"
+        )
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// An `x-ts-name` override on a model in *another* input file moves every
+/// reference the consuming module emits: the operation generic, the type-only
+/// model import, the converter value import, and the property annotation of a
+/// cross-module `$ref`. The override is declared in the referenced file, so only
+/// the tree-wide name manifest can resolve it (P14/P15).
+#[test]
+fn typescript_json_cross_module_ts_name_override_moves_every_reference() {
+    let temp_dir = unique_output_path("ts-json-cross-module-override");
+    let input_dir = write_cross_module_closure(&temp_dir);
+    let output_path = temp_dir.join("output");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let declaring = fs::read_to_string(output_path.join("content/page/models.ts")).unwrap();
+    assert!(declaring.contains("export interface RenamedPage {"));
+    assert!(declaring.contains("export const renamedPageTransferTypeConverter = new class"));
+
+    let services = fs::read_to_string(output_path.join("kb/services.ts")).unwrap();
+    for expected in [
+        "import { renamedPageTransferTypeConverter } from '../content/page/models';",
+        "import type { RenamedPage } from '../content/page/models';",
+        "    RenamedPage\n",
+        "outputType: { transferTypeConverter: renamedPageTransferTypeConverter } }),",
+    ] {
+        assert!(services.contains(expected), "{expected}\n{services}");
+    }
+
+    let models = fs::read_to_string(output_path.join("kb/models.ts")).unwrap();
+    for expected in [
+        "import { renamedPageTransferTypeConverter } from '../content/page/models';",
+        "import type { RenamedPage } from '../content/page/models';",
+        "  page?: RenamedPage;",
+        "page = renamedPageTransferTypeConverter.fromTransferType(raw.page);",
+    ] {
+        assert!(models.contains(expected), "{expected}\n{models}");
+    }
+    // Nothing names the pre-override identifier.
+    for stale in ["{ Page }", "pageTransferTypeConverter", ": Page", " Page\n"] {
+        assert!(!services.contains(stale), "{stale}\n{services}");
+        assert!(!models.contains(stale), "{stale}\n{models}");
+    }
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A name synthesized from a member follows that member's `x-ts-name`: the
+/// `DEFAULT_<FIELD>` constant is built from the emitted identifier, not the JSON
+/// key. A shape named after its *position* does not move — the hoisted inline
+/// object keeps `<Model><Property>`.
+/// See `specs/json-schema/PRINCIPLES.md` §15 and
+/// `specs/json-schema/features/default.md`.
+#[test]
+fn typescript_json_override_moves_member_derived_names_only() {
+    let temp_dir = unique_output_path("ts-json-member-derived-names");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("probe.yaml");
+    fs::write(&input_path, MEMBER_DERIVED_NAME_SCHEMA).unwrap();
+    let output_path = temp_dir.join("probe");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.ts")).unwrap();
+
+    // Member-derived: the override moves the constant with the field.
+    assert!(rendered.contains("export const DEFAULT_ATTEMPTS = 3;"));
+    assert!(!rendered.contains("DEFAULT_RETRY_COUNT"));
+    assert!(rendered.contains("attempts?: number;"));
+    // Position-derived: the hoisted shape keeps the position's name even though
+    // the declaring member is renamed.
+    assert!(rendered.contains("location?: ProbeAddress;"));
+    assert!(rendered.contains("export interface ProbeAddress {"));
+    assert!(!rendered.contains("ProbeLocation"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// The package barrel (`index.ts`) re-exports every module with `export *`, so two
+/// modules declaring the same type name land in one namespace there. TypeScript
+/// rejects that barrel outright (TS2308, "has already exported a member named
+/// `Page`"), and the model's `<model>TransferTypeConverter` collides alongside the
+/// type — so the generator must reject at load instead of emitting uncompilable
+/// output. See `specs/json-schema/PRINCIPLES.md` §15.
+#[test]
+fn typescript_json_rejects_same_type_name_in_two_modules() {
+    let temp_dir = unique_output_path("ts-json-barrel-collision");
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(input_dir.join("a")).unwrap();
+    fs::create_dir_all(input_dir.join("b")).unwrap();
+    let page = r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"title":{"type":"string"}}}"#;
+    fs::write(input_dir.join("a/page.json"), page).unwrap();
+    fs::write(input_dir.join("b/page.json"), page).unwrap();
+
+    let request = |output: &str| GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_dir.clone()],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join(output),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    };
+
+    let error = generate_to_file(&request("out"))
+        .expect_err("two modules declaring `Page` collide in the package barrel")
+        .to_string();
+    // The diagnostic names both modules — the bare type name appears twice and
+    // would otherwise read as one declaration seen twice.
+    assert!(error.contains("collision"), "{error}");
+    assert!(error.contains("a/page#Page"), "{error}");
+    assert!(error.contains("b/page#Page"), "{error}");
+    assert!(error.contains("x-ts-name"), "{error}");
+
+    // The documented escape hatch resolves it, and moves the converter with the
+    // type so the barrel re-exports two distinct pairs.
+    fs::write(
+        input_dir.join("b/page.json"),
+        r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","x-ts-name":"BPage","additionalProperties":false,"properties":{"title":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("out-renamed");
+    generate_to_file(&request("out-renamed")).expect("the override resolves the collision");
+    let models = fs::read_to_string(output_path.join("b/page/models.ts")).unwrap();
+    assert!(models.contains("export interface BPage {"), "{models}");
+    assert!(
+        models.contains("export const bPageTransferTypeConverter"),
+        "{models}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// Writes a closure whose service module declares no types of its own: both
+/// operation types are `$ref`s into sibling files. Returns the input directory.
+fn write_service_only_module_closure(temp_dir: &Path) -> PathBuf {
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(input_dir.join("a")).unwrap();
+    fs::create_dir_all(input_dir.join("b")).unwrap();
+    fs::write(
+        input_dir.join("a/page.json"),
+        r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"title":{"type":"string"}},"required":["title"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        input_dir.join("b/note.json"),
+        r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"body":{"type":"string"}},"required":["body"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        input_dir.join("svc.nexusrpc.yaml"),
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Svc:
+    fqn: example.v1.Svc
+    operations:
+      one:
+        input: { $ref: "a/page.json" }
+        output: { $ref: "b/note.json" }
+"#,
+    )
+    .unwrap();
+    input_dir
+}
+
+/// A module emits the types it declares; a type it only `$ref`s belongs to the
+/// module that declares it. Reachability pruning inferred "this front end does
+/// not scope by module" from a module owning nothing, so a service file whose
+/// every operation type is `$ref`d from elsewhere re-emitted all of them into
+/// its own module — a second copy of each interface and converter, which
+/// TypeScript rejects (`TS2440`, import conflicts with local declaration) and
+/// which the package barrel then re-exports twice (`TS2308`).
+#[test]
+fn typescript_json_service_module_without_own_types_imports_instead_of_reemitting() {
+    let temp_dir = unique_output_path("ts-json-service-only-module");
+    let input_dir = write_service_only_module_closure(&temp_dir);
+    let output_path = temp_dir.join("out");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    // Each type and its converter are declared exactly once, in the module that
+    // declares the schema.
+    let files = read_typescript_output_files(&output_path)
+        .into_values()
+        .collect::<Vec<_>>()
+        .join("\n");
+    for declaration in [
+        "export interface Page {",
+        "export interface Note {",
+        "export const pageTransferTypeConverter",
+        "export const noteTransferTypeConverter",
+    ] {
+        assert_eq!(
+            files.matches(declaration).count(),
+            1,
+            "expected exactly one `{declaration}`\n{files}"
+        );
+    }
+
+    // The service module declares nothing, so it emits no `models.ts` at all —
+    // an empty one would leave its barrel re-exporting a file with no exports,
+    // which TypeScript rejects (`TS2306`, "is not a module").
+    assert!(!output_path.join("svc/models.ts").exists());
+    let module_index = fs::read_to_string(output_path.join("svc/index.ts")).unwrap();
+    assert!(module_index.contains("export * from './services';"));
+    assert!(!module_index.contains("./models"), "{module_index}");
+
+    // It imports the types from the modules that own them.
+    let services = fs::read_to_string(output_path.join("svc/services.ts")).unwrap();
+    for expected in [
+        "import { pageTransferTypeConverter } from '../a/page/models';",
+        "import { noteTransferTypeConverter } from '../b/note/models';",
+    ] {
+        assert!(services.contains(expected), "{expected}\n{services}");
+    }
     fs::remove_dir_all(temp_dir).unwrap();
 }

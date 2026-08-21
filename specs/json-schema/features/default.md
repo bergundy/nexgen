@@ -133,7 +133,7 @@ The read-side surfacing synthesizes **one new identifier in two targets**
 | Target | Synthesized identifier | Scope | Collision risk |
 |---|---|---|---|
 | Go | `<Field>OrDefault()` method | struct method-set | a **declared** member whose name maps to `<Field>OrDefault` (Go forbids a field and method of the same name — a **hard compile error**); another `<Field>OrDefault` from a sibling field |
-| TypeScript | `DEFAULT_<FIELD>` const | module | another `DEFAULT_<FIELD>` from a field that case-maps the same ([[const]] synthesizes no TS identifier — the value is an inline literal) |
+| TypeScript | `DEFAULT_<FIELD>` const | module | another `DEFAULT_<FIELD>` from a field that case-maps the same. [[const]] synthesizes no named *type* in TS (the type closes to an inline literal) but does emit a module-scope `<FIELD>_CONST` binding holding the wire value, which shares this scope — unexported, yet still a redeclaration error if it coincides |
 | Python | none (native Pydantic field `default=`) | — | — |
 | Java | none (default folds into the existing getter) | — | — |
 
@@ -143,7 +143,15 @@ Per **P15** these participate in the single per-scope collision pass and
 Python and Java add no name, so they carry no default-specific collision.
 The rename **escape hatch** is the [[properties]] case-mapping override
 (`x-go-name`, …) on the *declaring* field — re-mapping it moves the
-synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names with it.
+synthesized `<Field>OrDefault` / `DEFAULT_<FIELD>` names with it, because
+both are named off the **emitted** member identifier rather than the JSON
+key (`retryCount` + `x-ts-name: attempts` → `DEFAULT_ATTEMPTS`). The
+derivation has to work that way for the hatch to open at all: two members
+that recase alike collide on `DEFAULT_<FIELD>`, and an override that moved
+the members apart while leaving both constants on the JSON-derived name
+would reject with a fix-it the author cannot act on — the only remaining
+escape being a rename of the JSON property, i.e. a change to the wire
+contract (P15, P7.1).
 
 Python and Java materialize-on-read for free (attribute default / getter);
 Go does so via the generated `<Field>OrDefault()` accessor. TypeScript has
@@ -181,7 +189,7 @@ default. Mechanisms (all empirically verified):
 | Language | Omit-unset mechanism |
 |---|---|
 | Go | `*T` with `,omitempty` → `nil` omitted by the stdlib encoder via the type-alias `MarshalJSON`. Pointer-to-zero-value still emits, so set-ness ≡ pointer-presence. |
-| TypeScript | `toIntermediate` skips keys whose value is `undefined` when building the intermediate value (PRINCIPLES TS §4). |
+| TypeScript | `toTransferType` skips keys whose value is `undefined` when building the transfer value (PRINCIPLES TS §4). |
 | Python | generated `@model_serializer(mode='wrap')` emits only `model_fields_set` keys — omits unset while the attribute still reads the default; explicit-set (incl. set-to-default) pins. No deep-equals. Baked into the model so the **default Temporal `pydantic_data_converter`** (which owns `to_json`, not us) honors it. |
 | Java | `@JsonInclude(NON_NULL)` — `null` (unset) omitted; getter still returns the default to the consumer. |
 

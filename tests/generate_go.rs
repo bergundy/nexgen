@@ -1844,3 +1844,354 @@ properties:
     assert!(!rendered.contains("\t\"time\"\n"));
     fs::remove_dir_all(temp_dir).unwrap();
 }
+
+/// The entry file of a two-file closure. `get`'s output is the model the *other*
+/// file declares, and `FindOutput.page` `$ref`s it from a property, so both
+/// cross-module reference shapes are covered.
+const CROSS_MODULE_ENTRY_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Pages:
+    fqn: example.pages.v1.Pages
+    operations:
+      get:
+        input: { $ref: "#/$defs/GetInput" }
+        output: { $ref: "content/page.json" }
+      find:
+        input: { $ref: "#/$defs/GetInput" }
+        output: { $ref: "#/$defs/FindOutput" }
+$defs:
+  GetInput:
+    type: object
+    additionalProperties: false
+    properties:
+      id: { type: string }
+  FindOutput:
+    type: object
+    additionalProperties: false
+    properties:
+      page: { $ref: "content/page.json" }
+"##;
+
+/// The referenced file. Its model carries the name override the *consuming*
+/// module has to resolve through.
+const CROSS_MODULE_PAGE_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+x-go-name: RenamedPage
+properties:
+  title: { type: string }
+"##;
+
+/// Writes the two-file cross-module closure into `dir` and returns the input
+/// directory to generate from.
+fn write_cross_module_closure(dir: &Path) -> PathBuf {
+    let input_dir = dir.join("input");
+    fs::create_dir_all(input_dir.join("content")).unwrap();
+    fs::write(
+        input_dir.join("kb.nexusrpc.yaml"),
+        CROSS_MODULE_ENTRY_SCHEMA,
+    )
+    .unwrap();
+    fs::write(
+        input_dir.join("content/page.json"),
+        CROSS_MODULE_PAGE_SCHEMA,
+    )
+    .unwrap();
+    input_dir
+}
+
+/// An `x-go-name` override on a model in *another* input file moves every
+/// reference the consuming module emits. Go collapses the whole closure into one
+/// flat package, so there is no import to fix — but the operation generic and the
+/// cross-module `$ref` field still name the type, and the override is declared in
+/// the referenced file, so only the tree-wide name manifest can resolve it
+/// (P14/P15).
+#[test]
+fn go_json_cross_module_go_name_override_moves_every_reference() {
+    let temp_dir = unique_output_path("go-json-cross-module-override");
+    let input_dir = write_cross_module_closure(&temp_dir);
+    let output_path = temp_dir.join("output");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let declaring = fs::read_to_string(output_path.join("content_page.go")).unwrap();
+    assert!(declaring.contains("type RenamedPage struct {"));
+
+    let consuming = fs::read_to_string(output_path.join("kb.go")).unwrap();
+    for expected in [
+        "Get nexus.OperationReference[GetInput, RenamedPage]",
+        "Get: nexus.NewOperationReference[GetInput, RenamedPage](\"Get\")",
+        "Page *RenamedPage `json:\"page,omitempty\"`",
+        "var tmp RenamedPage",
+    ] {
+        assert!(consuming.contains(expected), "{expected}\n{consuming}");
+    }
+    // Nothing names the pre-override identifier.
+    for stale in ["[GetInput, Page]", "*Page ", "var tmp Page\n"] {
+        assert!(!consuming.contains(stale), "{stale}\n{consuming}");
+    }
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A property carrying a per-language name override alongside a `const` and an
+/// inline object: the closed-value type is member-derived and moves with the
+/// override, while the hoisted shape is position-derived and does not.
+const MEMBER_DERIVED_NAME_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  retryCount:
+    type: integer
+    default: 3
+    x-go-name: Attempts
+  kind:
+    type: string
+    const: widget
+    x-go-name: Category
+  address:
+    type: object
+    x-go-name: Location
+    properties:
+      street: { type: string }
+"#;
+
+/// A name synthesized from a member follows that member's `x-go-name` — the
+/// `<Field>OrDefault()` accessor and the `<Type><Member>` closed-value type (plus
+/// its value constants). A shape named after its *position* does not move.
+/// See `specs/json-schema/PRINCIPLES.md` §15, `specs/json-schema/features/const.md`.
+#[test]
+fn go_json_override_moves_member_derived_names_only() {
+    let temp_dir = unique_output_path("go-json-member-derived-names");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("probe.yaml");
+    fs::write(&input_path, MEMBER_DERIVED_NAME_SCHEMA).unwrap();
+    let output_path = temp_dir.join("probe");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = read_go_output_files(&output_path)
+        .into_values()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Member-derived: accessor, closed-value type, and its value constant.
+    assert!(rendered.contains("func (m Probe) AttemptsOrDefault() int64 {"));
+    assert!(rendered.contains("type ProbeCategory string"));
+    assert!(rendered.contains("const ProbeCategoryWidget ProbeCategory = \"widget\""));
+    assert!(!rendered.contains("ProbeKind"));
+    // Position-derived: the hoisted shape keeps the position's name.
+    assert!(rendered.contains("Location *ProbeAddress `json:\"address,omitempty\"`"));
+    assert!(rendered.contains("type ProbeAddress struct {"));
+    assert!(!rendered.contains("ProbeLocation"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// Go flattens every module into one package, so its collision scope is the whole
+/// input closure, not the module. Two modules declaring the same type name are a
+/// redeclaration in that single package — uncompilable Go, previously emitted
+/// without a diagnostic because the pass scoped collisions per module.
+/// See `specs/json-schema/PRINCIPLES.md` §15 and
+/// `specs/json-schema/generated-file-layout.md`.
+#[test]
+fn go_json_rejects_same_type_name_in_two_modules() {
+    let temp_dir = unique_output_path("go-json-flat-package-collision");
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(input_dir.join("a")).unwrap();
+    fs::create_dir_all(input_dir.join("b")).unwrap();
+    let page = r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string"}}}"#;
+    fs::write(input_dir.join("a/page.json"), page).unwrap();
+    fs::write(input_dir.join("b/page.json"), page).unwrap();
+    fs::write(
+        input_dir.join("root.nexusrpc.yaml"),
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Svc:
+    fqn: example.v1.Svc
+    operations:
+      one:
+        input: { $ref: "a/page.json" }
+        output:
+          type: object
+          additionalProperties: false
+          properties: { ok: { type: boolean } }
+          required: [ok]
+      two:
+        input: { $ref: "b/page.json" }
+"##,
+    )
+    .unwrap();
+
+    let error = generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_dir.clone()],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("out"),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .expect_err("two modules declaring `Page` collide in Go's flat package")
+    .to_string();
+    // The diagnostic names both modules — the bare type name appears twice and
+    // would otherwise read as one declaration seen twice.
+    assert!(error.contains("collision"), "{error}");
+    assert!(error.contains("a/page#Page"), "{error}");
+    assert!(error.contains("b/page#Page"), "{error}");
+
+    // The same closure is fine in a language whose modules are separate scopes.
+    // Java gives each module its own sub-package (`…pkg.a.page`, `…pkg.b.page`)
+    // and emits no aggregating barrel, so the two `Page` classes stay distinct.
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Java,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("pkg"),
+        format: false,
+        generate_native_api: false,
+        java_package_name: Some("com.example.pkg".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .expect("separate Java packages keep `Page` apart");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A service enters the collision pass in the module that declares it. Keying the
+/// insert on the root module meant that in multi-input mode services never entered
+/// the pass at all, so this clash — which rejects when the same file is the only
+/// input — was silently accepted.
+#[test]
+fn go_json_rejects_service_clashing_with_a_model_in_multi_input() {
+    let temp_dir = unique_output_path("go-json-multi-input-service-clash");
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(input_dir.join("sub")).unwrap();
+    fs::write(
+        input_dir.join("sub/api.nexusrpc.yaml"),
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Thing:
+    fqn: example.v1.Thing
+    operations:
+      doIt:
+        input: { $ref: "#/$defs/Thing" }
+$defs:
+  Thing:
+    type: object
+    properties:
+      id: { type: string }
+"##,
+    )
+    .unwrap();
+    fs::write(
+        input_dir.join("root.nexusrpc.yaml"),
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+$defs:
+  Root:
+    type: object
+    properties:
+      x: { type: string }
+"##,
+    )
+    .unwrap();
+
+    let error = generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("out"),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .expect_err("a service and a model in one module both map to `Thing`")
+    .to_string();
+    assert!(
+        error.contains("collision") && error.contains("Thing"),
+        "{error}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// Go flattens every module into one package, so re-emitting a `$ref`d type into
+/// the referencing service's module put two `type Page struct` in that package —
+/// `Page redeclared in this block`, confirmed with the Go compiler. It happened
+/// whenever the service module declared no types of its own, because reachability
+/// pruning read "this module owns nothing" as "this front end does not scope by
+/// module" and kept every referenced declaration.
+#[test]
+fn go_json_service_module_without_own_types_does_not_redeclare_refs() {
+    let temp_dir = unique_output_path("go-json-service-only-module");
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(input_dir.join("a")).unwrap();
+    fs::write(
+        input_dir.join("a/page.json"),
+        r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"title":{"type":"string"}},"required":["title"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        input_dir.join("svc.nexusrpc.yaml"),
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Svc:
+    fqn: example.v1.Svc
+    operations:
+      one:
+        input: { $ref: "a/page.json" }
+"#,
+    )
+    .unwrap();
+
+    let output_path = temp_dir.join("out");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let rendered = read_go_output_files(&output_path)
+        .into_values()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        rendered.matches("type Page struct {").count(),
+        1,
+        "`Page` must be declared once in the flat package\n{rendered}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}

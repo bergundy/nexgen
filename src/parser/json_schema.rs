@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -522,7 +522,27 @@ fn parse_json_documents(
             }
         }
         if root_is_schema_shaped(&doc.root) && !doc.root.is_bare_ref() {
-            let model_name = root_type_name(path).to_upper_camel_case();
+            let model_name = root_model_name(path);
+            // The root type and the file's `$defs` share one namespace (P15), and
+            // the root's derived name *is* its model identity — the key every
+            // `$ref` resolves through and every target emits one type for. A
+            // `$defs` entry of that name is therefore a second schema under one
+            // identity, which no `x-<lang>-name` override can separate (an
+            // override moves the emitted identifier, not the identity), so the
+            // only fixes are renames. Reject rather than let one shape win.
+            if doc
+                .defs
+                .as_ref()
+                .is_some_and(|defs| defs.contains_key(&model_name))
+            {
+                return Err(Error::InvalidJsonSchema {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "the root schema derives the type name `{model_name}` from the file name `{}`, and the same file declares `$defs.{model_name}`; the two are different schemas that would emit one type. Rename the `$defs` entry (and the `$ref`s that point at it), or rename the file so the root schema derives a different name — an `x-<lang>-name` override cannot separate them, because the derived name is the model's identity and not just its emitted identifier (P15 — the generator never auto-mangles)",
+                        root_file_name(path),
+                    ),
+                });
+            }
             models.insert(
                 TypeKey::Root(canonical_path.clone()),
                 JsonModel {
@@ -614,7 +634,11 @@ fn api_spec_from_parsed_json_documents(
                 if module_exported {
                     TypeDeclEntry::module_export(declaration)
                 } else {
-                    TypeDeclEntry::new(declaration)
+                    // Declared by another input file. Marking it foreign rather
+                    // than merely "not exported" is what lets a service file that
+                    // declares no types of its own still import these instead of
+                    // re-emitting them into its own module.
+                    TypeDeclEntry::foreign(declaration)
                 },
             )
         })
@@ -2952,15 +2976,16 @@ fn is_inline_object_shape(schema: &Schema) -> bool {
 /// `$ref` at it. Every target has to materialize a *type* for such a shape: Go a
 /// struct (plus a defined type to carry a union's marker method), Java a class
 /// (to `implement` a union interface), Python a `BaseModel` for Pydantic to
-/// select, TypeScript an interface plus the mapper that validates its members —
-/// so the shape needs a name; and once it has one, a named definition is exactly
-/// what every target already emits. Hoisting is therefore the whole feature:
-/// downstream the position holds an ordinary `$ref` and its target an ordinary
-/// model, so validation, ref resolution, P15, module exports, and emission all
-/// apply unchanged, and the inline form emits byte-identical code to the `$defs`
-/// + `$ref` form. See `specs/json-schema/features/properties.md` §"Naming an
-/// inline object shape" and `specs/json-schema/features/oneOf.md` §"Object
-/// branches — naming the inline shape".
+/// select, TypeScript an interface plus the converter that validates its members
+/// — so the shape needs a name; and once it has one, a named definition is
+/// exactly what every target already emits. Hoisting is therefore the whole
+/// feature: downstream the position holds an ordinary `$ref` and its target an
+/// ordinary model, so validation, ref resolution, P15, module exports, and
+/// emission all apply unchanged, and the inline form emits byte-identical code to
+/// the `$defs` + `$ref` form. See
+/// `specs/json-schema/features/properties.md` §"Naming an inline object shape"
+/// and `specs/json-schema/features/oneOf.md` §"Object branches — naming the
+/// inline shape".
 ///
 /// The one object left inline is the **free-form** object as a `oneOf` *branch*:
 /// there it is the union's object kind rather than a value position of its own, so
@@ -2977,12 +3002,18 @@ fn hoist_inline_object_shapes(
     docs: &mut IndexMap<PathBuf, (PathBuf, Document)>,
 ) -> Result<()> {
     for (path, doc) in docs.values_mut() {
+        // The type name the file's root schema derives from its file name, when
+        // the file has a root type at all (a Nexus-document envelope and a
+        // definitions-only file have none). A synthesized name that coincides
+        // with it is a P15 collision, checked where the shape is inserted below.
+        let root_model = (root_is_schema_shaped(&doc.root) && !doc.root.is_bare_ref())
+            .then(|| root_model_name(path));
         // Fixpoint: a hoisted definition is walked on the next pass, so a union
         // nested in a hoisted branch's property is hoisted too. Each pass
         // replaces at least one inline branch with a `$ref` (and never
         // introduces one), so the walk terminates.
         loop {
-            let mut hoisted: Vec<(String, Schema)> = Vec::new();
+            let mut hoisted: Vec<HoistedDef> = Vec::new();
             if let Some(defs) = doc.defs.as_mut() {
                 for (name, schema) in defs.iter_mut() {
                     hoist_model_inline_shapes(
@@ -2995,12 +3026,11 @@ fn hoist_inline_object_shapes(
                     )?;
                 }
             }
-            if root_is_schema_shaped(&doc.root) && !doc.root.is_bare_ref() {
-                let model_name = root_type_name(path).to_upper_camel_case();
+            if let Some(model_name) = &root_model {
                 hoist_model_inline_shapes(
                     language,
                     path,
-                    &model_name,
+                    model_name,
                     "root schema",
                     &mut doc.root,
                     &mut hoisted,
@@ -3038,12 +3068,27 @@ fn hoist_inline_object_shapes(
                 break;
             }
             let defs = doc.defs.get_or_insert_with(IndexMap::new);
-            for (name, schema) in hoisted {
+            for HoistedDef {
+                name,
+                origin,
+                schema,
+            } in hoisted
+            {
+                if root_model.as_deref() == Some(name.as_str()) {
+                    return Err(Error::InvalidJsonSchema {
+                        path: path.to_path_buf(),
+                        reason: format!(
+                            "the name `{name}` synthesized for the inline shape at `{origin}` is the type name the root schema derives from the file name `{}`; the two are different schemas that would emit one type. Name the inline shape with an `{}` override where it takes one (a `oneOf` branch, an array element, a map member), move it into `$defs` under a name of your own and `$ref` it, or rename the file so the root schema derives a different name (P15 — the generator never auto-mangles)",
+                            root_file_name(path),
+                            lang_name_keyword(language).unwrap_or("x-<lang>-name"),
+                        ),
+                    });
+                }
                 if defs.contains_key(&name) {
                     return Err(Error::InvalidJsonSchema {
                         path: path.to_path_buf(),
                         reason: format!(
-                            "the name `{name}` synthesized for an inline shape is already declared in `$defs`; rename either one, name the inline shape with an `{}` override where it takes one (a `oneOf` branch, an array element, a map member), or move it into `$defs` under a name of your own and `$ref` it (P15 — the generator never auto-mangles)",
+                            "the name `{name}` synthesized for the inline shape at `{origin}` is already declared in `$defs`; rename either one, name the inline shape with an `{}` override where it takes one (a `oneOf` branch, an array element, a map member), or move it into `$defs` under a name of your own and `$ref` it (P15 — the generator never auto-mangles)",
                             lang_name_keyword(language).unwrap_or("x-<lang>-name"),
                         ),
                     });
@@ -3053,6 +3098,22 @@ fn hoist_inline_object_shapes(
         }
     }
     Ok(())
+}
+
+/// One inline shape queued for insertion into `$defs` by
+/// [`hoist_inline_object_shapes`]: the name synthesized for it, the authored
+/// position it was written in, and the shape itself. The origin travels with the
+/// name so a collision diagnostic can say *where* the synthesized name came from
+/// — the author never wrote the name itself, so naming only the identifier would
+/// leave them hunting for the shape that produced it.
+struct HoistedDef {
+    /// The synthesized `$defs` key (or the shape's own `x-<lang>-name`).
+    name: String,
+    /// The authored position, as a keyword breadcrumb — for example
+    /// `$defs.User.properties.profile` or `root schema.items`.
+    origin: String,
+    /// The shape moved out of that position.
+    schema: Schema,
 }
 
 /// Hoists the inline shapes a model declares that need a name: the object
@@ -3067,7 +3128,7 @@ fn hoist_model_inline_shapes(
     model_name: &str,
     context: &str,
     schema: &mut Schema,
-    hoisted: &mut Vec<(String, Schema)>,
+    hoisted: &mut Vec<HoistedDef>,
 ) -> Result<()> {
     if let Some(branches) = schema.one_of.as_mut() {
         // The model *is* the union, so the union carries its own name and its
@@ -3136,7 +3197,7 @@ fn hoist_property_shape(
     property_name: &str,
     context: &str,
     property: &mut Schema,
-    hoisted: &mut Vec<(String, Schema)>,
+    hoisted: &mut Vec<HoistedDef>,
 ) -> Result<()> {
     if is_sum_type_union(property) {
         let branches = property.one_of.as_mut().expect("a union has branches");
@@ -3171,7 +3232,11 @@ fn hoist_property_shape(
             property.extra.insert(keyword.to_string(), value);
         }
     }
-    hoisted.push((property_name.to_string(), shape));
+    hoisted.push(HoistedDef {
+        name: property_name.to_string(),
+        origin: context.to_string(),
+        schema: shape,
+    });
     Ok(())
 }
 
@@ -3197,7 +3262,7 @@ fn hoist_subschema_shapes(
     base_name: &str,
     context: &str,
     schema: &mut Schema,
-    hoisted: &mut Vec<(String, Schema)>,
+    hoisted: &mut Vec<HoistedDef>,
 ) -> Result<()> {
     if let Some(items) = schema.items.as_mut() {
         hoist_subschema_shape(
@@ -3246,11 +3311,11 @@ fn hoist_subschema_shape(
     name: &str,
     context: &str,
     slot: &mut Schema,
-    hoisted: &mut Vec<(String, Schema)>,
+    hoisted: &mut Vec<HoistedDef>,
 ) -> Result<()> {
     if is_sum_type_union(slot) || is_inline_object_shape(slot) {
         let name = resolve_shape_name(language, name, slot, context)?;
-        move_into_defs(slot, name, hoisted);
+        move_into_defs(slot, name, context.to_string(), hoisted);
         return Ok(());
     }
     if hoist_nullable_object_branch(language, name, context, slot, hoisted)? {
@@ -3270,7 +3335,7 @@ fn hoist_nullable_object_branch(
     derived: &str,
     context: &str,
     slot: &mut Schema,
-    hoisted: &mut Vec<(String, Schema)>,
+    hoisted: &mut Vec<HoistedDef>,
 ) -> Result<bool> {
     if is_sum_type_union(slot) {
         return Ok(false);
@@ -3283,7 +3348,7 @@ fn hoist_nullable_object_branch(
         return Ok(false);
     };
     let name = resolve_shape_name(language, derived, branch, context)?;
-    move_into_defs(branch, name, hoisted);
+    move_into_defs(branch, name, context.to_string(), hoisted);
     Ok(true)
 }
 
@@ -3311,13 +3376,17 @@ fn resolve_shape_name(
 
 /// Replaces a schema position with a `$ref` at `name` and queues the shape that
 /// was written there for insertion into `$defs`.
-fn move_into_defs(slot: &mut Schema, name: String, hoisted: &mut Vec<(String, Schema)>) {
+fn move_into_defs(slot: &mut Schema, name: String, origin: String, hoisted: &mut Vec<HoistedDef>) {
     let shape = std::mem::take(slot);
     *slot = Schema {
         reference: Some(format!("#/$defs/{name}")),
         ..Schema::default()
     };
-    hoisted.push((name, shape));
+    hoisted.push(HoistedDef {
+        name,
+        origin,
+        schema: shape,
+    });
 }
 
 /// True when a `oneOf` node is a **sum type** — two or more non-`null` branches
@@ -3351,7 +3420,7 @@ fn hoist_union_object_branches(
     derived: &str,
     context: &str,
     branches: &mut [Schema],
-    hoisted: &mut Vec<(String, Schema)>,
+    hoisted: &mut Vec<HoistedDef>,
 ) -> Result<()> {
     let inline: Vec<usize> = branches
         .iter()
@@ -3390,7 +3459,12 @@ fn hoist_union_object_branches(
                 });
             }
         };
-        move_into_defs(&mut branches[index], name, hoisted);
+        move_into_defs(
+            &mut branches[index],
+            name,
+            format!("{context}.oneOf[{index}]"),
+            hoisted,
+        );
     }
     Ok(())
 }
@@ -4847,15 +4921,42 @@ fn insert_json_external_type(
     module_paths: Option<&BTreeMap<PathBuf, ModulePath>>,
 ) -> Result<()> {
     let type_spec = json_model_spec(model, docs, models, module_paths)?;
-    external_types
-        .entry(type_spec.name.as_str().to_string())
-        .or_insert_with(|| ExternalTypeBindingSpec {
-            external_type: ExternalTypeSpec::Json(type_spec),
-            reference: LanguageStringSpec::default(),
-            type_name: language_string(Some(model.model_name.clone())),
-            replacement: None,
-            authored_type: None,
-        });
+    // The map is keyed by the model's identity, and one model is reached from
+    // several positions (its own collection pass, each `$ref` at it, an
+    // operation's I/O), so re-inserting the *same* model is an ordinary no-op.
+    // Two *different* schemas arriving under one identity would collapse into a
+    // single emitted type — the loser's shape gone, every reference to it
+    // silently retargeted at the winner — so reject instead (P7.1/P15). The
+    // in-file cases are caught earlier with a fix-it that names the authored
+    // positions; this is the backstop that keeps any other path from collapsing
+    // silently.
+    match external_types.entry(type_spec.name.as_str().to_string()) {
+        btree_map::Entry::Occupied(existing) => {
+            if let ExternalTypeSpec::Json(previous) = &existing.get().external_type
+                && (previous.model_name != type_spec.model_name
+                    || previous.schema != type_spec.schema)
+            {
+                return Err(Error::InvalidJsonSchema {
+                    path: model.canonical_path.clone(),
+                    reason: format!(
+                        "two different JSON schemas share the model identity `{}` (emitted as `{}` and `{}`); rename one of them so each schema has an identity of its own (P15 — the generator never auto-mangles)",
+                        type_spec.name.as_str(),
+                        previous.model_name,
+                        type_spec.model_name,
+                    ),
+                });
+            }
+        }
+        btree_map::Entry::Vacant(slot) => {
+            slot.insert(ExternalTypeBindingSpec {
+                external_type: ExternalTypeSpec::Json(type_spec),
+                reference: LanguageStringSpec::default(),
+                type_name: language_string(Some(model.model_name.clone())),
+                replacement: None,
+                authored_type: None,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -5033,6 +5134,22 @@ fn root_type_name(path: &Path) -> String {
     path.file_name()
         .map(|value| strip_json_schema_extension(&value.to_string_lossy()).to_string())
         .unwrap_or_else(|| "Root".to_string())
+}
+
+/// The type name a file's root schema derives: its base name, recased (see
+/// `specs/json-schema/features/ref.md` §"Type-name derivation"). The single
+/// source of the root model's identity — model collection, the hoist collision
+/// check, and the root-vs-`$defs` collision check all read it from here.
+fn root_model_name(path: &Path) -> String {
+    root_type_name(path).to_upper_camel_case()
+}
+
+/// The input file's name as authored, for a diagnostic that has to explain that a
+/// name was derived from it.
+fn root_file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -5361,6 +5478,16 @@ fn type_identifier(language: Language, model_name: &str, schema: &Schema) -> Str
         .unwrap_or_else(|| model_name.to_string())
 }
 
+/// The TypeScript identifier of a model's `TransferTypeConverter` instance,
+/// derived from the model's resolved type identifier. This is the single owner of
+/// the name: the P15 collision pass enters it into the module namespace here and
+/// the TypeScript emitters (model declaration, cross-module value imports,
+/// operation `inputType`/`outputType`) ask for it, so the derivation is never
+/// spelled twice and the check can never drift from emission.
+pub(crate) fn ts_transfer_type_converter_name(type_ident: &str) -> String {
+    format!("{}TransferTypeConverter", type_ident.to_lower_camel_case())
+}
+
 /// Whether a property schema is a scalar closed value set (`const`/`enum`) that
 /// synthesizes a Go defined type + value constants / Java value constants.
 fn schema_closed_values(schema: &Schema) -> Vec<Value> {
@@ -5578,15 +5705,37 @@ pub(crate) struct ManifestService {
     /// (`x-<lang>-name`), if the active target carries one. `None` derives from
     /// `name`.
     pub(crate) code_name: Option<String>,
+    /// The module the declaring file emits into — the scope this service's
+    /// identifier occupies. Empty for the single-input root.
+    pub(crate) module_key: String,
 }
 
 impl ManifestService {
     /// The emitted service code identifier for `language`: the verbatim override
     /// when present, else the derived name.
+    ///
+    /// TypeScript binds a service to a lower-camel `const` (`chatService`), not a
+    /// type name, so it derives through the member pipeline; Go's `var`, Python's
+    /// `class`, and Java's class all carry the name as authored. Deriving all four
+    /// as type names claimed a TypeScript service collided with a same-named
+    /// model, which it never can — the emitted identifiers differ in case.
     fn code_ident(&self, language: Language) -> String {
-        self.code_name
-            .clone()
-            .unwrap_or_else(|| recase_type_name(language, &self.name))
+        self.code_name.clone().unwrap_or_else(|| match language {
+            Language::TypeScript => recase_member(Language::TypeScript, &self.name),
+            _ => recase_type_name(language, &self.name),
+        })
+    }
+
+    /// How this service is named in a collision diagnostic. The module qualifier
+    /// matters in Go, whose scope spans every module: two same-named services in
+    /// different modules are a real clash, and identical origin text would make
+    /// them read as one declaration seen twice.
+    fn origin_label(&self) -> String {
+        if self.module_key.is_empty() {
+            format!("service `{}`", self.name)
+        } else {
+            format!("service `{}` in module `{}`", self.name, self.module_key)
+        }
     }
 }
 
@@ -5626,7 +5775,7 @@ pub(crate) fn build_name_manifest(
             .insert(model.full_name.clone(), type_ident.clone());
         ns_models.push(NsModel {
             module_key: model.module_key.clone(),
-            full_name: model.local_name.clone(),
+            full_name: model.full_name.clone(),
             type_ident,
             schema,
         });
@@ -5636,17 +5785,41 @@ pub(crate) fn build_name_manifest(
         return Ok(manifest);
     }
 
-    // Group modules → their own top-level namespace.
+    // Each emitted scope gets its own top-level namespace. Which scope that is
+    // depends on how the target resolves a name across the emitted file set, so
+    // it is a property of the generator's layout rather than of the schema:
+    //
+    // - **Go, TypeScript, Python** resolve run-wide, so `None` below means "every
+    //   module at once". Go flattens every module into a single package, so two
+    //   same-named types in different modules are plain redeclarations. TS and
+    //   Python do keep a namespace per module, but each emits a root barrel that
+    //   re-exports every module's top-level names into one namespace — `index.ts`
+    //   with `export *` per module, and `__init__.py` with named re-exports — so a
+    //   name emitted twice collides there. TypeScript rejects the barrel (TS2308,
+    //   "has already exported a member named ..."); Python silently binds whichever
+    //   import runs last, which is exactly the silent incorrectness P7 forbids.
+    // - **Java and .NET** resolve per module: each module lands in its own
+    //   sub-package/namespace (`com.example.api.content.page`,
+    //   `Nexgen.Generated.Content.Page`) and neither emits an aggregating barrel,
+    //   so the same type name in two modules is two distinct qualified names.
+    //
+    // A module with services but no models still has a scope, so its service
+    // identifiers are checked against the boilerplate.
     let module_keys: BTreeSet<String> = ns_models
         .iter()
         .map(|model| model.module_key.clone())
+        .chain(services.iter().map(|service| service.module_key.clone()))
         .collect();
-    for module_key in &module_keys {
+    let scopes: Vec<Option<String>> = if scope_is_run_wide(language) {
+        vec![None]
+    } else {
+        module_keys.into_iter().map(Some).collect()
+    };
+    for scope in &scopes {
+        let in_scope = |key: &str| scope.as_deref().is_none_or(|scope| scope == key);
+        let module_key: &str = scope.as_deref().unwrap_or_default();
         let mut top = Namespace::default();
-        for model in ns_models
-            .iter()
-            .filter(|model| &model.module_key == module_key)
-        {
+        for model in ns_models.iter().filter(|model| in_scope(&model.module_key)) {
             top.insert(
                 language,
                 model.type_ident.clone(),
@@ -5673,21 +5846,28 @@ pub(crate) fn build_name_manifest(
                 format!("generated runtime identifier `{ident}`"),
             )?;
         }
-        // Services and their derived bindings live in the root module scope of
-        // the file that declares them (the single-input scope).
-        if module_key.is_empty() {
-            for service in services {
-                top.insert(
-                    language,
-                    service.code_ident(language),
-                    format!("service `{}`", service.name),
-                )?;
-            }
+        // A service's bindings live in the module scope of the file that declares
+        // it — which is the root module only in single-input mode. Keying the
+        // insert on an empty module key meant that in multi-input mode services
+        // never entered the pass at all, so a service clashing with a model in its
+        // own module generated uncompilable code without a diagnostic.
+        for service in services
+            .iter()
+            .filter(|service| in_scope(&service.module_key))
+        {
+            top.insert(
+                language,
+                service.code_ident(language),
+                service.origin_label(),
+            )?;
         }
-        // TypeScript `DEFAULT_<FIELD>` constants share the module scope; make
-        // them participate rather than silently coexist (P15).
+        // TypeScript `DEFAULT_<FIELD>` / `<FIELD>_CONST` constants and per-model
+        // transfer type converters share the module scope; make them participate
+        // rather than silently coexist (P15).
         if language == Language::TypeScript {
             collect_ts_default_constants(module_key, &ns_models, &mut top)?;
+            collect_ts_const_constants(module_key, &ns_models, &mut top)?;
+            collect_ts_transfer_type_converters(module_key, &ns_models, &mut top)?;
         }
     }
 
@@ -5705,9 +5885,15 @@ pub(crate) fn build_name_manifest(
 ///   and `ValidationError` live in the models' own package; every other runtime
 ///   symbol is unexported (`addViolations`, `parseSpecInteger`, …) and cannot
 ///   collide with an exported user type.
-/// - TypeScript (`src/generator/json/typescript.rs`): `Violation` (interface)
-///   and `ValidationError` (class) are imported into every model module; the
-///   helper functions (`isPlainObject`, `collect`, …) are `camelCase`.
+/// - TypeScript (`src/generator/json/typescript.rs`): nexus-rpc's
+///   `TransferTypeConverter` is a bare named import in every model module (the
+///   contract each model's converter implements), so a user type of that name is
+///   an import-versus-local-declaration conflict. `Violation` (interface) and
+///   `ValidationError` (class) reach `models.ts` only through the namespace
+///   import `__nexgenDefinitions`, but the package barrel re-exports both from
+///   `./definitions` beside `export *` of the model modules, so a user type of
+///   either name is silently shadowed out of the package surface (P7). The
+///   runtime helper functions (`isPlainObject`, `collect`, …) are `camelCase`.
 /// - Python (`src/generator/json/python.rs`): the `UpperCamelCase` runtime type
 ///   aliases imported into model modules (`SpecInt`, the materialized temporal
 ///   and base64 field aliases). There is no generated `Violation`/error class —
@@ -5719,7 +5905,8 @@ pub(crate) fn build_name_manifest(
 ///   (`TemporalSupport`/`Base64Support` are schema-dependent, so excluded.)
 fn boilerplate_idents(language: Language) -> &'static [&'static str] {
     match language {
-        Language::Go | Language::TypeScript => &["Violation", "ValidationError"],
+        Language::Go => &["Violation", "ValidationError"],
+        Language::TypeScript => &["Violation", "ValidationError", "TransferTypeConverter"],
         Language::Python => &[
             "SpecInt",
             "DateTimeField",
@@ -5731,6 +5918,25 @@ fn boilerplate_idents(language: Language) -> &'static [&'static str] {
         ],
         Language::Java => &["Violation", "ValidationException", "SpecNumbers"],
         _ => &[],
+    }
+}
+
+/// Whether `language` resolves top-level names across the whole run rather than
+/// per module — that is, whether two modules may each declare the same name.
+///
+/// This is a property of the emitted layout, not of the schema:
+///
+/// - Go flattens every module into one package, so a name emitted twice is a
+///   redeclaration in that package.
+/// - TypeScript and Python do emit a namespace per module, but both also emit a
+///   root barrel (`index.ts` / `__init__.py`) that lifts every module's top-level
+///   names into a single namespace, so a name emitted twice collides there.
+/// - Java and .NET give each module its own sub-package/namespace and emit no
+///   aggregating barrel, so the same name in two modules stays unambiguous.
+const fn scope_is_run_wide(language: Language) -> bool {
+    match language {
+        Language::Go | Language::TypeScript | Language::Python => true,
+        Language::Java | Language::Dotnet | Language::Ruby => false,
     }
 }
 
@@ -5764,6 +5970,7 @@ fn manifest_inputs_from_spec(
         .map(|service| ManifestService {
             name: service.name.clone(),
             code_name: service.code_name.for_language(language).map(str::to_string),
+            module_key: spec.module_path.as_module_key(),
         })
         .collect();
     (models, services)
@@ -5805,11 +6012,14 @@ fn collect_synthesized_top_level(
         if values.is_empty() {
             continue;
         }
-        // The Go closed-value defined type is `<Type><Field>` and each value
-        // constant is `<definedType><valueSuffix>` — derived from the recased
-        // field name (the generator names these off `go_field_name`, so the
-        // collision pass matches the emitted identifiers).
-        let defined_type = format!("{type_ident}{}", recase_member(Language::Go, json_name));
+        // The Go closed-value defined type is `<Type><Member>` and each value
+        // constant is `<definedType><valueSuffix>`. Both derive from the *emitted*
+        // member identifier, so an `x-go-name` override moves them with the field
+        // (P15) — and so this pass matches what the generator emits.
+        let defined_type = format!(
+            "{type_ident}{}",
+            member_identifier(Language::Go, json_name, property)
+        );
         top.insert(
             language,
             defined_type.clone(),
@@ -5907,10 +6117,17 @@ fn validate_member_scope(language: Language, model_full_name: &str, schema: &Sch
 }
 
 /// TypeScript `DEFAULT_<FIELD>` constants (module scope). The generator names a
-/// default constant `DEFAULT_<FIELD>` when the field name is unique across the
-/// module's models, else `DEFAULT_<MODEL>_<FIELD>`. Replicate that name and
+/// default constant `DEFAULT_<FIELD>` when the member identifier is unique across
+/// the module's models, else `DEFAULT_<MODEL>_<FIELD>`. Replicate that name and
 /// enter it into the shared module namespace so a genuine clash rejects (P15)
 /// rather than silently coexisting behind the model-name prefix.
+///
+/// The identifier is built from the **emitted member identifier**, so an
+/// `x-ts-name` override on the declaring property moves this constant with it —
+/// a name synthesized *from the member* follows the member (P15). Were it built
+/// from the JSON name, two members that recase alike would collide here with no
+/// way to author around it: the override would move the members apart while
+/// leaving both constants on the colliding name.
 fn collect_ts_default_constants(
     module_key: &str,
     models: &[NsModel],
@@ -5920,20 +6137,19 @@ fn collect_ts_default_constants(
         .iter()
         .filter(|model| model.module_key == module_key)
         .collect();
-    // How many models declare a scalar-default field with this JSON name.
-    let field_count = |json_name: &str| -> usize {
+    // How many models declare a scalar-default field emitting this identifier.
+    let field_count = |member_ident: &str| -> usize {
         group
             .iter()
             .filter(|model| {
-                model
-                    .schema
-                    .properties
-                    .as_ref()
-                    .and_then(|properties| properties.get(json_name))
-                    .and_then(|property| property.extra.get("default"))
-                    .is_some_and(|default| {
-                        !default.is_null() && !default.is_object() && !default.is_array()
+                model.schema.properties.as_ref().is_some_and(|properties| {
+                    properties.iter().any(|(json_name, property)| {
+                        member_identifier(Language::TypeScript, json_name, property) == member_ident
+                            && property.extra.get("default").is_some_and(|default| {
+                                !default.is_null() && !default.is_object() && !default.is_array()
+                            })
                     })
+                })
             })
             .count()
     };
@@ -5948,8 +6164,9 @@ fn collect_ts_default_constants(
             if default.is_null() || default.is_object() || default.is_array() {
                 continue;
             }
-            let field_shouty = json_name.to_shouty_snake_case();
-            let ident = if field_count(json_name) == 1 {
+            let member_ident = member_identifier(Language::TypeScript, json_name, property);
+            let field_shouty = member_ident.to_shouty_snake_case();
+            let ident = if field_count(&member_ident) == 1 {
                 format!("DEFAULT_{field_shouty}")
             } else {
                 format!(
@@ -5963,6 +6180,89 @@ fn collect_ts_default_constants(
                 format!("`{}.{json_name}` DEFAULT_ constant", model.full_name),
             )?;
         }
+    }
+    Ok(())
+}
+
+/// TypeScript `<FIELD>_CONST` constants (module scope). A `const`-bearing member
+/// emits a module-level constant holding the fixed wire value, named
+/// `<FIELD>_CONST` when the member identifier is unique across the module's
+/// models, else `<MODEL>_<FIELD>_CONST`. The constant is not exported, but it is
+/// still a module-scope binding: a clash with any other module-scope identifier
+/// is a TypeScript redeclaration error, so it belongs in the collision pass
+/// (P15) rather than being emitted twice.
+///
+/// Like the `DEFAULT_` constant, the identifier is built from the **emitted
+/// member identifier**, so an `x-ts-name` override moves it with the member.
+fn collect_ts_const_constants(
+    module_key: &str,
+    models: &[NsModel],
+    top: &mut Namespace,
+) -> Result<()> {
+    let group: Vec<&NsModel> = models
+        .iter()
+        .filter(|model| model.module_key == module_key)
+        .collect();
+    // How many models declare a `const` member emitting this identifier.
+    let field_count = |member_ident: &str| -> usize {
+        group
+            .iter()
+            .filter(|model| {
+                model.schema.properties.as_ref().is_some_and(|properties| {
+                    properties.iter().any(|(json_name, property)| {
+                        member_identifier(Language::TypeScript, json_name, property) == member_ident
+                            && property.extra.contains_key("const")
+                    })
+                })
+            })
+            .count()
+    };
+    for model in &group {
+        let Some(properties) = &model.schema.properties else {
+            continue;
+        };
+        for (json_name, property) in properties {
+            if !property.extra.contains_key("const") {
+                continue;
+            }
+            let member_ident = member_identifier(Language::TypeScript, json_name, property);
+            let field_shouty = member_ident.to_shouty_snake_case();
+            let ident = if field_count(&member_ident) == 1 {
+                format!("{field_shouty}_CONST")
+            } else {
+                format!(
+                    "{}_{field_shouty}_CONST",
+                    model.type_ident.to_shouty_snake_case()
+                )
+            };
+            top.insert(
+                Language::TypeScript,
+                ident,
+                format!("`{}.{json_name}` _CONST constant", model.full_name),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// TypeScript per-model `TransferTypeConverter` instances (module scope). The
+/// identifier is derived from the model's type identifier
+/// ([`ts_transfer_type_converter_name`]), and lower-camel-casing is not
+/// injective over the distinct `UpperCamelCase` type names — `HTTPError` and
+/// `HttpError` both derive `httpErrorTransferTypeConverter` — so the derived
+/// name has to enter the shared module namespace too, or two models emit the
+/// same `export const` (P15).
+fn collect_ts_transfer_type_converters(
+    module_key: &str,
+    models: &[NsModel],
+    top: &mut Namespace,
+) -> Result<()> {
+    for model in models.iter().filter(|model| model.module_key == module_key) {
+        top.insert(
+            Language::TypeScript,
+            ts_transfer_type_converter_name(&model.type_ident),
+            format!("type `{}` transfer type converter", model.full_name),
+        )?;
     }
     Ok(())
 }
@@ -5997,7 +6297,7 @@ $defs:
       value: { type: string }
 "##,
         );
-        assert!(spec.types.values().all(|entry| entry.module_exported));
+        assert!(spec.types.values().all(|entry| entry.is_module_export()));
         assert_eq!(spec.types.len(), 2);
     }
 
@@ -8884,6 +9184,181 @@ properties:
         parse_for(Language::Go, input).expect("override resolves the Go collision");
     }
 
+    /// TypeScript binds a service to a lower-camel `const`, so a service and a
+    /// model of the same name emit `thing` and `Thing` and never collide. Deriving
+    /// the service identifier as a type name claimed they did, rejecting a schema
+    /// that generates cleanly — while missing the clash that can actually happen,
+    /// a service whose lower-camel form lands on a model's converter const.
+    #[test]
+    fn typescript_service_identifier_is_lower_camel() {
+        let service_and_model = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Thing:
+    fqn: example.v1.Thing
+    operations:
+      doIt:
+        input: { $ref: "#/$defs/Thing" }
+$defs:
+  Thing:
+    type: object
+    properties:
+      id: { type: string }
+"##;
+        parse_for(Language::TypeScript, service_and_model)
+            .expect("`thing` and `Thing` are distinct TypeScript identifiers");
+        // Python names the service class `Thing`, so there it is a real clash.
+        let error = reject_for(Language::Python, service_and_model);
+        assert!(
+            error.contains("collision") && error.contains("Thing"),
+            "{error}"
+        );
+
+        // The clash TypeScript does have: the service's lower-camel form is the
+        // model's converter identifier.
+        let converter_clash = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  ThingTransferTypeConverter:
+    fqn: example.v1.Thing
+    operations:
+      doIt:
+        input: { $ref: "#/$defs/Thing" }
+$defs:
+  Thing:
+    type: object
+    properties:
+      id: { type: string }
+"##;
+        let error = reject_for(Language::TypeScript, converter_clash);
+        assert!(error.contains("thingTransferTypeConverter"), "{error}");
+    }
+
+    /// A name synthesized *from a member* follows that member's override (P15).
+    /// Two default-bearing members that recase alike collide on the TS
+    /// `DEFAULT_<FIELD>` constant; the override has to reach the constant, or the
+    /// rejection's own fix-it cannot resolve it and the only escape left is
+    /// renaming the JSON property — a change to the wire contract.
+    #[test]
+    fn default_constant_collision_resolved_by_override() {
+        let colliding = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  retryCount: { type: string, default: "a" }
+  retry_count: { type: string, default: "b" }
+"#;
+        let error = reject_for(Language::TypeScript, colliding);
+        assert!(error.contains("collision"), "{error}");
+
+        let resolved = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  retryCount: { type: string, default: "a" }
+  retry_count: { type: string, default: "b", x-ts-name: retriesTwo }
+"#;
+        parse_for(Language::TypeScript, resolved)
+            .expect("the override moves the DEFAULT_ constant with the member");
+    }
+
+    /// The Go closed-value defined type is `<Type><Member>` off the *emitted*
+    /// member identifier, so an `x-go-name` override moves it out of a clash with
+    /// a declared type — matching Java's nested value class, which already
+    /// followed the override.
+    #[test]
+    fn closed_value_type_collision_resolved_by_override() {
+        // The harness names the file-root model `Api`, so the synthesized
+        // closed-value type is `ApiKind` — which the `$defs` entry then clashes
+        // with.
+        let colliding = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  kind: { type: string, const: widget }
+$defs:
+  ApiKind:
+    type: object
+    properties:
+      x: { type: string }
+"#;
+        let error = reject_for(Language::Go, colliding);
+        assert!(
+            error.contains("collision") && error.contains("ApiKind"),
+            "{error}"
+        );
+
+        let resolved = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  kind: { type: string, const: widget, x-go-name: Category }
+$defs:
+  ApiKind:
+    type: object
+    properties:
+      x: { type: string }
+"#;
+        parse_for(Language::Go, resolved)
+            .expect("the override moves the closed-value type with the member");
+    }
+
+    /// A `const` member's `<FIELD>_CONST` binding is module-scope, so it takes
+    /// part in the collision pass even though it is not exported. Two of them can
+    /// coincide through the model-name disambiguator — `A.kind` is prefixed
+    /// (`kind` is not unique) to `A_KIND_CONST`, which is exactly what the unique
+    /// `C.aKind` produces unprefixed. Emitting both is a duplicate `const` in one
+    /// module, a TypeScript `SyntaxError`.
+    #[test]
+    fn const_constant_collision_rejects_and_is_resolved_by_override() {
+        let colliding = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+$defs:
+  A:
+    type: object
+    properties:
+      kind: { type: string, const: one }
+  B:
+    type: object
+    properties:
+      kind: { type: string, const: two }
+  C:
+    type: object
+    properties:
+      aKind: { type: string, const: three }
+"#;
+        let error = reject_for(Language::TypeScript, colliding);
+        assert!(
+            error.contains("collision") && error.contains("A_KIND_CONST"),
+            "{error}"
+        );
+
+        let resolved = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+$defs:
+  A:
+    type: object
+    properties:
+      kind: { type: string, const: one }
+  B:
+    type: object
+    properties:
+      kind: { type: string, const: two }
+  C:
+    type: object
+    properties:
+      aKind: { type: string, const: three, x-ts-name: cKind }
+"#;
+        parse_for(Language::TypeScript, resolved)
+            .expect("the override moves the _CONST binding with the member");
+    }
+
     #[test]
     fn value_constant_collision_resolved_by_enum_names_override() {
         // `"user-admin"` and `"user_admin"` both encode to the Go value constant
@@ -8968,6 +9443,137 @@ $defs:
         let error = reject_for(Language::Python, input);
         assert!(
             error.contains("collision") && error.contains("UserProfile"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_root_type_name_collision_with_defs_entry() {
+        // `thing.yaml`'s root schema derives the type name `Thing`, and the same
+        // file declares `$defs.Thing` — two different schemas under one model
+        // identity, which is a P15 collision in every target's namespace. The
+        // diagnostic names the identifier and both origins (the root schema's
+        // file-name derivation and the `$defs` entry), and the fix-it is a rename:
+        // an `x-<lang>-name` moves the emitted identifier, not the identity.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  rootOnlyField: { type: string }
+  nested: { $ref: "#/$defs/Thing" }
+$defs:
+  Thing:
+    type: object
+    properties: { defOnlyField: { type: integer } }
+"##;
+        for language in [
+            Language::Go,
+            Language::TypeScript,
+            Language::Python,
+            Language::Java,
+        ] {
+            let error = parse_api_spec_from_json_schema_for_language(
+                language,
+                input,
+                PathBuf::from("thing.yaml"),
+            )
+            .expect_err("a root/`$defs` name collision is a load reject")
+            .to_string();
+            assert!(
+                error.contains("`Thing`")
+                    && error.contains("file name `thing.yaml`")
+                    && error.contains("`$defs.Thing`")
+                    && error.contains("Rename the `$defs` entry")
+                    && error.contains("rename the file")
+                    && error.contains("`x-<lang>-name` override cannot separate them"),
+                "{language:?}: {error}"
+            );
+        }
+
+        // The collision is the *root type's* name, so a definitions-only file of
+        // the same base name (no file-root type) keeps loading.
+        let definitions_only = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  Thing:
+    type: object
+    properties: { defOnlyField: { type: integer } }
+"##;
+        parse_api_spec_from_json_schema_for_language(
+            Language::Go,
+            definitions_only,
+            PathBuf::from("thing.yaml"),
+        )
+        .expect("a definitions-only file emits no root type, so nothing collides");
+    }
+
+    #[test]
+    fn rejects_hoisted_shape_name_collision_with_root_type_name() {
+        // The inline object at `$defs.User.properties.profile` is named
+        // `UserProfile`, which is also the type name `userProfile.yaml`'s root
+        // schema derives — so the synthesized name collides with the root type.
+        let error = parse_api_spec_from_json_schema_for_language(
+            Language::TypeScript,
+            r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  user: { $ref: "#/$defs/User" }
+$defs:
+  User:
+    type: object
+    properties:
+      profile:
+        type: object
+        properties: { nickname: { type: string } }
+"##,
+            PathBuf::from("userProfile.yaml"),
+        )
+        .expect_err("a synthesized name that collides with the root type is a load reject")
+        .to_string();
+        assert!(
+            error.contains("`UserProfile`")
+                && error.contains("`$defs.User.properties.profile`")
+                && error.contains("file name `userProfile.yaml`")
+                && error.contains("`x-ts-name`")
+                && error.contains("rename the file"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_two_schemas_sharing_one_model_identity() {
+        // The backstop behind the two rejects above: whatever route two different
+        // schemas take to one model identity, they never collapse into a single
+        // emitted type. Here two root types derive `User` in a flat (module-less)
+        // load of both files.
+        let error = api_spec_from_json_schema_sources(
+            Language::Python,
+            vec![
+                (
+                    PathBuf::from("a/user.yaml"),
+                    r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties: { first: { type: string } }
+"#
+                    .to_string(),
+                ),
+                (
+                    PathBuf::from("b/user.yaml"),
+                    r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties: { second: { type: string } }
+"#
+                    .to_string(),
+                ),
+            ],
+        )
+        .expect_err("two schemas under one identity is a load reject")
+        .to_string();
+        assert!(
+            error.contains("model identity `User`") && error.contains("rename"),
             "{error}"
         );
     }
@@ -9711,6 +10317,98 @@ $defs:
         );
         // Python has no `Violation` symbol, so it accepts the schema.
         parse_for(Language::Python, input).expect("Python has no Violation boilerplate");
+    }
+
+    #[test]
+    fn rejects_type_colliding_with_typescript_transfer_type_converter() {
+        // Every TS model module imports nexus-rpc's `TransferTypeConverter` for
+        // the contract its converter implements, so a `$defs` type of that name
+        // conflicts with the import.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  c: { $ref: "#/$defs/TransferTypeConverter" }
+$defs:
+  TransferTypeConverter:
+    type: object
+    properties: { a: { type: string } }
+"##;
+        let error = reject_for(Language::TypeScript, input);
+        assert!(
+            error.contains("collision") && error.contains("TransferTypeConverter"),
+            "{error}"
+        );
+        // The other targets import no such symbol, so the same schema is accepted.
+        parse_for(Language::Go, input).expect("Go has no TransferTypeConverter boilerplate");
+        parse_for(Language::Java, input).expect("Java has no TransferTypeConverter boilerplate");
+    }
+
+    #[test]
+    fn rejects_typescript_transfer_type_converters_that_case_fold_together() {
+        // The converter identifier is derived by lower-camel-casing the resolved
+        // type name, which is not injective over the distinct type names P15
+        // guarantees: both types below keep their verbatim names through an
+        // override, yet derive the same `httpErrorTransferTypeConverter` — one
+        // `export const` emitted twice. The derived name participates in the
+        // pass, so this rejects with a fix-it instead.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+required: [a, b]
+properties:
+  a: { $ref: "#/$defs/HTTPError" }
+  b: { $ref: "#/$defs/HttpError" }
+$defs:
+  HTTPError:
+    type: object
+    x-ts-name: HTTPError
+    x-go-name: HTTPError
+    x-py-name: HTTPError
+    x-java-name: HTTPError
+    properties: { m: { type: string } }
+  HttpError:
+    type: object
+    properties: { n: { type: string } }
+"##;
+        let error = reject_for(Language::TypeScript, input);
+        assert!(
+            error.contains("collision") && error.contains("httpErrorTransferTypeConverter"),
+            "{error}"
+        );
+        // The other targets derive no value identifier from a type name, so the
+        // two distinct type names are all they have to keep apart.
+        parse_for(Language::Go, input).expect("Go derives no converter identifier");
+        parse_for(Language::Python, input).expect("Python derives no converter identifier");
+        parse_for(Language::Java, input).expect("Java derives no converter identifier");
+    }
+
+    #[test]
+    fn rejects_service_name_colliding_with_a_transfer_type_converter() {
+        // A service's TypeScript identifier shares the module scope with the
+        // derived converter identifiers, so an override that lands on one is a
+        // P15 collision (TS2440 plus a temporal-dead-zone `ReferenceError` if
+        // emitted).
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+services:
+  Thing:
+    fqn: example.t.v1.Thing
+    x-ts-name: getInputTransferTypeConverter
+    operations:
+      get:
+        input: { $ref: "#/$defs/GetInput" }
+$defs:
+  GetInput:
+    type: object
+    properties: { id: { type: string } }
+"##;
+        let error = reject_for(Language::TypeScript, input);
+        assert!(
+            error.contains("service `Thing`") && error.contains("getInputTransferTypeConverter"),
+            "{error}"
+        );
     }
 
     #[test]

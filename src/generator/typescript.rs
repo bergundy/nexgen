@@ -245,6 +245,19 @@ impl TypeScriptExternalModels {
         files.extend(self.json.render_support_files()?);
         Ok(files)
     }
+
+    /// The `TransferTypeConverter` instance a model reference converts through, if
+    /// the backend that owns the model emits one. Only the JSON backend does, so
+    /// proto-backed and locally-planned records answer `None` and their operations
+    /// carry no type info.
+    fn transfer_type_converter(&self, model_type: &PlannedType) -> Option<String> {
+        match model_type {
+            PlannedType::External(ExternalTypeSpec::Json(json_type)) => {
+                Some(self.json.transfer_type_converter(json_type))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl ExternalModelBackend for TypeScriptExternalModels {
@@ -453,6 +466,7 @@ impl<'a> ApiPlanner<'a> {
                     })
                     .unwrap_or_default(),
                 to_wire_expr: input_conversion.to_wire_expr("request"),
+                transfer_type_converter: self.external_models.transfer_type_converter(input),
             }
         });
 
@@ -532,6 +546,9 @@ impl<'a> ApiPlanner<'a> {
             output_model_name: operation
                 .output_type()
                 .and_then(|output| self.locally_defined_model_name(output)),
+            output_transfer_type_converter: operation
+                .output_type()
+                .and_then(|output| self.external_models.transfer_type_converter(output)),
         })
     }
 
@@ -554,7 +571,9 @@ impl<'a> ApiPlanner<'a> {
                     .map(|module_path| *module_path == self.api_plan.module_path)
                     .unwrap_or(true) =>
             {
-                Some(json_type.model_name.clone())
+                // Through the backend, so the re-exported name is the resolved one
+                // (`x-ts-name`) rather than the plan's derived `model_name`.
+                self.external_models.model_type_annotation(model_type)
             }
             _ => None,
         }
@@ -2766,6 +2785,7 @@ struct RenderedOperation<'a> {
     output_resource_return: Option<PlannedOperationResourceReturn>,
     output_direct_result: bool,
     output_model_name: Option<String>,
+    output_transfer_type_converter: Option<String>,
 }
 
 #[derive(Debug)]
@@ -2777,6 +2797,7 @@ struct RenderedOperationInput {
     annotation: String,
     api_omitted_fields: Vec<String>,
     to_wire_expr: String,
+    transfer_type_converter: Option<String>,
 }
 
 #[derive(Debug)]
@@ -3035,29 +3056,38 @@ fn render_module_files(
     let json_runtime_files = external_models.render_support_files()?;
     let has_json_runtime_module = json_runtime_files.contains_key(&PathBuf::from("definitions.ts"));
     let mut files = BTreeMap::<PathBuf, String>::new();
+    let models_source = render_models_module(
+        enums,
+        flags,
+        variants,
+        models,
+        external_models,
+        model_fragments,
+        language_imports,
+        support_exports.as_ref(),
+        api_plan,
+        mode,
+    );
+    // A module whose every operation type is `$ref`d from another file declares
+    // nothing of its own. Emitting the empty `models.ts` anyway would leave the
+    // barrel re-exporting a file with no exports, which TypeScript rejects
+    // outright (TS2306, "is not a module").
+    let has_models_module = !is_blank_generated_module(&models_source);
     files.insert(
         "index.ts".into(),
         if mode == GenerationMode::NativeApi {
             render_index_module(services, &model_fragments.type_exported_names)
         } else {
-            render_definitions_only_index_module(services, has_json_runtime_module)
+            render_definitions_only_index_module(
+                services,
+                has_json_runtime_module,
+                has_models_module,
+            )
         },
     );
-    files.insert(
-        "models.ts".into(),
-        render_models_module(
-            enums,
-            flags,
-            variants,
-            models,
-            external_models,
-            model_fragments,
-            language_imports,
-            support_exports.as_ref(),
-            api_plan,
-            mode,
-        ),
-    );
+    if has_models_module {
+        files.insert("models.ts".into(), models_source);
+    }
     if !services.is_empty() {
         files.insert(
             "services.ts".into(),
@@ -3369,9 +3399,20 @@ fn render_generated_module(imports: String, body: String) -> String {
     output
 }
 
+/// Whether a rendered module carries nothing but the generated header, so
+/// emitting it would produce a file with no exports.
+fn is_blank_generated_module(source: &str) -> bool {
+    source
+        .strip_prefix(GENERATED_HEADER)
+        .unwrap_or(source)
+        .trim()
+        .is_empty()
+}
+
 fn render_definitions_only_index_module(
     services: &[RenderedService<'_>],
     has_json_runtime_module: bool,
+    has_models_module: bool,
 ) -> String {
     let mut output = String::new();
     output.push_str(GENERATED_HEADER);
@@ -3379,7 +3420,9 @@ fn render_definitions_only_index_module(
     if !services.is_empty() {
         output.push_str("export * from './services';\n");
     }
-    output.push_str("export * from './models';\n");
+    if has_models_module {
+        output.push_str("export * from './models';\n");
+    }
     if services.iter().any(|service| !service.resources.is_empty()) {
         output.push_str("export * from './resources';\n");
     }
@@ -3784,7 +3827,7 @@ fn render_cross_module_model_value_imports(
     for (module_path, names) in &api_plan.data.module_imports {
         let candidates = names
             .iter()
-            .map(|name| format!("{name}Mapper"))
+            .map(|name| typescript_json::ts_transfer_type_converter_name(name))
             .collect::<Vec<_>>();
         let used_names = used_import_names(source, &candidates);
         if !used_names.is_empty() {
@@ -3853,6 +3896,19 @@ fn render_service_module(
         &[("nexus", "nexus-rpc"), ("workflow", "@temporalio/workflow")],
     );
     render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
+    // Operation type info references converter *values*, so they import alongside
+    // (and before) the type-only model imports.
+    render_value_imports(
+        &mut imports,
+        "./models",
+        &used_import_names(
+            &body,
+            &external_model_names
+                .iter()
+                .map(|name| typescript_json::ts_transfer_type_converter_name(name))
+                .collect::<Vec<_>>(),
+        ),
+    );
     render_type_imports(
         &mut imports,
         "./models",
@@ -3860,6 +3916,12 @@ fn render_service_module(
             &body,
             &model_type_names(enums, flags, variants, models, external_model_names),
         ),
+    );
+    render_cross_module_model_value_imports(
+        &mut imports,
+        &api_plan.module_path.to_path_buf(),
+        api_plan,
+        &body,
     );
     render_cross_module_model_type_imports(
         &mut imports,
@@ -4911,9 +4973,36 @@ fn render_service_definition(output: &mut String, service: &RenderedService<'_>)
         output.push('\n');
         output.push_str("  >({ name: ");
         output.push_str(&typescript_string_literal(operation.wire_name));
+        // Operation type info carries the model's transfer type converter to the
+        // protocol integration. A void side has no value to convert, so it stays
+        // absent rather than carrying an empty `TypeInfo`.
+        render_operation_type_info(
+            output,
+            "inputType",
+            operation
+                .input
+                .as_ref()
+                .and_then(|input| input.transfer_type_converter.as_deref()),
+        );
+        render_operation_type_info(
+            output,
+            "outputType",
+            operation.output_transfer_type_converter.as_deref(),
+        );
         output.push_str(" }),\n");
     }
     output.push_str("});\n\n");
+}
+
+fn render_operation_type_info(output: &mut String, field: &str, converter: Option<&str>) {
+    let Some(converter) = converter else {
+        return;
+    };
+    output.push_str(", ");
+    output.push_str(field);
+    output.push_str(": { transferTypeConverter: ");
+    output.push_str(converter);
+    output.push_str(" }");
 }
 
 fn resource_client_symbol_name(resource: &PlannedResource) -> String {

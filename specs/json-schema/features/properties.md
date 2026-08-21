@@ -169,7 +169,14 @@ types/consts; the struct method-set for the Go accessor, where Go
 forbids a field/method clash outright). The single collision pass runs
 over that full union and rejects on any coincidence; the `x-*-name`
 override (Stage 4) on the declaring member is the escape hatch for these,
-and re-mapping the member moves every name synthesized *from the member*.
+and re-mapping the member moves every name synthesized *from the member*
+with it — the Go `<Field>OrDefault()` accessor and TS `DEFAULT_<FIELD>`
+constant ([[default]]), the Go closed-value type and Java value class
+([[const]]) are all named off the **emitted** member identifier, not the
+JSON key, so the override reaches them. A name synthesized from a
+**position** rather than a member does not move: an inline object hoisted
+to `<Model><Property>` keeps the position's name (see
+[Naming an inline object shape](#naming-an-inline-object-shape) below).
 A [[const]]/[[enum]] **value constant** is synthesized from the *value*,
 not the member — it shares the same namespace and collision pass but is
 re-mapped by its own `x-<lang>-const-name` override, not `x-*-name`. The
@@ -179,7 +186,12 @@ unstable under schema evolution (P13).
 ### Synthesized type names
 
 The Stage 1–4 algorithm maps *member* names; a synthesized **named type**
-(the [[const]]/[[enum]] value class / defined type) is named separately.
+(the [[const]]/[[enum]] value class / defined type) is named separately —
+but off the **emitted** member identifier, so a Stage 4 override moves it
+along with the member (`kind` + `x-go-name: Category` → `ProbeCategory`,
+Java `Probe.Category`). That is what makes the override a working escape
+hatch for a collision on the synthesized type, and it keeps the two
+languages that synthesize one from disagreeing about its name.
 A const or an enum synthesizes a named type where the language lacks
 literal types (Go defined type, Java value class), for every scalar kind;
 TS and Python close the type inline (a literal / union of literals) and
@@ -271,8 +283,10 @@ Rules that follow from "the name belongs to the position":
   describe the object that is now a type; the member falls back to its
   synthesized doc line — again identical to the `$defs` + `$ref` form.
 - **P15 is the backstop.** A synthesized name that collides with a declared
-  `$defs` entry or another synthesized name is a load reject with a fix-it
-  diagnostic, never auto-mangled.
+  `$defs` entry, with another synthesized name, or with the **file-root
+  type**'s name ([[ref]] type-name derivation) is a load reject with a fix-it
+  diagnostic naming the position the shape was written in, never
+  auto-mangled.
 
 ### Documented limitation
 
@@ -306,7 +320,7 @@ aggregates, arrays use [[items]], etc.
 
 `properties` is symmetric across directions: serialize recurses the
 shared `Validate` into each present member (a nested aggregate's own
-`MarshalJSON`/`toIntermediate`/`model_dump` validates it), and the JSON-name
+`MarshalJSON`/`toTransferType`/`model_dump` validates it), and the JSON-name
 binding (`json` tag / alias / `@JsonProperty`) re-emits each member under
 its **original wire name**, not the case-mapped identifier — so the
 contract is stable in both directions. Member omit-vs-emit-`null` is

@@ -13,6 +13,7 @@ use crate::generator::go::{
     go_string_literal,
 };
 use crate::generator::json_schema::build_json_name_manifest;
+use crate::generator::json_schema::register_cross_module_ref_names;
 use crate::language::Language;
 use crate::parser::NameManifest;
 use crate::planning::{PlannedFamily, PlannedJsonType, PlannedSpec};
@@ -756,6 +757,11 @@ impl ExternalModelBackend<PlannedValueType> for ModelBackend {
             .collect();
         self.local_json_models.clear();
         self.model_names.clear();
+        // Go flattens the whole tree into one package, so a model another input
+        // file declares is still an unqualified local name here -- but only the
+        // tree-wide resolution knows the identifier that file's `x-go-name`
+        // moved it to.
+        register_cross_module_ref_names(api_plan, &mut self.model_names);
 
         for model in &self.json_models {
             // Go flattens every input file in a generate closure into one flat
@@ -771,20 +777,6 @@ impl ExternalModelBackend<PlannedValueType> for ModelBackend {
                 format!("#/$defs/{}", model.full_name),
                 model.model_name.clone(),
             );
-        }
-        if self.include_service_imports && !api_plan.services.is_empty() {
-            for (module_path, names) in &api_plan.data.module_imports {
-                for name in names {
-                    self.model_names.insert(
-                        format!("{}#{name}", module_path.as_module_key()),
-                        name.clone(),
-                    );
-                    self.model_names.insert(
-                        format!("{}#/$defs/{name}", module_path.as_module_key()),
-                        name.clone(),
-                    );
-                }
-            }
         }
         Ok(())
     }
@@ -1279,7 +1271,8 @@ fn render_const_discriminators(output: &mut String, models: &[&PlannedJsonType])
             if !is_closed_value_schema(property) {
                 continue;
             }
-            let type_name = const_type_name(&model.model_name, field_name);
+            let type_name =
+                const_type_name(&model.model_name, &property.go_member_name(field_name));
             let underlying = go_closed_underlying(property);
             let consts = closed_values(property)
                 .iter()
@@ -3858,7 +3851,7 @@ fn go_property_type(
     model_names: &BTreeMap<String, String>,
 ) -> Result<String> {
     if is_closed_value_schema(schema) {
-        let type_name = const_type_name(model_name, json_name);
+        let type_name = const_type_name(model_name, &schema.go_member_name(json_name));
         return Ok(if required {
             type_name
         } else {
@@ -4213,8 +4206,15 @@ fn is_open_object(schema: &Schema) -> bool {
         && schema.additional_properties.as_ref() != Some(&Value::Bool(false))
 }
 
-fn const_type_name(model_name: &str, field_name: &str) -> String {
-    format!("{model_name}{}", go_field_name(field_name))
+/// The Go closed-value defined type, `<Model><Member>`, built from the **emitted
+/// member identifier** so an `x-go-name` override on the declaring property moves
+/// it: a name synthesized *from the member* follows the member (P15). This matches
+/// Java, whose nested value class is already named off the emitted member, and is
+/// what makes the collision fix-it in [[const]] actually resolve a clash — while
+/// the name derived from the JSON key, the override moved the field and left this
+/// type behind.
+fn const_type_name(model_name: &str, member_ident: &str) -> String {
+    format!("{model_name}{member_ident}")
 }
 
 /// True when the schema is a scalar closed value set (`const` or `enum`) that
@@ -4285,7 +4285,7 @@ fn go_closed_value_name(
     }
     format!(
         "{}{}",
-        const_type_name(model_name, field_name),
+        const_type_name(model_name, &schema.go_member_name(field_name)),
         go_value_suffix(value)
     )
 }
@@ -4420,7 +4420,7 @@ fn render_closed_value_unmarshal(
     required: bool,
 ) {
     let field = property.go_member_name(json_name);
-    let type_name = const_type_name(model_name, json_name);
+    let type_name = const_type_name(model_name, &field);
     let underlying = go_closed_underlying(property);
     let parser = match underlying {
         "int64" => "parseIntegerField",
