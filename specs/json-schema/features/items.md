@@ -101,7 +101,7 @@ Notes:
 - **Element nullability is the element's own concern.** An element
   schema that is the recognized [[nullability]] `oneOf` pattern makes the
   *elements* nullable — `[]*T` (Go), `(T | null)[]` (TS),
-  `list[Optional[T]]` (Python), `List<@Nullable T>` (Java) — distinct
+  `list[T | None]` (Python), `List<@Nullable T>` (Java) — distinct
   from the array field itself being optional/nullable, which wraps the
   whole collection. The two axes compose (an optional array of nullable
   elements is legal), and neither implies the other: an optional array of
@@ -128,20 +128,31 @@ Notes:
 Per **P10** the array type and every element are validated at the
 (de)serializer boundary; per **P11** element failures aggregate.
 `items` contributes the per-element dispatch; the outer array-type check
-(`Array.isArray` / typed slice / Pydantic `list` / typed `List` binding)
-comes from [[type]]'s `"array"` row.
+(`Array.isArray` / typed slice / `isinstance(v, list)` / typed `List`
+binding) comes from [[type]]'s `"array"` row.
 
 | Language | Strategy |
 |---|---|
 | Go | Custom `UnmarshalJSON` decodes the field into a shadow `[]*json.RawMessage`, then dispatches each element through `T`'s runtime helper, collecting `Violation{Path, Reason}` into the one `ValidationError`. `Path` threads the index: `tags[2]`. |
 | TypeScript | Hand-emitted `Array.isArray` guard, then a per-element loop running `T`'s checks; push `Violation { path: "tags[2]", reason }` per bad element into the list, throw one `ValidationError`. |
-| Python | Pydantic `list[T]` in strict mode; per-element validation is native and aggregates via `pydantic.ValidationError.errors()` (`loc` carries the element index). |
+| Python | The transfer type converter (PRINCIPLES Python §3) guards `isinstance(v, list)`, then loops the raw elements through `T`'s parse helper / converter, appending `Violation(path="tags[2]", reason=…)` per bad element and raising one generated `ValidationError`. The TypeScript parallel. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) reads the array node, walks each element through `T`'s spec-strict/constraint helper, and collects `Violation{path:"tags[2]", reason}` into the one `ValidationException`. The Go parallel. |
 
 - **Path convention.** Element failures use bracketed indices appended to
   the field path (`tags[2]`, and for nested arrays `matrix[1][2]`),
   distinct from the dotted member paths [[properties]] uses — so a caller
   can locate the offending element unambiguously (**P11**).
+- **Reason convention.** An element takes the *same* checks — and so the
+  same `reason` text — the value in that position would take anywhere
+  else: a mistyped element reads `expected string` / `expected number`
+  from [[type]]'s row for `T`, and a constraint failure reads that
+  keyword's own reason (`must have length >= 3, got 1`). Nothing about the
+  reason marks it as an element: the bracketed index in the path already
+  does that, which leaves the reason free to name the type or bound that
+  was missed. This holds for an element of a `oneOf` array branch exactly
+  as for a declared array member (see [[oneOf]]). Reason *text* is not held
+  byte-identical across targets (**P11**), but the shape is the same one
+  everywhere.
 - **Element recursion.** Each element validates recursively — an array of
   objects runs each object's own `Validate`, an array of arrays recurses
   again, an array of `$ref` follows the reference (see [[ref]]). A nested
@@ -156,7 +167,7 @@ comes from [[type]]'s `"array"` row.
 
 `items` is symmetric across directions: serialize recurses the shared
 `Validate` into each element (a nested aggregate element runs its own
-`MarshalJSON`/`toTransferType`/`model_dump`; a scalar element re-runs the
+`MarshalJSON`/`toTransferType`/`to_transfer_type`; a scalar element re-runs the
 same predicate the deserializer used) **before emitting a byte**, failing
 with the same aggregated primitive (**P11**), and re-emits elements in
 order (arrays are ordered — unlike object members, element order is part

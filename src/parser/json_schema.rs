@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
+// The P15 collision pass names every synthesized identifier through the emitter's
+// own naming helpers, so the load-time check cannot drift from what is emitted.
+use crate::generator::json_schema::python;
 use crate::language::Language;
 use crate::spec::{
     ApiSpec, ExternalTypeBindingSpec, ExternalTypeSpec, JsonModelSpec, LanguageStringSpec,
@@ -302,7 +305,7 @@ fn api_spec_tree_from_json_schema_sources(
             return Err(Error::InvalidJsonSchema {
                 path: source.path.clone(),
                 reason: format!(
-                    "input `{}` maps to the reserved module name `{segment}`, which collides with a generated file (models/services/definitions/index/_recursive); rename the input file or directory",
+                    "input `{}` maps to the reserved module name `{segment}`, which collides with a generated file (models/services/definitions/_definitions/index/_recursive/__init__); rename the input file or directory",
                     source.relative_path.display()
                 ),
             });
@@ -392,10 +395,24 @@ fn insert_leaf_at(
 /// `specs/json-schema/generated-file-layout.md`). Reserving the union means a name
 /// reserved in *any* target is rejected for *all*, keeping the flat package
 /// coherent everywhere.
+///
+/// Both spellings of the shared runtime module are reserved, because the targets
+/// spell it differently: Go and TypeScript emit `definitions.go` / `definitions.ts`,
+/// while Python emits `_definitions.py` (module-private, like the `_recursive.py`
+/// hoist module beside it). An input named `_definitions.yaml` would otherwise
+/// emit a `_definitions/` package *directory* at the runtime module's own import
+/// path — and a package shadows a sibling module, so every
+/// `from .._definitions import ...` in the tree fails at import.
 fn is_reserved_module_name(segment: &str) -> bool {
     matches!(
         segment,
-        "definitions" | "_recursive" | "models" | "services" | "index" | "__init__"
+        "definitions"
+            | "_definitions"
+            | "_recursive"
+            | "models"
+            | "services"
+            | "index"
+            | "__init__"
     )
 }
 
@@ -5861,13 +5878,23 @@ pub(crate) fn build_name_manifest(
                 service.origin_label(),
             )?;
         }
-        // TypeScript `DEFAULT_<FIELD>` / `<FIELD>_CONST` constants and per-model
-        // transfer type converters share the module scope; make them participate
-        // rather than silently coexist (P15).
+        // TypeScript `DEFAULT_<FIELD>` constants share the module scope; make
+        // them participate rather than silently coexist (P15). Python surfaces
+        // defaults through properties and emits no module-level constant.
         if language == Language::TypeScript {
-            collect_ts_default_constants(module_key, &ns_models, &mut top)?;
+            collect_default_constants(language, module_key, &ns_models, &mut top)?;
+        }
+        // TypeScript additionally emits `<FIELD>_CONST` bindings and a per-model
+        // transfer type converter into that same module scope.
+        if language == Language::TypeScript {
             collect_ts_const_constants(module_key, &ns_models, &mut top)?;
             collect_ts_transfer_type_converters(module_key, &ns_models, &mut top)?;
+        }
+        // Everything else the Python emitter synthesizes at module scope: the
+        // converter classes, the declared-key frozensets, the union conversion
+        // functions, and the compiled-pattern constants (P15).
+        if language == Language::Python {
+            collect_python_module_idents(module_key, &ns_models, &mut top)?;
         }
     }
 
@@ -5894,28 +5921,18 @@ pub(crate) fn build_name_manifest(
 ///   `./definitions` beside `export *` of the model modules, so a user type of
 ///   either name is silently shadowed out of the package surface (P7). The
 ///   runtime helper functions (`isPlainObject`, `collect`, …) are `camelCase`.
-/// - Python (`src/generator/json/python.rs`): the `UpperCamelCase` runtime type
-///   aliases imported into model modules (`SpecInt`, the materialized temporal
-///   and base64 field aliases). There is no generated `Violation`/error class —
-///   aggregation uses `pydantic.ValidationError`. The other runtime helpers are
-///   `_`-prefixed.
+/// - Python (`src/generator/json/python.rs`): `Violation` (dataclass) and
+///   `ValidationError` (exception) are imported by bare name into every model
+///   module and re-exported by the root package barrel; the other runtime helpers
+///   are `_`-prefixed.
 /// - Java (`src/generator/java.rs`): the root-package runtime classes
 ///   `Violation`, `ValidationException`, and `SpecNumbers`, each emitted as its
 ///   own always-present public file and imported into model files.
 ///   (`TemporalSupport`/`Base64Support` are schema-dependent, so excluded.)
 fn boilerplate_idents(language: Language) -> &'static [&'static str] {
     match language {
-        Language::Go => &["Violation", "ValidationError"],
+        Language::Go | Language::Python => &["Violation", "ValidationError"],
         Language::TypeScript => &["Violation", "ValidationError", "TransferTypeConverter"],
-        Language::Python => &[
-            "SpecInt",
-            "DateTimeField",
-            "DateField",
-            "TimeField",
-            "DurationField",
-            "Base64Field",
-            "Base64UrlField",
-        ],
         Language::Java => &["Violation", "ValidationException", "SpecNumbers"],
         _ => &[],
     }
@@ -6043,9 +6060,9 @@ fn collect_synthesized_top_level(
 }
 
 /// Per-model member-scope collision checks (one scope per aggregate): two
-/// members that recase/override to the same identifier collide; and in Go the
-/// synthesized `<Field>OrDefault()` accessor shares the struct method-set, so a
-/// field/accessor clash is a hard compile error.
+/// members that recase/override to the same identifier collide. Synthesized
+/// member-scope names participate too: Go's `<Field>OrDefault()` method and
+/// Python's private `_<field>` storage for a default-bearing property.
 fn validate_member_scope(language: Language, model_full_name: &str, schema: &Schema) -> Result<()> {
     let Some(properties) = &schema.properties else {
         return Ok(());
@@ -6084,6 +6101,25 @@ fn validate_member_scope(language: Language, model_full_name: &str, schema: &Sch
             format!("`{model_full_name}` additional-properties catch-all"),
         )?;
     }
+    // A Python default-bearing property stores presence in `_<field>`. The
+    // backing slot and every declared member occupy the same class namespace;
+    // `x-py-name` moves both the public property and its backing name.
+    if language == Language::Python {
+        for (json_name, property) in properties {
+            let Some(default) = property.extra.get("default") else {
+                continue;
+            };
+            if default.is_null() || default.is_object() || default.is_array() {
+                continue;
+            }
+            let member = member_identifier(language, json_name, property);
+            scope.insert(
+                language,
+                format!("_{member}"),
+                format!("`{model_full_name}.{json_name}` default backing field"),
+            )?;
+        }
+    }
     // Go `<Field>OrDefault()` accessor (scalar `default` on an optional member).
     if language == Language::Go {
         let required: BTreeSet<&str> = schema
@@ -6117,9 +6153,9 @@ fn validate_member_scope(language: Language, model_full_name: &str, schema: &Sch
 }
 
 /// TypeScript `DEFAULT_<FIELD>` constants (module scope). The generator names a
-/// default constant `DEFAULT_<FIELD>` when the member identifier is unique across
-/// the module's models, else `DEFAULT_<MODEL>_<FIELD>`. Replicate that name and
-/// enter it into the shared module namespace so a genuine clash rejects (P15)
+/// default constant `DEFAULT_<FIELD>` when the member is unique
+/// across the module's models, else `DEFAULT_<MODEL>_<FIELD>`. Replicate that name
+/// and enter it into the shared module namespace so a genuine clash rejects (P15)
 /// rather than silently coexisting behind the model-name prefix.
 ///
 /// The identifier is built from the **emitted member identifier**, so an
@@ -6128,7 +6164,8 @@ fn validate_member_scope(language: Language, model_full_name: &str, schema: &Sch
 /// from the JSON name, two members that recase alike would collide here with no
 /// way to author around it: the override would move the members apart while
 /// leaving both constants on the colliding name.
-fn collect_ts_default_constants(
+fn collect_default_constants(
+    language: Language,
     module_key: &str,
     models: &[NsModel],
     top: &mut Namespace,
@@ -6144,7 +6181,7 @@ fn collect_ts_default_constants(
             .filter(|model| {
                 model.schema.properties.as_ref().is_some_and(|properties| {
                     properties.iter().any(|(json_name, property)| {
-                        member_identifier(Language::TypeScript, json_name, property) == member_ident
+                        member_identifier(language, json_name, property) == member_ident
                             && property.extra.get("default").is_some_and(|default| {
                                 !default.is_null() && !default.is_object() && !default.is_array()
                             })
@@ -6164,7 +6201,7 @@ fn collect_ts_default_constants(
             if default.is_null() || default.is_object() || default.is_array() {
                 continue;
             }
-            let member_ident = member_identifier(Language::TypeScript, json_name, property);
+            let member_ident = member_identifier(language, json_name, property);
             let field_shouty = member_ident.to_shouty_snake_case();
             let ident = if field_count(&member_ident) == 1 {
                 format!("DEFAULT_{field_shouty}")
@@ -6175,7 +6212,7 @@ fn collect_ts_default_constants(
                 )
             };
             top.insert(
-                Language::TypeScript,
+                language,
                 ident,
                 format!("`{}.{json_name}` DEFAULT_ constant", model.full_name),
             )?;
@@ -6240,6 +6277,197 @@ fn collect_ts_const_constants(
                 ident,
                 format!("`{}.{json_name}` _CONST constant", model.full_name),
             )?;
+        }
+    }
+    Ok(())
+}
+
+/// The remaining module-scope identifiers the Python JSON-Schema generator
+/// synthesizes, entered into the same namespace as the user types and services
+/// so a coincidence rejects at load instead of one
+/// definition silently overwriting the other (P15).
+///
+/// Each is named by [`build_name_manifest`]'s resolved `type_ident`, so a
+/// type-level `x-py-name` override moves all of them together — and every ident
+/// is computed by the *generator's* own naming helper, never re-derived here, so
+/// the check cannot drift from what is emitted:
+///
+/// - `_<Model>TransferTypeConverter` — the converter class carrying the model's
+///   whole wire contract (class models only; a union has no converter class).
+/// - `_<MODEL>_DECLARED` — the declared-key `frozenset` an *open* object splits
+///   its catch-all on. `to_shouty_snake_case` is not injective over the verbatim
+///   overrides (`ContactPy` and `ContactPY` both shout to `CONTACT_PY`), which is
+///   how a declared property used to leak into the catch-all of whichever model
+///   lost the race.
+/// - `_<base>_from_transfer_type` / `_<base>_to_transfer_type` — a union's
+///   conversion functions. `to_snake_case` is likewise non-injective, and a named
+///   union's base can also coincide with an inline (`<model>_<member>`) one.
+/// - `_PATTERN_<HEX>` — the shared compiled regexes. Identical pattern text
+///   *intentionally* shares one constant, so the origin is keyed by that text:
+///   a repeat is deduplication (accepted), while two distinct patterns landing on
+///   one name — or a user type overridden to that shape — is a collision.
+/// - the converter bodies' own locals ([`PYTHON_CONVERTER_BODY_LOCALS`]).
+fn collect_python_module_idents(
+    module_key: &str,
+    models: &[NsModel],
+    top: &mut Namespace,
+) -> Result<()> {
+    let language = Language::Python;
+    // A converter body reads the module's own classes and constants by bare name
+    // while binding these locals in the same scope, so a module-level identifier
+    // spelled like one of them is shadowed inside every body that binds it.
+    // Nothing *derived* lands here — user types are `UpperCamelCase` and the
+    // synthesized names are `_`-prefixed or shouty — so this only ever fires on a
+    // verbatim `x-py-name` that spells a runtime local (P15).
+    for local in PYTHON_CONVERTER_BODY_LOCALS {
+        top.insert(
+            language,
+            (*local).to_string(),
+            format!("generated converter-body local `{local}`"),
+        )?;
+    }
+    for model in models.iter().filter(|m| m.module_key == module_key) {
+        let origin = |what: &str| format!("`{}` {what}", model.full_name);
+        // A sum-type def is emitted as a `TypeAlias` whose conversion lives in a
+        // pair of module-private free functions, so it has no converter class and
+        // no declared-key set. This one predicate covers the emitter's
+        // `is_python_union_model` / `is_py_union` pair: they can only disagree on a
+        // branch typed `["string", "null"]`, a form the loader has already
+        // rejected by the time the manifest is built.
+        if is_sum_type_union(&model.schema) {
+            let base = python::union_fn_base(&model.type_ident);
+            top.insert(
+                language,
+                python::union_parse_fn(&base),
+                origin("union parse function"),
+            )?;
+            top.insert(
+                language,
+                python::union_serialize_fn(&base),
+                origin("union serialize function"),
+            )?;
+        } else {
+            top.insert(
+                language,
+                python::converter_class_name(&model.type_ident),
+                origin("transfer-type converter class"),
+            )?;
+            if python_open_object(&model.schema) {
+                top.insert(
+                    language,
+                    python::declared_fields_const_name(&model.type_ident),
+                    origin("declared-key frozenset"),
+                )?;
+            }
+        }
+        // An inline (property-level) union gets its own function pair, named
+        // `<model>_<member>` — so a member-level `x-py-name` moves it.
+        for (json_name, property) in model.schema.properties.iter().flatten() {
+            if !is_sum_type_union(property) {
+                continue;
+            }
+            let base = python::inline_union_fn_base(
+                &model.type_ident,
+                &member_identifier(language, json_name, property),
+            );
+            top.insert(
+                language,
+                python::union_parse_fn(&base),
+                origin(&format!("`{json_name}` inline union parse function")),
+            )?;
+            top.insert(
+                language,
+                python::union_serialize_fn(&base),
+                origin(&format!("`{json_name}` inline union serialize function")),
+            )?;
+        }
+        collect_python_pattern_constants(&model.schema, top)?;
+    }
+    Ok(())
+}
+
+/// Every fixed identifier a generated Python converter body binds or receives:
+/// the accumulator and wire dictionaries, the loop and dispatch temporaries, and
+/// the function parameters. The property-derived slots are absent by
+/// construction — they are suffixed `_value` precisely so they cannot coincide
+/// with anything here (see the generator's `parse_slot_local`).
+const PYTHON_CONVERTER_BODY_LOCALS: &[&str] = &[
+    "additional_properties",
+    "entry",
+    "error",
+    "items",
+    "key",
+    "member",
+    "narrowed",
+    "number",
+    "out",
+    "parsed",
+    "path",
+    "raw",
+    "self",
+    "tag",
+    "tagged",
+    "type_hint",
+    "value",
+    "violations",
+];
+
+/// Mirrors the Python emitter's `is_open_object`: a declared-property object that
+/// stays open to unknown members, which is what gives it the catch-all — and the
+/// module-level declared-key set the catch-all is split on.
+fn python_open_object(schema: &Schema) -> bool {
+    schema.ty.as_ref().and_then(Value::as_str) == Some("object")
+        && schema
+            .properties
+            .as_ref()
+            .is_some_and(|properties| !properties.is_empty())
+        && schema.additional_properties.as_ref() != Some(&Value::Bool(false))
+}
+
+/// Walks every string position that hoists a compiled regex — mirroring the
+/// emitter's `collect_schema_patterns` — and enters each constant under an origin
+/// keyed by the pattern text, so identical patterns dedupe and distinct ones
+/// collide.
+fn collect_python_pattern_constants(schema: &Schema, top: &mut Namespace) -> Result<()> {
+    let insert = |pattern: &str, top: &mut Namespace| -> Result<()> {
+        let emitted = crate::json_schema::pattern::rewrite_end_anchor(pattern, r"\Z");
+        top.insert(
+            Language::Python,
+            python::py_pattern_const_name(&emitted),
+            format!("compiled pattern constant for {emitted:?}"),
+        )
+    };
+    if let Some(Value::String(pattern)) = schema.extra.get("pattern") {
+        insert(pattern, top)?;
+    }
+    if let Some(Value::String(format)) = schema.extra.get("format")
+        && let Some(check) = crate::json_schema::format::check_for(format)
+    {
+        insert(&check.pattern, top)?;
+    }
+    for property in schema
+        .properties
+        .iter()
+        .flat_map(|entries| entries.values())
+    {
+        collect_python_pattern_constants(property, top)?;
+    }
+    if let Some(items) = &schema.items {
+        collect_python_pattern_constants(items, top)?;
+    }
+    for branch in schema.one_of.iter().flatten() {
+        collect_python_pattern_constants(branch, top)?;
+    }
+    // A key-shape subschema and a typed map's member schema are both carried as
+    // raw values here; decode them the same way the emitter does.
+    for nested in [
+        schema.extra.get("propertyNames"),
+        schema.additional_properties.as_ref(),
+    ] {
+        if let Some(value @ Value::Object(_)) = nested
+            && let Ok(subschema) = serde_json::from_value::<Schema>(value.clone())
+        {
+            collect_python_pattern_constants(&subschema, top)?;
         }
     }
     Ok(())
@@ -9659,6 +9887,290 @@ properties:
     }
 
     #[test]
+    fn rejects_colliding_default_constants_typescript() {
+        // TypeScript hoists a defaulted member's value to a module-level
+        // `DEFAULT_<FIELD>` constant, named off the **emitted** member identifier.
+        // Two members that stay distinct as identifiers (`fooBar` / `foo_bar`, held
+        // apart by their overrides) still shout to one `DEFAULT_FOO_BAR`, and the
+        // model-name qualification cannot separate two members of one model.
+        for (language, override_key) in [(Language::TypeScript, "x-ts-name")] {
+            let input = format!(
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  first: {{ type: string, default: "x", {override_key}: fooBar }}
+  second: {{ type: string, default: "y", {override_key}: foo_bar }}
+"##
+            );
+            let error = reject_for(language, &input);
+            assert!(
+                error.contains("collision") && error.contains("DEFAULT_FOO_BAR"),
+                "{language:?}: {error}"
+            );
+            // Go and Java keep the default on the model (no module-level constant),
+            // so the same schema is accepted there.
+            parse_for(Language::Go, &input).expect("Go emits no DEFAULT_ constants");
+            parse_for(Language::Java, &input).expect("Java emits no DEFAULT_ constants");
+
+            // The escape hatch reaches the constant, because the constant follows
+            // the member it was synthesized from (P15).
+            let resolved = format!(
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  first: {{ type: string, default: "x", {override_key}: fooBar }}
+  second: {{ type: string, default: "y", {override_key}: fooBarTwo }}
+"##
+            );
+            parse_for(language, &resolved)
+                .expect("the override moves the DEFAULT_ constant with the member");
+        }
+
+        // Two *models* each declaring a member of that identifier are separated by
+        // the model-name qualification instead, so they load.
+        let across_models = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  a: { $ref: "#/$defs/A" }
+  b: { $ref: "#/$defs/B" }
+$defs:
+  A:
+    type: object
+    properties:
+      fooBar: { type: string, default: "x" }
+  B:
+    type: object
+    properties:
+      foo_bar: { type: string, default: "y" }
+"##;
+        parse_for(Language::TypeScript, across_models)
+            .expect("`DEFAULT_<MODEL>_<FIELD>` keeps the two apart");
+        parse_for(Language::Python, across_models)
+            .expect("Python emits properties rather than DEFAULT_ constants");
+    }
+
+    #[test]
+    fn rejects_python_default_backing_field_collision() {
+        let colliding = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  greeting: { type: string, default: hello }
+  raw: { type: string, x-py-name: _greeting }
+"#;
+        let error = reject_for(Language::Python, colliding);
+        assert!(
+            error.contains("collision") && error.contains("_greeting"),
+            "{error}"
+        );
+
+        let resolved = r#"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  greeting: { type: string, default: hello, x-py-name: salutation }
+  raw: { type: string, x-py-name: _greeting }
+"#;
+        parse_for(Language::Python, resolved)
+            .expect("x-py-name moves the property and its private backing field");
+    }
+
+    #[test]
+    fn rejects_colliding_declared_field_sets_python() {
+        // An open object hoists its declared wire keys to a module-level
+        // `_<MODEL>_DECLARED` frozenset. `to_shouty_snake_case` is not injective
+        // over the verbatim type overrides — `ContactPy` and `ContactPY` both
+        // shout to `CONTACT_PY` — and the loser's declared property would leak
+        // into the winner's catch-all instead (P13/P15).
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  a: { $ref: "#/$defs/Alpha" }
+  b: { $ref: "#/$defs/Beta" }
+$defs:
+  Alpha:
+    x-py-name: ContactPy
+    type: object
+    properties:
+      count: { type: integer }
+  Beta:
+    x-py-name: ContactPY
+    type: object
+    properties:
+      b: { type: string }
+"##;
+        let error = reject_for(Language::Python, input);
+        assert!(
+            error.contains("collision") && error.contains("_CONTACT_PY_DECLARED"),
+            "{error}"
+        );
+        // The overrides are Python-only, so every other target sees `Alpha` and
+        // `Beta` and is unaffected.
+        for language in [Language::Go, Language::TypeScript, Language::Java] {
+            parse_for(language, input)
+                .unwrap_or_else(|error| panic!("{language:?} sees no override: {error}"));
+        }
+    }
+
+    #[test]
+    fn rejects_colliding_converter_class_python() {
+        // A model's converter class is `_<Model>TransferTypeConverter`; a verbatim
+        // type override can name a *type* that exact identifier.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  a: { $ref: "#/$defs/Contact" }
+  b: { $ref: "#/$defs/Other" }
+$defs:
+  Contact:
+    type: object
+    properties:
+      count: { type: integer }
+  Other:
+    x-py-name: _ContactTransferTypeConverter
+    type: object
+    properties:
+      b: { type: string }
+"##;
+        let error = reject_for(Language::Python, input);
+        assert!(
+            error.contains("collision") && error.contains("_ContactTransferTypeConverter"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_colliding_union_functions_python() {
+        // A union's conversion lives in `_<base>_{from,to}_transfer_type` free
+        // functions: `to_snake_case` on the named union `FooBar` and the
+        // `<model>_<member>` base of `Foo.bar`'s inline union both give `foo_bar`.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  u: { $ref: "#/$defs/FooBar" }
+  f: { $ref: "#/$defs/Foo" }
+$defs:
+  FooBar:
+    oneOf:
+      - { type: string }
+      - { type: integer }
+  Foo:
+    type: object
+    additionalProperties: false
+    properties:
+      bar:
+        oneOf:
+          - { type: string }
+          - { type: boolean }
+"##;
+        let error = reject_for(Language::Python, input);
+        assert!(
+            error.contains("collision") && error.contains("_foo_bar_from_transfer_type"),
+            "{error}"
+        );
+        // P15's escape hatch has to reach the synthesized function name too: the
+        // member override renames the inline union's functions with the member.
+        let renamed = input.replace(
+            "      bar:\n        oneOf:",
+            "      bar:\n        x-py-name: renamed\n        oneOf:",
+        );
+        parse_for(Language::Python, &renamed)
+            .expect("an `x-py-name` override moves the inline union's function names");
+    }
+
+    #[test]
+    fn rejects_type_colliding_with_pattern_constant_python() {
+        // A `pattern` is hoisted to a module-level compiled-regex constant named
+        // `_PATTERN_<FNV-1a of the pattern text>`; `^a` hashes to this one. A
+        // verbatim type override can name a type that identifier.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  a: { type: string, pattern: "^a" }
+  b: { $ref: "#/$defs/Other" }
+$defs:
+  Other:
+    x-py-name: _PATTERN_09572B07B5E46120
+    type: object
+    properties:
+      b: { type: string }
+"##;
+        assert_eq!(
+            python::py_pattern_const_name("^a"),
+            "_PATTERN_09572B07B5E46120"
+        );
+        let error = reject_for(Language::Python, input);
+        assert!(
+            error.contains("collision") && error.contains("_PATTERN_09572B07B5E46120"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_type_named_after_a_converter_body_local_python() {
+        // The mirror image of a member shadowing a runtime local: a converter body
+        // reads the module's classes by bare name while binding `raw`, so a *type*
+        // overridden to `raw` is shadowed inside every body that parses one.
+        let input = r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  a: { $ref: "#/$defs/Other" }
+$defs:
+  Other:
+    x-py-name: raw
+    type: object
+    properties:
+      b: { type: string }
+"##;
+        let error = reject_for(Language::Python, input);
+        assert!(
+            error.contains("collision") && error.contains("`raw`"),
+            "{error}"
+        );
+        // Only Python binds that local, and only the Python override renames the
+        // type, so the other targets are unaffected.
+        for language in [Language::Go, Language::TypeScript, Language::Java] {
+            parse_for(language, input)
+                .unwrap_or_else(|error| panic!("{language:?} sees no override: {error}"));
+        }
+    }
+
+    #[test]
+    fn accepts_repeated_pattern_across_positions_python() {
+        // One compiled constant per *distinct* pattern text is deliberate
+        // deduplication, not a collision: the same pattern in several positions
+        // (and the same `format`'s pinned regex twice) shares one constant.
+        parse_for(
+            Language::Python,
+            r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  a: { type: string, pattern: "^a" }
+  b: { type: string, pattern: "^a" }
+  c:
+    type: array
+    items: { type: string, pattern: "^a" }
+  d: { type: string, format: "email" }
+  e: { type: string, format: "email" }
+"##,
+        )
+        .expect("identical patterns share one module constant");
+    }
+
+    #[test]
     fn rejects_synthesized_operation_input_colliding_with_defs_type() {
         // The synthesized `<Op>Input` type collides with a declared `$defs` type
         // of the same name (top-level module scope, every target).
@@ -9917,6 +10429,36 @@ properties:
             .expect_err("a source mapping to a reserved module name should be rejected")
             .to_string();
         assert!(error.contains("reserved module name"), "{error}");
+    }
+
+    #[test]
+    fn rejects_shared_runtime_module_names() {
+        // Both spellings of the shared runtime module are reserved for every
+        // target: `definitions` (Go/TypeScript) and `_definitions` (Python). A
+        // `_definitions` input emits a package directory at the Python runtime
+        // module's own import path, which shadows it and breaks every
+        // `from .._definitions import ...` in the tree.
+        for segment in ["definitions", "_definitions", "_recursive"] {
+            for language in [
+                Language::Python,
+                Language::TypeScript,
+                Language::Go,
+                Language::Java,
+            ] {
+                let sources = vec![
+                    module_collision_source(&format!("{segment}.yaml"), "Shadow"),
+                    module_collision_source("other.yaml", "Other"),
+                ];
+                let error = api_spec_tree_from_json_schema_sources(language, sources)
+                    .err()
+                    .unwrap_or_else(|| panic!("`{segment}` must be rejected for {language:?}"))
+                    .to_string();
+                assert!(
+                    error.contains("reserved module name") && error.contains(segment),
+                    "{language:?}: {error}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -10273,9 +10815,10 @@ $defs:
     }
 
     #[test]
-    fn rejects_type_colliding_with_go_runtime_boilerplate() {
+    fn rejects_type_colliding_with_go_and_python_runtime_boilerplate() {
         // Go emits the exported runtime type `ValidationError` into the models'
-        // own package, so a `$defs` type of that name is a package-scope clash.
+        // own package, so a `$defs` type of that name is a package-scope clash;
+        // Python imports the same name into every model module.
         let input = r##"
 $schema: https://json-schema.org/draft/2020-12/schema
 type: object
@@ -10286,14 +10829,16 @@ $defs:
     type: object
     properties: { a: { type: string } }
 "##;
-        let error = reject_for(Language::Go, input);
-        assert!(
-            error.contains("collision") && error.contains("ValidationError"),
-            "{error}"
-        );
-        // Python aggregates via `pydantic.ValidationError` (a qualified name), so
-        // it emits no top-level `ValidationError` and the same schema is accepted.
-        parse_for(Language::Python, input).expect("Python has no ValidationError boilerplate");
+        for language in [Language::Go, Language::Python] {
+            let error = reject_for(language, input);
+            assert!(
+                error.contains("collision") && error.contains("ValidationError"),
+                "{language:?}: {error}"
+            );
+        }
+        // Java names its aggregate error `ValidationException`, not
+        // `ValidationError`, so the same schema is accepted for Java.
+        parse_for(Language::Java, input).expect("Java has no ValidationError boilerplate");
     }
 
     #[test]
@@ -10315,8 +10860,11 @@ $defs:
             error.contains("collision") && error.contains("Violation"),
             "{error}"
         );
-        // Python has no `Violation` symbol, so it accepts the schema.
-        parse_for(Language::Python, input).expect("Python has no Violation boilerplate");
+        // Java names its aggregate error `ValidationException`; TypeScript has no
+        // such symbol, so that name is accepted.
+        let input = input.replace("Violation", "ValidationException");
+        parse_for(Language::TypeScript, &input)
+            .expect("TypeScript has no ValidationException boilerplate");
     }
 
     #[test]
@@ -10376,11 +10924,19 @@ $defs:
             error.contains("collision") && error.contains("httpErrorTransferTypeConverter"),
             "{error}"
         );
-        // The other targets derive no value identifier from a type name, so the
-        // two distinct type names are all they have to keep apart.
+        // Go and Java derive no value identifier from a type name, so the two
+        // distinct type names are all they have to keep apart.
         parse_for(Language::Go, input).expect("Go derives no converter identifier");
-        parse_for(Language::Python, input).expect("Python derives no converter identifier");
         parse_for(Language::Java, input).expect("Java derives no converter identifier");
+        // Python derives module-level names from the type name too. Its converter
+        // classes stay apart (`_HTTPError…` / `_HttpError…`), but the declared-key
+        // frozensets both shout to `_HTTP_ERROR_DECLARED`, so it rejects for that
+        // reason rather than accepting.
+        let python_error = reject_for(Language::Python, input);
+        assert!(
+            python_error.contains("collision") && python_error.contains("_HTTP_ERROR_DECLARED"),
+            "{python_error}"
+        );
     }
 
     #[test]
@@ -10437,10 +10993,8 @@ $defs:
 
     #[test]
     fn rejects_type_colliding_with_java_violation_boilerplate() {
-        // Per the task: Java `$defs: { Violation: {...} }` rejects for Java (Java
-        // emits a public `Violation` record). `Violation` is boilerplate for Go,
-        // TypeScript and Java alike; only Python (which has no `Violation`)
-        // accepts it, so Python is the "not boilerplate" language here.
+        // Java emits a public `Violation` record in the root package, imported
+        // into model files, so a `$defs` type of that name clashes.
         let input = r##"
 $schema: https://json-schema.org/draft/2020-12/schema
 type: object
@@ -10456,29 +11010,31 @@ $defs:
             error.contains("collision") && error.contains("Violation"),
             "{error}"
         );
-        parse_for(Language::Python, input).expect("Python has no Violation boilerplate");
     }
 
     #[test]
     fn rejects_type_colliding_with_python_runtime_boilerplate() {
-        // Python imports the runtime type alias `SpecInt` into model modules for
-        // any integer field, so a `$defs` type named `SpecInt` clashes.
+        // Python imports the runtime `Violation` dataclass into every model
+        // module by bare name, so a `$defs` type of that name clashes with the
+        // import.
         let input = r##"
 $schema: https://json-schema.org/draft/2020-12/schema
 type: object
 properties:
-  s: { $ref: "#/$defs/SpecInt" }
+  v: { $ref: "#/$defs/Violation" }
 $defs:
-  SpecInt:
+  Violation:
     type: object
     properties: { a: { type: string } }
 "##;
         let error = reject_for(Language::Python, input);
         assert!(
-            error.contains("collision") && error.contains("SpecInt"),
+            error.contains("collision") && error.contains("Violation"),
             "{error}"
         );
-        // `SpecInt` is Python-specific runtime naming; Go has no such symbol.
-        parse_for(Language::Go, input).expect("Go has no SpecInt boilerplate");
+        // Java names its aggregate error `ValidationException`; Python has no
+        // such symbol, so that name is accepted.
+        let input = input.replace("Violation", "ValidationException");
+        parse_for(Language::Python, &input).expect("Python has no ValidationException boilerplate");
     }
 }

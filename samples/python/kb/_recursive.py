@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import dataclasses
 import typing
-import pydantic
+import typing_extensions
+import temporalio.converter
 
 from ._definitions import (
-    SpecInt,
-    _emit_set_fields,
-    _reject_explicit_null,
+    ValidationError,
+    Violation,
+    _collect,
+    _parse_spec_integer,
+    _transfer_type_convertible,
 )
 
 from .content.block.models import BlockStyle
@@ -16,97 +20,286 @@ from .content.block.models import BlockStyle
 from .content.page.models import PageMeta
 
 
-class Block(pydantic.BaseModel):
+class _BlockTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Block", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Block"]
+    ) -> "Block":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        block_id_value: str = typing.cast("typing.Any", None)
+        if "blockId" not in raw or raw["blockId"] is None:
+            violations.append(Violation(path="blockId", reason="required"))
+        else:
+            block_id_value_raw = raw["blockId"]
+            if not isinstance(block_id_value_raw, str):
+                violations.append(Violation(path="blockId", reason="expected string"))
+            else:
+                block_id_value = block_id_value_raw
+
+        order_value: int = typing.cast("typing.Any", None)
+        if "order" not in raw or raw["order"] is None:
+            violations.append(Violation(path="order", reason="required"))
+        else:
+            order_value_raw = raw["order"]
+            order_value_parsed = _parse_spec_integer(
+                order_value_raw, "order", violations
+            )
+            if order_value_parsed is not None:
+                order_value = order_value_parsed
+                if order_value < 0:
+                    violations.append(
+                        Violation(
+                            path="order", reason=f"must be >= 0, got {order_value}"
+                        )
+                    )
+
+        text_value: str | None = None
+        if "text" in raw:
+            text_value_raw = raw["text"]
+            if text_value_raw is None:
+                violations.append(
+                    Violation(path="text", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(text_value_raw, str):
+                    violations.append(Violation(path="text", reason="expected string"))
+                else:
+                    text_value = text_value_raw
+
+        style_value: BlockStyle | None = None
+        if "style" in raw:
+            style_value_raw = raw["style"]
+            if style_value_raw is None:
+                violations.append(
+                    Violation(path="style", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    style_value = getattr(
+                        BlockStyle, "__temporal_transfer_type_converter"
+                    ).from_transfer_type(style_value_raw, BlockStyle)
+                except ValidationError as error:
+                    _collect(violations, "style", error)
+
+        page_value: Page | None = None
+        if "page" in raw:
+            page_value_raw = raw["page"]
+            if page_value_raw is None:
+                page_value = None
+            else:
+                try:
+                    page_value = _PageTransferTypeConverter().from_transfer_type(
+                        page_value_raw, Page
+                    )
+                except ValidationError as error:
+                    _collect(violations, "page", error)
+
+        for key in raw:
+            if (
+                key != "blockId"
+                and key != "order"
+                and key != "text"
+                and key != "style"
+                and key != "page"
+            ):
+                violations.append(Violation(path=key, reason="unknown field"))
+        if violations:
+            raise ValidationError(violations)
+        return Block(
+            block_id=block_id_value,
+            order=order_value,
+            text=text_value,
+            style=style_value,
+            page=page_value,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Block") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        out["blockId"] = value.block_id
+        if value.order < 0:
+            violations.append(
+                Violation(path="order", reason=f"must be >= 0, got {value.order}")
+            )
+        out["order"] = value.order
+        if value.text is not None:
+            out["text"] = value.text
+        if value.style is not None:
+            try:
+                out["style"] = getattr(
+                    BlockStyle, "__temporal_transfer_type_converter"
+                ).to_transfer_type(value.style)
+            except ValidationError as error:
+                _collect(violations, "style", error)
+        if value.page is not None:
+            try:
+                out["page"] = _PageTransferTypeConverter().to_transfer_type(value.page)
+            except ValidationError as error:
+                _collect(violations, "page", error)
+        if violations:
+            raise ValidationError(violations)
+        return out
+
+
+@_transfer_type_convertible(_BlockTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Block:
     """A content block. The other half of the Page <-> Block cross-file cycle. The `page`
     back-reference is optional + nullable, which terminates the cycle so it is
     satisfiable.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
-    )
+    block_id: str
 
-    block_id: str = pydantic.Field(alias="blockId")
-
-    order: SpecInt = pydantic.Field(ge=0)
+    order: int
     """Non-negative position within the page. Exercises a numeric `minimum` bound over an
     integer field.
     """
 
-    text: str | None = pydantic.Field(default=None)
+    text: str | None = None
 
-    style: BlockStyle | None = pydantic.Field(default=None)
+    style: BlockStyle | None = None
 
-    page: Page | None = pydantic.Field(default=None)
+    page: Page | None = None
     """Optional back-reference to the containing page - closes the Page <-> Block cycle.
     Optional + nullable, so this edge terminates.
     """
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"style", "text"}
-    )
 
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+class _PageTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Page", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(self, value: typing.Any, type_hint: type["Page"]) -> "Page":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+        page_id_value: str = typing.cast("typing.Any", None)
+        if "pageId" not in raw or raw["pageId"] is None:
+            violations.append(Violation(path="pageId", reason="required"))
+        else:
+            page_id_value_raw = raw["pageId"]
+            if not isinstance(page_id_value_raw, str):
+                violations.append(Violation(path="pageId", reason="expected string"))
+            else:
+                page_id_value = page_id_value_raw
+
+        title_value: str = typing.cast("typing.Any", None)
+        if "title" not in raw or raw["title"] is None:
+            violations.append(Violation(path="title", reason="required"))
+        else:
+            title_value_raw = raw["title"]
+            if not isinstance(title_value_raw, str):
+                violations.append(Violation(path="title", reason="expected string"))
+            else:
+                title_value = title_value_raw
+
+        meta_value: PageMeta = typing.cast("typing.Any", None)
+        if "meta" not in raw or raw["meta"] is None:
+            violations.append(Violation(path="meta", reason="required"))
+        else:
+            meta_value_raw = raw["meta"]
+            try:
+                meta_value = getattr(
+                    PageMeta, "__temporal_transfer_type_converter"
+                ).from_transfer_type(meta_value_raw, PageMeta)
+            except ValidationError as error:
+                _collect(violations, "meta", error)
+
+        blocks_value: list[Block] | None = None
+        if "blocks" in raw:
+            blocks_value_raw = raw["blocks"]
+            if blocks_value_raw is None:
+                violations.append(
+                    Violation(path="blocks", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(blocks_value_raw, list):
+                    violations.append(Violation(path="blocks", reason="expected array"))
+                else:
+                    blocks_value_list: list[Block] = []
+                    for blocks_value_index, blocks_value_element in enumerate(
+                        typing.cast("list[typing.Any]", blocks_value_raw)
+                    ):
+                        blocks_value_item_path = f"blocks[{blocks_value_index}]"
+                        blocks_value_item: Block = typing.cast("typing.Any", None)
+                        try:
+                            blocks_value_item = (
+                                _BlockTransferTypeConverter().from_transfer_type(
+                                    blocks_value_element, Block
+                                )
+                            )
+                        except ValidationError as error:
+                            _collect(violations, blocks_value_item_path, error)
+                        blocks_value_list.append(blocks_value_item)
+                    blocks_value = blocks_value_list
+
+        for key in raw:
+            if key != "pageId" and key != "title" and key != "meta" and key != "blocks":
+                violations.append(Violation(path=key, reason="unknown field"))
+        if violations:
+            raise ValidationError(violations)
+        return Page(
+            page_id=page_id_value,
+            title=title_value,
+            meta=meta_value,
+            blocks=blocks_value,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Page") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        out["pageId"] = value.page_id
+        out["title"] = value.title
+        try:
+            out["meta"] = getattr(
+                PageMeta, "__temporal_transfer_type_converter"
+            ).to_transfer_type(value.meta)
+        except ValidationError as error:
+            _collect(violations, "meta", error)
+        if value.blocks is not None:
+            blocks_out: list[typing.Any] = []
+            for blocks_index, blocks_element in enumerate(value.blocks):
+                try:
+                    blocks_out.append(
+                        _BlockTransferTypeConverter().to_transfer_type(blocks_element)
+                    )
+                except ValidationError as error:
+                    _collect(violations, f"blocks[{blocks_index}]", error)
+            out["blocks"] = blocks_out
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Page(pydantic.BaseModel):
+@_transfer_type_convertible(_PageTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Page:
     """A page. One half of the Page <-> Block cross-file cycle. Because the cycle spans two
     input files, Page and Block hoist together into Python's _recursive.py; the
     non-cyclic PageMeta helper stays in this module.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
-    )
+    page_id: str
 
-    page_id: str = pydantic.Field(alias="pageId")
+    title: str
 
-    title: str = pydantic.Field()
+    meta: PageMeta
 
-    meta: PageMeta = pydantic.Field()
-
-    blocks: list[Block] | None = pydantic.Field(default=None)
+    blocks: list[Block] | None = None
     """Ordered content blocks. Cross-file `$ref` to block.json (same directory); the array
     is the terminating edge of the cycle.
     """
-
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"blocks"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
-
-
-_ = Block.model_rebuild()
-_ = Page.model_rebuild()
 
 
 __all__ = [

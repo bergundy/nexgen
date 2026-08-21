@@ -86,6 +86,263 @@ properties:
       - { type: string, enum: [auto, manual] }
 "#;
 
+/// A property-position union whose **last** branch converts through a model's
+/// converter. Nothing in the annotation stops a member holding a value no branch
+/// admits, and the serialize dispatch guards every branch but the last, so that
+/// value reaches the last branch's converter — which fails on whatever attribute
+/// it reads first. `mixed`'s last branch is a scalar, so its fallthrough returns
+/// the bad value instead: same missing check, quieter symptom.
+const UNION_DISPATCH_FALLTHROUGH_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  pick:
+    oneOf:
+      - { $ref: "#/$defs/Circle" }
+      - { $ref: "#/$defs/Square" }
+  mixed:
+    oneOf:
+      - { $ref: "#/$defs/Circle" }
+      - { type: string, minLength: 2 }
+$defs:
+  Circle:
+    type: object
+    required: [kind, radius]
+    properties:
+      kind: { type: string, const: circle }
+      radius: { type: number }
+  Square:
+    type: object
+    required: [kind, side]
+    properties:
+      kind: { type: string, const: square }
+      side: { type: number }
+"##;
+
+/// Drives the generated converter for `UNION_DISPATCH_FALLTHROUGH_SCHEMA`: a
+/// member matching no branch must raise the union's own aggregated
+/// `ValidationError`, at the member's path, alongside every other violation the
+/// model collected — not the `AttributeError` the fallthrough branch's converter
+/// used to raise, which escaped the `except ValidationError` and discarded them.
+const UNION_DISPATCH_FALLTHROUGH_RUNTIME_CHECK: &str = r#"
+import sys
+
+root, package = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root)
+models = __import__(package + ".models", fromlist=["*"])
+definitions = __import__(package + "._definitions", fromlist=["*"])
+
+Bag, Circle = models.Bag, models.Circle
+ValidationError = definitions.ValidationError
+converter = getattr(Bag, "__temporal_transfer_type_converter")
+
+valid = {"pick": {"kind": "circle", "radius": 1.5}, "mixed": "ok"}
+model = converter.from_transfer_type(valid, Bag)
+assert converter.to_transfer_type(model) == valid, converter.to_transfer_type(model)
+
+# Neither member is admitted by any branch: `pick` used to reach
+# `_SquareTransferTypeConverter` and raise `AttributeError: 'int' object has no
+# attribute 'kind'`, taking `mixed`'s violation down with it.
+try:
+    converter.to_transfer_type(Bag(pick=42, mixed=7, additional_properties={}))
+except ValidationError as error:
+    reported = [(violation.path, violation.reason) for violation in error.violations]
+else:
+    raise AssertionError("serializing members no branch admits did not raise")
+
+assert reported == [
+    ("pick", "expected one of: Circle, Square"),
+    ("mixed", "expected one of: Circle, string"),
+], reported
+
+# A branch's own constraint is still reported under the member's path, not the
+# empty path the union function collects it at.
+try:
+    converter.to_transfer_type(Bag(pick=Circle(kind="circle", radius=1.5), mixed="x", additional_properties={}))
+except ValidationError as error:
+    reported = [(violation.path, violation.reason) for violation in error.violations]
+else:
+    raise AssertionError("a short string branch did not raise")
+
+assert reported == [("mixed", "must have length >= 2, got 1")], reported
+"#;
+
+/// Properties named after the converter body's *own* identifiers — its locals
+/// (`violations`, `raw`, `out`), the builtins it calls (`len`, `int`, `str`,
+/// `bool`, `dict`, `isinstance`), the modules it imports (`typing`, `math`, `re`),
+/// the loop temporaries it uses (`key`, `value`) and the converter method's
+/// parameters (`self`, `type_hint`).
+///
+/// A property may be named anything, so none of these is reserved. No sample
+/// schema declares one, which is why this lives here rather than in the Python
+/// sample suite: the shadow it used to cause was *silently* wrong (the collected
+/// violations were thrown away and an invalid payload came back as a model), so
+/// nothing short of running the generated converter proves it is gone.
+///
+/// The object is open so the catch-all's `_<MODEL>_DECLARED` frozenset — another
+/// name synthesized from these properties — is exercised too.
+const SHADOWED_NAME_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: true
+required: [violations]
+properties:
+  violations: { type: string, minLength: 2 }
+  raw: { type: string }
+  out: { type: string }
+  len: { type: integer }
+  int: { type: integer }
+  str: { type: string }
+  bool: { type: boolean }
+  dict: { type: object, additionalProperties: true }
+  isinstance: { type: string }
+  typing: { type: string }
+  math: { type: number }
+  re: { type: string, pattern: "^[a-z]+$" }
+  key: { type: string }
+  value: { type: string }
+  self: { type: string }
+  typeHint: { type: string }
+"#;
+
+/// Drives the generated converter for `SHADOWED_NAME_SCHEMA` end to end: a valid
+/// payload must round-trip, and an invalid one must raise the aggregated
+/// `ValidationError` with every violation intact in **both** directions.
+const SHADOWED_NAME_RUNTIME_CHECK: &str = r#"
+import sys
+
+root, package = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root)
+models = __import__(package + ".models", fromlist=["*"])
+definitions = __import__(package + "._definitions", fromlist=["*"])
+
+Shadow = models.Shadow
+converter = getattr(Shadow, "__temporal_transfer_type_converter")
+
+valid = {
+    "violations": "ok",
+    "raw": "r",
+    "out": "o",
+    "len": 1,
+    "int": 2,
+    "str": "s",
+    "bool": True,
+    "dict": {"a": 1},
+    "isinstance": "i",
+    "typing": "t",
+    "math": 1.5,
+    "re": "abc",
+    "key": "k",
+    "value": "v",
+    "self": "me",
+    "typeHint": "h",
+    "unknown": [1, 2],
+}
+
+# Every one of `raw`, `len`, `int`, `str`, `bool`, `dict`, `isinstance`, `typing`,
+# `math` and `out` used to crash *every* payload, valid ones included.
+model = converter.from_transfer_type(valid, Shadow)
+assert model.violations == "ok", model.violations
+assert model.type_hint == "h", model.type_hint
+assert model.additional_properties == {"unknown": [1, 2]}, model.additional_properties
+assert converter.to_transfer_type(model) == valid, converter.to_transfer_type(model)
+
+expected = [
+    ("violations", "must have length >= 2, got 1"),
+    ("math", "must be a finite number, got inf"),
+    ("re", 'must match pattern ^[a-z]+\\Z, got "ABC"'),
+]
+
+# The critical case: a property named `violations` rebound the violation
+# accumulator, so the collected violations were discarded and the invalid payload
+# came back as a model. Reaching the `else` here is that silent failure.
+bad = dict(valid, violations="a", re="ABC", math=float("inf"))
+try:
+    converter.from_transfer_type(bad, Shadow)
+except definitions.ValidationError as error:
+    got = [(item.path, item.reason) for item in error.violations]
+    assert got == expected, got
+else:
+    raise AssertionError("an invalid payload was accepted: validation was disabled")
+
+# The serialize body has locals of its own, so it needs the same proof (P12). A
+# dataclass validates nothing on assignment, so the model is simply mutated.
+model.violations = "a"
+model.re = "ABC"
+model.math = float("inf")
+try:
+    converter.to_transfer_type(model)
+except definitions.ValidationError as error:
+    got = [(item.path, item.reason) for item in error.violations]
+    assert got == expected, got
+else:
+    raise AssertionError("an invalid model was serialized: validation was disabled")
+"#;
+
+const PYTHON_DATACLASS_DEFAULT_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+required: [requiredPlain, requiredNullable]
+properties:
+  requiredPlain: { type: string }
+  requiredNullable:
+    oneOf: [{ type: integer }, { type: "null" }]
+  optionalPlain: { type: boolean }
+  optionalNullable:
+    oneOf: [{ type: string }, { type: "null" }]
+  nullableItems:
+    type: array
+    items:
+      oneOf: [{ type: string }, { type: "null" }]
+  greeting:
+    type: string
+    default: hello
+    deprecated: true
+    x-py-name: salutation
+"#;
+
+const PYTHON_DATACLASS_DEFAULT_RUNTIME_CHECK: &str = r#"
+import sys
+
+root, package = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root)
+models = __import__(package + ".models", fromlist=["*"])
+
+Model = models.Model
+converter = getattr(Model, "__temporal_transfer_type_converter")
+
+try:
+    Model(required_plain="x")
+except TypeError:
+    pass
+else:
+    raise AssertionError("required nullable constructor argument became optional")
+
+unset = Model(required_plain="x", required_nullable=None)
+other = Model(required_plain="x", required_nullable=None)
+assert unset.salutation == "hello"
+assert converter.to_transfer_type(unset) == {
+    "requiredPlain": "x",
+    "requiredNullable": None,
+}
+assert unset.additional_properties == {}
+assert other.additional_properties == {}
+assert unset.additional_properties is not other.additional_properties
+assert unset == other
+assert "_salutation" not in repr(unset)
+
+explicit_default = Model(
+    required_plain="x", required_nullable=None, salutation="hello"
+)
+assert converter.to_transfer_type(explicit_default)["greeting"] == "hello"
+assert explicit_default != unset
+
+unset.salutation = "bye"
+assert unset.salutation == "bye"
+assert converter.to_transfer_type(unset)["greeting"] == "bye"
+del unset.salutation
+assert unset.salutation == "hello"
+assert "greeting" not in converter.to_transfer_type(unset)
+assert unset == other
+"#;
+
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -194,6 +451,21 @@ fn read_python_package_files(dir: &Path) -> BTreeMap<PathBuf, String> {
     let mut files = BTreeMap::new();
     visit(dir, dir, &mut files);
     files
+}
+
+fn assert_python_validation_exports(package_init: &str) {
+    for expected in [
+        "from ._definitions import (",
+        "    ValidationError,",
+        "    Violation,",
+        "    \"ValidationError\",",
+        "    \"Violation\",",
+    ] {
+        assert!(
+            package_init.contains(expected),
+            "{expected}\n{package_init}"
+        );
+    }
 }
 
 fn render_output_files(files: BTreeMap<PathBuf, String>) -> String {
@@ -351,6 +623,28 @@ for path in sorted(root.rglob("*.py")):
     assert!(status.success());
 }
 
+/// The interpreter the generated packages are exercised with. The advanced
+/// project's environment is the one already provisioned with `temporalio`, which
+/// the generated converters import.
+fn sample_python_interpreter() -> PathBuf {
+    project_root().join("advanced/samples/python/.venv/bin/python")
+}
+
+/// Runs `script` under that interpreter, failing the test on a non-zero exit. Used
+/// where a rendered-output assertion cannot reach the behavior under test — a
+/// silently disabled validator renders perfectly readable code.
+fn assert_python_script_succeeds(script: &str, args: &[&str]) {
+    let status = Command::new(sample_python_interpreter())
+        .args(["-c", script])
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "generated package failed its runtime check"
+    );
+}
+
 fn unique_output_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -385,31 +679,63 @@ fn python_json_example_generation_matches_checked_in_output() {
         let expected =
             read_python_package_files(&python_json_definitions_output_path(&root, example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        let package_init = rendered
+            .get(&PathBuf::from("__init__.py"))
+            .expect("JSON Schema package should include a root __init__.py");
+        assert_python_validation_exports(package_init);
         if example_id == "showcase" {
             let all = rendered.values().cloned().collect::<Vec<_>>().join("\n");
-            // Scalar defaults surface natively via the Pydantic field default.
-            assert!(all.contains("greeting: str = pydantic.Field(default=\"hello\")"));
-            assert!(all.contains("debug: bool = pydantic.Field(default=False)"));
+            // A default-bearing property materializes on read while its private
+            // optional storage retains unset state for wire omission.
+            assert!(all.contains("_greeting: str | None"));
+            assert!(all.contains("def greeting(self) -> str:"));
+            assert!(all.contains("def greeting(self, value: str) -> None:"));
+            assert!(all.contains("@greeting.deleter\n    def greeting(self) -> None:"));
+            assert!(!all.contains("DEFAULT_GREETING"));
+            assert!(!all.contains("DEFAULT_DEBUG"));
+            assert!(!all.contains("DEFAULT_RETRIES"));
             // `deprecated` → PEP 702 marker (no runtime warning); `title` → docstring.
             assert!(all.contains(
                 "typing_extensions.deprecated(\"This field is deprecated.\", category=None)"
             ));
             assert!(all.contains("Retry budget"));
             // `x-py-name` override (Stage 4): the attribute uses the override
-            // while the wire name is pinned by `Field(alias="legacyId")`.
+            // while the wire name stays `legacyId`, pinned by the converter body.
             assert!(all.contains("legacy_id_py:"));
-            assert!(all.contains("alias=\"legacyId\""));
-            // A free-form object inlines as a mapping — both as a union branch
-            // and (extra="allow" + a member-count validator) as a named model.
+            assert!(all.contains("\"legacyId\""));
+            // A free-form object inlines as a mapping as a union branch, and as a
+            // named model with an explicit `additional_properties` catch-all.
             assert!(all.contains("payload: dict[str, typing.Any] | str | None"));
-            assert!(all.contains("class Extras(pydantic.BaseModel):"));
+            assert!(all.contains("class Extras:"));
+            assert!(
+                all.contains("additional_properties: dict[str, typing.Any] = dataclasses.field(")
+            );
+            // Each model is a plain dataclass carrying a private transfer type
+            // converter, so the default Temporal data converter picks it up. The
+            // registration goes through the runtime's `_transfer_type_convertible`
+            // shim, which erases the converter's value-type parameter — binding it
+            // on the decorated class is circular for a static type checker.
+            assert!(all.contains("@dataclasses.dataclass(slots=True, kw_only=True)"));
+            assert!(all.contains("@_transfer_type_convertible(_ExtrasTransferTypeConverter)"));
+            assert!(all.contains(
+                "def _transfer_type_convertible(\n    converter: type[temporalio.converter.TransferTypeConverter[typing.Any, typing.Any]],\n) -> collections.abc.Callable[[type[_ModelT]], type[_ModelT]]:"
+            ));
+            assert!(
+                all.contains(
+                    "    return temporalio.converter.transfer_type_convertible(converter)"
+                )
+            );
             // A tagged union whose branches are written inline: each branch names
-            // itself with `x-py-name` and becomes a model Pydantic selects on.
-            assert!(all.contains("class TextNote(pydantic.BaseModel):"));
+            // itself with `x-py-name` and becomes a model of its own.
+            assert!(all.contains("class TextNote:"));
             assert!(all.contains("Note: typing.TypeAlias = TextNote | LinkNote"));
+            // A named union cannot be decorated, so its conversion is emitted as
+            // module-private free functions instead.
+            assert!(all.contains("def _note_from_transfer_type("));
+            assert!(all.contains("def _note_to_transfer_type("));
             // The lone inline object branch of a property union derives its name
             // from the union it belongs to.
-            assert!(all.contains("class ShowcaseDetailObject(pydantic.BaseModel):"));
+            assert!(all.contains("class ShowcaseDetailObject:"));
             assert!(all.contains("detail: ShowcaseDetailObject | str | None"));
             assert!(all.contains("must have at most 4 properties"));
         }
@@ -427,6 +753,10 @@ fn python_json_api_example_generation_matches_checked_in_output() {
         let rendered = read_python_package_files(&output_path);
         let expected = read_python_package_files(&python_json_api_output_path(&root, example_id));
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
+        let package_init = rendered
+            .get(&PathBuf::from("__init__.py"))
+            .expect("JSON Schema package should include a root __init__.py");
+        assert_python_validation_exports(package_init);
         fs::remove_dir_all(output_path).unwrap();
     }
 }
@@ -575,6 +905,38 @@ fn python_example_suite_type_checks_and_runs() {
             .unwrap();
         assert!(pytest_status.success(), "pytest failed in {example_dir:?}");
     }
+}
+
+/// The generated JSON-Schema runtime must also *run* on the declared floor,
+/// `requires-python = ">=3.10"` — not merely parse as 3.10 syntax.
+///
+/// `assert_python_310_syntax_compatible` checks the AST at
+/// `feature_version=(3, 10)`, which is a syntax check only, and the project
+/// environments above are whatever interpreter `uv` picked (3.13 here). That left a
+/// real class of bug uncovered: before 3.11, `datetime.fromisoformat` parses only
+/// the fractional-second widths `isoformat` writes, so an RFC 3339 `.1` raised on
+/// 3.10 while passing everywhere else. Every test in the suite was green.
+///
+/// The environment lives outside the project directory so the checked-in one is
+/// untouched and neither `basedpyright` nor `ruff` picks it up (their excludes name
+/// `.venv`). It is created on demand in well under a second from the same locked
+/// `uv.lock`, so this is one extra resolve, not a second maintained lockfile; `uv`
+/// fetches a managed CPython 3.10 if the host has none.
+#[test]
+fn python_json_samples_run_on_the_declared_python_floor() {
+    let root = project_root();
+    let floor_environment = root.join("target/python-floor-venv");
+
+    let status = Command::new("uv")
+        .current_dir(samples_python_root(&root))
+        .env("UV_PROJECT_ENVIRONMENT", &floor_environment)
+        .args(["run", "--python", "3.10", "--locked", "pytest"])
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "the JSON-Schema sample suite failed on Python 3.10, the declared floor"
+    );
 }
 
 #[test]
@@ -858,8 +1220,8 @@ fn python_rejects_support_namespace() {
 }
 
 /// An inline **structured** object `oneOf` branch on a property: the branch is
-/// named `<Union>Object` and emitted as a module-level `BaseModel`, which is what
-/// Pydantic selects on for the object member of the union.
+/// named `<Union>Object` and emitted as a module-level dataclass, which the
+/// union's dispatcher selects for the object member of the union.
 /// See `specs/json-schema/features/oneOf.md` ("Object branches").
 #[test]
 fn python_json_names_inline_object_union_branch() {
@@ -884,7 +1246,8 @@ fn python_json_names_inline_object_union_branch() {
     let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
 
     assert!(rendered.contains("payload: DetailPayloadObject | str | None"));
-    assert!(rendered.contains("class DetailPayloadObject(pydantic.BaseModel):"));
+    assert!(rendered.contains("class DetailPayloadObject:"));
+    assert!(rendered.contains("class _DetailPayloadObjectTransferTypeConverter("));
     assert!(rendered.contains("text: str"));
     // The branch model is part of the module surface, like any named definition.
     let exports = fs::read_to_string(output_path.join("__init__.py")).unwrap();
@@ -892,11 +1255,11 @@ fn python_json_names_inline_object_union_branch() {
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
-/// Every constraint a **non-object** branch declares rides inside the union
-/// member's own annotation, so Pydantic holds the value to the branch it selected
-/// — the native `Field` bounds innermost, the refinement validators wrapping
-/// them, and the `uniqueItems`/`contains` validators Pydantic has no native form
-/// for. See `specs/json-schema/features/oneOf.md` ("Validator mapping").
+/// Every constraint a **non-object** branch declares is enforced by the union's
+/// dispatcher rather than by the annotation, so the field annotation is the plain
+/// union of the branch types while the bound, the `pattern`, and the
+/// `uniqueItems` check all live in the converter body.
+/// See `specs/json-schema/features/oneOf.md` ("Validator mapping").
 #[test]
 fn python_json_validates_non_object_union_branch_constraints() {
     let temp_dir = unique_output_path("py-json-branch-constraints");
@@ -919,26 +1282,93 @@ fn python_json_validates_non_object_union_branch_constraints() {
     .unwrap();
     let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
 
-    // The string branch: native length bound innermost, `pattern` wrapping it;
-    // the integer branch's bound is its own.
-    assert!(rendered.contains(
-        "value: typing.Annotated[typing.Annotated[str, pydantic.Field(min_length=3)], pydantic.AfterValidator(_check_pattern(\"^[a-z]+\\\\Z\"))] | typing.Annotated[SpecInt, pydantic.Field(ge=1)] | None"
-    ));
-    // The array branch: `minItems` natively, `uniqueItems` through the validator
-    // a position with no declared field of its own needs.
-    assert!(rendered.contains(
-        "typing.Annotated[typing.Annotated[list[float], pydantic.Field(min_length=1)], pydantic.AfterValidator(_check_unique_items)] | typing.Literal[\"auto\", \"manual\"] | None"
-    ));
-    // The validators are imported from the runtime module.
-    assert!(rendered.contains("_check_pattern,"));
-    assert!(rendered.contains("_check_unique_items,"));
+    // The string branch's `minLength`/`pattern` and the integer branch's
+    // `minimum` leave no residue on the annotation: it is the plain branch union.
+    assert!(rendered.contains("value: str | int | None"));
+    // Same for the array branch's `minItems`/`uniqueItems`; a closed value set
+    // still narrows to a `typing.Literal`.
+    assert!(rendered.contains("list[float] | typing.Literal[\"auto\", \"manual\"] | None"));
+    // The branch checks themselves live in the converter body: a `pattern` lowers
+    // to a `.search` against a module-level compiled regex const, `uniqueItems` to
+    // a runtime helper imported from the definitions module.
+    assert!(
+        rendered.contains("_PATTERN_F242E3A159C2422C = re.compile(\"^[a-z]+\\\\Z\", re.ASCII)")
+    );
+    assert!(rendered.contains("if _PATTERN_F242E3A159C2422C.search(value) is None:"));
+    assert!(rendered.contains("_check_unique_items("));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A union that converts through a `_<base>_to_transfer_type` runs its checks
+/// *inside* that function, ahead of the dispatch, so the unguarded last branch is
+/// only ever reached by a value some branch admits. The enclosing member emits no
+/// check of its own and re-paths what the function raises.
+/// See `specs/json-schema/features/oneOf.md` ("Serialize-side (P12)").
+#[test]
+fn python_json_union_serializer_validates_before_dispatching() {
+    let temp_dir = unique_output_path("py-json-union-dispatch");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("bag.yaml");
+    fs::write(&input_path, UNION_DISPATCH_FALLTHROUGH_SCHEMA).unwrap();
+    let output_path = temp_dir.join("bag_package");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
+
+    // The checks precede the dispatch, and the raise separates them: the last
+    // branch's converter is unreachable for a value no branch admits.
+    let dispatch = rendered
+        .split_once("def _bag_pick_to_transfer_type(value: Circle | Square) -> typing.Any:\n")
+        .expect("no serialize function for the `pick` union")
+        .1;
+    assert!(dispatch.starts_with(concat!(
+        "    violations: list[Violation] = []\n",
+        "    candidate = typing.cast(\"object\", value)\n",
+        "    if not (isinstance(candidate, Circle) or isinstance(candidate, Square)):\n",
+        "        violations.append(Violation(path=\"\", reason=\"expected one of: Circle, Square\"))\n",
+        "    if violations:\n",
+        "        raise ValidationError(violations)\n",
+        "    if isinstance(value, Circle):\n",
+    )),
+    "the `pick` dispatch is not preceded by the no-branch-matched test:\n{dispatch}");
+
+    // The enclosing member holds no copy of that test; it only re-paths.
+    let member = rendered
+        .split_once("        if value.pick is not None:\n")
+        .expect("no serialize block for the `pick` member")
+        .1;
+    assert!(
+        member.starts_with(concat!(
+            "            try:\n",
+            "                out[\"pick\"] = _bag_pick_to_transfer_type(value.pick)\n",
+            "            except ValidationError as error:\n",
+            "                _collect(violations, \"pick\", error)\n",
+        )),
+        "the `pick` member repeats the union's checks:\n{member}"
+    );
+
+    assert_python_script_succeeds(
+        UNION_DISPATCH_FALLTHROUGH_RUNTIME_CHECK,
+        &[temp_dir.to_str().unwrap(), "bag_package"],
+    );
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
 /// A union in an element position: the loader names it, so Python emits an
-/// ordinary union alias and Pydantic selects the branch per element. An optional
-/// field whose *elements* are nullable still needs its own `| None` — the
-/// element's `None` is not the field's.
+/// ordinary union alias and the converter dispatches the branch per element. An
+/// optional field whose *elements* are nullable still needs its own `| None` —
+/// the element's `None` is not the field's.
 /// See `specs/json-schema/features/oneOf.md` ("Unions in element positions").
 #[test]
 fn python_json_annotates_element_position_unions() {
@@ -962,7 +1392,7 @@ fn python_json_annotates_element_position_unions() {
     .unwrap();
     let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
 
-    assert!(rendered.contains("BagSegmentsItem: typing.TypeAlias = str | SpecInt"));
+    assert!(rendered.contains("BagSegmentsItem: typing.TypeAlias = str | int"));
     assert!(rendered.contains("segments: list[BagSegmentsItem] | None"));
     assert!(rendered.contains("choices: list[Choice] | None"));
     assert!(rendered.contains("slots: list[str | None] | None"));
@@ -1052,7 +1482,7 @@ fn python_json_cross_module_py_name_override_moves_every_reference() {
     .unwrap();
 
     let declaring = fs::read_to_string(output_path.join("content/page/models.py")).unwrap();
-    assert!(declaring.contains("class RenamedPage(pydantic.BaseModel):"));
+    assert!(declaring.contains("class RenamedPage:"));
 
     let services = fs::read_to_string(output_path.join("kb/services.py")).unwrap();
     for expected in [
@@ -1191,12 +1621,153 @@ services:
         .collect::<Vec<_>>()
         .join("\n");
     assert_eq!(
-        rendered.matches("class Page(").count(),
+        rendered.matches("class Page:").count(),
         1,
         "`Page` must be declared once\n{rendered}"
     );
     // The root barrel binds each name exactly once.
     let barrel = fs::read_to_string(output_path.join("__init__.py")).unwrap();
     assert_eq!(barrel.matches("import Page").count(), 1, "{barrel}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// A declared property named after one of the converter's own identifiers must not
+/// shadow it: the parse body holds each property's value in a `<member>_value` slot
+/// local, so the shadow is structurally impossible rather than merely unlisted.
+///
+/// Rendered output is asserted for the mechanism, and the generated package is then
+/// **run**, because the failure this guards against is silent: `violations:
+/// list[Violation] = []` rebound by a `violations` property's local discarded every
+/// collected violation and returned an invalid payload as a model.
+/// See `specs/json-schema/PRINCIPLES.md` (P15) and
+/// `specs/json-schema/features/properties.md`.
+#[test]
+fn python_json_property_names_never_shadow_converter_locals() {
+    let temp_dir = unique_output_path("py-json-shadowed-names");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("shadow.yaml");
+    fs::write(&input_path, SHADOWED_NAME_SCHEMA).unwrap();
+    let output_path = temp_dir.join("shadow_package");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
+
+    // The accumulator, the decoded mapping and the emitted mapping keep their own
+    // names, unshadowed.
+    assert!(rendered.contains("violations: list[Violation] = []"));
+    assert!(rendered.contains("raw = typing.cast(\"dict[str, typing.Any]\", value)"));
+    assert!(rendered.contains("out: dict[str, typing.Any] = {}"));
+    // Every property is held in a `_value` slot instead, and its temporaries hang
+    // off that slot rather than off the bare member identifier.
+    for member in [
+        "violations",
+        "raw",
+        "out",
+        "len",
+        "int",
+        "str",
+        "bool",
+        "dict",
+        "isinstance",
+        "typing",
+        "math",
+        "re",
+        "key",
+        "value",
+        "self",
+        "type_hint",
+    ] {
+        assert!(
+            rendered.contains(&format!("{member}_value")),
+            "no `_value` slot for the `{member}` property"
+        );
+    }
+    // No property is ever assigned to its bare identifier, which is what shadowed.
+    for shadowing in [
+        "\n        violations = ",
+        "\n        raw = raw[",
+        "\n        len = ",
+        "\n        int = ",
+        "\n        str = ",
+        "\n        dict = ",
+        "\n        isinstance = ",
+        "\n        typing = ",
+        "\n        math = ",
+        "\n        re = ",
+        "\n        self = ",
+    ] {
+        assert!(
+            !rendered.contains(shadowing),
+            "a property rebound the converter's own `{}`",
+            shadowing.trim().trim_end_matches(" =").trim()
+        );
+    }
+    // The synthesized catch-all frozenset carries the *wire* names, not the locals.
+    assert!(rendered.contains("_SHADOW_DECLARED: frozenset[str] = frozenset({\"violations\","));
+    assert!(rendered.contains("\"typeHint\"}"));
+
+    assert_python_script_succeeds(
+        SHADOWED_NAME_RUNTIME_CHECK,
+        &[temp_dir.to_str().unwrap(), "shadow_package"],
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn python_json_model_properties_use_union_none_and_defaults_preserve_presence() {
+    let temp_dir = unique_output_path("py-json-dataclass-default");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("model.yaml");
+    fs::write(&input_path, PYTHON_DATACLASS_DEFAULT_SCHEMA).unwrap();
+    let output_path = temp_dir.join("default_package");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        generate_native_api: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.py")).unwrap();
+
+    assert!(rendered.contains("required_plain: str"));
+    assert!(rendered.contains("required_nullable: int | None"));
+    assert!(rendered.contains("optional_plain: bool | None = None"));
+    assert!(rendered.contains("optional_nullable: str | None = None"));
+    assert!(rendered.contains("nullable_items: list[str | None] | None = None"));
+    assert!(rendered.contains("_salutation: typing.Annotated[str, typing_extensions.deprecated"));
+    assert!(rendered.contains("def salutation(self) -> typing.Annotated[str,"));
+    assert!(rendered.contains("value: typing.Annotated["));
+    assert!(rendered.contains("@salutation.deleter\n    def salutation(self) -> None:"));
+    assert!(rendered.contains("if value._salutation is not None:"));
+    assert!(!rendered.contains("DEFAULT_SALUTATION"));
+    assert!(!rendered.contains("reportDeprecated=false"));
+    assert!(!rendered.contains("reportPropertyTypeMismatch=false"));
+    assert!(!rendered.contains("reportDeprecated"));
+    assert!(!rendered.contains("reportPropertyTypeMismatch"));
+    // Converter/helper annotations use the same compact union style.
+    assert!(rendered.contains("optional_plain_value: bool | None = None"));
+    assert!(rendered.contains("nullable_items_value: list[str | None] | None = None"));
+
+    assert_python_script_succeeds(
+        PYTHON_DATACLASS_DEFAULT_RUNTIME_CHECK,
+        &[temp_dir.to_str().unwrap(), "default_package"],
+    );
     fs::remove_dir_all(temp_dir).unwrap();
 }

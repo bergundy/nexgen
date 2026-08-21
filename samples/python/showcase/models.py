@@ -2,234 +2,551 @@
 
 from __future__ import annotations
 
+import dataclasses
 import typing
 import typing_extensions
-import pydantic
-import pydantic_core
+import math
+import re
+import temporalio.converter
 
 from ._definitions import (
-    Base64Field,
-    Base64UrlField,
-    SpecInt,
-    _check_format,
-    _check_multiple_of,
-    _check_pattern,
+    ValidationError,
+    Violation,
+    _check_contains,
     _check_unique_items,
-    _emit_set_fields,
-    _reject_explicit_null,
+    _collect,
+    _format_base64,
+    _format_base64url,
+    _parse_base64,
+    _parse_base64url,
+    _parse_spec_integer,
+    _quote,
+    _transfer_type_convertible,
 )
 
 
-class Address(pydantic.BaseModel):
+_PATTERN_CD24623C0C29CA35 = re.compile("^[A-Z]{2,4}\\Z", re.ASCII)
+_PATTERN_B4BA2CA20EB1B963 = re.compile(
+    "^[^\\t\\n\\x0B\\f\\r ]+[\\t\\n\\x0B\\f\\r ][^\\t\\n\\x0B\\f\\r ]+\\Z", re.ASCII
+)
+_PATTERN_EAAFA3F3BF5456C8 = re.compile(
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\Z",
+    re.ASCII,
+)
+_PATTERN_67B8088E6C41E9D2 = re.compile(
+    "^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+\\Z",
+    re.ASCII,
+)
+_PATTERN_C3551EE088DD1057 = re.compile(
+    "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\Z",
+    re.ASCII,
+)
+_PATTERN_BECE32B4DA20247D = re.compile(
+    "^(?:[A-Za-z][A-Za-z0-9+.-]*:(?://(?:(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*@)?(?:(?:\\[(?:([0-9a-fA-F]{1,4}:){6}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|::([0-9a-fA-F]{1,4}:){5}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){4}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,1}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){3}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){2}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:)([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4})?::[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::)\\]|\\[v[0-9A-Fa-f]+\\.[A-Za-z0-9._~!$&'()*+,;=:-]+\\])|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*)(?::[0-9]*)?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*|/(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?|(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?(?:\\?(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?(?:#(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?)\\Z",
+    re.ASCII,
+)
+_PATTERN_4A45C0D214B9083D = re.compile(
+    "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\Z",
+    re.ASCII,
+)
+_PATTERN_F242E3A159C2422C = re.compile("^[a-z]+\\Z", re.ASCII)
+
+
+_ADDRESS_DECLARED: frozenset[str] = frozenset({"street", "city", "zip"})
+
+
+_CIRCLE_DECLARED: frozenset[str] = frozenset({"kind", "radius"})
+
+
+_CONTACT_PY_DECLARED: frozenset[str] = frozenset(
+    {"email", "shippingStreet", "shippingZip"}
+)
+
+
+_LINK_NOTE_DECLARED: frozenset[str] = frozenset({"kind", "href"})
+
+
+_SHOWCASE_AUDIT_DECLARED: frozenset[str] = frozenset({"by"})
+
+
+_SHOWCASE_DETAIL_OBJECT_DECLARED: frozenset[str] = frozenset({"code", "hint"})
+
+
+_SHOWCASE_LEDGER_VALUE_DECLARED: frozenset[str] = frozenset({"amount"})
+
+
+_SHOWCASE_LOCATION_DECLARED: frozenset[str] = frozenset({"city", "geo"})
+
+
+_SHOWCASE_LOCATION_GEO_DECLARED: frozenset[str] = frozenset({"lat", "lon"})
+
+
+_SHOWCASE_ROWS_ITEM_DECLARED: frozenset[str] = frozenset({"cell"})
+
+
+_SQUARE_DECLARED: frozenset[str] = frozenset({"kind", "side"})
+
+
+_TEXT_NOTE_DECLARED: frozenset[str] = frozenset({"kind", "body"})
+
+
+_WIDGET_DECLARED: frozenset[str] = frozenset({"id", "kind", "name", "size"})
+
+
+_WIDGET_BASE_DECLARED: frozenset[str] = frozenset({"id", "kind"})
+
+
+class _AddressTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Address", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Address"]
+    ) -> "Address":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        street_value: str = typing.cast("typing.Any", None)
+        if "street" not in raw or raw["street"] is None:
+            violations.append(Violation(path="street", reason="required"))
+        else:
+            street_value_raw = raw["street"]
+            if not isinstance(street_value_raw, str):
+                violations.append(Violation(path="street", reason="expected string"))
+            else:
+                street_value = street_value_raw
+
+        city_value: str | None = None
+        if "city" in raw:
+            city_value_raw = raw["city"]
+            if city_value_raw is None:
+                violations.append(
+                    Violation(path="city", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(city_value_raw, str):
+                    violations.append(Violation(path="city", reason="expected string"))
+                else:
+                    city_value = city_value_raw
+
+        zip_value: int | None = None
+        if "zip" in raw:
+            zip_value_raw = raw["zip"]
+            if zip_value_raw is None:
+                violations.append(
+                    Violation(path="zip", reason="explicit null not allowed")
+                )
+            else:
+                zip_value_parsed = _parse_spec_integer(zip_value_raw, "zip", violations)
+                if zip_value_parsed is not None:
+                    zip_value = zip_value_parsed
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _ADDRESS_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return Address(
+            street=street_value,
+            city=city_value,
+            zip=zip_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Address") -> typing.Any:
+        out: dict[str, typing.Any] = {}
+        out["street"] = value.street
+        if value.city is not None:
+            out["city"] = value.city
+        if value.zip is not None:
+            out["zip"] = value.zip
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        return out
+
+
+@_transfer_type_convertible(_AddressTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Address:
     """A nested object, open to forward-compatible extension."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    street: str
+
+    city: str | None = None
+
+    zip: int | None = None
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    street: str = pydantic.Field()
 
-    city: str | None = pydantic.Field(default=None)
+class _AttributesTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Attributes", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Attributes"]
+    ) -> "Attributes":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        if len(raw) < 1:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at least 1 properties, got {len(raw)}"
+                )
+            )
+        if len(raw) > 3:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 3 properties, got {len(raw)}"
+                )
+            )
+        for key in raw:
+            if len(key) > 8:
+                violations.append(
+                    Violation(
+                        path=key,
+                        reason=f"invalid property name {_quote(key)}: must have length <= 8, got {len(key)}",
+                    )
+                )
+        additional_properties: dict[str, str] = {}
+        for key in raw:
+            member: str = typing.cast("typing.Any", None)
+            member_raw = raw[key]
+            if not isinstance(member_raw, str):
+                violations.append(Violation(path=key, reason="expected string"))
+            else:
+                member = member_raw
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return Attributes(additional_properties=additional_properties)
 
-    zip: SpecInt | None = pydantic.Field(default=None)
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Attributes") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if len(out) < 1:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at least 1 properties, got {len(out)}"
+                )
+            )
+        if len(out) > 3:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 3 properties, got {len(out)}"
+                )
+            )
+        for key in out:
+            if len(key) > 8:
+                violations.append(
+                    Violation(
+                        path=key,
+                        reason=f"invalid property name {_quote(key)}: must have length <= 8, got {len(key)}",
+                    )
+                )
+        if violations:
+            raise ValidationError(violations)
+        return out
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"city", "zip"}
-    )
 
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
-
-
-class Attributes(pydantic.BaseModel):
+@_transfer_type_convertible(_AttributesTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Attributes:
     """A string map with member-count and key-shape constraints: 1 to 3 entries, each key
     at most 8 code points (minProperties/maxProperties/propertyNames on a map-shaped
     object).
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
+    additional_properties: dict[str, str] = dataclasses.field(default_factory=dict)
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
+
+class _ChoicesTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Choices", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Choices"]
+    ) -> "Choices":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        additional_properties: dict[str, ChoicesValue] = {}
+        for key in raw:
+            member: ChoicesValue = typing.cast("typing.Any", None)
+            member_raw = raw[key]
+            member_parsed = _choices_value_from_transfer_type(
+                member_raw, key, violations
+            )
+            if member_parsed is not None:
+                member = member_parsed
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return Choices(additional_properties=additional_properties)
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Choices") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
             try:
-                extra[key] = _ATTRIBUTES_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
-                        )
-                    )
-        if len(extra) < 1:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_few_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at least 1 properties, got {len(extra)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(extra),
-                )
-            )
-        if len(extra) > 3:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_many_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at most 3 properties, got {len(extra)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(extra),
-                )
-            )
-        for key in extra:
-            if len(key) > 8:
-                errors.append(
-                    pydantic_core.InitErrorDetails(
-                        type=pydantic_core.PydanticCustomError(
-                            "invalid_property_name",
-                            typing.cast(
-                                typing.Any,
-                                f'invalid property name "{key}": must have length <= 8, got {len(key)}',
-                            ),
-                        ),
-                        loc=(key,),
-                        input=key,
-                    )
-                )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
-            )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _ATTRIBUTES_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+                out[key] = _choices_value_to_transfer_type(entry)
+            except ValidationError as error:
+                _collect(violations, key, error)
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Choices(pydantic.BaseModel):
+@_transfer_type_convertible(_ChoicesTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Choices:
     """A map whose *member* type is a union written inline in `additionalProperties`. Like
     an element union it has no name of its own, so it is named after its position —
     `ChoicesValue` — and moved into `$defs`; each member then decodes through that
     union's selector, with the member key carrying into the violation path.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    additional_properties: dict[str, ChoicesValue] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
-            try:
-                extra[key] = _CHOICES_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
+
+class _CircleTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Circle", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Circle"]
+    ) -> "Circle":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        kind_value: typing.Literal["circle"] = typing.cast("typing.Any", None)
+        if "kind" not in raw or raw["kind"] is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            kind_value_raw = raw["kind"]
+            if not isinstance(kind_value_raw, str):
+                violations.append(Violation(path="kind", reason="expected string"))
+            elif kind_value_raw not in ("circle",):
+                violations.append(Violation(path="kind", reason='must equal "circle"'))
+            else:
+                kind_value = kind_value_raw
+
+        radius_value: float = typing.cast("typing.Any", None)
+        if "radius" not in raw or raw["radius"] is None:
+            violations.append(Violation(path="radius", reason="required"))
+        else:
+            radius_value_raw = raw["radius"]
+            if not (
+                not isinstance(radius_value_raw, bool)
+                and isinstance(radius_value_raw, (int, float))
+            ):
+                violations.append(Violation(path="radius", reason="expected number"))
+            else:
+                radius_value = radius_value_raw
+                if not (
+                    -1.7976931348623157e308
+                    <= radius_value_raw
+                    <= 1.7976931348623157e308
+                ):
+                    violations.append(
+                        Violation(
+                            path="radius",
+                            reason=f"must be a finite number, got {radius_value_raw}",
                         )
                     )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _CIRCLE_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return Circle(
+            kind=kind_value,
+            radius=radius_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Circle") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if typing.cast("object", value.kind) not in ("circle",):
+            violations.append(Violation(path="kind", reason='must equal "circle"'))
+        out["kind"] = value.kind
+        if not (-1.7976931348623157e308 <= value.radius <= 1.7976931348623157e308):
+            violations.append(
+                Violation(
+                    path="radius", reason=f"must be a finite number, got {value.radius}"
+                )
             )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _CHOICES_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+        out["radius"] = value.radius
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Circle(pydantic.BaseModel):
+@_transfer_type_convertible(_CircleTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Circle:
     """A circle branch of the Shape and shapeOrName tagged unions."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    kind: typing.Literal["circle"] = "circle"
+
+    radius: float
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    kind: typing.Literal["circle"] = pydantic.Field(default="circle")
 
-    radius: float = pydantic.Field()
+class _ContactPyTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ContactPy", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ContactPy"]
+    ) -> "ContactPy":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_kind(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "kind" not in values:
-                data = {**values, "kind": "circle"}
-            elif values.get("kind", values.get("kind")) != "circle":
-                raise pydantic_core.PydanticCustomError(
-                    "const", 'kind must equal "circle"'
+        email_value: str | None = None
+        if "email" in raw:
+            email_value_raw = raw["email"]
+            if email_value_raw is None:
+                violations.append(
+                    Violation(path="email", reason="explicit null not allowed")
                 )
-        return typing.cast(object, data)
+            else:
+                if not isinstance(email_value_raw, str):
+                    violations.append(Violation(path="email", reason="expected string"))
+                else:
+                    email_value = email_value_raw
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+        shipping_street_value: str | None = None
+        if "shippingStreet" in raw:
+            shipping_street_value_raw = raw["shippingStreet"]
+            if shipping_street_value_raw is None:
+                violations.append(
+                    Violation(path="shippingStreet", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(shipping_street_value_raw, str):
+                    violations.append(
+                        Violation(path="shippingStreet", reason="expected string")
+                    )
+                else:
+                    shipping_street_value = shipping_street_value_raw
+
+        shipping_zip_value: str | None = None
+        if "shippingZip" in raw:
+            shipping_zip_value_raw = raw["shippingZip"]
+            if shipping_zip_value_raw is None:
+                violations.append(
+                    Violation(path="shippingZip", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(shipping_zip_value_raw, str):
+                    violations.append(
+                        Violation(path="shippingZip", reason="expected string")
+                    )
+                else:
+                    shipping_zip_value = shipping_zip_value_raw
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _CONTACT_PY_DECLARED:
+                additional_properties[key] = raw[key]
+        if len(raw) < 1:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at least 1 properties, got {len(raw)}"
+                )
+            )
+        if len(raw) > 3:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 3 properties, got {len(raw)}"
+                )
+            )
+        if "shippingStreet" in raw:
+            if "shippingZip" not in raw:
+                violations.append(
+                    Violation(
+                        path="shippingZip",
+                        reason='property "shippingZip" is required when "shippingStreet" is present',
+                    )
+                )
+        if violations:
+            raise ValidationError(violations)
+        return ContactPy(
+            email=email_value,
+            shipping_street=shipping_street_value,
+            shipping_zip=shipping_zip_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ContactPy") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if value.email is not None:
+            out["email"] = value.email
+        if value.shipping_street is not None:
+            out["shippingStreet"] = value.shipping_street
+        if value.shipping_zip is not None:
+            out["shippingZip"] = value.shipping_zip
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if len(out) < 1:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at least 1 properties, got {len(out)}"
+                )
+            )
+        if len(out) > 3:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 3 properties, got {len(out)}"
+                )
+            )
+        if "shippingStreet" in out:
+            if "shippingZip" not in out:
+                violations.append(
+                    Violation(
+                        path="shippingZip",
+                        reason='property "shippingZip" is required when "shippingStreet" is present',
+                    )
+                )
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ContactPy(pydantic.BaseModel):
+@_transfer_type_convertible(_ContactPyTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ContactPy:
     """Contact details with a conditional requirement and a member-count bound: a shipping
     street requires a shipping zip (dependentRequired), and the object must carry 1 to 3
     members (minProperties/maxProperties on a declared-property object). Also exercises
@@ -239,353 +556,2270 @@ class ContactPy(pydantic.BaseModel):
     `$ref`, while the wire `$ref` name stays `Contact`.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    email: str | None = None
+
+    shipping_street: str | None = None
+
+    shipping_zip: str | None = None
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    email: str | None = pydantic.Field(default=None)
 
-    shipping_street: str | None = pydantic.Field(default=None, alias="shippingStreet")
-
-    shipping_zip: str | None = pydantic.Field(default=None, alias="shippingZip")
-
-    @pydantic.model_validator(mode="after")
-    def _validate_object(self) -> typing.Any:
-        errors: list[pydantic_core.InitErrorDetails] = []
-        present = self.model_fields_set
-        if len(present) < 1:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_few_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at least 1 properties, got {len(present)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(present),
+class _ExtrasTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Extras", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Extras"]
+    ) -> "Extras":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        if len(raw) > 4:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 4 properties, got {len(raw)}"
                 )
             )
-        if len(present) > 3:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_many_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at most 3 properties, got {len(present)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(present),
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return Extras(additional_properties=additional_properties)
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Extras") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if len(out) > 4:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 4 properties, got {len(out)}"
                 )
             )
-        if "shipping_street" in present:
-            if "shipping_zip" not in present:
-                errors.append(
-                    pydantic_core.InitErrorDetails(
-                        type=pydantic_core.PydanticCustomError(
-                            "dependent_required",
-                            'property "shippingZip" is required when "shippingStreet" is present',
-                        ),
-                        loc=("shippingZip",),
-                        input=None,
-                    )
-                )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
-            )
-        return self
-
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"email", "shippingStreet", "shippingZip", "shipping_street", "shipping_zip"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Extras(pydantic.BaseModel):
+@_transfer_type_convertible(_ExtrasTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Extras:
     """A free-form object (`additionalProperties: true` with no declared properties): every
     member is carried verbatim, bounded to at most 4 members. Members keep their wire
     form, so large integers survive a round-trip untruncated.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        if len(extra) > 4:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_many_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at most 4 properties, got {len(extra)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(extra),
+
+class _LabelsTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Labels", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Labels"]
+    ) -> "Labels":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        if len(raw) > 50:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 50 properties, got {len(raw)}"
                 )
             )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
+        additional_properties: dict[str, str] = {}
+        for key in raw:
+            member: str = typing.cast("typing.Any", None)
+            member_raw = raw[key]
+            if not isinstance(member_raw, str):
+                violations.append(Violation(path=key, reason="expected string"))
+            else:
+                member = member_raw
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return Labels(additional_properties=additional_properties)
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Labels") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if len(out) > 50:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 50 properties, got {len(out)}"
+                )
             )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return dict(typing.cast(dict[str, object], self.model_extra or {}))
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Labels(pydantic.BaseModel):
+@_transfer_type_convertible(_LabelsTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Labels:
     """Arbitrary string key/value labels (typed map)."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
+    additional_properties: dict[str, str] = dataclasses.field(default_factory=dict)
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
-            try:
-                extra[key] = _LABELS_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
+
+class _LinkNoteTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["LinkNote", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["LinkNote"]
+    ) -> "LinkNote":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        kind_value: typing.Literal["link"] = typing.cast("typing.Any", None)
+        if "kind" not in raw or raw["kind"] is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            kind_value_raw = raw["kind"]
+            if not isinstance(kind_value_raw, str):
+                violations.append(Violation(path="kind", reason="expected string"))
+            elif kind_value_raw not in ("link",):
+                violations.append(Violation(path="kind", reason='must equal "link"'))
+            else:
+                kind_value = kind_value_raw
+
+        href_value: str = typing.cast("typing.Any", None)
+        if "href" not in raw or raw["href"] is None:
+            violations.append(Violation(path="href", reason="required"))
+        else:
+            href_value_raw = raw["href"]
+            if not isinstance(href_value_raw, str):
+                violations.append(Violation(path="href", reason="expected string"))
+            else:
+                href_value = href_value_raw
+                if len(href_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="href",
+                            reason=f"must have length >= 1, got {len(href_value_raw)}",
                         )
                     )
-        if len(extra) > 50:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_many_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at most 50 properties, got {len(extra)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(extra),
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _LINK_NOTE_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return LinkNote(
+            kind=kind_value,
+            href=href_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "LinkNote") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if typing.cast("object", value.kind) not in ("link",):
+            violations.append(Violation(path="kind", reason='must equal "link"'))
+        out["kind"] = value.kind
+        if len(value.href) < 1:
+            violations.append(
+                Violation(
+                    path="href", reason=f"must have length >= 1, got {len(value.href)}"
                 )
             )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
-            )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _LABELS_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+        out["href"] = value.href
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class LinkNote(pydantic.BaseModel):
+@_transfer_type_convertible(_LinkNoteTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class LinkNote:
     """A link note branch, named inline."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    kind: typing.Literal["link"] = "link"
+
+    href: str
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    kind: typing.Literal["link"] = pydantic.Field(default="link")
 
-    href: str = pydantic.Field(min_length=1)
+class _NicknamesTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Nicknames", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Nicknames"]
+    ) -> "Nicknames":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        additional_properties: dict[str, str | None] = {}
+        for key in raw:
+            member: str | None = None
+            member_raw = raw[key]
+            if member_raw is None:
+                member = None
+            else:
+                if not isinstance(member_raw, str):
+                    violations.append(Violation(path=key, reason="expected string"))
+                else:
+                    member = member_raw
+                    if len(member_raw) < 2:
+                        violations.append(
+                            Violation(
+                                path=key,
+                                reason=f"must have length >= 2, got {len(member_raw)}",
+                            )
+                        )
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return Nicknames(additional_properties=additional_properties)
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_kind(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "kind" not in values:
-                data = {**values, "kind": "link"}
-            elif values.get("kind", values.get("kind")) != "link":
-                raise pydantic_core.PydanticCustomError(
-                    "const", 'kind must equal "link"'
-                )
-        return typing.cast(object, data)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Nicknames") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            if entry is not None:
+                if len(entry) < 2:
+                    violations.append(
+                        Violation(
+                            path=key, reason=f"must have length >= 2, got {len(entry)}"
+                        )
+                    )
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Nicknames(pydantic.BaseModel):
+@_transfer_type_convertible(_NicknamesTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Nicknames:
     """A typed map of **nullable** members: a member may be an explicit null, which is kept
     as a null member rather than dropped from the map, while a present member still
     carries its own constraint.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    additional_properties: dict[str, str | None] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
-            try:
-                extra[key] = _NICKNAMES_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
+
+class _QuotasTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Quotas", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Quotas"]
+    ) -> "Quotas":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        additional_properties: dict[str, int] = {}
+        for key in raw:
+            member: int = typing.cast("typing.Any", None)
+            member_raw = raw[key]
+            member_parsed = _parse_spec_integer(member_raw, key, violations)
+            if member_parsed is not None:
+                member = member_parsed
+                if member < 0:
+                    violations.append(
+                        Violation(path=key, reason=f"must be >= 0, got {member}")
+                    )
+                if member > 100:
+                    violations.append(
+                        Violation(path=key, reason=f"must be <= 100, got {member}")
+                    )
+                if member % 5 != 0:
+                    violations.append(
+                        Violation(
+                            path=key, reason=f"must be a multiple of 5, got {member}"
                         )
                     )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
-            )
-        return self
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return Quotas(additional_properties=additional_properties)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _NICKNAMES_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Quotas") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            if entry < 0:
+                violations.append(
+                    Violation(path=key, reason=f"must be >= 0, got {entry}")
+                )
+            if entry > 100:
+                violations.append(
+                    Violation(path=key, reason=f"must be <= 100, got {entry}")
+                )
+            if entry % 5 != 0:
+                violations.append(
+                    Violation(path=key, reason=f"must be a multiple of 5, got {entry}")
+                )
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Quotas(pydantic.BaseModel):
+@_transfer_type_convertible(_QuotasTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Quotas:
     """A typed map whose members carry their own constraints: every member is a
     non-negative multiple of 5, at most 100. A member is held to exactly what a declared
     field of that type is held to, in both directions, with the offending member's key
     as the violation path.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
-
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
-            try:
-                extra[key] = _QUOTAS_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
-                        )
-                    )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
-            )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _QUOTAS_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+    additional_properties: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
-class Settings(pydantic.BaseModel):
+class _SettingsTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Settings", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Settings"]
+    ) -> "Settings":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        theme_value: str | None = None
+        if "theme" in raw:
+            theme_value_raw = raw["theme"]
+            if theme_value_raw is None:
+                violations.append(
+                    Violation(path="theme", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(theme_value_raw, str):
+                    violations.append(Violation(path="theme", reason="expected string"))
+                else:
+                    theme_value = theme_value_raw
+
+        font_size_value: int | None = None
+        if "fontSize" in raw:
+            font_size_value_raw = raw["fontSize"]
+            if font_size_value_raw is None:
+                violations.append(
+                    Violation(path="fontSize", reason="explicit null not allowed")
+                )
+            else:
+                font_size_value_parsed = _parse_spec_integer(
+                    font_size_value_raw, "fontSize", violations
+                )
+                if font_size_value_parsed is not None:
+                    font_size_value = font_size_value_parsed
+
+        for key in raw:
+            if key != "theme" and key != "fontSize":
+                violations.append(Violation(path=key, reason="unknown field"))
+        if violations:
+            raise ValidationError(violations)
+        return Settings(
+            theme=theme_value,
+            font_size=font_size_value,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Settings") -> typing.Any:
+        out: dict[str, typing.Any] = {}
+        if value.theme is not None:
+            out["theme"] = value.theme
+        if value.font_size is not None:
+            out["fontSize"] = value.font_size
+        return out
+
+
+@_transfer_type_convertible(_SettingsTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Settings:
     """A closed object; unknown members are rejected."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
-    )
+    theme: str | None = None
 
-    theme: str | None = pydantic.Field(default=None)
-
-    font_size: SpecInt | None = pydantic.Field(default=None, alias="fontSize")
-
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"fontSize", "font_size", "theme"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+    font_size: int | None = None
 
 
-class Showcase(pydantic.BaseModel):
+class _ShowcaseTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Showcase", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Showcase"]
+    ) -> "Showcase":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        kind_value: typing.Literal["showcase"] = typing.cast("typing.Any", None)
+        if "kind" not in raw or raw["kind"] is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            kind_value_raw = raw["kind"]
+            if not isinstance(kind_value_raw, str):
+                violations.append(Violation(path="kind", reason="expected string"))
+            elif kind_value_raw not in ("showcase",):
+                violations.append(
+                    Violation(path="kind", reason='must equal "showcase"')
+                )
+            else:
+                kind_value = kind_value_raw
+
+        revision_value: typing.Literal[1] = typing.cast("typing.Any", None)
+        if "revision" not in raw or raw["revision"] is None:
+            violations.append(Violation(path="revision", reason="required"))
+        else:
+            revision_value_raw = raw["revision"]
+            revision_value_parsed = _parse_spec_integer(
+                revision_value_raw, "revision", violations
+            )
+            if revision_value_parsed is not None:
+                if revision_value_parsed not in (1,):
+                    violations.append(Violation(path="revision", reason="must equal 1"))
+                else:
+                    revision_value = revision_value_parsed
+
+        enabled_value: typing.Literal[True] = typing.cast("typing.Any", None)
+        if "enabled" not in raw or raw["enabled"] is None:
+            violations.append(Violation(path="enabled", reason="required"))
+        else:
+            enabled_value_raw = raw["enabled"]
+            if not isinstance(enabled_value_raw, bool):
+                violations.append(Violation(path="enabled", reason="expected boolean"))
+            elif enabled_value_raw not in (True,):
+                violations.append(Violation(path="enabled", reason="must equal true"))
+            else:
+                enabled_value = enabled_value_raw
+
+        status_value: typing.Literal["active", "inactive", "pending"] = typing.cast(
+            "typing.Any", None
+        )
+        if "status" not in raw or raw["status"] is None:
+            violations.append(Violation(path="status", reason="required"))
+        else:
+            status_value_raw = raw["status"]
+            if not isinstance(status_value_raw, str):
+                violations.append(Violation(path="status", reason="expected string"))
+            elif status_value_raw not in ("active", "inactive", "pending"):
+                violations.append(
+                    Violation(
+                        path="status",
+                        reason=f'must be one of ["active", "inactive", "pending"], got {_quote(status_value_raw)}',
+                    )
+                )
+            else:
+                status_value = status_value_raw
+
+        tier_value: typing.Literal[1, 2, 3] = typing.cast("typing.Any", None)
+        if "tier" not in raw or raw["tier"] is None:
+            violations.append(Violation(path="tier", reason="required"))
+        else:
+            tier_value_raw = raw["tier"]
+            tier_value_parsed = _parse_spec_integer(tier_value_raw, "tier", violations)
+            if tier_value_parsed is not None:
+                if tier_value_parsed not in (1, 2, 3):
+                    violations.append(
+                        Violation(
+                            path="tier",
+                            reason=f"must be one of [1, 2, 3], got {_quote(tier_value_parsed)}",
+                        )
+                    )
+                else:
+                    tier_value = tier_value_parsed
+
+        scale_value: float = typing.cast("typing.Any", None)
+        if "scale" not in raw or raw["scale"] is None:
+            violations.append(Violation(path="scale", reason="required"))
+        else:
+            scale_value_raw = raw["scale"]
+            if not (
+                not isinstance(scale_value_raw, bool)
+                and isinstance(scale_value_raw, (int, float))
+            ):
+                violations.append(Violation(path="scale", reason="expected number"))
+            elif scale_value_raw not in (1.5, 2.5):
+                violations.append(
+                    Violation(
+                        path="scale",
+                        reason=f"must be one of [1.5, 2.5], got {_quote(scale_value_raw)}",
+                    )
+                )
+            else:
+                scale_value = scale_value_raw
+
+        name_value: str = typing.cast("typing.Any", None)
+        if "name" not in raw or raw["name"] is None:
+            violations.append(Violation(path="name", reason="required"))
+        else:
+            name_value_raw = raw["name"]
+            if not isinstance(name_value_raw, str):
+                violations.append(Violation(path="name", reason="expected string"))
+            else:
+                name_value = name_value_raw
+                if len(name_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="name",
+                            reason=f"must have length >= 1, got {len(name_value_raw)}",
+                        )
+                    )
+                if len(name_value_raw) > 64:
+                    violations.append(
+                        Violation(
+                            path="name",
+                            reason=f"must have length <= 64, got {len(name_value_raw)}",
+                        )
+                    )
+
+        count_value: int = typing.cast("typing.Any", None)
+        if "count" not in raw or raw["count"] is None:
+            violations.append(Violation(path="count", reason="required"))
+        else:
+            count_value_raw = raw["count"]
+            count_value_parsed = _parse_spec_integer(
+                count_value_raw, "count", violations
+            )
+            if count_value_parsed is not None:
+                count_value = count_value_parsed
+
+        active_value: bool = typing.cast("typing.Any", None)
+        if "active" not in raw or raw["active"] is None:
+            violations.append(Violation(path="active", reason="required"))
+        else:
+            active_value_raw = raw["active"]
+            if not isinstance(active_value_raw, bool):
+                violations.append(Violation(path="active", reason="expected boolean"))
+            else:
+                active_value = active_value_raw
+
+        nickname_value: str | None = None
+        if "nickname" in raw:
+            nickname_value_raw = raw["nickname"]
+            if nickname_value_raw is None:
+                violations.append(
+                    Violation(path="nickname", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(nickname_value_raw, str):
+                    violations.append(
+                        Violation(path="nickname", reason="expected string")
+                    )
+                else:
+                    nickname_value = nickname_value_raw
+                    if len(nickname_value_raw) > 12:
+                        violations.append(
+                            Violation(
+                                path="nickname",
+                                reason=f"must have length <= 12, got {len(nickname_value_raw)}",
+                            )
+                        )
+
+        code_value: str | None = None
+        if "code" in raw:
+            code_value_raw = raw["code"]
+            if code_value_raw is None:
+                violations.append(
+                    Violation(path="code", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(code_value_raw, str):
+                    violations.append(Violation(path="code", reason="expected string"))
+                else:
+                    code_value = code_value_raw
+                    if len(code_value_raw) < 2:
+                        violations.append(
+                            Violation(
+                                path="code",
+                                reason=f"must have length >= 2, got {len(code_value_raw)}",
+                            )
+                        )
+                    if len(code_value_raw) > 5:
+                        violations.append(
+                            Violation(
+                                path="code",
+                                reason=f"must have length <= 5, got {len(code_value_raw)}",
+                            )
+                        )
+
+        sku_value: str | None = None
+        if "sku" in raw:
+            sku_value_raw = raw["sku"]
+            if sku_value_raw is None:
+                violations.append(
+                    Violation(path="sku", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(sku_value_raw, str):
+                    violations.append(Violation(path="sku", reason="expected string"))
+                else:
+                    sku_value = sku_value_raw
+                    if _PATTERN_CD24623C0C29CA35.search(sku_value_raw) is None:
+                        violations.append(
+                            Violation(
+                                path="sku",
+                                reason=f"must match pattern {_PATTERN_CD24623C0C29CA35.pattern}, got {_quote(sku_value_raw)}",
+                            )
+                        )
+
+        phrase_value: str | None = None
+        if "phrase" in raw:
+            phrase_value_raw = raw["phrase"]
+            if phrase_value_raw is None:
+                violations.append(
+                    Violation(path="phrase", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(phrase_value_raw, str):
+                    violations.append(
+                        Violation(path="phrase", reason="expected string")
+                    )
+                else:
+                    phrase_value = phrase_value_raw
+                    if _PATTERN_B4BA2CA20EB1B963.search(phrase_value_raw) is None:
+                        violations.append(
+                            Violation(
+                                path="phrase",
+                                reason=f"must match pattern {_PATTERN_B4BA2CA20EB1B963.pattern}, got {_quote(phrase_value_raw)}",
+                            )
+                        )
+
+        request_id_value: str | None = None
+        if "requestId" in raw:
+            request_id_value_raw = raw["requestId"]
+            if request_id_value_raw is None:
+                violations.append(
+                    Violation(path="requestId", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(request_id_value_raw, str):
+                    violations.append(
+                        Violation(path="requestId", reason="expected string")
+                    )
+                else:
+                    request_id_value = request_id_value_raw
+                    if _PATTERN_EAAFA3F3BF5456C8.search(request_id_value_raw) is None:
+                        violations.append(
+                            Violation(
+                                path="requestId",
+                                reason=f"must be a valid uuid, got {_quote(request_id_value_raw)}",
+                            )
+                        )
+
+        contact_email_value: str | None = None
+        if "contactEmail" in raw:
+            contact_email_value_raw = raw["contactEmail"]
+            if contact_email_value_raw is None:
+                violations.append(
+                    Violation(path="contactEmail", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(contact_email_value_raw, str):
+                    violations.append(
+                        Violation(path="contactEmail", reason="expected string")
+                    )
+                else:
+                    contact_email_value = contact_email_value_raw
+                    if (
+                        len(contact_email_value_raw) > 254
+                        or _PATTERN_67B8088E6C41E9D2.search(contact_email_value_raw)
+                        is None
+                    ):
+                        violations.append(
+                            Violation(
+                                path="contactEmail",
+                                reason=f"must be a valid email, got {_quote(contact_email_value_raw)}",
+                            )
+                        )
+
+        host_value: str | None = None
+        if "host" in raw:
+            host_value_raw = raw["host"]
+            if host_value_raw is None:
+                violations.append(
+                    Violation(path="host", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(host_value_raw, str):
+                    violations.append(Violation(path="host", reason="expected string"))
+                else:
+                    host_value = host_value_raw
+                    if (
+                        len(host_value_raw) > 253
+                        or _PATTERN_C3551EE088DD1057.search(host_value_raw) is None
+                    ):
+                        violations.append(
+                            Violation(
+                                path="host",
+                                reason=f"must be a valid hostname, got {_quote(host_value_raw)}",
+                            )
+                        )
+
+        homepage_value: str | None = None
+        if "homepage" in raw:
+            homepage_value_raw = raw["homepage"]
+            if homepage_value_raw is None:
+                violations.append(
+                    Violation(path="homepage", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(homepage_value_raw, str):
+                    violations.append(
+                        Violation(path="homepage", reason="expected string")
+                    )
+                else:
+                    homepage_value = homepage_value_raw
+                    if _PATTERN_BECE32B4DA20247D.search(homepage_value_raw) is None:
+                        violations.append(
+                            Violation(
+                                path="homepage",
+                                reason=f"must be a valid uri, got {_quote(homepage_value_raw)}",
+                            )
+                        )
+
+        gateway_value: str | None = None
+        if "gateway" in raw:
+            gateway_value_raw = raw["gateway"]
+            if gateway_value_raw is None:
+                violations.append(
+                    Violation(path="gateway", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(gateway_value_raw, str):
+                    violations.append(
+                        Violation(path="gateway", reason="expected string")
+                    )
+                else:
+                    gateway_value = gateway_value_raw
+                    if _PATTERN_4A45C0D214B9083D.search(gateway_value_raw) is None:
+                        violations.append(
+                            Violation(
+                                path="gateway",
+                                reason=f"must be a valid ipv4, got {_quote(gateway_value_raw)}",
+                            )
+                        )
+
+        blob_value: bytes | None = None
+        if "blob" in raw:
+            blob_value_raw = raw["blob"]
+            if blob_value_raw is None:
+                violations.append(
+                    Violation(path="blob", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(blob_value_raw, str):
+                    violations.append(Violation(path="blob", reason="expected string"))
+                else:
+                    blob_value_parsed = _parse_base64(
+                        blob_value_raw, "blob", violations
+                    )
+                    if blob_value_parsed is not None:
+                        blob_value = blob_value_parsed
+
+        url_blob_value: bytes | None = None
+        if "urlBlob" in raw:
+            url_blob_value_raw = raw["urlBlob"]
+            if url_blob_value_raw is None:
+                violations.append(
+                    Violation(path="urlBlob", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(url_blob_value_raw, str):
+                    violations.append(
+                        Violation(path="urlBlob", reason="expected string")
+                    )
+                else:
+                    url_blob_value_parsed = _parse_base64url(
+                        url_blob_value_raw, "urlBlob", violations
+                    )
+                    if url_blob_value_parsed is not None:
+                        url_blob_value = url_blob_value_parsed
+
+        retries_value: int | None = None
+        if "retries" in raw:
+            retries_value_raw = raw["retries"]
+            if retries_value_raw is None:
+                violations.append(
+                    Violation(path="retries", reason="explicit null not allowed")
+                )
+            else:
+                retries_value_parsed = _parse_spec_integer(
+                    retries_value_raw, "retries", violations
+                )
+                if retries_value_parsed is not None:
+                    retries_value = retries_value_parsed
+
+        verbose_value: bool | None = None
+        if "verbose" in raw:
+            verbose_value_raw = raw["verbose"]
+            if verbose_value_raw is None:
+                violations.append(
+                    Violation(path="verbose", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(verbose_value_raw, bool):
+                    violations.append(
+                        Violation(path="verbose", reason="expected boolean")
+                    )
+                else:
+                    verbose_value = verbose_value_raw
+
+        greeting_value: str | None = None
+        if "greeting" in raw:
+            greeting_value_raw = raw["greeting"]
+            if greeting_value_raw is None:
+                violations.append(
+                    Violation(path="greeting", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(greeting_value_raw, str):
+                    violations.append(
+                        Violation(path="greeting", reason="expected string")
+                    )
+                else:
+                    greeting_value = greeting_value_raw
+
+        debug_value: bool | None = None
+        if "debug" in raw:
+            debug_value_raw = raw["debug"]
+            if debug_value_raw is None:
+                violations.append(
+                    Violation(path="debug", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(debug_value_raw, bool):
+                    violations.append(
+                        Violation(path="debug", reason="expected boolean")
+                    )
+                else:
+                    debug_value = debug_value_raw
+
+        legacy_id_py_value: str | None = None
+        if "legacyId" in raw:
+            legacy_id_py_value_raw = raw["legacyId"]
+            if legacy_id_py_value_raw is None:
+                violations.append(
+                    Violation(path="legacyId", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(legacy_id_py_value_raw, str):
+                    violations.append(
+                        Violation(path="legacyId", reason="expected string")
+                    )
+                else:
+                    legacy_id_py_value = legacy_id_py_value_raw
+
+        middle_name_value: str | None = None
+        if "middleName" in raw:
+            middle_name_value_raw = raw["middleName"]
+            if middle_name_value_raw is None:
+                middle_name_value = None
+            else:
+                if not isinstance(middle_name_value_raw, str):
+                    violations.append(
+                        Violation(path="middleName", reason="expected string")
+                    )
+                else:
+                    middle_name_value = middle_name_value_raw
+
+        category_value: str | None = None
+        if "category" not in raw:
+            violations.append(Violation(path="category", reason="required"))
+        else:
+            category_value_raw = raw["category"]
+            if category_value_raw is None:
+                category_value = None
+            else:
+                if not isinstance(category_value_raw, str):
+                    violations.append(
+                        Violation(path="category", reason="expected string")
+                    )
+                else:
+                    category_value = category_value_raw
+
+        priority_value: int | None = None
+        if "priority" in raw:
+            priority_value_raw = raw["priority"]
+            if priority_value_raw is None:
+                violations.append(
+                    Violation(path="priority", reason="explicit null not allowed")
+                )
+            else:
+                priority_value_parsed = _parse_spec_integer(
+                    priority_value_raw, "priority", violations
+                )
+                if priority_value_parsed is not None:
+                    priority_value = priority_value_parsed
+                    if priority_value < 1:
+                        violations.append(
+                            Violation(
+                                path="priority",
+                                reason=f"must be >= 1, got {priority_value}",
+                            )
+                        )
+                    if priority_value > 10:
+                        violations.append(
+                            Violation(
+                                path="priority",
+                                reason=f"must be <= 10, got {priority_value}",
+                            )
+                        )
+
+        level_value: int | None = None
+        if "level" in raw:
+            level_value_raw = raw["level"]
+            if level_value_raw is None:
+                violations.append(
+                    Violation(path="level", reason="explicit null not allowed")
+                )
+            else:
+                level_value_parsed = _parse_spec_integer(
+                    level_value_raw, "level", violations
+                )
+                if level_value_parsed is not None:
+                    level_value = level_value_parsed
+                    if level_value <= 0:
+                        violations.append(
+                            Violation(
+                                path="level", reason=f"must be > 0, got {level_value}"
+                            )
+                        )
+
+        ratio_value: float | None = None
+        if "ratio" in raw:
+            ratio_value_raw = raw["ratio"]
+            if ratio_value_raw is None:
+                violations.append(
+                    Violation(path="ratio", reason="explicit null not allowed")
+                )
+            else:
+                if not (
+                    not isinstance(ratio_value_raw, bool)
+                    and isinstance(ratio_value_raw, (int, float))
+                ):
+                    violations.append(Violation(path="ratio", reason="expected number"))
+                else:
+                    ratio_value = ratio_value_raw
+                    if not (
+                        -1.7976931348623157e308
+                        <= ratio_value_raw
+                        <= 1.7976931348623157e308
+                    ):
+                        violations.append(
+                            Violation(
+                                path="ratio",
+                                reason=f"must be a finite number, got {ratio_value_raw}",
+                            )
+                        )
+                    else:
+                        if ratio_value_raw < 5:
+                            violations.append(
+                                Violation(
+                                    path="ratio",
+                                    reason=f"must be >= 5, got {ratio_value_raw}",
+                                )
+                            )
+                        if math.fmod(ratio_value_raw, 5) != 0:
+                            violations.append(
+                                Violation(
+                                    path="ratio",
+                                    reason=f"must be a multiple of 5, got {ratio_value_raw}",
+                                )
+                            )
+
+        step_value: int | None = None
+        if "step" in raw:
+            step_value_raw = raw["step"]
+            if step_value_raw is None:
+                violations.append(
+                    Violation(path="step", reason="explicit null not allowed")
+                )
+            else:
+                step_value_parsed = _parse_spec_integer(
+                    step_value_raw, "step", violations
+                )
+                if step_value_parsed is not None:
+                    step_value = step_value_parsed
+                    if step_value % 3 != 0:
+                        violations.append(
+                            Violation(
+                                path="step",
+                                reason=f"must be a multiple of 3, got {step_value}",
+                            )
+                        )
+
+        tags_value: list[str] | None = None
+        if "tags" in raw:
+            tags_value_raw = raw["tags"]
+            if tags_value_raw is None:
+                violations.append(
+                    Violation(path="tags", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(tags_value_raw, list):
+                    violations.append(Violation(path="tags", reason="expected array"))
+                else:
+                    tags_value_list: list[str] = []
+                    for tags_value_index, tags_value_element in enumerate(
+                        typing.cast("list[typing.Any]", tags_value_raw)
+                    ):
+                        tags_value_item_path = f"tags[{tags_value_index}]"
+                        tags_value_item: str = typing.cast("typing.Any", None)
+                        if not isinstance(tags_value_element, str):
+                            violations.append(
+                                Violation(
+                                    path=tags_value_item_path, reason="expected string"
+                                )
+                            )
+                        else:
+                            tags_value_item = tags_value_element
+                        tags_value_list.append(tags_value_item)
+                    if len(tags_value_list) < 1:
+                        violations.append(
+                            Violation(
+                                path="tags",
+                                reason=f"must have at least 1 items, got {len(tags_value_list)}",
+                            )
+                        )
+                    if len(tags_value_list) > 5:
+                        violations.append(
+                            Violation(
+                                path="tags",
+                                reason=f"must have at most 5 items, got {len(tags_value_list)}",
+                            )
+                        )
+                    tags_value = tags_value_list
+
+        aliases_value: list[str] | None = None
+        if "aliases" in raw:
+            aliases_value_raw = raw["aliases"]
+            if aliases_value_raw is None:
+                violations.append(
+                    Violation(path="aliases", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(aliases_value_raw, list):
+                    violations.append(
+                        Violation(path="aliases", reason="expected array")
+                    )
+                else:
+                    aliases_value_list: list[str] = []
+                    for aliases_value_index, aliases_value_element in enumerate(
+                        typing.cast("list[typing.Any]", aliases_value_raw)
+                    ):
+                        aliases_value_item_path = f"aliases[{aliases_value_index}]"
+                        aliases_value_item: str = typing.cast("typing.Any", None)
+                        if not isinstance(aliases_value_element, str):
+                            violations.append(
+                                Violation(
+                                    path=aliases_value_item_path,
+                                    reason="expected string",
+                                )
+                            )
+                        else:
+                            aliases_value_item = aliases_value_element
+                        aliases_value_list.append(aliases_value_item)
+                    _check_unique_items(aliases_value_list, "aliases", violations)
+                    aliases_value = aliases_value_list
+
+        roles_value: list[str] | None = None
+        if "roles" in raw:
+            roles_value_raw = raw["roles"]
+            if roles_value_raw is None:
+                violations.append(
+                    Violation(path="roles", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(roles_value_raw, list):
+                    violations.append(Violation(path="roles", reason="expected array"))
+                else:
+                    roles_value_list: list[str] = []
+                    for roles_value_index, roles_value_element in enumerate(
+                        typing.cast("list[typing.Any]", roles_value_raw)
+                    ):
+                        roles_value_item_path = f"roles[{roles_value_index}]"
+                        roles_value_item: str = typing.cast("typing.Any", None)
+                        if not isinstance(roles_value_element, str):
+                            violations.append(
+                                Violation(
+                                    path=roles_value_item_path, reason="expected string"
+                                )
+                            )
+                        else:
+                            roles_value_item = roles_value_element
+                        roles_value_list.append(roles_value_item)
+                    _check_contains(
+                        roles_value_list,
+                        lambda element: element in ("admin",),
+                        1,
+                        2,
+                        True,
+                        "roles",
+                        violations,
+                    )
+                    roles_value = roles_value_list
+
+        id_or_name_value: str | int | None = None
+        if "idOrName" in raw:
+            id_or_name_value_raw = raw["idOrName"]
+            if id_or_name_value_raw is None:
+                violations.append(
+                    Violation(path="idOrName", reason="explicit null not allowed")
+                )
+            else:
+                id_or_name_value_parsed = _showcase_id_or_name_from_transfer_type(
+                    id_or_name_value_raw, "idOrName", violations
+                )
+                if id_or_name_value_parsed is not None:
+                    id_or_name_value = id_or_name_value_parsed
+
+        mode_value: typing.Literal["auto", "manual"] | int | None = None
+        if "mode" in raw:
+            mode_value_raw = raw["mode"]
+            if mode_value_raw is None:
+                violations.append(
+                    Violation(path="mode", reason="explicit null not allowed")
+                )
+            else:
+                mode_value_parsed = _showcase_mode_from_transfer_type(
+                    mode_value_raw, "mode", violations
+                )
+                if mode_value_parsed is not None:
+                    mode_value = mode_value_parsed
+
+        payload_value: dict[str, typing.Any] | str | None = None
+        if "payload" in raw:
+            payload_value_raw = raw["payload"]
+            if payload_value_raw is None:
+                violations.append(
+                    Violation(path="payload", reason="explicit null not allowed")
+                )
+            else:
+                payload_value_parsed = _showcase_payload_from_transfer_type(
+                    payload_value_raw, "payload", violations
+                )
+                if payload_value_parsed is not None:
+                    payload_value = payload_value_parsed
+
+        detail_value: ShowcaseDetailObject | str | None = None
+        if "detail" in raw:
+            detail_value_raw = raw["detail"]
+            if detail_value_raw is None:
+                violations.append(
+                    Violation(path="detail", reason="explicit null not allowed")
+                )
+            else:
+                detail_value_parsed = _showcase_detail_from_transfer_type(
+                    detail_value_raw, "detail", violations
+                )
+                if detail_value_parsed is not None:
+                    detail_value = detail_value_parsed
+
+        shape_or_name_value: Circle | Square | str | None = None
+        if "shapeOrName" in raw:
+            shape_or_name_value_raw = raw["shapeOrName"]
+            if shape_or_name_value_raw is None:
+                violations.append(
+                    Violation(path="shapeOrName", reason="explicit null not allowed")
+                )
+            else:
+                shape_or_name_value_parsed = _showcase_shape_or_name_from_transfer_type(
+                    shape_or_name_value_raw, "shapeOrName", violations
+                )
+                if shape_or_name_value_parsed is not None:
+                    shape_or_name_value = shape_or_name_value_parsed
+
+        measurements_value: list[float] | str | None = None
+        if "measurements" in raw:
+            measurements_value_raw = raw["measurements"]
+            if measurements_value_raw is None:
+                violations.append(
+                    Violation(path="measurements", reason="explicit null not allowed")
+                )
+            else:
+                measurements_value_parsed = _showcase_measurements_from_transfer_type(
+                    measurements_value_raw, "measurements", violations
+                )
+                if measurements_value_parsed is not None:
+                    measurements_value = measurements_value_parsed
+
+        shapes_value: list[Shape] | None = None
+        if "shapes" in raw:
+            shapes_value_raw = raw["shapes"]
+            if shapes_value_raw is None:
+                violations.append(
+                    Violation(path="shapes", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(shapes_value_raw, list):
+                    violations.append(Violation(path="shapes", reason="expected array"))
+                else:
+                    shapes_value_list: list[Shape] = []
+                    for shapes_value_index, shapes_value_element in enumerate(
+                        typing.cast("list[typing.Any]", shapes_value_raw)
+                    ):
+                        shapes_value_item_path = f"shapes[{shapes_value_index}]"
+                        shapes_value_item: Shape = typing.cast("typing.Any", None)
+                        shapes_value_item_parsed = _shape_from_transfer_type(
+                            shapes_value_element, shapes_value_item_path, violations
+                        )
+                        if shapes_value_item_parsed is not None:
+                            shapes_value_item = shapes_value_item_parsed
+                        shapes_value_list.append(shapes_value_item)
+                    shapes_value = shapes_value_list
+
+        segments_value: list[ShowcaseSegmentsItem] | None = None
+        if "segments" in raw:
+            segments_value_raw = raw["segments"]
+            if segments_value_raw is None:
+                violations.append(
+                    Violation(path="segments", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(segments_value_raw, list):
+                    violations.append(
+                        Violation(path="segments", reason="expected array")
+                    )
+                else:
+                    segments_value_list: list[ShowcaseSegmentsItem] = []
+                    for segments_value_index, segments_value_element in enumerate(
+                        typing.cast("list[typing.Any]", segments_value_raw)
+                    ):
+                        segments_value_item_path = f"segments[{segments_value_index}]"
+                        segments_value_item: ShowcaseSegmentsItem = typing.cast(
+                            "typing.Any", None
+                        )
+                        segments_value_item_parsed = (
+                            _showcase_segments_item_from_transfer_type(
+                                segments_value_element,
+                                segments_value_item_path,
+                                violations,
+                            )
+                        )
+                        if segments_value_item_parsed is not None:
+                            segments_value_item = segments_value_item_parsed
+                        segments_value_list.append(segments_value_item)
+                    segments_value = segments_value_list
+
+        slots_value: list[str | None] | None = None
+        if "slots" in raw:
+            slots_value_raw = raw["slots"]
+            if slots_value_raw is None:
+                violations.append(
+                    Violation(path="slots", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(slots_value_raw, list):
+                    violations.append(Violation(path="slots", reason="expected array"))
+                else:
+                    slots_value_list: list[str | None] = []
+                    for slots_value_index, slots_value_element in enumerate(
+                        typing.cast("list[typing.Any]", slots_value_raw)
+                    ):
+                        slots_value_item_path = f"slots[{slots_value_index}]"
+                        slots_value_item: str | None = None
+                        if slots_value_element is None:
+                            slots_value_item = None
+                        else:
+                            if not isinstance(slots_value_element, str):
+                                violations.append(
+                                    Violation(
+                                        path=slots_value_item_path,
+                                        reason="expected string",
+                                    )
+                                )
+                            else:
+                                slots_value_item = slots_value_element
+                        slots_value_list.append(slots_value_item)
+                    slots_value = slots_value_list
+
+        grid_value: list[list[int]] | None = None
+        if "grid" in raw:
+            grid_value_raw = raw["grid"]
+            if grid_value_raw is None:
+                violations.append(
+                    Violation(path="grid", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(grid_value_raw, list):
+                    violations.append(Violation(path="grid", reason="expected array"))
+                else:
+                    grid_value_list: list[list[int]] = []
+                    for grid_value_index, grid_value_element in enumerate(
+                        typing.cast("list[typing.Any]", grid_value_raw)
+                    ):
+                        grid_value_item_path = f"grid[{grid_value_index}]"
+                        grid_value_item: list[int] = typing.cast("typing.Any", None)
+                        if not isinstance(grid_value_element, list):
+                            violations.append(
+                                Violation(
+                                    path=grid_value_item_path, reason="expected array"
+                                )
+                            )
+                        else:
+                            grid_value_item_list: list[int] = []
+                            for (
+                                grid_value_item_index,
+                                grid_value_item_element,
+                            ) in enumerate(
+                                typing.cast("list[typing.Any]", grid_value_element)
+                            ):
+                                grid_value_item_item_path = (
+                                    f"{grid_value_item_path}[{grid_value_item_index}]"
+                                )
+                                grid_value_item_item: int = typing.cast(
+                                    "typing.Any", None
+                                )
+                                grid_value_item_item_parsed = _parse_spec_integer(
+                                    grid_value_item_element,
+                                    grid_value_item_item_path,
+                                    violations,
+                                )
+                                if grid_value_item_item_parsed is not None:
+                                    grid_value_item_item = grid_value_item_item_parsed
+                                grid_value_item_list.append(grid_value_item_item)
+                            grid_value_item = grid_value_item_list
+                        grid_value_list.append(grid_value_item)
+                    grid_value = grid_value_list
+
+        location_value: ShowcaseLocation | None = None
+        if "location" in raw:
+            location_value_raw = raw["location"]
+            if location_value_raw is None:
+                violations.append(
+                    Violation(path="location", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    location_value = (
+                        _ShowcaseLocationTransferTypeConverter().from_transfer_type(
+                            location_value_raw, ShowcaseLocation
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "location", error)
+
+        audit_value: ShowcaseAudit | None = None
+        if "audit" in raw:
+            audit_value_raw = raw["audit"]
+            if audit_value_raw is None:
+                audit_value = None
+            else:
+                try:
+                    audit_value = (
+                        _ShowcaseAuditTransferTypeConverter().from_transfer_type(
+                            audit_value_raw, ShowcaseAudit
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "audit", error)
+
+        rows_value: list[ShowcaseRowsItem] | None = None
+        if "rows" in raw:
+            rows_value_raw = raw["rows"]
+            if rows_value_raw is None:
+                violations.append(
+                    Violation(path="rows", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(rows_value_raw, list):
+                    violations.append(Violation(path="rows", reason="expected array"))
+                else:
+                    rows_value_list: list[ShowcaseRowsItem] = []
+                    for rows_value_index, rows_value_element in enumerate(
+                        typing.cast("list[typing.Any]", rows_value_raw)
+                    ):
+                        rows_value_item_path = f"rows[{rows_value_index}]"
+                        rows_value_item: ShowcaseRowsItem = typing.cast(
+                            "typing.Any", None
+                        )
+                        try:
+                            rows_value_item = _ShowcaseRowsItemTransferTypeConverter().from_transfer_type(
+                                rows_value_element, ShowcaseRowsItem
+                            )
+                        except ValidationError as error:
+                            _collect(violations, rows_value_item_path, error)
+                        rows_value_list.append(rows_value_item)
+                    rows_value = rows_value_list
+
+        ledger_py_value: ShowcaseLedger | None = None
+        if "ledger" in raw:
+            ledger_py_value_raw = raw["ledger"]
+            if ledger_py_value_raw is None:
+                violations.append(
+                    Violation(path="ledger", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    ledger_py_value = (
+                        _ShowcaseLedgerTransferTypeConverter().from_transfer_type(
+                            ledger_py_value_raw, ShowcaseLedger
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "ledger", error)
+
+        metadata_value: ShowcaseMetadata | None = None
+        if "metadata" in raw:
+            metadata_value_raw = raw["metadata"]
+            if metadata_value_raw is None:
+                violations.append(
+                    Violation(path="metadata", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    metadata_value = (
+                        _ShowcaseMetadataTransferTypeConverter().from_transfer_type(
+                            metadata_value_raw, ShowcaseMetadata
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "metadata", error)
+
+        quotas_value: Quotas | None = None
+        if "quotas" in raw:
+            quotas_value_raw = raw["quotas"]
+            if quotas_value_raw is None:
+                violations.append(
+                    Violation(path="quotas", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    quotas_value = _QuotasTransferTypeConverter().from_transfer_type(
+                        quotas_value_raw, Quotas
+                    )
+                except ValidationError as error:
+                    _collect(violations, "quotas", error)
+
+        tokens_value: Tokens | None = None
+        if "tokens" in raw:
+            tokens_value_raw = raw["tokens"]
+            if tokens_value_raw is None:
+                violations.append(
+                    Violation(path="tokens", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    tokens_value = _TokensTransferTypeConverter().from_transfer_type(
+                        tokens_value_raw, Tokens
+                    )
+                except ValidationError as error:
+                    _collect(violations, "tokens", error)
+
+        nicknames_value: Nicknames | None = None
+        if "nicknames" in raw:
+            nicknames_value_raw = raw["nicknames"]
+            if nicknames_value_raw is None:
+                violations.append(
+                    Violation(path="nicknames", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    nicknames_value = (
+                        _NicknamesTransferTypeConverter().from_transfer_type(
+                            nicknames_value_raw, Nicknames
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "nicknames", error)
+
+        choices_value: Choices | None = None
+        if "choices" in raw:
+            choices_value_raw = raw["choices"]
+            if choices_value_raw is None:
+                violations.append(
+                    Violation(path="choices", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    choices_value = _ChoicesTransferTypeConverter().from_transfer_type(
+                        choices_value_raw, Choices
+                    )
+                except ValidationError as error:
+                    _collect(violations, "choices", error)
+
+        extras_value: Extras | None = None
+        if "extras" in raw:
+            extras_value_raw = raw["extras"]
+            if extras_value_raw is None:
+                violations.append(
+                    Violation(path="extras", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    extras_value = _ExtrasTransferTypeConverter().from_transfer_type(
+                        extras_value_raw, Extras
+                    )
+                except ValidationError as error:
+                    _collect(violations, "extras", error)
+
+        shape_value: Shape | None = None
+        if "shape" in raw:
+            shape_value_raw = raw["shape"]
+            if shape_value_raw is None:
+                violations.append(
+                    Violation(path="shape", reason="explicit null not allowed")
+                )
+            else:
+                shape_value_parsed = _shape_from_transfer_type(
+                    shape_value_raw, "shape", violations
+                )
+                if shape_value_parsed is not None:
+                    shape_value = shape_value_parsed
+
+        note_value: Note | None = None
+        if "note" in raw:
+            note_value_raw = raw["note"]
+            if note_value_raw is None:
+                violations.append(
+                    Violation(path="note", reason="explicit null not allowed")
+                )
+            else:
+                note_value_parsed = _note_from_transfer_type(
+                    note_value_raw, "note", violations
+                )
+                if note_value_parsed is not None:
+                    note_value = note_value_parsed
+
+        address_value: Address | None = None
+        if "address" in raw:
+            address_value_raw = raw["address"]
+            if address_value_raw is None:
+                violations.append(
+                    Violation(path="address", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    address_value = _AddressTransferTypeConverter().from_transfer_type(
+                        address_value_raw, Address
+                    )
+                except ValidationError as error:
+                    _collect(violations, "address", error)
+
+        labels_value: Labels | None = None
+        if "labels" in raw:
+            labels_value_raw = raw["labels"]
+            if labels_value_raw is None:
+                violations.append(
+                    Violation(path="labels", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    labels_value = _LabelsTransferTypeConverter().from_transfer_type(
+                        labels_value_raw, Labels
+                    )
+                except ValidationError as error:
+                    _collect(violations, "labels", error)
+
+        settings_value: Settings | None = None
+        if "settings" in raw:
+            settings_value_raw = raw["settings"]
+            if settings_value_raw is None:
+                violations.append(
+                    Violation(path="settings", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    settings_value = (
+                        _SettingsTransferTypeConverter().from_transfer_type(
+                            settings_value_raw, Settings
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "settings", error)
+
+        attributes_value: Attributes | None = None
+        if "attributes" in raw:
+            attributes_value_raw = raw["attributes"]
+            if attributes_value_raw is None:
+                violations.append(
+                    Violation(path="attributes", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    attributes_value = (
+                        _AttributesTransferTypeConverter().from_transfer_type(
+                            attributes_value_raw, Attributes
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "attributes", error)
+
+        contact_value: ContactPy | None = None
+        if "contact" in raw:
+            contact_value_raw = raw["contact"]
+            if contact_value_raw is None:
+                violations.append(
+                    Violation(path="contact", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    contact_value = (
+                        _ContactPyTransferTypeConverter().from_transfer_type(
+                            contact_value_raw, ContactPy
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "contact", error)
+
+        for key in raw:
+            if (
+                key != "kind"
+                and key != "revision"
+                and key != "enabled"
+                and key != "status"
+                and key != "tier"
+                and key != "scale"
+                and key != "name"
+                and key != "count"
+                and key != "active"
+                and key != "nickname"
+                and key != "code"
+                and key != "sku"
+                and key != "phrase"
+                and key != "requestId"
+                and key != "contactEmail"
+                and key != "host"
+                and key != "homepage"
+                and key != "gateway"
+                and key != "blob"
+                and key != "urlBlob"
+                and key != "retries"
+                and key != "verbose"
+                and key != "greeting"
+                and key != "debug"
+                and key != "legacyId"
+                and key != "middleName"
+                and key != "category"
+                and key != "priority"
+                and key != "level"
+                and key != "ratio"
+                and key != "step"
+                and key != "tags"
+                and key != "aliases"
+                and key != "roles"
+                and key != "idOrName"
+                and key != "mode"
+                and key != "payload"
+                and key != "detail"
+                and key != "shapeOrName"
+                and key != "measurements"
+                and key != "shapes"
+                and key != "segments"
+                and key != "slots"
+                and key != "grid"
+                and key != "location"
+                and key != "audit"
+                and key != "rows"
+                and key != "ledger"
+                and key != "metadata"
+                and key != "quotas"
+                and key != "tokens"
+                and key != "nicknames"
+                and key != "choices"
+                and key != "extras"
+                and key != "shape"
+                and key != "note"
+                and key != "address"
+                and key != "labels"
+                and key != "settings"
+                and key != "attributes"
+                and key != "contact"
+            ):
+                violations.append(Violation(path=key, reason="unknown field"))
+        if violations:
+            raise ValidationError(violations)
+        return Showcase(
+            kind=kind_value,
+            revision=revision_value,
+            enabled=enabled_value,
+            status=status_value,
+            tier=tier_value,
+            scale=scale_value,
+            name=name_value,
+            count=count_value,
+            active=active_value,
+            nickname=nickname_value,
+            code=code_value,
+            sku=sku_value,
+            phrase=phrase_value,
+            request_id=request_id_value,
+            contact_email=contact_email_value,
+            host=host_value,
+            homepage=homepage_value,
+            gateway=gateway_value,
+            blob=blob_value,
+            url_blob=url_blob_value,
+            retries=retries_value,
+            verbose=verbose_value,
+            greeting=greeting_value,
+            debug=debug_value,
+            legacy_id_py=legacy_id_py_value,
+            middle_name=middle_name_value,
+            category=category_value,
+            priority=priority_value,
+            level=level_value,
+            ratio=ratio_value,
+            step=step_value,
+            tags=tags_value,
+            aliases=aliases_value,
+            roles=roles_value,
+            id_or_name=id_or_name_value,
+            mode=mode_value,
+            payload=payload_value,
+            detail=detail_value,
+            shape_or_name=shape_or_name_value,
+            measurements=measurements_value,
+            shapes=shapes_value,
+            segments=segments_value,
+            slots=slots_value,
+            grid=grid_value,
+            location=location_value,
+            audit=audit_value,
+            rows=rows_value,
+            ledger_py=ledger_py_value,
+            metadata=metadata_value,
+            quotas=quotas_value,
+            tokens=tokens_value,
+            nicknames=nicknames_value,
+            choices=choices_value,
+            extras=extras_value,
+            shape=shape_value,
+            note=note_value,
+            address=address_value,
+            labels=labels_value,
+            settings=settings_value,
+            attributes=attributes_value,
+            contact=contact_value,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Showcase") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if typing.cast("object", value.kind) not in ("showcase",):
+            violations.append(Violation(path="kind", reason='must equal "showcase"'))
+        out["kind"] = value.kind
+        if typing.cast("object", value.revision) not in (1,):
+            violations.append(Violation(path="revision", reason="must equal 1"))
+        out["revision"] = value.revision
+        if typing.cast("object", value.enabled) not in (True,):
+            violations.append(Violation(path="enabled", reason="must equal true"))
+        out["enabled"] = value.enabled
+        if typing.cast("object", value.status) not in ("active", "inactive", "pending"):
+            violations.append(
+                Violation(
+                    path="status",
+                    reason=f'must be one of ["active", "inactive", "pending"], got {_quote(value.status)}',
+                )
+            )
+        out["status"] = value.status
+        if typing.cast("object", value.tier) not in (1, 2, 3):
+            violations.append(
+                Violation(
+                    path="tier",
+                    reason=f"must be one of [1, 2, 3], got {_quote(value.tier)}",
+                )
+            )
+        out["tier"] = value.tier
+        if typing.cast("object", value.scale) not in (1.5, 2.5):
+            violations.append(
+                Violation(
+                    path="scale",
+                    reason=f"must be one of [1.5, 2.5], got {_quote(value.scale)}",
+                )
+            )
+        out["scale"] = value.scale
+        if len(value.name) < 1:
+            violations.append(
+                Violation(
+                    path="name", reason=f"must have length >= 1, got {len(value.name)}"
+                )
+            )
+        if len(value.name) > 64:
+            violations.append(
+                Violation(
+                    path="name", reason=f"must have length <= 64, got {len(value.name)}"
+                )
+            )
+        out["name"] = value.name
+        out["count"] = value.count
+        out["active"] = value.active
+        if value.nickname is not None:
+            if len(value.nickname) > 12:
+                violations.append(
+                    Violation(
+                        path="nickname",
+                        reason=f"must have length <= 12, got {len(value.nickname)}",
+                    )
+                )
+            out["nickname"] = value.nickname
+        if value.code is not None:
+            if len(value.code) < 2:
+                violations.append(
+                    Violation(
+                        path="code",
+                        reason=f"must have length >= 2, got {len(value.code)}",
+                    )
+                )
+            if len(value.code) > 5:
+                violations.append(
+                    Violation(
+                        path="code",
+                        reason=f"must have length <= 5, got {len(value.code)}",
+                    )
+                )
+            out["code"] = value.code
+        if value.sku is not None:
+            if _PATTERN_CD24623C0C29CA35.search(value.sku) is None:
+                violations.append(
+                    Violation(
+                        path="sku",
+                        reason=f"must match pattern {_PATTERN_CD24623C0C29CA35.pattern}, got {_quote(value.sku)}",
+                    )
+                )
+            out["sku"] = value.sku
+        if value.phrase is not None:
+            if _PATTERN_B4BA2CA20EB1B963.search(value.phrase) is None:
+                violations.append(
+                    Violation(
+                        path="phrase",
+                        reason=f"must match pattern {_PATTERN_B4BA2CA20EB1B963.pattern}, got {_quote(value.phrase)}",
+                    )
+                )
+            out["phrase"] = value.phrase
+        if value.request_id is not None:
+            if _PATTERN_EAAFA3F3BF5456C8.search(value.request_id) is None:
+                violations.append(
+                    Violation(
+                        path="requestId",
+                        reason=f"must be a valid uuid, got {_quote(value.request_id)}",
+                    )
+                )
+            out["requestId"] = value.request_id
+        if value.contact_email is not None:
+            if (
+                len(value.contact_email) > 254
+                or _PATTERN_67B8088E6C41E9D2.search(value.contact_email) is None
+            ):
+                violations.append(
+                    Violation(
+                        path="contactEmail",
+                        reason=f"must be a valid email, got {_quote(value.contact_email)}",
+                    )
+                )
+            out["contactEmail"] = value.contact_email
+        if value.host is not None:
+            if (
+                len(value.host) > 253
+                or _PATTERN_C3551EE088DD1057.search(value.host) is None
+            ):
+                violations.append(
+                    Violation(
+                        path="host",
+                        reason=f"must be a valid hostname, got {_quote(value.host)}",
+                    )
+                )
+            out["host"] = value.host
+        if value.homepage is not None:
+            if _PATTERN_BECE32B4DA20247D.search(value.homepage) is None:
+                violations.append(
+                    Violation(
+                        path="homepage",
+                        reason=f"must be a valid uri, got {_quote(value.homepage)}",
+                    )
+                )
+            out["homepage"] = value.homepage
+        if value.gateway is not None:
+            if _PATTERN_4A45C0D214B9083D.search(value.gateway) is None:
+                violations.append(
+                    Violation(
+                        path="gateway",
+                        reason=f"must be a valid ipv4, got {_quote(value.gateway)}",
+                    )
+                )
+            out["gateway"] = value.gateway
+        if value.blob is not None:
+            out["blob"] = _format_base64(value.blob)
+        if value.url_blob is not None:
+            out["urlBlob"] = _format_base64url(value.url_blob)
+        if value._retries is not None:
+            out["retries"] = value._retries
+        if value.verbose is not None:
+            out["verbose"] = value.verbose
+        if value._greeting is not None:
+            out["greeting"] = value._greeting
+        if value._debug is not None:
+            out["debug"] = value._debug
+        if value.legacy_id_py is not None:
+            out["legacyId"] = value.legacy_id_py
+        if value.middle_name is not None:
+            out["middleName"] = value.middle_name
+        out["category"] = value.category
+        if value.priority is not None:
+            if value.priority < 1:
+                violations.append(
+                    Violation(
+                        path="priority", reason=f"must be >= 1, got {value.priority}"
+                    )
+                )
+            if value.priority > 10:
+                violations.append(
+                    Violation(
+                        path="priority", reason=f"must be <= 10, got {value.priority}"
+                    )
+                )
+            out["priority"] = value.priority
+        if value.level is not None:
+            if value.level <= 0:
+                violations.append(
+                    Violation(path="level", reason=f"must be > 0, got {value.level}")
+                )
+            out["level"] = value.level
+        if value.ratio is not None:
+            if not (-1.7976931348623157e308 <= value.ratio <= 1.7976931348623157e308):
+                violations.append(
+                    Violation(
+                        path="ratio",
+                        reason=f"must be a finite number, got {value.ratio}",
+                    )
+                )
+            else:
+                if value.ratio < 5:
+                    violations.append(
+                        Violation(
+                            path="ratio", reason=f"must be >= 5, got {value.ratio}"
+                        )
+                    )
+                if math.fmod(value.ratio, 5) != 0:
+                    violations.append(
+                        Violation(
+                            path="ratio",
+                            reason=f"must be a multiple of 5, got {value.ratio}",
+                        )
+                    )
+            out["ratio"] = value.ratio
+        if value.step is not None:
+            if value.step % 3 != 0:
+                violations.append(
+                    Violation(
+                        path="step", reason=f"must be a multiple of 3, got {value.step}"
+                    )
+                )
+            out["step"] = value.step
+        if value.tags is not None:
+            if len(value.tags) < 1:
+                violations.append(
+                    Violation(
+                        path="tags",
+                        reason=f"must have at least 1 items, got {len(value.tags)}",
+                    )
+                )
+            if len(value.tags) > 5:
+                violations.append(
+                    Violation(
+                        path="tags",
+                        reason=f"must have at most 5 items, got {len(value.tags)}",
+                    )
+                )
+            out["tags"] = value.tags
+        if value.aliases is not None:
+            _check_unique_items(value.aliases, "aliases", violations)
+            out["aliases"] = value.aliases
+        if value.roles is not None:
+            _check_contains(
+                value.roles,
+                lambda element: element in ("admin",),
+                1,
+                2,
+                True,
+                "roles",
+                violations,
+            )
+            out["roles"] = value.roles
+        if value.id_or_name is not None:
+            if isinstance(value.id_or_name, str):
+                if len(value.id_or_name) < 3:
+                    violations.append(
+                        Violation(
+                            path="idOrName",
+                            reason=f"must have length >= 3, got {len(value.id_or_name)}",
+                        )
+                    )
+            if not isinstance(value.id_or_name, bool) and isinstance(
+                value.id_or_name, int
+            ):
+                if value.id_or_name < 1:
+                    violations.append(
+                        Violation(
+                            path="idOrName",
+                            reason=f"must be >= 1, got {value.id_or_name}",
+                        )
+                    )
+            candidate = typing.cast("object", value.id_or_name)
+            if not (
+                isinstance(candidate, str)
+                or (not isinstance(candidate, bool) and isinstance(candidate, int))
+            ):
+                violations.append(
+                    Violation(
+                        path="idOrName", reason="expected one of: string, integer"
+                    )
+                )
+            out["idOrName"] = value.id_or_name
+        if value.mode is not None:
+            if isinstance(value.mode, str):
+                if typing.cast("object", value.mode) not in ("auto", "manual"):
+                    violations.append(
+                        Violation(
+                            path="mode",
+                            reason=f'must be one of ["auto", "manual"], got {_quote(value.mode)}',
+                        )
+                    )
+            if not isinstance(value.mode, bool) and isinstance(value.mode, int):
+                if value.mode < 0:
+                    violations.append(
+                        Violation(path="mode", reason=f"must be >= 0, got {value.mode}")
+                    )
+            candidate = typing.cast("object", value.mode)
+            if not (
+                isinstance(candidate, str)
+                or (not isinstance(candidate, bool) and isinstance(candidate, int))
+            ):
+                violations.append(
+                    Violation(path="mode", reason="expected one of: string, integer")
+                )
+            out["mode"] = value.mode
+        if value.payload is not None:
+            candidate = typing.cast("object", value.payload)
+            if not (isinstance(candidate, dict) or isinstance(candidate, str)):
+                violations.append(
+                    Violation(path="payload", reason="expected one of: object, string")
+                )
+            out["payload"] = value.payload
+        if value.detail is not None:
+            try:
+                out["detail"] = _showcase_detail_to_transfer_type(value.detail)
+            except ValidationError as error:
+                _collect(violations, "detail", error)
+        if value.shape_or_name is not None:
+            try:
+                out["shapeOrName"] = _showcase_shape_or_name_to_transfer_type(
+                    value.shape_or_name
+                )
+            except ValidationError as error:
+                _collect(violations, "shapeOrName", error)
+        if value.measurements is not None:
+            if isinstance(value.measurements, list):
+                if len(value.measurements) < 1:
+                    violations.append(
+                        Violation(
+                            path="measurements",
+                            reason=f"must have at least 1 items, got {len(value.measurements)}",
+                        )
+                    )
+                _check_unique_items(value.measurements, "measurements", violations)
+            if isinstance(value.measurements, str):
+                if _PATTERN_F242E3A159C2422C.search(value.measurements) is None:
+                    violations.append(
+                        Violation(
+                            path="measurements",
+                            reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(value.measurements)}",
+                        )
+                    )
+            candidate = typing.cast("object", value.measurements)
+            if not (isinstance(candidate, list) or isinstance(candidate, str)):
+                violations.append(
+                    Violation(
+                        path="measurements",
+                        reason="expected one of: list[float], string",
+                    )
+                )
+            out["measurements"] = value.measurements
+        if value.shapes is not None:
+            shapes_out: list[typing.Any] = []
+            for shapes_index, shapes_element in enumerate(value.shapes):
+                try:
+                    shapes_out.append(_shape_to_transfer_type(shapes_element))
+                except ValidationError as error:
+                    _collect(violations, f"shapes[{shapes_index}]", error)
+            out["shapes"] = shapes_out
+        if value.segments is not None:
+            segments_out: list[typing.Any] = []
+            for segments_index, segments_element in enumerate(value.segments):
+                try:
+                    segments_out.append(
+                        _showcase_segments_item_to_transfer_type(segments_element)
+                    )
+                except ValidationError as error:
+                    _collect(violations, f"segments[{segments_index}]", error)
+            out["segments"] = segments_out
+        if value.slots is not None:
+            out["slots"] = value.slots
+        if value.grid is not None:
+            out["grid"] = value.grid
+        if value.location is not None:
+            try:
+                out["location"] = (
+                    _ShowcaseLocationTransferTypeConverter().to_transfer_type(
+                        value.location
+                    )
+                )
+            except ValidationError as error:
+                _collect(violations, "location", error)
+        if value.audit is not None:
+            try:
+                out["audit"] = _ShowcaseAuditTransferTypeConverter().to_transfer_type(
+                    value.audit
+                )
+            except ValidationError as error:
+                _collect(violations, "audit", error)
+        if value.rows is not None:
+            rows_out: list[typing.Any] = []
+            for rows_index, rows_element in enumerate(value.rows):
+                try:
+                    rows_out.append(
+                        _ShowcaseRowsItemTransferTypeConverter().to_transfer_type(
+                            rows_element
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, f"rows[{rows_index}]", error)
+            out["rows"] = rows_out
+        if value.ledger_py is not None:
+            try:
+                out["ledger"] = _ShowcaseLedgerTransferTypeConverter().to_transfer_type(
+                    value.ledger_py
+                )
+            except ValidationError as error:
+                _collect(violations, "ledger", error)
+        if value.metadata is not None:
+            try:
+                out["metadata"] = (
+                    _ShowcaseMetadataTransferTypeConverter().to_transfer_type(
+                        value.metadata
+                    )
+                )
+            except ValidationError as error:
+                _collect(violations, "metadata", error)
+        if value.quotas is not None:
+            try:
+                out["quotas"] = _QuotasTransferTypeConverter().to_transfer_type(
+                    value.quotas
+                )
+            except ValidationError as error:
+                _collect(violations, "quotas", error)
+        if value.tokens is not None:
+            try:
+                out["tokens"] = _TokensTransferTypeConverter().to_transfer_type(
+                    value.tokens
+                )
+            except ValidationError as error:
+                _collect(violations, "tokens", error)
+        if value.nicknames is not None:
+            try:
+                out["nicknames"] = _NicknamesTransferTypeConverter().to_transfer_type(
+                    value.nicknames
+                )
+            except ValidationError as error:
+                _collect(violations, "nicknames", error)
+        if value.choices is not None:
+            try:
+                out["choices"] = _ChoicesTransferTypeConverter().to_transfer_type(
+                    value.choices
+                )
+            except ValidationError as error:
+                _collect(violations, "choices", error)
+        if value.extras is not None:
+            try:
+                out["extras"] = _ExtrasTransferTypeConverter().to_transfer_type(
+                    value.extras
+                )
+            except ValidationError as error:
+                _collect(violations, "extras", error)
+        if value.shape is not None:
+            try:
+                out["shape"] = _shape_to_transfer_type(value.shape)
+            except ValidationError as error:
+                _collect(violations, "shape", error)
+        if value.note is not None:
+            try:
+                out["note"] = _note_to_transfer_type(value.note)
+            except ValidationError as error:
+                _collect(violations, "note", error)
+        if value.address is not None:
+            try:
+                out["address"] = _AddressTransferTypeConverter().to_transfer_type(
+                    value.address
+                )
+            except ValidationError as error:
+                _collect(violations, "address", error)
+        if value.labels is not None:
+            try:
+                out["labels"] = _LabelsTransferTypeConverter().to_transfer_type(
+                    value.labels
+                )
+            except ValidationError as error:
+                _collect(violations, "labels", error)
+        if value.settings is not None:
+            try:
+                out["settings"] = _SettingsTransferTypeConverter().to_transfer_type(
+                    value.settings
+                )
+            except ValidationError as error:
+                _collect(violations, "settings", error)
+        if value.attributes is not None:
+            try:
+                out["attributes"] = _AttributesTransferTypeConverter().to_transfer_type(
+                    value.attributes
+                )
+            except ValidationError as error:
+                _collect(violations, "attributes", error)
+        if value.contact is not None:
+            try:
+                out["contact"] = _ContactPyTransferTypeConverter().to_transfer_type(
+                    value.contact
+                )
+            except ValidationError as error:
+                _collect(violations, "contact", error)
+        if violations:
+            raise ValidationError(violations)
+        return out
+
+
+@_transfer_type_convertible(_ShowcaseTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True, init=False)
+class Showcase:
     """Showcase
     Root object exercising the supported JSON-Schema feature subset: required and
     optional fields of every scalar type, optional+nullable and required+nullable
@@ -593,14 +2827,10 @@ class Showcase(pydantic.BaseModel):
     (catch-all) object, a string const, a scalar default, and member docs.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
-    )
-
-    kind: typing.Literal["showcase"] = pydantic.Field(default="showcase")
+    kind: typing.Literal["showcase"] = "showcase"
     """Discriminator; always "showcase"."""
 
-    revision: typing.Literal[1] = pydantic.Field(default=1)
+    revision: typing.Literal[1] = 1
     """Integer const; always 1. Also exercises the single-`const` value override:
     `x-go-const-name`/`x-java-const-name` rename the emitted constant to the derived
     name plus a per-language suffix (Go `RevisionGo`, Java `REVISION_JAVA`) while the
@@ -608,10 +2838,10 @@ class Showcase(pydantic.BaseModel):
     value is emitted as a plain literal type).
     """
 
-    enabled: typing.Literal[True] = pydantic.Field(default=True)
+    enabled: typing.Literal[True] = True
     """Boolean const; always true."""
 
-    status: typing.Literal["active", "inactive", "pending"] = pydantic.Field()
+    status: typing.Literal["active", "inactive", "pending"]
     """Closed string value set. Also exercises the enum value-constant override:
     `x-go-enum-names`/`x-java-enum-names` rename the `active` value's emitted constant
     to the value name plus a per-language suffix (Go `ActiveGo`, Java `ACTIVE_JAVA`)
@@ -619,165 +2849,95 @@ class Showcase(pydantic.BaseModel):
     keyword).
     """
 
-    tier: typing.Literal[1, 2, 3] = pydantic.Field()
+    tier: typing.Literal[1, 2, 3]
     """Closed integer value set."""
 
-    scale: float = pydantic.Field()
+    scale: float
     """Closed number value set (exercises the Python float exception: emitted as plain
     float, validated by membership).
     """
 
-    name: str = pydantic.Field(min_length=1, max_length=64)
+    name: str
     """Display name
     Required human-readable name, 1 to 64 code points.
     """
 
-    count: SpecInt = pydantic.Field()
+    count: int
     """Required integer scalar."""
 
-    active: bool = pydantic.Field()
+    active: bool
     """Required boolean scalar."""
 
-    nickname: str | None = pydantic.Field(default=None, max_length=12)
+    nickname: str | None = None
     """Optional short name, at most 12 code points."""
 
-    code: str | None = pydantic.Field(default=None, min_length=2, max_length=5)
+    code: str | None = None
     """Optional code, 2 to 5 code points. Counted in Unicode code points, so a multi-byte
     value (e.g. "a😀b", 3 code points / 6 UTF-8 bytes) is valid.
     """
 
-    sku: (
-        typing.Annotated[str, pydantic.AfterValidator(_check_pattern("^[A-Z]{2,4}\\Z"))]
-        | None
-    ) = pydantic.Field(default=None)
+    sku: str | None = None
     """Optional product code: 2 to 4 uppercase ASCII letters, anchored (`^[A-Z]{2,4}$`).
     Exercises the RE2-safe `pattern` gate.
     """
 
-    phrase: (
-        typing.Annotated[
-            str,
-            pydantic.AfterValidator(
-                _check_pattern(
-                    "^[^\\t\\n\\x0B\\f\\r ]+[\\t\\n\\x0B\\f\\r ][^\\t\\n\\x0B\\f\\r ]+\\Z"
-                )
-            ),
-        ]
-        | None
-    ) = pydantic.Field(default=None)
+    phrase: str | None = None
     """Optional two-word phrase separated by whitespace (`^\\S+\\s\\S+$`). Exercises the
     loader's `\\s`/`\\S` → ASCII-class normalization and the per-target `$` end-anchor
     rewrite (Python `\\Z` / Java `\\z`), so a Unicode space (NBSP) and a trailing newline
     are rejected consistently across all four languages.
     """
 
-    request_id: (
-        typing.Annotated[
-            str,
-            pydantic.AfterValidator(
-                _check_format(
-                    "uuid",
-                    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\Z",
-                )
-            ),
-        ]
-        | None
-    ) = pydantic.Field(default=None, alias="requestId")
+    request_id: str | None = None
     """Optional request identifier; asserted RFC 4122 UUID via `format: uuid`. Stays
     `string`-typed (format assertion, no materialization); the pinned regex is validated
     identically across all four languages.
     """
 
-    contact_email: (
-        typing.Annotated[
-            str,
-            pydantic.AfterValidator(
-                _check_format(
-                    "email",
-                    "^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+\\Z",
-                    254,
-                )
-            ),
-        ]
-        | None
-    ) = pydantic.Field(default=None, alias="contactEmail")
+    contact_email: str | None = None
     """Optional contact address; asserted ASCII dot-atom `format: email` (single `@`,
     >=2-label domain, total length <= 254, guard-before-regex).
     """
 
-    host: (
-        typing.Annotated[
-            str,
-            pydantic.AfterValidator(
-                _check_format(
-                    "hostname",
-                    "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\Z",
-                    253,
-                )
-            ),
-        ]
-        | None
-    ) = pydantic.Field(default=None)
+    host: str | None = None
     """Optional host name; asserted RFC 1123 `format: hostname` (LDH labels, total length
     <= 253).
     """
 
-    homepage: (
-        typing.Annotated[
-            str,
-            pydantic.AfterValidator(
-                _check_format(
-                    "uri",
-                    "^(?:[A-Za-z][A-Za-z0-9+.-]*:(?://(?:(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*@)?(?:(?:\\[(?:([0-9a-fA-F]{1,4}:){6}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|::([0-9a-fA-F]{1,4}:){5}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){4}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,1}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){3}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){2}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:)([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4})?::[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::)\\]|\\[v[0-9A-Fa-f]+\\.[A-Za-z0-9._~!$&'()*+,;=:-]+\\])|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*)(?::[0-9]*)?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*|/(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?|(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?(?:\\?(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?(?:#(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?)\\Z",
-                )
-            ),
-        ]
-        | None
-    ) = pydantic.Field(default=None)
+    homepage: str | None = None
     """Optional homepage; asserted RFC 3986 `format: uri` (scheme required, ASCII only; an
     IP-literal host is validated by the spliced ipv6 grammar).
     """
 
-    gateway: (
-        typing.Annotated[
-            str,
-            pydantic.AfterValidator(
-                _check_format(
-                    "ipv4",
-                    "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\Z",
-                )
-            ),
-        ]
-        | None
-    ) = pydantic.Field(default=None)
+    gateway: str | None = None
     """Optional gateway address; asserted dotted-quad IPv4 via format ipv4."""
 
-    blob: Base64Field | None = pydantic.Field(default=None)
+    blob: bytes | None = None
     """Optional binary payload carried as a `contentEncoding: base64` string, materialized
     to native bytes (Go []byte, TS Uint8Array, Python bytes, Java byte[]). The wire is
     canonical padded standard base64; a malformed value is rejected by the pinned regex
     before decode.
     """
 
-    url_blob: Base64UrlField | None = pydantic.Field(default=None, alias="urlBlob")
+    url_blob: bytes | None = None
     """Optional binary payload carried as a `contentEncoding: base64url` string (URL-safe
     alphabet, unpadded, RFC 4648 §5), materialized to the same native bytes type. The
     same bytes encode to a different wire than base64 ("Pj4+" vs "Pj4-").
     """
 
-    retries: SpecInt = pydantic.Field(default=3)
+    _retries: int | None = dataclasses.field(default=None, repr=False)
     """Retry budget
     Optional integer with a schema default.
     """
 
-    verbose: bool | None = pydantic.Field(default=None)
+    verbose: bool | None = None
 
-    greeting: str = pydantic.Field(default="hello")
+    _greeting: str | None = dataclasses.field(default=None, repr=False)
     """Greeting
     Optional string with a schema default, surfaced on read.
     """
 
-    debug: bool = pydantic.Field(default=False)
+    _debug: bool | None = dataclasses.field(default=None, repr=False)
     """Debug flag
     Optional boolean with a schema default.
     """
@@ -788,7 +2948,7 @@ class Showcase(pydantic.BaseModel):
             typing_extensions.deprecated("This field is deprecated.", category=None),
         ]
         | None
-    ) = pydantic.Field(default=None, alias="legacyId")
+    ) = None
     """Deprecated legacy identifier; prefer `requestId`. Exercises the native deprecation
     marker (Go // Deprecated:, TS @deprecated, Java @Deprecated, Python PEP 702
     @deprecated). Also exercises the property-level `x-<lang>-name` override (the Stage
@@ -798,40 +2958,34 @@ class Showcase(pydantic.BaseModel):
     @JsonProperty).
     """
 
-    middle_name: str | None = pydantic.Field(default=None, alias="middleName")
+    middle_name: str | None = None
     """Optional and nullable; may be absent or explicitly null."""
 
-    category: str | None = pydantic.Field()
+    category: str | None
     """Required but nullable; may be explicitly cleared to null."""
 
-    priority: SpecInt | None = pydantic.Field(default=None, ge=1, le=10)
+    priority: int | None = None
     """Optional integer bounded to the inclusive range [1, 10]."""
 
-    level: SpecInt | None = pydantic.Field(default=None, gt=0)
+    level: int | None = None
     """Optional integer that must be strictly greater than 0."""
 
-    ratio: (
-        typing.Annotated[float, pydantic.AfterValidator(_check_multiple_of(5))] | None
-    ) = pydantic.Field(default=None, ge=5)
+    ratio: float | None = None
     """Optional number that must be a non-negative multiple of 5."""
 
-    step: SpecInt | None = pydantic.Field(default=None, multiple_of=3)
+    step: int | None = None
     """Optional integer that must be a multiple of 3."""
 
-    tags: list[str] | None = pydantic.Field(default=None, min_length=1, max_length=5)
+    tags: list[str] | None = None
     """Ordered list of free-form tags; 1 to 5 entries."""
 
-    aliases: list[str] | None = pydantic.Field(default=None)
+    aliases: list[str] | None = None
     """Alternate names; each must be distinct."""
 
-    roles: list[str] | None = pydantic.Field(default=None)
+    roles: list[str] | None = None
     """Access roles; must contain between one and two "admin" entries."""
 
-    id_or_name: (
-        typing.Annotated[str, pydantic.Field(min_length=3)]
-        | typing.Annotated[SpecInt, pydantic.Field(ge=1)]
-        | None
-    ) = pydantic.Field(default=None, alias="idOrName")
+    id_or_name: str | int | None = None
     """Disjoint-kind union (oneOf sum type): the wire value is either a string of at least
     3 code points or an integer of at least 1, selected by its JSON token. Not a member
     of a discriminated union — the token itself is the selector. Each branch also
@@ -840,18 +2994,14 @@ class Showcase(pydantic.BaseModel):
     violation.
     """
 
-    mode: (
-        typing.Literal["auto", "manual"]
-        | typing.Annotated[SpecInt, pydantic.Field(ge=0)]
-        | None
-    ) = pydantic.Field(default=None)
+    mode: typing.Literal["auto", "manual"] | int | None = None
     """A union whose string branch is a **closed value set**: either one of two named modes
     or an unbounded non-negative integer. The branch narrows to its own admissible
     values (a Go/Java membership check, a TypeScript literal union, a Python `Literal`),
     so an unknown string is a Violation while any non-negative integer is accepted.
     """
 
-    payload: dict[str, typing.Any] | str | None = pydantic.Field(default=None)
+    payload: dict[str, typing.Any] | str | None = None
     """Mixed-kind union whose object branch is an inline free-form object: the wire value
     is either an arbitrary object (members carried verbatim) or a string, selected by
     its JSON token. The free-form object is the one object branch that needs no type
@@ -859,7 +3009,7 @@ class Showcase(pydantic.BaseModel):
     `<Union>Object`.
     """
 
-    detail: ShowcaseDetailObject | str | None = pydantic.Field(default=None)
+    detail: ShowcaseDetailObject | str | None = None
     """Mixed-kind union whose object branch is an inline *structured* object, written
     directly on the property rather than in `$defs`. It is the only object branch of
     this union, so it derives its name from the union it belongs to —
@@ -867,9 +3017,7 @@ class Showcase(pydantic.BaseModel):
     own constraints and it stays open to unknown ones.
     """
 
-    shape_or_name: (
-        Circle | Square | typing.Annotated[str, pydantic.Field(max_length=32)] | None
-    ) = pydantic.Field(default=None, alias="shapeOrName")
+    shape_or_name: Circle | Square | str | None = None
     """Tagged object union mixed with a scalar kind: the two selector layers compose — the
     JSON token picks object-vs-string, and, for an object, the shared required `kind`
     const picks Circle-vs-Square. Written inline on the property, so the union itself is
@@ -880,14 +3028,7 @@ class Showcase(pydantic.BaseModel):
     validate through their own models.
     """
 
-    measurements: (
-        typing.Annotated[
-            typing.Annotated[list[float], pydantic.Field(min_length=1)],
-            pydantic.AfterValidator(_check_unique_items),
-        ]
-        | typing.Annotated[str, pydantic.AfterValidator(_check_pattern("^[a-z]+\\Z"))]
-        | None
-    ) = pydantic.Field(default=None)
+    measurements: list[float] | str | None = None
     """Mixed-kind union with an array branch: the wire value is either a non-empty list of
     distinct numbers or a lowercase preset name, selected by its JSON token. An array
     branch has no definition to take a name from, so Go and Java emit it as the
@@ -897,352 +3038,452 @@ class Showcase(pydantic.BaseModel):
     string's `pattern` — so the array-vs-string choice is validated as well as selected.
     """
 
-    shapes: list[Shape] | None = pydantic.Field(default=None)
+    shapes: list[Shape] | None = None
     """A list whose element type is a named union: every element is routed to exactly one
     branch by the union's own selector, and its index carries into the violation path
     (`shapes[1]`). Go and Java cannot decode a sealed interface as a whole, so the
     element decodes through the union's dispatcher one at a time.
     """
 
-    segments: list[ShowcaseSegmentsItem] | None = pydantic.Field(default=None)
+    segments: list[ShowcaseSegmentsItem] | None = None
     """A list whose element union is written **inline**. An element has no name of its own,
     so the union is named after its position — `ShowcaseSegmentsItem` — moved into
     `$defs`, and the element becomes a `$ref` at it; from there it is an ordinary named
     union in every language.
     """
 
-    slots: list[str | None] | None = pydantic.Field(default=None)
+    slots: list[str | None] | None = None
     """A list of **nullable elements** — the two-branch nullability `oneOf` rather than a
     sum type, so nothing is named: the elements themselves become nullable (`[]*string`,
     `(string | null)[]`, `list[str | None]`, `List<@Nullable String>`) while the list
     stays a list.
     """
 
-    grid: list[list[SpecInt]] | None = pydantic.Field(default=None)
+    grid: list[list[int]] | None = None
     """A nested array: `items` at depth two. Each level decodes elementwise, so a bad
     element is reported at its own two-dimensional index (`grid[1][0]`).
     """
 
-    location: ShowcaseLocation | None = pydantic.Field(default=None)
+    location: ShowcaseLocation | None = None
 
-    audit: ShowcaseAudit | None = pydantic.Field(default=None)
+    audit: ShowcaseAudit | None = None
     """A nullable inline object. The nullability wrapper emits no type of its own, so the
     object inside it takes the property's name — `ShowcaseAudit`, the same name it would
     take written plainly: adding or removing nullability never renames the type.
     """
 
-    rows: list[ShowcaseRowsItem] | None = pydantic.Field(default=None)
+    rows: list[ShowcaseRowsItem] | None = None
     """A list whose element is an inline object, named after its position
     (`ShowcaseRowsItem`) exactly as an inline element *union* is.
     """
 
-    ledger_py: ShowcaseLedger | None = pydantic.Field(default=None, alias="ledger")
+    ledger_py: ShowcaseLedger | None = None
 
-    metadata: ShowcaseMetadata | None = pydantic.Field(default=None)
+    metadata: ShowcaseMetadata | None = None
 
-    quotas: Quotas | None = pydantic.Field(default=None)
+    quotas: Quotas | None = None
 
-    tokens: Tokens | None = pydantic.Field(default=None)
+    tokens: Tokens | None = None
 
-    nicknames: Nicknames | None = pydantic.Field(default=None)
+    nicknames: Nicknames | None = None
 
-    choices: Choices | None = pydantic.Field(default=None)
+    choices: Choices | None = None
 
-    extras: Extras | None = pydantic.Field(default=None)
+    extras: Extras | None = None
 
-    shape: Shape | None = pydantic.Field(default=None)
+    shape: Shape | None = None
 
-    note: Note | None = pydantic.Field(default=None)
+    note: Note | None = None
 
-    address: Address | None = pydantic.Field(default=None)
+    address: Address | None = None
 
-    labels: Labels | None = pydantic.Field(default=None)
+    labels: Labels | None = None
 
-    settings: Settings | None = pydantic.Field(default=None)
+    settings: Settings | None = None
 
-    attributes: Attributes | None = pydantic.Field(default=None)
+    attributes: Attributes | None = None
 
-    contact: ContactPy | None = pydantic.Field(default=None)
+    contact: ContactPy | None = None
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_kind(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "kind" not in values:
-                data = {**values, "kind": "showcase"}
-            elif values.get("kind", values.get("kind")) != "showcase":
-                raise pydantic_core.PydanticCustomError(
-                    "const", 'kind must equal "showcase"'
-                )
-        return typing.cast(object, data)
+    def __init__(
+        self,
+        *,
+        kind: typing.Literal["showcase"] = "showcase",
+        revision: typing.Literal[1] = 1,
+        enabled: typing.Literal[True] = True,
+        status: typing.Literal["active", "inactive", "pending"],
+        tier: typing.Literal[1, 2, 3],
+        scale: float,
+        name: str,
+        count: int,
+        active: bool,
+        nickname: str | None = None,
+        code: str | None = None,
+        sku: str | None = None,
+        phrase: str | None = None,
+        request_id: str | None = None,
+        contact_email: str | None = None,
+        host: str | None = None,
+        homepage: str | None = None,
+        gateway: str | None = None,
+        blob: bytes | None = None,
+        url_blob: bytes | None = None,
+        retries: int | None = None,
+        verbose: bool | None = None,
+        greeting: str | None = None,
+        debug: bool | None = None,
+        legacy_id_py: typing.Annotated[
+            str,
+            typing_extensions.deprecated("This field is deprecated.", category=None),
+        ]
+        | None = None,
+        middle_name: str | None = None,
+        category: str | None,
+        priority: int | None = None,
+        level: int | None = None,
+        ratio: float | None = None,
+        step: int | None = None,
+        tags: list[str] | None = None,
+        aliases: list[str] | None = None,
+        roles: list[str] | None = None,
+        id_or_name: str | int | None = None,
+        mode: typing.Literal["auto", "manual"] | int | None = None,
+        payload: dict[str, typing.Any] | str | None = None,
+        detail: ShowcaseDetailObject | str | None = None,
+        shape_or_name: Circle | Square | str | None = None,
+        measurements: list[float] | str | None = None,
+        shapes: list[Shape] | None = None,
+        segments: list[ShowcaseSegmentsItem] | None = None,
+        slots: list[str | None] | None = None,
+        grid: list[list[int]] | None = None,
+        location: ShowcaseLocation | None = None,
+        audit: ShowcaseAudit | None = None,
+        rows: list[ShowcaseRowsItem] | None = None,
+        ledger_py: ShowcaseLedger | None = None,
+        metadata: ShowcaseMetadata | None = None,
+        quotas: Quotas | None = None,
+        tokens: Tokens | None = None,
+        nicknames: Nicknames | None = None,
+        choices: Choices | None = None,
+        extras: Extras | None = None,
+        shape: Shape | None = None,
+        note: Note | None = None,
+        address: Address | None = None,
+        labels: Labels | None = None,
+        settings: Settings | None = None,
+        attributes: Attributes | None = None,
+        contact: ContactPy | None = None,
+        _retries: int | None = None,
+        _greeting: str | None = None,
+        _debug: bool | None = None,
+    ) -> None:
+        self.kind = kind
+        self.revision = revision
+        self.enabled = enabled
+        self.status = status
+        self.tier = tier
+        self.scale = scale
+        self.name = name
+        self.count = count
+        self.active = active
+        self.nickname = nickname
+        self.code = code
+        self.sku = sku
+        self.phrase = phrase
+        self.request_id = request_id
+        self.contact_email = contact_email
+        self.host = host
+        self.homepage = homepage
+        self.gateway = gateway
+        self.blob = blob
+        self.url_blob = url_blob
+        self._retries = _retries if _retries is not None else retries
+        self.verbose = verbose
+        self._greeting = _greeting if _greeting is not None else greeting
+        self._debug = _debug if _debug is not None else debug
+        self.legacy_id_py = legacy_id_py
+        self.middle_name = middle_name
+        self.category = category
+        self.priority = priority
+        self.level = level
+        self.ratio = ratio
+        self.step = step
+        self.tags = tags
+        self.aliases = aliases
+        self.roles = roles
+        self.id_or_name = id_or_name
+        self.mode = mode
+        self.payload = payload
+        self.detail = detail
+        self.shape_or_name = shape_or_name
+        self.measurements = measurements
+        self.shapes = shapes
+        self.segments = segments
+        self.slots = slots
+        self.grid = grid
+        self.location = location
+        self.audit = audit
+        self.rows = rows
+        self.ledger_py = ledger_py
+        self.metadata = metadata
+        self.quotas = quotas
+        self.tokens = tokens
+        self.nicknames = nicknames
+        self.choices = choices
+        self.extras = extras
+        self.shape = shape
+        self.note = note
+        self.address = address
+        self.labels = labels
+        self.settings = settings
+        self.attributes = attributes
+        self.contact = contact
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_revision(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "revision" not in values:
-                data = {**values, "revision": 1}
-            elif values.get("revision", values.get("revision")) != 1:
-                raise pydantic_core.PydanticCustomError(
-                    "const", "revision must equal 1"
-                )
-        return typing.cast(object, data)
+    @property
+    def retries(self) -> int:
+        """Retry budget
+        Optional integer with a schema default.
+        """
+        return self._retries if self._retries is not None else 3
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_enabled(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "enabled" not in values:
-                data = {**values, "enabled": True}
-            elif values.get("enabled", values.get("enabled")) != True:
-                raise pydantic_core.PydanticCustomError(
-                    "const", "enabled must equal True"
-                )
-        return typing.cast(object, data)
+    @retries.setter
+    def retries(self, value: int) -> None:
+        self._retries = value
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _check_enum_status(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "status" in values:
-                got = values.get("status")
-                if got not in ["active", "inactive", "pending"]:
-                    raise pydantic_core.PydanticCustomError(
-                        "enum",
-                        'status must be one of ["active", "inactive", "pending"], got {got}',
-                        {"got": got},
-                    )
-        return typing.cast(object, data)
+    @retries.deleter
+    def retries(self) -> None:
+        self._retries = None
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _check_enum_tier(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "tier" in values:
-                got = values.get("tier")
-                if got not in [1, 2, 3]:
-                    raise pydantic_core.PydanticCustomError(
-                        "enum", "tier must be one of [1, 2, 3], got {got}", {"got": got}
-                    )
-        return typing.cast(object, data)
+    @property
+    def greeting(self) -> str:
+        """Greeting
+        Optional string with a schema default, surfaced on read.
+        """
+        return self._greeting if self._greeting is not None else "hello"
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _check_enum_scale(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "scale" in values:
-                got = values.get("scale")
-                if got not in [1.5, 2.5]:
-                    raise pydantic_core.PydanticCustomError(
-                        "enum",
-                        "scale must be one of [1.5, 2.5], got {got}",
-                        {"got": got},
-                    )
-        return typing.cast(object, data)
+    @greeting.setter
+    def greeting(self, value: str) -> None:
+        self._greeting = value
 
-    @pydantic.model_validator(mode="after")
-    def _validate_arrays(self) -> typing.Any:
-        errors: list[pydantic_core.InitErrorDetails] = []
-        value = self.aliases
-        if value is not None:
-            seen: dict[object, int] = {}
-            for index, element in enumerate(value):
-                if element in seen:
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                "unique_items",
-                                typing.cast(
-                                    typing.Any,
-                                    f"duplicate items: element at index {index} equals index {seen[element]}",
-                                ),
-                            ),
-                            loc=("aliases",),
-                            input=element,
+    @greeting.deleter
+    def greeting(self) -> None:
+        self._greeting = None
+
+    @property
+    def debug(self) -> bool:
+        """Debug flag
+        Optional boolean with a schema default.
+        """
+        return self._debug if self._debug is not None else False
+
+    @debug.setter
+    def debug(self, value: bool) -> None:
+        self._debug = value
+
+    @debug.deleter
+    def debug(self) -> None:
+        self._debug = None
+
+
+class _ShowcaseAuditTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseAudit", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseAudit"]
+    ) -> "ShowcaseAudit":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        by_value: str = typing.cast("typing.Any", None)
+        if "by" not in raw or raw["by"] is None:
+            violations.append(Violation(path="by", reason="required"))
+        else:
+            by_value_raw = raw["by"]
+            if not isinstance(by_value_raw, str):
+                violations.append(Violation(path="by", reason="expected string"))
+            else:
+                by_value = by_value_raw
+                if len(by_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="by",
+                            reason=f"must have length >= 1, got {len(by_value_raw)}",
                         )
                     )
-                else:
-                    seen[element] = index
-        value = self.roles
-        if value is not None:
-            match_count = sum(1 for element in value if element == "admin")
-            if match_count < 1:
-                errors.append(
-                    pydantic_core.InitErrorDetails(
-                        type=pydantic_core.PydanticCustomError(
-                            "too_few_matching_items",
-                            typing.cast(
-                                typing.Any,
-                                f"too few matching items: at least 1, got {match_count}",
-                            ),
-                        ),
-                        loc=("roles",),
-                        input=value,
-                    )
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SHOWCASE_AUDIT_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseAudit(
+            by=by_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseAudit") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if len(value.by) < 1:
+            violations.append(
+                Violation(
+                    path="by", reason=f"must have length >= 1, got {len(value.by)}"
                 )
-            if match_count > 2:
-                errors.append(
-                    pydantic_core.InitErrorDetails(
-                        type=pydantic_core.PydanticCustomError(
-                            "too_many_matching_items",
-                            typing.cast(
-                                typing.Any,
-                                f"too many matching items: at most 2, got {match_count}",
-                            ),
-                        ),
-                        loc=("roles",),
-                        input=value,
-                    )
-                )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
             )
-        return self
+        out["by"] = value.by
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {
-            "address",
-            "aliases",
-            "attributes",
-            "blob",
-            "choices",
-            "code",
-            "contact",
-            "contactEmail",
-            "contact_email",
-            "detail",
-            "extras",
-            "gateway",
-            "grid",
-            "homepage",
-            "host",
-            "idOrName",
-            "id_or_name",
-            "labels",
-            "ledger",
-            "ledger_py",
-            "legacyId",
-            "legacy_id_py",
-            "level",
-            "location",
-            "measurements",
-            "metadata",
-            "mode",
-            "nickname",
-            "nicknames",
-            "note",
-            "payload",
-            "phrase",
-            "priority",
-            "quotas",
-            "ratio",
-            "requestId",
-            "request_id",
-            "roles",
-            "rows",
-            "segments",
-            "settings",
-            "shape",
-            "shapeOrName",
-            "shape_or_name",
-            "shapes",
-            "sku",
-            "slots",
-            "step",
-            "tags",
-            "tokens",
-            "urlBlob",
-            "url_blob",
-            "verbose",
-        }
+
+@_transfer_type_convertible(_ShowcaseAuditTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseAudit:
+    by: str
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+class _ShowcaseDetailObjectTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseDetailObject", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseDetailObject"]
+    ) -> "ShowcaseDetailObject":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        code_value: str = typing.cast("typing.Any", None)
+        if "code" not in raw or raw["code"] is None:
+            violations.append(Violation(path="code", reason="required"))
+        else:
+            code_value_raw = raw["code"]
+            if not isinstance(code_value_raw, str):
+                violations.append(Violation(path="code", reason="expected string"))
+            else:
+                code_value = code_value_raw
+                if len(code_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="code",
+                            reason=f"must have length >= 1, got {len(code_value_raw)}",
+                        )
+                    )
+
+        hint_value: str | None = None
+        if "hint" in raw:
+            hint_value_raw = raw["hint"]
+            if hint_value_raw is None:
+                violations.append(
+                    Violation(path="hint", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(hint_value_raw, str):
+                    violations.append(Violation(path="hint", reason="expected string"))
+                else:
+                    hint_value = hint_value_raw
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SHOWCASE_DETAIL_OBJECT_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseDetailObject(
+            code=code_value,
+            hint=hint_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseDetailObject") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if len(value.code) < 1:
+            violations.append(
+                Violation(
+                    path="code", reason=f"must have length >= 1, got {len(value.code)}"
+                )
+            )
+        out["code"] = value.code
+        if value.hint is not None:
+            out["hint"] = value.hint
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseAudit(pydantic.BaseModel):
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+@_transfer_type_convertible(_ShowcaseDetailObjectTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseDetailObject:
+    code: str
+
+    hint: str | None = None
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    by: str = pydantic.Field(min_length=1)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+class _ShowcaseLedgerTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseLedger", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseLedger"]
+    ) -> "ShowcaseLedger":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        additional_properties: dict[str, ShowcaseLedgerValue] = {}
+        for key in raw:
+            member: ShowcaseLedgerValue = typing.cast("typing.Any", None)
+            member_raw = raw[key]
+            try:
+                member = _ShowcaseLedgerValueTransferTypeConverter().from_transfer_type(
+                    member_raw, ShowcaseLedgerValue
+                )
+            except ValidationError as error:
+                _collect(violations, key, error)
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseLedger(additional_properties=additional_properties)
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseLedger") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            try:
+                out[key] = _ShowcaseLedgerValueTransferTypeConverter().to_transfer_type(
+                    entry
+                )
+            except ValidationError as error:
+                _collect(violations, key, error)
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseDetailObject(pydantic.BaseModel):
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
-
-    code: str = pydantic.Field(min_length=1)
-
-    hint: str | None = pydantic.Field(default=None)
-
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset({"hint"})
-
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
-
-
-class ShowcaseLedger(pydantic.BaseModel):
+@_transfer_type_convertible(_ShowcaseLedgerTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseLedger:
     """A typed map written inline on the property: the map itself is named `ShowcaseLedger`
     and its inline member shape `ShowcaseLedgerValue`, so both the map and its members
     are ordinary named models. Also exercises the member-name override on a hoisted
@@ -1251,64 +3492,165 @@ class ShowcaseLedger(pydantic.BaseModel):
     name.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    additional_properties: dict[str, ShowcaseLedgerValue] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
-            try:
-                extra[key] = _SHOWCASE_LEDGER_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
+
+class _ShowcaseLedgerValueTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseLedgerValue", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseLedgerValue"]
+    ) -> "ShowcaseLedgerValue":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        amount_value: int = typing.cast("typing.Any", None)
+        if "amount" not in raw or raw["amount"] is None:
+            violations.append(Violation(path="amount", reason="required"))
+        else:
+            amount_value_raw = raw["amount"]
+            amount_value_parsed = _parse_spec_integer(
+                amount_value_raw, "amount", violations
+            )
+            if amount_value_parsed is not None:
+                amount_value = amount_value_parsed
+                if amount_value < 0:
+                    violations.append(
+                        Violation(
+                            path="amount", reason=f"must be >= 0, got {amount_value}"
                         )
                     )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SHOWCASE_LEDGER_VALUE_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseLedgerValue(
+            amount=amount_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseLedgerValue") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if value.amount < 0:
+            violations.append(
+                Violation(path="amount", reason=f"must be >= 0, got {value.amount}")
             )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _SHOWCASE_LEDGER_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+        out["amount"] = value.amount
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseLedgerValue(pydantic.BaseModel):
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+@_transfer_type_convertible(_ShowcaseLedgerValueTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseLedgerValue:
+    amount: int
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    amount: SpecInt = pydantic.Field(ge=0)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+class _ShowcaseLocationTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseLocation", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseLocation"]
+    ) -> "ShowcaseLocation":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        city_value: str = typing.cast("typing.Any", None)
+        if "city" not in raw or raw["city"] is None:
+            violations.append(Violation(path="city", reason="required"))
+        else:
+            city_value_raw = raw["city"]
+            if not isinstance(city_value_raw, str):
+                violations.append(Violation(path="city", reason="expected string"))
+            else:
+                city_value = city_value_raw
+                if len(city_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="city",
+                            reason=f"must have length >= 1, got {len(city_value_raw)}",
+                        )
+                    )
+
+        geo_value: ShowcaseLocationGeo | None = None
+        if "geo" in raw:
+            geo_value_raw = raw["geo"]
+            if geo_value_raw is None:
+                violations.append(
+                    Violation(path="geo", reason="explicit null not allowed")
+                )
+            else:
+                try:
+                    geo_value = (
+                        _ShowcaseLocationGeoTransferTypeConverter().from_transfer_type(
+                            geo_value_raw, ShowcaseLocationGeo
+                        )
+                    )
+                except ValidationError as error:
+                    _collect(violations, "geo", error)
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SHOWCASE_LOCATION_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseLocation(
+            city=city_value,
+            geo=geo_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseLocation") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if len(value.city) < 1:
+            violations.append(
+                Violation(
+                    path="city", reason=f"must have length >= 1, got {len(value.city)}"
+                )
+            )
+        out["city"] = value.city
+        if value.geo is not None:
+            try:
+                out["geo"] = (
+                    _ShowcaseLocationGeoTransferTypeConverter().to_transfer_type(
+                        value.geo
+                    )
+                )
+            except ValidationError as error:
+                _collect(violations, "geo", error)
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseLocation(pydantic.BaseModel):
+@_transfer_type_convertible(_ShowcaseLocationTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseLocation:
     """An object written **inline** on the property rather than in `$defs`. It is named
     after the position it occupies — `ShowcaseLocation` — moved into `$defs`, and the
     property becomes a `$ref` at it, so it emits as the ordinary named model an authored
@@ -1317,254 +3659,678 @@ class ShowcaseLocation(pydantic.BaseModel):
     `$defs` boilerplate at any depth.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    city: str
+
+    geo: ShowcaseLocationGeo | None = None
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    city: str = pydantic.Field(min_length=1)
 
-    geo: ShowcaseLocationGeo | None = pydantic.Field(default=None)
+class _ShowcaseLocationGeoTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseLocationGeo", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseLocationGeo"]
+    ) -> "ShowcaseLocationGeo":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset({"geo"})
+        lat_value: float | None = None
+        if "lat" in raw:
+            lat_value_raw = raw["lat"]
+            if lat_value_raw is None:
+                violations.append(
+                    Violation(path="lat", reason="explicit null not allowed")
+                )
+            else:
+                if not (
+                    not isinstance(lat_value_raw, bool)
+                    and isinstance(lat_value_raw, (int, float))
+                ):
+                    violations.append(Violation(path="lat", reason="expected number"))
+                else:
+                    lat_value = lat_value_raw
+                    if not (
+                        -1.7976931348623157e308
+                        <= lat_value_raw
+                        <= 1.7976931348623157e308
+                    ):
+                        violations.append(
+                            Violation(
+                                path="lat",
+                                reason=f"must be a finite number, got {lat_value_raw}",
+                            )
+                        )
 
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+        lon_value: float | None = None
+        if "lon" in raw:
+            lon_value_raw = raw["lon"]
+            if lon_value_raw is None:
+                violations.append(
+                    Violation(path="lon", reason="explicit null not allowed")
+                )
+            else:
+                if not (
+                    not isinstance(lon_value_raw, bool)
+                    and isinstance(lon_value_raw, (int, float))
+                ):
+                    violations.append(Violation(path="lon", reason="expected number"))
+                else:
+                    lon_value = lon_value_raw
+                    if not (
+                        -1.7976931348623157e308
+                        <= lon_value_raw
+                        <= 1.7976931348623157e308
+                    ):
+                        violations.append(
+                            Violation(
+                                path="lon",
+                                reason=f"must be a finite number, got {lon_value_raw}",
+                            )
+                        )
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SHOWCASE_LOCATION_GEO_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseLocationGeo(
+            lat=lat_value,
+            lon=lon_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseLocationGeo") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if value.lat is not None:
+            if not (-1.7976931348623157e308 <= value.lat <= 1.7976931348623157e308):
+                violations.append(
+                    Violation(
+                        path="lat", reason=f"must be a finite number, got {value.lat}"
+                    )
+                )
+            out["lat"] = value.lat
+        if value.lon is not None:
+            if not (-1.7976931348623157e308 <= value.lon <= 1.7976931348623157e308):
+                violations.append(
+                    Violation(
+                        path="lon", reason=f"must be a finite number, got {value.lon}"
+                    )
+                )
+            out["lon"] = value.lon
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseLocationGeo(pydantic.BaseModel):
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+@_transfer_type_convertible(_ShowcaseLocationGeoTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseLocationGeo:
+    lat: float | None = None
+
+    lon: float | None = None
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    lat: float | None = pydantic.Field(default=None)
 
-    lon: float | None = pydantic.Field(default=None)
+class _ShowcaseMetadataTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseMetadata", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseMetadata"]
+    ) -> "ShowcaseMetadata":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        if len(raw) > 3:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 3 properties, got {len(raw)}"
+                )
+            )
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseMetadata(additional_properties=additional_properties)
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"lat", "lon"}
-    )
-
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseMetadata") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if len(out) > 3:
+            violations.append(
+                Violation(
+                    path="", reason=f"must have at most 3 properties, got {len(out)}"
+                )
+            )
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseMetadata(pydantic.BaseModel):
+@_transfer_type_convertible(_ShowcaseMetadataTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseMetadata:
     """A free-form object written inline. Even this is named (`ShowcaseMetadata`): every
     object emits as a named aggregate holding its members in a catch-all, so adding
     `properties` to it later only adds fields rather than changing the emitted type's
     kind, and its member-count bound rides along with it.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        if len(extra) > 3:
-            errors.append(
-                pydantic_core.InitErrorDetails(
-                    type=pydantic_core.PydanticCustomError(
-                        "too_many_properties",
-                        typing.cast(
-                            typing.Any,
-                            f"must have at most 3 properties, got {len(extra)}",
-                        ),
-                    ),
-                    loc=(),
-                    input=len(extra),
+
+class _ShowcaseRowsItemTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ShowcaseRowsItem", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ShowcaseRowsItem"]
+    ) -> "ShowcaseRowsItem":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        cell_value: str = typing.cast("typing.Any", None)
+        if "cell" not in raw or raw["cell"] is None:
+            violations.append(Violation(path="cell", reason="required"))
+        else:
+            cell_value_raw = raw["cell"]
+            if not isinstance(cell_value_raw, str):
+                violations.append(Violation(path="cell", reason="expected string"))
+            else:
+                cell_value = cell_value_raw
+                if len(cell_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="cell",
+                            reason=f"must have length >= 1, got {len(cell_value_raw)}",
+                        )
+                    )
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SHOWCASE_ROWS_ITEM_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return ShowcaseRowsItem(
+            cell=cell_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ShowcaseRowsItem") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if len(value.cell) < 1:
+            violations.append(
+                Violation(
+                    path="cell", reason=f"must have length >= 1, got {len(value.cell)}"
                 )
             )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
+        out["cell"] = value.cell
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
+
+
+@_transfer_type_convertible(_ShowcaseRowsItemTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ShowcaseRowsItem:
+    cell: str
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
+    )
+
+
+class _GetShowcaseInputTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["GetShowcaseInput", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["GetShowcaseInput"]
+    ) -> "GetShowcaseInput":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        id_value: str = typing.cast("typing.Any", None)
+        if "id" not in raw or raw["id"] is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            id_value_raw = raw["id"]
+            if not isinstance(id_value_raw, str):
+                violations.append(Violation(path="id", reason="expected string"))
+            else:
+                id_value = id_value_raw
+
+        for key in raw:
+            if key != "id":
+                violations.append(Violation(path=key, reason="unknown field"))
+        if violations:
+            raise ValidationError(violations)
+        return GetShowcaseInput(
+            id=id_value,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "GetShowcaseInput") -> typing.Any:
+        out: dict[str, typing.Any] = {}
+        out["id"] = value.id
+        return out
+
+
+@_transfer_type_convertible(_GetShowcaseInputTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class GetShowcaseInput:
+    id: str
+
+
+class _SquareTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Square", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Square"]
+    ) -> "Square":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        kind_value: typing.Literal["square"] = typing.cast("typing.Any", None)
+        if "kind" not in raw or raw["kind"] is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            kind_value_raw = raw["kind"]
+            if not isinstance(kind_value_raw, str):
+                violations.append(Violation(path="kind", reason="expected string"))
+            elif kind_value_raw not in ("square",):
+                violations.append(Violation(path="kind", reason='must equal "square"'))
+            else:
+                kind_value = kind_value_raw
+
+        side_value: float = typing.cast("typing.Any", None)
+        if "side" not in raw or raw["side"] is None:
+            violations.append(Violation(path="side", reason="required"))
+        else:
+            side_value_raw = raw["side"]
+            if not (
+                not isinstance(side_value_raw, bool)
+                and isinstance(side_value_raw, (int, float))
+            ):
+                violations.append(Violation(path="side", reason="expected number"))
+            else:
+                side_value = side_value_raw
+                if not (
+                    -1.7976931348623157e308 <= side_value_raw <= 1.7976931348623157e308
+                ):
+                    violations.append(
+                        Violation(
+                            path="side",
+                            reason=f"must be a finite number, got {side_value_raw}",
+                        )
+                    )
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _SQUARE_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return Square(
+            kind=kind_value,
+            side=side_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Square") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if typing.cast("object", value.kind) not in ("square",):
+            violations.append(Violation(path="kind", reason='must equal "square"'))
+        out["kind"] = value.kind
+        if not (-1.7976931348623157e308 <= value.side <= 1.7976931348623157e308):
+            violations.append(
+                Violation(
+                    path="side", reason=f"must be a finite number, got {value.side}"
+                )
             )
-        return self
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return dict(typing.cast(dict[str, object], self.model_extra or {}))
+        out["side"] = value.side
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class ShowcaseRowsItem(pydantic.BaseModel):
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
-
-    cell: str = pydantic.Field(min_length=1)
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
-
-
-class GetShowcaseInput(pydantic.BaseModel):
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="forbid"
-    )
-
-    id: str = pydantic.Field()
-
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
-
-
-class Square(pydantic.BaseModel):
+@_transfer_type_convertible(_SquareTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Square:
     """A square branch of the Shape and shapeOrName tagged unions."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    kind: typing.Literal["square"] = "square"
+
+    side: float
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    kind: typing.Literal["square"] = pydantic.Field(default="square")
 
-    side: float = pydantic.Field()
+class _TextNoteTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["TextNote", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["TextNote"]
+    ) -> "TextNote":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_kind(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "kind" not in values:
-                data = {**values, "kind": "square"}
-            elif values.get("kind", values.get("kind")) != "square":
-                raise pydantic_core.PydanticCustomError(
-                    "const", 'kind must equal "square"'
+        kind_value: typing.Literal["text"] = typing.cast("typing.Any", None)
+        if "kind" not in raw or raw["kind"] is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            kind_value_raw = raw["kind"]
+            if not isinstance(kind_value_raw, str):
+                violations.append(Violation(path="kind", reason="expected string"))
+            elif kind_value_raw not in ("text",):
+                violations.append(Violation(path="kind", reason='must equal "text"'))
+            else:
+                kind_value = kind_value_raw
+
+        body_value: str = typing.cast("typing.Any", None)
+        if "body" not in raw or raw["body"] is None:
+            violations.append(Violation(path="body", reason="required"))
+        else:
+            body_value_raw = raw["body"]
+            if not isinstance(body_value_raw, str):
+                violations.append(Violation(path="body", reason="expected string"))
+            else:
+                body_value = body_value_raw
+                if len(body_value_raw) < 1:
+                    violations.append(
+                        Violation(
+                            path="body",
+                            reason=f"must have length >= 1, got {len(body_value_raw)}",
+                        )
+                    )
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _TEXT_NOTE_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return TextNote(
+            kind=kind_value,
+            body=body_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "TextNote") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        if typing.cast("object", value.kind) not in ("text",):
+            violations.append(Violation(path="kind", reason='must equal "text"'))
+        out["kind"] = value.kind
+        if len(value.body) < 1:
+            violations.append(
+                Violation(
+                    path="body", reason=f"must have length >= 1, got {len(value.body)}"
                 )
-        return typing.cast(object, data)
+            )
+        out["body"] = value.body
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
 
-
-class TextNote(pydantic.BaseModel):
+@_transfer_type_convertible(_TextNoteTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class TextNote:
     """A text note branch, named inline."""
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    kind: typing.Literal["text"] = "text"
+
+    body: str
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    kind: typing.Literal["text"] = pydantic.Field(default="text")
 
-    body: str = pydantic.Field(min_length=1)
+class _TokensTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Tokens", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Tokens"]
+    ) -> "Tokens":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+        additional_properties: dict[str, str] = {}
+        for key in raw:
+            member: str = typing.cast("typing.Any", None)
+            member_raw = raw[key]
+            if not isinstance(member_raw, str):
+                violations.append(Violation(path=key, reason="expected string"))
+            else:
+                member = member_raw
+                if len(member_raw) < 2:
+                    violations.append(
+                        Violation(
+                            path=key,
+                            reason=f"must have length >= 2, got {len(member_raw)}",
+                        )
+                    )
+                if len(member_raw) > 8:
+                    violations.append(
+                        Violation(
+                            path=key,
+                            reason=f"must have length <= 8, got {len(member_raw)}",
+                        )
+                    )
+                if _PATTERN_F242E3A159C2422C.search(member_raw) is None:
+                    violations.append(
+                        Violation(
+                            path=key,
+                            reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(member_raw)}",
+                        )
+                    )
+            additional_properties[key] = member
+        if violations:
+            raise ValidationError(violations)
+        return Tokens(additional_properties=additional_properties)
 
-    @pydantic.model_validator(mode="before")
-    @classmethod
-    def _inject_const_kind(
-        cls,
-        data: object,
-    ) -> object:
-        if isinstance(data, dict):
-            values = typing.cast(dict[str, object], data)
-            if "kind" not in values:
-                data = {**values, "kind": "text"}
-            elif values.get("kind", values.get("kind")) != "text":
-                raise pydantic_core.PydanticCustomError(
-                    "const", 'kind must equal "text"'
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Tokens") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        for key, entry in value.additional_properties.items():
+            if len(entry) < 2:
+                violations.append(
+                    Violation(
+                        path=key, reason=f"must have length >= 2, got {len(entry)}"
+                    )
                 )
-        return typing.cast(object, data)
+            if len(entry) > 8:
+                violations.append(
+                    Violation(
+                        path=key, reason=f"must have length <= 8, got {len(entry)}"
+                    )
+                )
+            if _PATTERN_F242E3A159C2422C.search(entry) is None:
+                violations.append(
+                    Violation(
+                        path=key,
+                        reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(entry)}",
+                    )
+                )
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
 
-
-class Tokens(pydantic.BaseModel):
+@_transfer_type_convertible(_TokensTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Tokens:
     """A typed map with a refined *string* member: 2 to 8 code points of lowercase ASCII.
     Exercises the member-level `minLength`/`maxLength`/`pattern` in every language.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
+    additional_properties: dict[str, str] = dataclasses.field(default_factory=dict)
 
-    @pydantic.model_validator(mode="after")
-    def _validate_extras(self) -> typing.Any:
-        extra = typing.cast(dict[str, object], self.model_extra or {})
-        errors: list[pydantic_core.InitErrorDetails] = []
-        for key, value in list(extra.items()):
-            try:
-                extra[key] = _TOKENS_MEMBER.validate_python(value)
-            except pydantic.ValidationError as error:
-                for detail in error.errors():
-                    errors.append(
-                        pydantic_core.InitErrorDetails(
-                            type=pydantic_core.PydanticCustomError(
-                                typing.cast(typing.Any, detail["type"]),
-                                typing.cast(typing.Any, detail["msg"]),
-                            ),
-                            loc=(key, *detail["loc"]),
-                            input=detail["input"],
+
+class _WidgetTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["Widget", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["Widget"]
+    ) -> "Widget":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        id_value: str = typing.cast("typing.Any", None)
+        if "id" not in raw or raw["id"] is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            id_value_raw = raw["id"]
+            if not isinstance(id_value_raw, str):
+                violations.append(Violation(path="id", reason="expected string"))
+            else:
+                id_value = id_value_raw
+
+        kind_value: str | None = None
+        if "kind" in raw:
+            kind_value_raw = raw["kind"]
+            if kind_value_raw is None:
+                violations.append(
+                    Violation(path="kind", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(kind_value_raw, str):
+                    violations.append(Violation(path="kind", reason="expected string"))
+                else:
+                    kind_value = kind_value_raw
+
+        name_value: str = typing.cast("typing.Any", None)
+        if "name" not in raw or raw["name"] is None:
+            violations.append(Violation(path="name", reason="required"))
+        else:
+            name_value_raw = raw["name"]
+            if not isinstance(name_value_raw, str):
+                violations.append(Violation(path="name", reason="expected string"))
+            else:
+                name_value = name_value_raw
+
+        size_value: int | None = None
+        if "size" in raw:
+            size_value_raw = raw["size"]
+            if size_value_raw is None:
+                violations.append(
+                    Violation(path="size", reason="explicit null not allowed")
+                )
+            else:
+                size_value_parsed = _parse_spec_integer(
+                    size_value_raw, "size", violations
+                )
+                if size_value_parsed is not None:
+                    size_value = size_value_parsed
+                    if size_value < 10:
+                        violations.append(
+                            Violation(
+                                path="size", reason=f"must be >= 10, got {size_value}"
+                            )
                         )
-                    )
-        if errors:
-            raise pydantic.ValidationError.from_exception_data(
-                title=type(self).__name__, line_errors=errors
-            )
-        return self
+                    if size_value > 20:
+                        violations.append(
+                            Violation(
+                                path="size", reason=f"must be <= 20, got {size_value}"
+                            )
+                        )
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        _handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return {
-            key: _TOKENS_MEMBER.dump_python(value, mode="json", by_alias=True)
-            for key, value in typing.cast(
-                dict[str, object], self.model_extra or {}
-            ).items()
-        }
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _WIDGET_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return Widget(
+            id=id_value,
+            kind=kind_value,
+            name=name_value,
+            size=size_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "Widget") -> typing.Any:
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        out["id"] = value.id
+        if value.kind is not None:
+            out["kind"] = value.kind
+        out["name"] = value.name
+        if value.size is not None:
+            if value.size < 10:
+                violations.append(
+                    Violation(path="size", reason=f"must be >= 10, got {value.size}")
+                )
+            if value.size > 20:
+                violations.append(
+                    Violation(path="size", reason=f"must be <= 20, got {value.size}")
+                )
+            out["size"] = value.size
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        if violations:
+            raise ValidationError(violations)
+        return out
 
 
-class Widget(pydantic.BaseModel):
+@_transfer_type_convertible(_WidgetTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class Widget:
     """Base-type extension via allOf: WidgetBase is flattened in and the extension branch
     adds fields, so Widget merges to one standalone object with the union of properties
     ({id, kind, name, size}) and required ([id, name]). The `size` member is itself an
@@ -1572,75 +4338,490 @@ class Widget(pydantic.BaseModel):
     outside it is rejected by the merged constraint. No allOf survives past the loader.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
-    )
+    id: str
 
-    id: str = pydantic.Field()
+    kind: str | None = None
 
-    kind: str | None = pydantic.Field(default=None)
+    name: str
 
-    name: str = pydantic.Field()
-
-    size: SpecInt | None = pydantic.Field(default=None, ge=10, le=20)
+    size: int | None = None
     """Optional integer with two allOf branches tightened to [10, 20]."""
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset(
-        {"kind", "size"}
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+class _WidgetBaseTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["WidgetBase", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["WidgetBase"]
+    ) -> "WidgetBase":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise ValidationError([Violation(path="", reason="expected object")])
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        id_value: str = typing.cast("typing.Any", None)
+        if "id" not in raw or raw["id"] is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            id_value_raw = raw["id"]
+            if not isinstance(id_value_raw, str):
+                violations.append(Violation(path="id", reason="expected string"))
+            else:
+                id_value = id_value_raw
+
+        kind_value: str | None = None
+        if "kind" in raw:
+            kind_value_raw = raw["kind"]
+            if kind_value_raw is None:
+                violations.append(
+                    Violation(path="kind", reason="explicit null not allowed")
+                )
+            else:
+                if not isinstance(kind_value_raw, str):
+                    violations.append(Violation(path="kind", reason="expected string"))
+                else:
+                    kind_value = kind_value_raw
+
+        additional_properties: dict[str, typing.Any] = {}
+        for key in raw:
+            if key not in _WIDGET_BASE_DECLARED:
+                additional_properties[key] = raw[key]
+        if violations:
+            raise ValidationError(violations)
+        return WidgetBase(
+            id=id_value,
+            kind=kind_value,
+            additional_properties=additional_properties,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "WidgetBase") -> typing.Any:
+        out: dict[str, typing.Any] = {}
+        out["id"] = value.id
+        if value.kind is not None:
+            out["kind"] = value.kind
+        for key, entry in value.additional_properties.items():
+            out[key] = entry
+        return out
 
 
-class WidgetBase(pydantic.BaseModel):
+@_transfer_type_convertible(_WidgetBaseTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class WidgetBase:
     """A base object folded into Widget via allOf. It stays its own type; Widget copies its
     fields rather than referencing or subtyping it.
     """
 
-    model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        strict=True, populate_by_name=True, extra="allow"
+    id: str
+
+    kind: str | None = None
+
+    additional_properties: dict[str, typing.Any] = dataclasses.field(
+        default_factory=dict
     )
 
-    id: str = pydantic.Field()
 
-    kind: str | None = pydantic.Field(default=None)
+def _choices_value_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> ChoicesValue | None:
+    if isinstance(value, dict):
+        tagged = typing.cast("dict[str, typing.Any]", value)
+        tag = tagged.get("kind")
+        if tag == "circle":
+            try:
+                return _CircleTransferTypeConverter().from_transfer_type(value, Circle)
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        if tag == "square":
+            try:
+                return _SquareTransferTypeConverter().from_transfer_type(value, Square)
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        violations.append(
+            Violation(
+                path=path,
+                reason=f'unknown discriminator kind {tag}: expected one of ["circle", "square"]',
+            )
+        )
+        return None
+    violations.append(Violation(path=path, reason="expected one of: Circle, Square"))
+    return None
 
-    _OPTIONAL_NON_NULLABLE_FIELDS: typing.ClassVar[frozenset[str]] = frozenset({"kind"})
 
-    @pydantic.model_validator(mode="wrap")
-    @classmethod
-    def _reject_null(
-        cls,
-        data: object,
-        handler: typing.Callable[[object], typing.Any],
-    ) -> typing.Any:
-        return _reject_explicit_null(cls, data, handler)
+def _choices_value_to_transfer_type(value: ChoicesValue) -> typing.Any:
+    violations: list[Violation] = []
+    candidate = typing.cast("object", value)
+    if not (isinstance(candidate, Circle) or isinstance(candidate, Square)):
+        violations.append(Violation(path="", reason="expected one of: Circle, Square"))
+    if violations:
+        raise ValidationError(violations)
+    if isinstance(value, Circle):
+        return _CircleTransferTypeConverter().to_transfer_type(value)
+    return _SquareTransferTypeConverter().to_transfer_type(value)
 
-    @pydantic.model_serializer(mode="wrap")
-    def _serialize(
-        self,
-        handler: typing.Callable[[pydantic.BaseModel], typing.Any],
-    ) -> dict[str, object]:
-        return _emit_set_fields(self, handler)
+
+def _note_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> Note | None:
+    if isinstance(value, dict):
+        tagged = typing.cast("dict[str, typing.Any]", value)
+        tag = tagged.get("kind")
+        if tag == "text":
+            try:
+                return _TextNoteTransferTypeConverter().from_transfer_type(
+                    value, TextNote
+                )
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        if tag == "link":
+            try:
+                return _LinkNoteTransferTypeConverter().from_transfer_type(
+                    value, LinkNote
+                )
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        violations.append(
+            Violation(
+                path=path,
+                reason=f'unknown discriminator kind {tag}: expected one of ["text", "link"]',
+            )
+        )
+        return None
+    violations.append(
+        Violation(path=path, reason="expected one of: TextNote, LinkNote")
+    )
+    return None
+
+
+def _note_to_transfer_type(value: Note) -> typing.Any:
+    violations: list[Violation] = []
+    candidate = typing.cast("object", value)
+    if not (isinstance(candidate, TextNote) or isinstance(candidate, LinkNote)):
+        violations.append(
+            Violation(path="", reason="expected one of: TextNote, LinkNote")
+        )
+    if violations:
+        raise ValidationError(violations)
+    if isinstance(value, TextNote):
+        return _TextNoteTransferTypeConverter().to_transfer_type(value)
+    return _LinkNoteTransferTypeConverter().to_transfer_type(value)
+
+
+def _shape_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> Shape | None:
+    if isinstance(value, dict):
+        tagged = typing.cast("dict[str, typing.Any]", value)
+        tag = tagged.get("kind")
+        if tag == "circle":
+            try:
+                return _CircleTransferTypeConverter().from_transfer_type(value, Circle)
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        if tag == "square":
+            try:
+                return _SquareTransferTypeConverter().from_transfer_type(value, Square)
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        violations.append(
+            Violation(
+                path=path,
+                reason=f'unknown discriminator kind {tag}: expected one of ["circle", "square"]',
+            )
+        )
+        return None
+    violations.append(Violation(path=path, reason="expected one of: Circle, Square"))
+    return None
+
+
+def _shape_to_transfer_type(value: Shape) -> typing.Any:
+    violations: list[Violation] = []
+    candidate = typing.cast("object", value)
+    if not (isinstance(candidate, Circle) or isinstance(candidate, Square)):
+        violations.append(Violation(path="", reason="expected one of: Circle, Square"))
+    if violations:
+        raise ValidationError(violations)
+    if isinstance(value, Circle):
+        return _CircleTransferTypeConverter().to_transfer_type(value)
+    return _SquareTransferTypeConverter().to_transfer_type(value)
+
+
+def _showcase_segments_item_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> ShowcaseSegmentsItem | None:
+    if isinstance(value, str):
+        if len(value) < 2:
+            violations.append(
+                Violation(path=path, reason=f"must have length >= 2, got {len(value)}")
+            )
+        return value
+    if (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and abs(value) <= 9007199254740991
+        and float(value).is_integer()
+    ):
+        number = int(value)
+        if number < 0:
+            violations.append(
+                Violation(path=path, reason=f"must be >= 0, got {number}")
+            )
+        return number
+    violations.append(Violation(path=path, reason="expected one of: string, integer"))
+    return None
+
+
+def _showcase_segments_item_to_transfer_type(value: ShowcaseSegmentsItem) -> typing.Any:
+    violations: list[Violation] = []
+    if isinstance(value, str):
+        if len(value) < 2:
+            violations.append(
+                Violation(path="", reason=f"must have length >= 2, got {len(value)}")
+            )
+    if not isinstance(value, bool) and isinstance(value, int):
+        if value < 0:
+            violations.append(Violation(path="", reason=f"must be >= 0, got {value}"))
+    candidate = typing.cast("object", value)
+    if not (
+        isinstance(candidate, str)
+        or (not isinstance(candidate, bool) and isinstance(candidate, int))
+    ):
+        violations.append(Violation(path="", reason="expected one of: string, integer"))
+    if violations:
+        raise ValidationError(violations)
+    return value
+
+
+def _showcase_id_or_name_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> str | int | None:
+    if isinstance(value, str):
+        if len(value) < 3:
+            violations.append(
+                Violation(path=path, reason=f"must have length >= 3, got {len(value)}")
+            )
+        return value
+    if (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and abs(value) <= 9007199254740991
+        and float(value).is_integer()
+    ):
+        number = int(value)
+        if number < 1:
+            violations.append(
+                Violation(path=path, reason=f"must be >= 1, got {number}")
+            )
+        return number
+    violations.append(Violation(path=path, reason="expected one of: string, integer"))
+    return None
+
+
+def _showcase_mode_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> typing.Literal["auto", "manual"] | int | None:
+    if isinstance(value, str):
+        narrowed = typing.cast('typing.Literal["auto", "manual"]', value)
+        if typing.cast("object", narrowed) not in ("auto", "manual"):
+            violations.append(
+                Violation(
+                    path=path,
+                    reason=f'must be one of ["auto", "manual"], got {_quote(narrowed)}',
+                )
+            )
+        return narrowed
+    if (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and abs(value) <= 9007199254740991
+        and float(value).is_integer()
+    ):
+        number = int(value)
+        if number < 0:
+            violations.append(
+                Violation(path=path, reason=f"must be >= 0, got {number}")
+            )
+        return number
+    violations.append(Violation(path=path, reason="expected one of: string, integer"))
+    return None
+
+
+def _showcase_payload_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> dict[str, typing.Any] | str | None:
+    if isinstance(value, dict):
+        return typing.cast("dict[str, typing.Any]", value)
+    if isinstance(value, str):
+        return value
+    violations.append(Violation(path=path, reason="expected one of: object, string"))
+    return None
+
+
+def _showcase_detail_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> ShowcaseDetailObject | str | None:
+    if isinstance(value, dict):
+        try:
+            return _ShowcaseDetailObjectTransferTypeConverter().from_transfer_type(
+                value, ShowcaseDetailObject
+            )
+        except ValidationError as error:
+            _collect(violations, path, error)
+            return None
+    if isinstance(value, str):
+        return value
+    violations.append(
+        Violation(path=path, reason="expected one of: ShowcaseDetailObject, string")
+    )
+    return None
+
+
+def _showcase_detail_to_transfer_type(value: ShowcaseDetailObject | str) -> typing.Any:
+    violations: list[Violation] = []
+    candidate = typing.cast("object", value)
+    if not (isinstance(candidate, ShowcaseDetailObject) or isinstance(candidate, str)):
+        violations.append(
+            Violation(path="", reason="expected one of: ShowcaseDetailObject, string")
+        )
+    if violations:
+        raise ValidationError(violations)
+    if isinstance(value, ShowcaseDetailObject):
+        return _ShowcaseDetailObjectTransferTypeConverter().to_transfer_type(value)
+    return value
+
+
+def _showcase_shape_or_name_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> Circle | Square | str | None:
+    if isinstance(value, dict):
+        tagged = typing.cast("dict[str, typing.Any]", value)
+        tag = tagged.get("kind")
+        if tag == "circle":
+            try:
+                return _CircleTransferTypeConverter().from_transfer_type(value, Circle)
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        if tag == "square":
+            try:
+                return _SquareTransferTypeConverter().from_transfer_type(value, Square)
+            except ValidationError as error:
+                _collect(violations, path, error)
+                return None
+        violations.append(
+            Violation(
+                path=path,
+                reason=f'unknown discriminator kind {tag}: expected one of ["circle", "square"]',
+            )
+        )
+        return None
+    if isinstance(value, str):
+        if len(value) > 32:
+            violations.append(
+                Violation(path=path, reason=f"must have length <= 32, got {len(value)}")
+            )
+        return value
+    violations.append(
+        Violation(path=path, reason="expected one of: Circle, Square, string")
+    )
+    return None
+
+
+def _showcase_shape_or_name_to_transfer_type(
+    value: Circle | Square | str,
+) -> typing.Any:
+    violations: list[Violation] = []
+    if isinstance(value, str):
+        if len(value) > 32:
+            violations.append(
+                Violation(path="", reason=f"must have length <= 32, got {len(value)}")
+            )
+    candidate = typing.cast("object", value)
+    if not (
+        isinstance(candidate, Circle)
+        or isinstance(candidate, Square)
+        or isinstance(candidate, str)
+    ):
+        violations.append(
+            Violation(path="", reason="expected one of: Circle, Square, string")
+        )
+    if violations:
+        raise ValidationError(violations)
+    if isinstance(value, Circle):
+        return _CircleTransferTypeConverter().to_transfer_type(value)
+    if isinstance(value, Square):
+        return _SquareTransferTypeConverter().to_transfer_type(value)
+    return value
+
+
+def _showcase_measurements_from_transfer_type(
+    value: typing.Any, path: str, violations: list[Violation]
+) -> list[float] | str | None:
+    if isinstance(value, list):
+        items_list: list[float] = []
+        for items_index, items_element in enumerate(
+            typing.cast("list[typing.Any]", value)
+        ):
+            items_item_path = f"{path}[{items_index}]"
+            items_item: float = typing.cast("typing.Any", None)
+            if not (
+                not isinstance(items_element, bool)
+                and isinstance(items_element, (int, float))
+            ):
+                violations.append(
+                    Violation(path=items_item_path, reason="expected number")
+                )
+            else:
+                items_item = items_element
+                if not (
+                    -1.7976931348623157e308 <= items_element <= 1.7976931348623157e308
+                ):
+                    violations.append(
+                        Violation(
+                            path=items_item_path,
+                            reason=f"must be a finite number, got {items_element}",
+                        )
+                    )
+            items_list.append(items_item)
+        if len(items_list) < 1:
+            violations.append(
+                Violation(
+                    path=path,
+                    reason=f"must have at least 1 items, got {len(items_list)}",
+                )
+            )
+        _check_unique_items(items_list, path, violations)
+        return items_list
+    if isinstance(value, str):
+        if _PATTERN_F242E3A159C2422C.search(value) is None:
+            violations.append(
+                Violation(
+                    path=path,
+                    reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(value)}",
+                )
+            )
+        return value
+    violations.append(
+        Violation(path=path, reason="expected one of: list[float], string")
+    )
+    return None
 
 
 ChoicesValue: typing.TypeAlias = Circle | Square
 
 
+Note: typing.TypeAlias = TextNote | LinkNote
 """A tagged union whose object branches are written **inline** rather than `$ref`ed: each
 branch is emitted as a named type, so each names itself with the per-language
 `x-<lang>-name` override (two or more inline object branches cannot derive
@@ -1648,48 +4829,13 @@ distinguishing names — the discriminator `const` is a wire value, not an ident
 Selection reads the shared required `kind` const, and each branch keeps its own
 constraints and stays open to unknown members.
 """
-Note: typing.TypeAlias = TextNote | LinkNote
 
 
+Shape: typing.TypeAlias = Circle | Square
 """A closed sum type (discriminated union) of Circle | Square, tagged by the shared
 required `kind` const. Selection reads `kind` and routes to the matching branch; an
 unknown tag is a Violation.
 """
-Shape: typing.TypeAlias = Circle | Square
 
 
-ShowcaseSegmentsItem: typing.TypeAlias = (
-    typing.Annotated[str, pydantic.Field(min_length=2)]
-    | typing.Annotated[SpecInt, pydantic.Field(ge=0)]
-)
-
-
-_ = Choices.model_rebuild()
-_ = Showcase.model_rebuild()
-_ATTRIBUTES_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    str, config=pydantic.ConfigDict(strict=True)
-)
-_CHOICES_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    ChoicesValue, config=pydantic.ConfigDict(strict=True)
-)
-_LABELS_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    str, config=pydantic.ConfigDict(strict=True)
-)
-_NICKNAMES_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    typing.Annotated[str | None, pydantic.Field(min_length=2)],
-    config=pydantic.ConfigDict(strict=True),
-)
-_QUOTAS_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    typing.Annotated[SpecInt, pydantic.Field(ge=0, le=100, multiple_of=5)],
-    config=pydantic.ConfigDict(strict=True),
-)
-_SHOWCASE_LEDGER_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    ShowcaseLedgerValue
-)
-_TOKENS_MEMBER: pydantic.TypeAdapter[typing.Any] = pydantic.TypeAdapter(
-    typing.Annotated[
-        typing.Annotated[str, pydantic.Field(min_length=2, max_length=8)],
-        pydantic.AfterValidator(_check_pattern("^[a-z]+\\Z")),
-    ],
-    config=pydantic.ConfigDict(strict=True),
-)
+ShowcaseSegmentsItem: typing.TypeAlias = str | int

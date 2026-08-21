@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - WIT signal-with-start request models now carry Temporal headers while keeping
   them out of generated convenience operation APIs.
+- Python JSON Schema packages now export `ValidationError` and `Violation`
+  from their root `__init__.py`; callers no longer need to import the private
+  `_definitions` module.
 - Added grouped protobuf `oneof` authoring and bidirectional Python conversion,
   including required and optional oneofs, scaffolding through `add-rpc` and
   `add-message`, and explicit diagnostics for unsupported target backends.
@@ -54,11 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — the one sibling keyword treated this way, because it asserts nothing about the
   value, and the only way to rename a member whose type is a `$ref` (a member
   named `class` was otherwise unfixable in Python and Java).
-- TypeScript: JSON models now export companion `TransferTypeConverter`
-  instances with `fromTransferType`/`toTransferType`, replacing the previous
-  mapper classes and intermediate-value terminology.
-- TypeScript: JSON Schema operations now attach their model converters as
-  `inputType`/`outputType` metadata. WIT-generated operations are unchanged.
+- TypeScript: JSON Schema models now export `TransferTypeConverter` instances
+  (`fromTransferType`/`toTransferType`) instead of mapper classes, and generated
+  operations reference them through `inputType`/`outputType`. Converter names
+  follow resolved model names, participate in collision checks, and require the
+  nexus-rpc type-info API.
 - Generating into an existing `--output` directory no longer deletes it first.
   The directory is written into instead, so pre-existing files and
   subdirectories are preserved; generated files are still overwritten in place.
@@ -90,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- Python: JSON Schema output now uses slotted, keyword-only dataclasses instead
+  of Pydantic and works with the default Temporal converter, removing the
+  Pydantic dependency and contrib converter wiring. Generated transfer converters
+  preserve wire names, carry unknown fields in `additional_properties` instead of
+  `model_extra`, aggregate structured validation errors, collapse absent and
+  explicit-null optional-and-nullable values to `None`, and surface schema
+  defaults through mutable properties whose deleter restores unset state.
 - Java: A map-shaped model (a pure typed map — `additionalProperties` with no
   declared `properties`) now names its catch-all member `additionalProperties`,
   matching the struct-shaped POJOs and the other languages (Go
@@ -108,15 +118,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- JSON Schema: Modules that own no types now import foreign `$ref` targets
-  without re-emitting duplicate declarations.
-- JSON Schema: Identifier collisions now use each target's actual emitted
-  namespace, including Go's flat package and the TypeScript/Python root barrels.
-  TypeScript service constants are checked under their emitted lower-camel names.
-- JSON Schema: Member-derived synthesized names now follow `x-<lang>-name`
-  overrides, including TypeScript default constants and Go closed-value types.
-- JSON Schema: A root model can no longer silently collapse with a same-named
-  `$defs` or synthesized model; the loader reports the conflicting origins.
+- JSON Schema: Cross-input emission and naming now follow each target's actual
+  scope and `x-<lang>-name` overrides. Foreign types are imported rather than
+  duplicated, empty TypeScript model modules are omitted, member-derived names
+  stay aligned, and root/`$defs`/synthesized collisions fail at load time.
+- TypeScript: String array elements now enforce their own constraints and report
+  type errors at the indexed element path.
+- Python: Closed-value checks now use tuple membership, array-element errors name
+  the expected type, converter locals cannot be shadowed by properties, and all
+  synthesized module names participate in collision checks. `_definitions` is
+  reserved for the generated runtime module.
 - JSON Schema: A **non-object `oneOf` branch's own constraints** were dropped in
   three of four languages: only Go carried them, in the synthesized
   `<Union><Kind>` variant's `Validate`. TypeScript cast the narrowed value
@@ -135,10 +146,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own constraint, an element-level check — was reported with a dangling separator
   (`segments[0].`). The prefix is now the whole path, matching Go and Java.
 - JSON Schema: `uniqueItems` and `contains` were dropped on an array-typed **typed
-  map member** in Python, for want of a native Pydantic form. Both now ride in the
-  member's annotation as AfterValidators, with the same reasons the property
-  position emits (and the same mechanism now serves a `oneOf` branch).
-- JSON Schema: A typed map's members were validated against their type _token_
+  map member** in Python. Both now run in the member's converter through the
+  runtime's `_check_unique_items` / `_check_contains`, with the same reasons the
+  property position emits (and the same mechanism now serves a `oneOf` branch).
+- JSON Schema: A typed map's members were validated against their type *token*
   only, so every constraint the member type declared was silently dropped — a
   string's `minLength`/`maxLength`/`pattern`/`format`, a number's bounds and
   `multipleOf`, an array's `minItems`/`uniqueItems`/`contains`, a `const`/`enum`
@@ -146,11 +157,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directions, with the member's key as the violation path. Python additionally
   validated only that a member was a _string_, leaving an object, union, or
   numeric member unchecked and unmaterialized; members now validate and
-  materialize through the member type's own annotation, so `model_extra` holds the
-  declared type (an `Inner`, an `int` parsed from `1.0`, a `datetime`, `bytes`) and
-  re-encodes through it on the way out. TypeScript checked members on the way in
-  but not on the way out, and dropped a nullable value's constraints in both
-  positions (a member's _and_ a declared field's).
+  materialize through the member type's own converter, so
+  `additional_properties` holds the declared type (an `Inner`, an `int` parsed
+  from `1.0`, a `datetime`, `bytes`) and re-encodes through it on the way out.
+  TypeScript checked members on the way in but not on the way out, and dropped
+  a nullable value's constraints in both positions (a member's *and* a
+  declared field's).
 - JSON Schema: A **nullable** typed-map member (`additionalProperties` as the
   nullability `oneOf`) was mishandled: Go typed the member `T` and dropped a
   `null` member from the map entirely, and Java rejected it. A null member is now
@@ -212,8 +224,6 @@ array"` at runtime, though `items.md` accepts them. Both now decode elementwise,
   a time.") added that package to the import block, and an unused import is a Go
   compile error. Package use is now read off the emitted code, not the doc
   comments.
-- JSON Schema: Cross-file `$ref` and operation references now honor the target
-  model's `x-<lang>-name` override.
 - JSON Schema: A `oneOf` with an inline object branch generated uncompilable Go
   (a marker method on an undeclared `<Union>Object` type) and uncompilable
   TypeScript (a converter named after the anonymous `Record<string, unknown>`
