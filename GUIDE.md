@@ -23,7 +23,7 @@ of `@nexus` directives.
   - [Resource Return Binding](#resource-return-binding)
   - [Edge Cases and Error Conditions](#edge-cases-and-error-conditions)
 - [Proto-Backed Models](#proto-backed-models)
-  - [from_proto and to_proto](#from_proto-and-to_proto)
+  - [Transfer-Type Conversion](#transfer-type-conversion)
   - [Sourced Fields](#sourced-fields)
   - [Omitted Fields](#omitted-fields)
   - [Flattened Records](#flattened-records)
@@ -603,9 +603,11 @@ name, the generator raises an error.
 ## Proto-Backed Models
 
 When a WIT record is annotated with `@nexus.proto`, the generator produces
-`from_proto()` / `to_proto()` conversion methods alongside the model.
+code that converts between the public model and its protobuf transfer type.
+Generated callers continue to accept and return the public model; conversion is
+performed by the target SDK or generated operation helpers.
 
-### from_proto and to_proto
+### Transfer-Type Conversion
 
 ```wit
 /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
@@ -618,27 +620,65 @@ record activity-options {
 **Python:**
 
 ```python
+class _ActivityOptionsTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ActivityOptions", ProtoActivityOptions]
+):
+    def from_transfer_type(self, value, type_hint) -> "ActivityOptions":
+        return ActivityOptions(
+            task_queue=task_queue_from_proto(value.task_queue)
+                if value.HasField("task_queue") else None,
+            retry_policy=retry_policy_from_proto(value.retry_policy),
+        )
+
+    def to_transfer_type(self, value: "ActivityOptions") -> ProtoActivityOptions:
+        message = ProtoActivityOptions()
+        if value.task_queue is not None:
+            message.task_queue.CopyFrom(task_queue_to_proto(value.task_queue))
+        message.retry_policy.CopyFrom(retry_policy_to_proto(value.retry_policy))
+        return message
+
+@temporalio.converter.transfer_type_convertible(_ActivityOptionsTransferTypeConverter)
 @dataclasses.dataclass(slots=True, kw_only=True)
 class ActivityOptions:
     task_queue: str | None = None
     retry_policy: temporalio.common.RetryPolicy
+```
 
-    @classmethod
-    def from_proto(cls, proto) -> ActivityOptions:
-        if not proto.HasField("retry_policy"):
-            raise ValueError("missing required field ActivityOptions.retry_policy")
-        return cls(
-            task_queue=task_queue_from_proto(proto.task_queue)
-                if proto.HasField("task_queue") else None,
-            retry_policy=retry_policy_from_proto(proto.retry_policy),
-        )
+**.NET:**
+```csharp
+[TemporalTransferTypeConverter(typeof(ActivityOptions.TransferTypeConverter))]
+public class ActivityOptions
+{
+    public ActivityOptions(Temporalio.Common.RetryPolicy retryPolicy)
+    {
+        RetryPolicy = retryPolicy;
+    }
 
-    def to_proto(self):
-        message = ...ActivityOptions()
-        if self.task_queue is not None:
-            message.task_queue.CopyFrom(task_queue_to_proto(self.task_queue))
-        message.retry_policy.CopyFrom(retry_policy_to_proto(self.retry_policy))
-        return message
+    public string? TaskQueue { get; init; }
+    public Temporalio.Common.RetryPolicy RetryPolicy { get; }
+
+    internal static ActivityOptions FromTransferType(
+        Temporalio.Api.Activity.V1.ActivityOptions wire) { /* ... */ }
+
+    internal Temporalio.Api.Activity.V1.ActivityOptions ToTransferType()
+        { /* ... */ }
+
+    public sealed class TransferTypeConverter : ITemporalTransferTypeConverter
+    {
+        public Type TransferType =>
+            typeof(Temporalio.Api.Activity.V1.ActivityOptions);
+
+        public object? ToTransferType(object? value) => value is null
+            ? null
+            : ((ActivityOptions)value).ToTransferType();
+
+        public object? FromTransferType(object? transferType) =>
+            transferType is null
+                ? null
+                : ActivityOptions.FromTransferType(
+                    (Temporalio.Api.Activity.V1.ActivityOptions)transferType);
+    }
+}
 ```
 
 **TypeScript:**
@@ -672,12 +712,13 @@ export const ActivityOptions = {
 ```
 
 Required fields are validated in `from_proto` -- missing required proto fields
-raise a `ValueError` (Python) or throw an `Error` (TypeScript).
+raise a `ValueError` (Python) or throw an `Error` (TypeScript). .NET output
+requires `Temporalio` 1.18.0 or newer.
 
 ### Sourced Fields
 
 Fields annotated with `@nexus.source` are not exposed in the user-facing API.
-Instead, the `to_proto()` method calls a support function to obtain the value.
+Instead, transfer-type conversion calls a support function to obtain the value.
 
 ```wit
 record start-workflow-request {
@@ -687,7 +728,8 @@ record start-workflow-request {
 }
 ```
 
-The `namespace` field does not appear as a constructor parameter. In `to_proto()`:
+The `namespace` field does not appear as a constructor parameter. During
+transfer-type conversion:
 
 ```python
 message.namespace = workflow_namespace()   # auto-injected
@@ -935,9 +977,9 @@ class StartWorkflowRequest:
     workflow: collections.abc.Callable[..., str]
     args: list[typing.Any] | None = None
 
-    def to_proto(self):
-        if self.args is not None:
-            message.input.CopyFrom(payloads_to_proto(self.args))
+    def to_transfer_type(self, value: "StartWorkflowRequest"):
+        if value.args is not None:
+            message.input.CopyFrom(payloads_to_proto(value.args))
         return message
 ```
 
@@ -1066,7 +1108,8 @@ is just `signal_name`.
 type signal-function = placeholder;
 ```
 
-Generated Python imports and calls the converter in `to_proto()`:
+Generated Python imports and calls the converter during transfer-type
+conversion:
 
 ```python
 from ._support import signal_function_to_proto
@@ -1076,10 +1119,10 @@ class SignalWithStartWorkflowRequest:
     signal: str | collections.abc.Callable[..., None | collections.abc.Awaitable[None]]
     signal_args: list[typing.Any] | None = None
 
-    def to_proto(self):
-        message.signal_name = signal_function_to_proto(self.signal)
-        if self.signal_args is not None:
-            message.signal_input.CopyFrom(payloads_to_proto(self.signal_args))
+    def to_transfer_type(self, value: "SignalWithStartWorkflowRequest"):
+        message.signal_name = signal_function_to_proto(value.signal)
+        if value.signal_args is not None:
+            message.signal_input.CopyFrom(payloads_to_proto(value.signal_args))
         return message
 ```
 
@@ -1191,9 +1234,9 @@ package nexus:temporal-types@1.0.0;
 **Placement:** Type alias, record, or enum
 **Syntax:** `@nexus.proto "<fully.qualified.proto.MessageName>"`
 
-Maps a WIT type to a protobuf message or enum. The generator produces
-`from_proto()` / `to_proto()` methods and validates field mappings against the
-proto descriptor. Requires `--descriptors` on the CLI.
+Maps a WIT type to a protobuf message or enum. The generator emits
+target-specific transfer-type conversion code and validates field mappings
+against the proto descriptor. Requires `--descriptors` on the CLI.
 
 ```wit
 /// @nexus.proto "temporal.api.activity.v1.ActivityOptions"
@@ -1259,6 +1302,11 @@ as `typing.Any`. `Payloads` fields continue to decode as untyped sequences.
 
 Type parameters are also unsupported in resources, map keys, function-signature
 metadata, or resource-bound generic operations.
+
+.NET also rejects every generic proto-backed record: the current SDK transfer
+type converter registration cannot instantiate an open generic converter. The
+generator reports this explicitly rather than emitting a model that cannot be
+serialized through the SDK.
 
 Generic variants retain each target's normal tagged representation: tagged
 tuples in Python, tagged object unions in TypeScript, sealed interfaces and
@@ -1356,7 +1404,8 @@ parameter. The function must be defined in the support file.
 namespace: string,
 ```
 
-In `to_proto()`, this becomes `message.namespace = workflow_namespace()`.
+During transfer-type conversion, this becomes
+`message.namespace = workflow_namespace()`.
 
 Cannot be combined with `@nexus.default`.
 

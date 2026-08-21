@@ -59,15 +59,11 @@ namespace Nexgen.DotNetExamples.Tests
         public async Task GeneratedWorkflowServiceOperationRoundTripsThroughRuntime()
         {
             await using var env = await WorkflowEnvironment.StartLocalAsync(new());
-            var dataConverter = new DataConverter(
-                new TemporalIntermediatePayloadConverter(),
-                DataConverter.Default.FailureConverter,
-                DataConverter.Default.PayloadCodec);
             var client = new TemporalClient(
                 env.Client.Connection,
                 new TemporalClientOptions
                 {
-                    DataConverter = dataConverter,
+                    DataConverter = DataConverter.Default,
                     Namespace = "default",
                 });
             var taskQueue = Guid.NewGuid().ToString();
@@ -78,6 +74,10 @@ namespace Nexgen.DotNetExamples.Tests
                 .AddNexusService(serviceHandler);
             using var worker = new TemporalWorker(client, workerOptions);
 
+            // TODO: Remove once the SDK scopes this context around System Nexus transfer conversion.
+            using var converterContext = SystemNexusConverterContext.Push(
+                DataConverter.Default.PayloadConverter,
+                DataConverter.Default.FailureConverter);
             var result = await worker.ExecuteAsync(async () =>
             {
                 var endpoint = await env.CreateNexusEndpointAsync("temporal-system", taskQueue);
