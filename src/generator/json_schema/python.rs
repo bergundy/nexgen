@@ -105,6 +105,36 @@ fn py_bound_literal(number: &serde_json::Number, is_integer: bool) -> String {
     number.to_string()
 }
 
+/// The Python literal a bound is *compared against*. For an `integer` field this
+/// is the authored value, exactly (`type.md`: `integer` is the exact ±(2^53−1)
+/// domain). For a `number` field it is the authored decimal rounded to binary64,
+/// which is the domain `type.md:98-104` gives `number` in every target: Go, TS
+/// and Java all hold the bound as a `float64`/`number`/`double`, so emitting the
+/// digits verbatim would leave Python the only target comparing an exact integer
+/// — `maximum: 9007199254740992` would reject a wire `9007199254740993` here and
+/// accept it in the other three.
+///
+/// The *message* keeps [`py_bound_literal`]'s authored spelling, so the reason
+/// text stays identical across the four targets.
+fn py_bound_compare_literal(number: &serde_json::Number, is_integer: bool) -> String {
+    if is_integer {
+        return py_bound_literal(number, true);
+    }
+    match number.as_f64() {
+        Some(value) if value.is_finite() => py_float_literal(value),
+        // A bound the loader admitted always converts; fall back to the authored
+        // text rather than emitting something that is not a Python literal.
+        _ => number.to_string(),
+    }
+}
+
+/// A finite `f64` as a Python `float` literal. Rust's `Debug` for `f64` is the
+/// shortest round-tripping spelling and always carries a `.` or an exponent, so
+/// the result is never read back as a Python `int`.
+fn py_float_literal(value: f64) -> String {
+    format!("{value:?}")
+}
+
 thread_local! {
     /// Resolved type identifiers keyed by both `full_name` and the `#/$defs/<full_name>`
     /// `$ref` form, so `reference_model_name` follows the same name manifest as the
@@ -690,7 +720,17 @@ pub(in crate::generator) fn render_external_models(
         push_section(&mut body);
         body.push_str(&model.model_name);
         body.push_str(": typing.TypeAlias = ");
-        body.push_str(&annotation(&schema)?);
+        let alias_annotation = annotation(&schema)?;
+        // A `TypeAlias` cannot carry a PEP 702 decorator, so the marker rides
+        // inside the annotation instead — the same shape a deprecated field
+        // uses. See specs/json-schema/features/deprecated.md.
+        if schema.deprecated == Some(true) {
+            body.push_str(&format!(
+                "typing.Annotated[{alias_annotation}, typing_extensions.deprecated(\"This type is deprecated.\", category=None)]"
+            ));
+        } else {
+            body.push_str(&alias_annotation);
+        }
         body.push('\n');
         // A module-level variable docstring *follows* its assignment — the same
         // placement a dataclass member's docstring takes. Emitted before it, the
@@ -698,7 +738,7 @@ pub(in crate::generator) fn render_external_models(
         render_python_docstring(
             &mut body,
             "",
-            schema.description.as_deref(),
+            compose_python_doc(schema.title.as_deref(), schema.description.as_deref()).as_deref(),
             &[],
             None,
             false,
@@ -744,6 +784,7 @@ pub(in crate::generator) fn render_external_models(
 const JSON_RUNTIME_SYMBOLS: &[&str] = &[
     "ValidationError",
     "Violation",
+    "_binary64",
     "_check_contains",
     "_check_date_time",
     "_check_duration",
@@ -835,6 +876,7 @@ fn render_json_runtime_module() -> String {
     for name in [
         "ValidationError",
         "Violation",
+        "_binary64",
         "_check_contains",
         "_check_date_time",
         "_check_duration",
@@ -868,6 +910,8 @@ fn render_json_runtime_module() -> String {
     render_transfer_type_convertible_helper(&mut output);
     output.push_str("\n\n");
     render_spec_int_helper(&mut output);
+    output.push_str("\n\n");
+    render_binary64_helper(&mut output);
     output.push_str("\n\n");
     render_unique_items_helper(&mut output);
     output.push_str("\n\n");
@@ -964,21 +1008,27 @@ def _transfer_type_convertible(
 /// is always an aggregated `Violation` and never a `ValueError` (P11).
 fn render_temporal_helpers(output: &mut String) {
     use crate::json_schema::format::TemporalKind;
+    // The pinned patterns end in `$`, which in Python also matches immediately
+    // before a trailing newline. Rewriting the anchor to `\Z` is what every other
+    // Python pattern emission does, and it is what keeps `"PT1H\n"` an aggregated
+    // `Violation` instead of a raw `ValueError`/`KeyError` escaping the parse (P11).
+    let anchored =
+        |kind: TemporalKind| crate::json_schema::pattern::rewrite_end_anchor(kind.pattern(), r"\Z");
     output.push_str(&format!(
         "_TEMPORAL_DATE_TIME_RE = re.compile(r\"{}\")\n",
-        TemporalKind::DateTime.pattern()
+        anchored(TemporalKind::DateTime)
     ));
     output.push_str(&format!(
         "_TEMPORAL_DATE_RE = re.compile(r\"{}\")\n",
-        TemporalKind::Date.pattern()
+        anchored(TemporalKind::Date)
     ));
     output.push_str(&format!(
         "_TEMPORAL_TIME_RE = re.compile(r\"{}\")\n",
-        TemporalKind::Time.pattern()
+        anchored(TemporalKind::Time)
     ));
     output.push_str(&format!(
         "_TEMPORAL_DURATION_RE = re.compile(r\"{}\")\n",
-        TemporalKind::Duration.pattern()
+        anchored(TemporalKind::Duration)
     ));
     output.push_str(TEMPORAL_HELPER_BODY);
 }
@@ -1499,46 +1549,60 @@ fn render_py_numeric_checks(
         format!("{indent}    ")
     };
     let mut body = String::new();
+    // A `number` is the binary64 domain in every target, but a wire `number` is
+    // held as a Python `int` when the JSON spelled it without a fraction, and
+    // Python compares `int` against `float` *exactly*. Narrowing the subject to
+    // a `float` first is what makes the comparison the same one Go, TypeScript
+    // and Java perform. It cannot raise: the finiteness guard below runs first
+    // and every predicate here hangs off its `else`, so the value is already
+    // known to be inside the binary64 range. An `integer` subject is compared
+    // exactly and is left alone.
+    let subject = if is_integer {
+        value_expr.to_string()
+    } else {
+        format!("float({value_expr})")
+    };
     let mut emit = |condition: String, reason: String| {
         render_py_violation_if(&mut body, &body_indent, &condition, path_expr, &reason);
     };
     if let Some(min) = &schema.minimum {
         let bound = py_bound_literal(min, is_integer);
         emit(
-            format!("{value_expr} < {bound}"),
+            format!("{subject} < {}", py_bound_compare_literal(min, is_integer)),
             format!("f\"must be >= {bound}, got {{{value_expr}}}\""),
         );
     }
     if let Some(max) = &schema.maximum {
         let bound = py_bound_literal(max, is_integer);
         emit(
-            format!("{value_expr} > {bound}"),
+            format!("{subject} > {}", py_bound_compare_literal(max, is_integer)),
             format!("f\"must be <= {bound}, got {{{value_expr}}}\""),
         );
     }
     if let Some(min) = &schema.exclusive_minimum {
         let bound = py_bound_literal(min, is_integer);
         emit(
-            format!("{value_expr} <= {bound}"),
+            format!("{subject} <= {}", py_bound_compare_literal(min, is_integer)),
             format!("f\"must be > {bound}, got {{{value_expr}}}\""),
         );
     }
     if let Some(max) = &schema.exclusive_maximum {
         let bound = py_bound_literal(max, is_integer);
         emit(
-            format!("{value_expr} >= {bound}"),
+            format!("{subject} >= {}", py_bound_compare_literal(max, is_integer)),
             format!("f\"must be < {bound}, got {{{value_expr}}}\""),
         );
     }
     if let Some(divisor) = &schema.multiple_of {
         let bound = py_bound_literal(divisor, is_integer);
+        let compare_bound = py_bound_compare_literal(divisor, is_integer);
         // An integer field divides exactly; a number field goes through
         // `math.fmod` so divisibility is bit-identical across all four targets
         // rather than merely close. See features/multipleOf.md.
         let condition = if is_integer {
-            format!("{value_expr} % {bound} != 0")
+            format!("{value_expr} % {compare_bound} != 0")
         } else {
-            format!("math.fmod({value_expr}, {bound}) != 0")
+            format!("math.fmod({subject}, {compare_bound}) != 0")
         };
         emit(
             condition,
@@ -1749,11 +1813,25 @@ fn render_py_property_name_checks(
     subschema: &Schema,
     indent: &str,
 ) {
+    // The guard has to admit exactly what the body below emits, or the `for`
+    // is written with nothing in it and the module fails to import with an
+    // `IndentationError`. A `format` only contributes a check when it has a
+    // string predicate (the four materializing temporal formats do not), and an
+    // `enum` only when it holds at least one string member.
+    let has_format_check = subschema
+        .format
+        .as_deref()
+        .and_then(crate::json_schema::format::check_for)
+        .is_some();
+    let has_enum_check = subschema
+        .enum_values
+        .as_ref()
+        .is_some_and(|values| values.iter().any(Value::is_string));
     if subschema.min_length.is_none()
         && subschema.max_length.is_none()
         && subschema.pattern.is_none()
-        && subschema.format.is_none()
-        && subschema.enum_values.is_none()
+        && !has_format_check
+        && !has_enum_check
     {
         return;
     }
@@ -1802,12 +1880,24 @@ fn render_py_property_name_checks(
             .map(python_string_literal)
             .collect::<Vec<_>>();
         if !allowed.is_empty() {
+            // Name the admissible set and the offending key, as every other
+            // closed-set reason does (and as TypeScript and Java already do
+            // here) — a bare "an allowed value" tells the caller nothing.
+            let rendered = values
+                .iter()
+                .filter(|value| value.is_string())
+                .map(py_reason_literal)
+                .collect::<Vec<_>>()
+                .join(", ");
             render_py_violation_if(
                 output,
                 &inner,
                 &format!("key not in {}", py_value_tuple(&allowed)),
                 "key",
-                "f'invalid property name {_quote(key)}: must equal an allowed value'",
+                &format!(
+                    "f'invalid property name {{_quote(key)}}: must be one of [{}], got {{_quote(key)}}'",
+                    py_fstring_text(&rendered)
+                ),
             );
         }
     }
@@ -1943,13 +2033,10 @@ fn py_field_needs_serialize_check(schema: &Schema) -> bool {
         // in-memory `inf`/`nan` out as bytes no other target can read (see
         // [`render_py_numeric_checks`]).
         Some("number") => true,
-        Some("integer") => {
-            schema.minimum.is_some()
-                || schema.maximum.is_some()
-                || schema.exclusive_minimum.is_some()
-                || schema.exclusive_maximum.is_some()
-                || schema.multiple_of.is_some()
-        }
+        // An `integer` always carries one too: a Python `int` is unbounded, so
+        // the ±(2^53−1) cap has to be asserted before the value reaches the wire
+        // whether or not a bound is declared.
+        Some("integer") => true,
         Some("array") => {
             schema.min_items.is_some()
                 || schema.max_items.is_some()
@@ -1995,6 +2082,17 @@ fn py_model_needs_serialize_validation(schema: &Schema) -> Result<bool> {
     Ok(false)
 }
 
+/// Which side of the codec a value check is being emitted for. The predicates
+/// are identical in both directions (P12) with one exception: on the parse side
+/// the ±(2^53−1) integer cap has already been asserted by the capped integer
+/// parse (or by the union's own integer token guard), so re-asserting it there
+/// would only emit dead code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PyCheckSide {
+    Parse,
+    Serialize,
+}
+
 /// Emits the per-value constraint checks over an in-memory `value_expr`,
 /// reusing the same emitters the parse path calls. References and
 /// contentEncoding carry no check here — a nested converter validates its own
@@ -2009,11 +2107,14 @@ fn render_py_field_checks(
     value_expr: &str,
     path_expr: &str,
     indent: &str,
+    side: PyCheckSide,
 ) -> Result<()> {
     // A nullability wrapper's constraints live on its non-null branch; the
     // caller has already guarded the value against `None`.
     if let Some(non_null) = nullable_member_schema(schema) {
-        return render_py_field_checks(output, non_null, models, value_expr, path_expr, indent);
+        return render_py_field_checks(
+            output, non_null, models, value_expr, path_expr, indent, side,
+        );
     }
     // An inline sum type narrows to the branch it holds and runs that branch's
     // own checks. An object branch validates through its own converter instead,
@@ -2081,8 +2182,23 @@ fn render_py_field_checks(
     }
     match schema.ty.as_ref().and_then(Value::as_str) {
         Some("string") => render_py_string_checks(output, value_expr, path_expr, schema, indent),
-        Some("number") | Some("integer") => {
-            render_py_numeric_checks(output, value_expr, path_expr, schema, indent)
+        Some("number") => render_py_numeric_checks(output, value_expr, path_expr, schema, indent),
+        Some("integer") => {
+            // A Python `int` is unbounded, so an in-memory value can be past the
+            // ±(2^53−1) spec-integer cap that every target's *parser* enforces —
+            // including this module's own. Serializing it would write bytes
+            // nothing can read back (P12). Go emits the same assertion with the
+            // same reason (`go.rs:2745-2762`).
+            if side == PyCheckSide::Serialize {
+                render_py_violation_if(
+                    output,
+                    indent,
+                    &format!("abs({value_expr}) > {PY_INTEGER_CAP}"),
+                    path_expr,
+                    &python_string_literal("exceeds ±(2^53-1) integer cap"),
+                );
+            }
+            render_py_numeric_checks(output, value_expr, path_expr, schema, indent);
         }
         Some("array") => {
             render_py_array_checks(output, value_expr, path_expr, schema, indent)?;
@@ -2112,6 +2228,7 @@ fn render_py_field_checks(
                     &element,
                     &item_path,
                     &check_indent,
+                    side,
                 )?;
                 // Some materialized schemas (for example `date`) report that
                 // they need serialize validation but their native helper proves
@@ -2877,7 +2994,15 @@ fn render_py_union_parse(
             (None, PyToken::Integer) => {
                 output.push_str(&inner);
                 output.push_str(&format!("number = int({value_expr})\n"));
-                render_py_field_checks(output, &variant.schema, &[], "number", path_expr, &inner)?;
+                render_py_field_checks(
+                    output,
+                    &variant.schema,
+                    &[],
+                    "number",
+                    path_expr,
+                    &inner,
+                    PyCheckSide::Parse,
+                )?;
                 if variant.narrowed {
                     output.push_str(&inner);
                     output.push_str(&format!(
@@ -2915,6 +3040,7 @@ fn render_py_union_parse(
                     "narrowed",
                     path_expr,
                     &inner,
+                    PyCheckSide::Parse,
                 )?;
                 "narrowed".to_string()
             }
@@ -2926,6 +3052,7 @@ fn render_py_union_parse(
                     value_expr,
                     path_expr,
                     &inner,
+                    PyCheckSide::Parse,
                 )?;
                 value_expr.to_string()
             }
@@ -3019,6 +3146,7 @@ fn render_py_union_value_checks(
             value_expr,
             path_expr,
             &format!("{indent}    "),
+            PyCheckSide::Serialize,
         )?;
         if body.is_empty() {
             continue;
@@ -3965,6 +4093,7 @@ fn render_py_serialize_property_check(
         &value_expr,
         &path_expr,
         &body_indent,
+        PyCheckSide::Serialize,
     )?;
     if body.is_empty() {
         return Ok(());
@@ -4002,6 +4131,7 @@ fn render_py_member_check(
         value_expr,
         path_expr,
         &body_indent,
+        PyCheckSide::Serialize,
     )?;
     if body.is_empty() {
         return Ok(());
@@ -4307,7 +4437,10 @@ fn render_value_parser(
                     "not isinstance({raw_expr}, bool) and isinstance({raw_expr}, (int, float))"
                 ),
                 "expected number",
-                raw_expr,
+                // Narrowed on the way in, so the member holds the binary64 its
+                // annotation promises and a wire integer past 2^53 reads back
+                // the same value it does in every other target (P1).
+                &format!("_binary64({raw_expr})"),
                 target,
                 path_expr,
                 indent,
@@ -4454,7 +4587,7 @@ fn render_py_isinstance_parser(
     output: &mut String,
     guard: &str,
     reason: &str,
-    raw_expr: &str,
+    store_expr: &str,
     target: &str,
     path_expr: &str,
     indent: &str,
@@ -4469,7 +4602,7 @@ fn render_py_isinstance_parser(
     output.push_str(indent);
     output.push_str("else:\n");
     output.push_str(indent);
-    output.push_str(&format!("    {target} = {raw_expr}\n"));
+    output.push_str(&format!("    {target} = {store_expr}\n"));
 }
 
 /// Declares a local for a value that has not been parsed yet. The placeholder is
@@ -4719,7 +4852,12 @@ fn render_py_array_elements(
     output.push_str(&format!("    {list_local}.append({item_slot})\n"));
     // Array-level keywords are siblings of `items`: they inspect the original
     // instance even when one or more elements fail conversion.
-    let raw_array = format!("typing.cast(\"list[typing.Any]\", {raw_expr})");
+    //
+    // The cast target is single-quoted because `render_py_array_checks`
+    // interpolates this expression into `f"..."` reason strings: reusing the
+    // outer quote inside an f-string replacement field is PEP 701, which is
+    // Python 3.12+, and the declared floor is 3.10.
+    let raw_array = format!("typing.cast('list[typing.Any]', {raw_expr})");
     render_py_array_checks(output, &raw_array, path_expr, schema, &body)?;
     Ok(list_local)
 }
@@ -4838,6 +4976,14 @@ fn serialize_expr(schema: &Schema, value_expr: &str, depth: usize) -> String {
             return format!("[{mapped} for {element} in {value_expr}]");
         }
     }
+    // Narrow on the way out too: a model built in Python (rather than parsed)
+    // can hold an unbounded `int` in a `number` member, which would leave this
+    // target the only one emitting an integer past 2^53 exactly. The array form
+    // above is what carries the narrowing into elements, and the `oneOf` form
+    // above it past a `None`.
+    if schema.ty.as_ref().and_then(Value::as_str) == Some("number") {
+        return format!("_binary64({value_expr})");
+    }
     value_expr.to_string()
 }
 
@@ -4873,6 +5019,32 @@ def _parse_spec_integer(
         violations.append(Violation(path=path, reason="expected integer"))
         return None
     return out
+"#;
+
+/// Emits the `type: number` narrowing helper.
+///
+/// Python is the one target whose `int` is unbounded, so a wire integer past
+/// 2^53 kept its exact value in a `number` field while Go, TypeScript and Java
+/// rounded it into their `float64`/`number`/`double` — the same payload reading
+/// back as a *different* number in Python, which is the round-trip agreement P1
+/// makes mandatory. Narrowing in both directions puts all four targets in the
+/// one binary64 domain `type.md` specifies, and also stops an `int` being stored
+/// in a `float`-annotated member.
+fn render_binary64_helper(output: &mut String) {
+    output.push_str(BINARY64_HELPER_BODY);
+}
+
+const BINARY64_HELPER_BODY: &str = r#"def _binary64(value: float) -> float:
+    """Narrows a `number` value to the binary64 domain shared by every target."""
+
+    try:
+        return float(value)
+    except OverflowError:
+        # Past the binary64 range there is nothing to narrow to. The caller's
+        # finiteness check has already recorded that violation and will raise, so
+        # hand the value back rather than throwing out of turn and losing the
+        # other violations collected alongside it.
+        return value
 "#;
 
 fn typed_map_value_schema(schema: &Schema) -> Result<Option<Schema>> {
@@ -4943,18 +5115,19 @@ fn py_matcher_condition(
     elem: &str,
 ) -> Result<String> {
     let matcher = scalar_matcher(matcher);
+    // The matcher's effective kind is its declared `type`, and otherwise the
+    // element type — never the kind of a `const`/`enum` literal. Reading the
+    // first literal made a mixed-kind set such as `enum: [2, 1.5]` emit an
+    // integer-only guard that excludes its own members, and made the verdict
+    // depend on the authoring order of the set. TypeScript uses the declared
+    // type alone and Java falls back to the element type; the element type is
+    // the fallback all four agree on.
     let kind = matcher.kind.or_else(|| {
-        matcher
-            .const_value
-            .as_ref()
-            .and_then(scalar_kind_for_value)
-            .or_else(|| matcher.enum_values.first().and_then(scalar_kind_for_value))
-            .or_else(|| {
-                element_schema
-                    .and_then(|schema| schema.ty.as_ref())
-                    .and_then(Value::as_str)
-                    .and_then(ScalarKind::from_name)
-            })
+        element_schema
+            .map(|schema| nullable_member_schema(schema).unwrap_or(schema))
+            .and_then(|schema| schema.ty.as_ref())
+            .and_then(Value::as_str)
+            .and_then(ScalarKind::from_name)
     });
     let mut parts: Vec<String> = Vec::new();
     if let Some(kind) = kind {
@@ -5057,16 +5230,6 @@ fn scalar_matcher(schema: &Schema) -> ScalarMatcher {
         max_length: schema.max_length,
         pattern: schema.pattern.clone(),
         format: schema.format.clone(),
-    }
-}
-
-fn scalar_kind_for_value(value: &Value) -> Option<ScalarKind> {
-    match value {
-        Value::String(_) => Some(ScalarKind::String),
-        Value::Bool(_) => Some(ScalarKind::Boolean),
-        Value::Number(number) if number.is_i64() || number.is_u64() => Some(ScalarKind::Integer),
-        Value::Number(_) => Some(ScalarKind::Number),
-        _ => None,
     }
 }
 

@@ -219,6 +219,14 @@ a **named** definition; when it is **anonymous** (inline on a property),
 nest the synthesized type inside its enclosing model where the language
 allows it, so it leaves the package/module namespace.
 
+> **`$defs`-named scalar closed values are unimplemented.** A `$defs` entry
+> must currently be `type: object`, a `oneOf` union, or a bare `$ref`, so
+> `$defs: {Color: {type: string, enum: [red, green, blue]}}` is a load
+> reject in all four languages. Every "named definition" branch below —
+> the `$defs`-name reuse, the P15 row for a `$defs`-named type, and
+> `x-<lang>-const-name` on a `$defs` node — describes the intended design
+> and is unreachable until scalar `$defs` entries are admitted.
+
 | Target | Synthesized identifier(s) | Placement / scope |
 |---|---|---|
 | Go | defined type `UserEventKind` **+** value const `UserEventKindUser` | **flat package** (Go has no nested types); P15 backstop |
@@ -265,7 +273,12 @@ Rules:
 - **Numbers** encode from the shortest round-trippable decimal; the `.`
   becomes `_` and is **kept** (so `3_14` stays distinct from `314`). A
   magnitude that canonicalizes to exponent form encodes `e` as `E` and its
-  exponent sign via `Neg` (`1e-7` → `Ratio1ENeg7`).
+  exponent sign via `Neg` (`1e-7` → `Ratio1ENeg7`). The decimal comes from the
+  **value**, not the authored spelling: P1 makes `1`, `1.0` and `1e0` one
+  number, so an integral value collapses to its integer form and all three
+  spellings name one constant (`Score1` / `V_1`). Re-spelling a `const` is a
+  no-op on the wire and must not rename a constant out from under callers
+  (P13).
 - **Java leading-letter guarantee.** Java constants are class-scoped with
   no type prefix, and Stage 3 rejects an identifier beginning with a
   digit. A token that does not start with an ASCII letter (every numeric,
@@ -297,7 +310,9 @@ the member name. The [[properties]] `x-<lang>-name` override moves the
 synthesized **type** (which *is* derived from the member) but leaves the
 value constant untouched — in **Java** the constant is purely the encoded
 value with no member-derived component, and a **`$defs`**-named const has
-no declaring member at all. So the escape hatch for the value-constant
+no declaring member at all (the motivating case, though a scalar `$defs`
+entry does not load yet — see *Naming and collisions*). So the escape hatch
+for the value-constant
 axis is a separate override, **`x-<lang>-const-name`** (`x-go-const-name`
 / `x-java-const-name`), placed on the **const schema** — the node carrying
 `const`, whether inline on a property or a named `$defs` definition. Like

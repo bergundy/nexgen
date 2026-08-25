@@ -129,6 +129,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- JSON Schema: generated value-constant names have changed. Java `const` and
+  `enum` constants now derive from the value instead of the member name, and Go
+  and Java give mathematically equal numeric spellings the same constant name.
+  Explicit `x-<lang>-const-name` and `x-<lang>-enum-names` overrides are unchanged.
+- JSON Schema (Python): `number` values are now stored and emitted as binary64
+  `float`s. Large integers may lose precision and integral values may serialize
+  with a `.0` suffix; `integer` values remain Python `int`s.
+- JSON Schema: `pattern` now rejects expressions that are not portable across
+  all target regex engines or that permit exponential backtracking. Portable
+  expressions are normalized where necessary so their behavior agrees.
+- JSON Schema: `contentEncoding` now rejects non-canonical encodings instead of
+  decoding them to bytes that serialize to a different wire value.
+- JSON Schema: unsupported or ambiguous schemas that previously produced wrong
+  or uncompilable output now reject at load. This includes materializing temporal
+  formats in `propertyNames` or `contains`, defaults on sum-type `oneOf`s,
+  invalid or colliding emitted names, mathematically duplicate enum values,
+  shapeless union branches, invalid `propertyNames` applicators, impossible
+  numeric ranges, and non-string schema documentation.
+
 - Python: JSON Schema output now uses slotted, keyword-only dataclasses instead
   of Pydantic and works with the default Temporal converter, removing the
   Pydantic dependency and contrib converter wiring. Generated transfer converters
@@ -153,6 +172,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[GeneratedCode]` attribute now read `nexgen`.
 
 ### Fixed
+
+- JSON Schema: Go and Java now enforce constraints from nullable schemas, and
+  Java supports nested nullable array elements. Recursive `allOf` merges no
+  longer discard `$ref` or `oneOf` children.
+- JSON Schema: cross-file union branches now resolve in Go, TypeScript, and
+  Python. Go also preserves services from modules that declare no local models.
+- JSON Schema: numeric validation is consistent across targets. Go rejects
+  quoted numbers and uses the shared floating-point `multipleOf` semantics; all
+  targets enforce the safe-integer limit and accept integral count bounds such
+  as `minItems: 2.0`.
+- JSON Schema: discriminated unions, `uniqueItems`, `contains`, and `const`/`enum`
+  constraints now evaluate canonical JSON values consistently across targets.
+  Numeric and boolean `x-<lang>-enum-names` overrides also work in Go and Java.
+- JSON Schema: temporal and binary values now validate and round-trip
+  consistently. Over-precision fractional seconds are truncated, Go and Java
+  validate temporal values before serialization, and Java supports temporal and
+  binary collections with a stock `ObjectMapper`.
+- JSON Schema: generated output now compiles or imports for closed and optional
+  `const` objects in TypeScript, quoted documentation and deprecated operations
+  in Python, binary/temporal collections and cross-module unions in Go, and
+  typed-map union branches in Java.
+- JSON Schema (Java): nested serialization violations now carry the correct
+  path, `byte[]` members use value semantics, and member Javadoc is emitted on
+  getters.
 
 - Java now rejects numeric JSON tokens outside the finite binary64 domain (for
   example `1e400`) with an aggregated, fully pathed violation in ordinary

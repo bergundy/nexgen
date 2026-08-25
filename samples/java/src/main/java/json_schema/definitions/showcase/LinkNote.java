@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 @JsonDeserialize(using = LinkNote.Deserializer.class)
 public final class LinkNote implements Note {
     public static final class Kind {
-        public static final Kind KIND = new Kind("link");
+        public static final Kind LINK = new Kind("link");
 
         private final String value;
 
@@ -40,7 +40,7 @@ public final class LinkNote implements Note {
                 return null;
             }
             if ("link".equals(value)) {
-                return KIND;
+                return LINK;
             }
             throw new IllegalArgumentException("must equal \"link\", got \"" + value + "\"");
         }
@@ -170,7 +170,7 @@ public final class LinkNote implements Note {
     public static final class Deserializer extends com.fasterxml.jackson.databind.JsonDeserializer<LinkNote> {
         @Override
         public LinkNote deserialize(JsonParser parser, DeserializationContext context) throws IOException {
-            JsonNode node = parser.readValueAsTree();
+            JsonNode node = SpecNumbers.readExactTree(parser);
             List<Violation> violations = new ArrayList<>();
             if (node == null || !node.isObject()) {
                 violations.add(new Violation("", "expected object"));
@@ -201,7 +201,7 @@ public final class LinkNote implements Note {
                     } else {
                         String kindValue = field.textValue();
                         if ("link".equals(kindValue)) {
-                            kind = Kind.KIND;
+                            kind = Kind.LINK;
                         } else {
                             violations.add(new Violation("kind", "must equal \"link\""));
                         }

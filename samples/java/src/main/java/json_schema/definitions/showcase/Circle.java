@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 @JsonDeserialize(using = Circle.Deserializer.class)
 public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
     public static final class Kind {
-        public static final Kind KIND = new Kind("circle");
+        public static final Kind CIRCLE = new Kind("circle");
 
         private final String value;
 
@@ -40,7 +40,7 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
                 return null;
             }
             if ("circle".equals(value)) {
-                return KIND;
+                return CIRCLE;
             }
             throw new IllegalArgumentException("must equal \"circle\", got \"" + value + "\"");
         }
@@ -166,7 +166,7 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
     public static final class Deserializer extends com.fasterxml.jackson.databind.JsonDeserializer<Circle> {
         @Override
         public Circle deserialize(JsonParser parser, DeserializationContext context) throws IOException {
-            JsonNode node = parser.readValueAsTree();
+            JsonNode node = SpecNumbers.readExactTree(parser);
             List<Violation> violations = new ArrayList<>();
             if (node == null || !node.isObject()) {
                 violations.add(new Violation("", "expected object"));
@@ -197,7 +197,7 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
                     } else {
                         String kindValue = field.textValue();
                         if ("circle".equals(kindValue)) {
-                            kind = Kind.KIND;
+                            kind = Kind.CIRCLE;
                         } else {
                             violations.add(new Violation("kind", "must equal \"circle\""));
                         }

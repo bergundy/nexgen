@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 @JsonDeserialize(using = Square.Deserializer.class)
 public final class Square implements ChoicesValue, Shape, Showcase.ShapeOrName {
     public static final class Kind {
-        public static final Kind KIND = new Kind("square");
+        public static final Kind SQUARE = new Kind("square");
 
         private final String value;
 
@@ -40,7 +40,7 @@ public final class Square implements ChoicesValue, Shape, Showcase.ShapeOrName {
                 return null;
             }
             if ("square".equals(value)) {
-                return KIND;
+                return SQUARE;
             }
             throw new IllegalArgumentException("must equal \"square\", got \"" + value + "\"");
         }
@@ -166,7 +166,7 @@ public final class Square implements ChoicesValue, Shape, Showcase.ShapeOrName {
     public static final class Deserializer extends com.fasterxml.jackson.databind.JsonDeserializer<Square> {
         @Override
         public Square deserialize(JsonParser parser, DeserializationContext context) throws IOException {
-            JsonNode node = parser.readValueAsTree();
+            JsonNode node = SpecNumbers.readExactTree(parser);
             List<Violation> violations = new ArrayList<>();
             if (node == null || !node.isObject()) {
                 violations.add(new Violation("", "expected object"));
@@ -197,7 +197,7 @@ public final class Square implements ChoicesValue, Shape, Showcase.ShapeOrName {
                     } else {
                         String kindValue = field.textValue();
                         if ("square".equals(kindValue)) {
-                            kind = Kind.KIND;
+                            kind = Kind.SQUARE;
                         } else {
                             violations.add(new Violation("kind", "must equal \"square\""));
                         }

@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 @JsonDeserialize(using = TextNote.Deserializer.class)
 public final class TextNote implements Note {
     public static final class Kind {
-        public static final Kind KIND = new Kind("text");
+        public static final Kind TEXT = new Kind("text");
 
         private final String value;
 
@@ -40,7 +40,7 @@ public final class TextNote implements Note {
                 return null;
             }
             if ("text".equals(value)) {
-                return KIND;
+                return TEXT;
             }
             throw new IllegalArgumentException("must equal \"text\", got \"" + value + "\"");
         }
@@ -170,7 +170,7 @@ public final class TextNote implements Note {
     public static final class Deserializer extends com.fasterxml.jackson.databind.JsonDeserializer<TextNote> {
         @Override
         public TextNote deserialize(JsonParser parser, DeserializationContext context) throws IOException {
-            JsonNode node = parser.readValueAsTree();
+            JsonNode node = SpecNumbers.readExactTree(parser);
             List<Violation> violations = new ArrayList<>();
             if (node == null || !node.isObject()) {
                 violations.add(new Violation("", "expected object"));
@@ -201,7 +201,7 @@ public final class TextNote implements Note {
                     } else {
                         String kindValue = field.textValue();
                         if ("text".equals(kindValue)) {
-                            kind = Kind.KIND;
+                            kind = Kind.TEXT;
                         } else {
                             violations.add(new Violation("kind", "must equal \"text\""));
                         }

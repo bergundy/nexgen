@@ -12,6 +12,12 @@
   full script passing. It covers Rust formatting and tests plus the checked-in
   Python, TypeScript, and Go sample projects.
 
+- When running Rust tests directly, pass the feature flag to test the "advanced" features:
+
+  ```sh
+  cargo test --all-features
+  ```
+
 ## Generated samples
 
 - Never edit generated sample output directly. Change the authored input,
