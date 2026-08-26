@@ -14,8 +14,8 @@ use crate::generator::proto::typescript as typescript_proto;
 use crate::generator::python;
 use crate::language::Language;
 use crate::spec::{
-    ApiSpec, AuthoredFamily, ExternalTypeBindingSpec, ExternalTypeSpec, FunctionArgsSpec,
-    FunctionResultSpec, RecordFieldVisibility, RecordSpec, ServiceSpec, TypeSpec,
+    ApiSpec, AuthoredFamily, ExternalTypeBindingSpec, ExternalTypeSourceSpec, ExternalTypeSpec,
+    FunctionArgsSpec, FunctionResultSpec, RecordFieldVisibility, RecordSpec, ServiceSpec, TypeSpec,
 };
 use crate::spec::{ApiSpecLeaf, CompilerPass};
 
@@ -225,8 +225,10 @@ fn validate_external_type_bindings(
     }
 
     for (_, record) in spec.records() {
-        let Some(ExternalTypeSpec::Proto(proto_name)) =
-            record.source.as_ref().map(|source| &source.external_type)
+        let Some(proto_name) = record
+            .source
+            .as_ref()
+            .and_then(ExternalTypeSourceSpec::proto_type)
         else {
             continue;
         };
@@ -247,6 +249,36 @@ fn validate_external_type_bindings(
             usages.get(proto_name.as_str()).copied().unwrap_or_default(),
             language,
         )?;
+    }
+
+    for (_, variant) in spec.variants() {
+        let Some(source) = variant
+            .source
+            .as_ref()
+            .and_then(crate::spec::ExternalVariantSourceSpec::proto_oneof)
+        else {
+            continue;
+        };
+        let proto_name = &source.message;
+        let oneof_name = &source.name;
+        let Some(message) = descriptors.message(proto_name.as_str()) else {
+            if descriptors.file_count() == 0 {
+                continue;
+            }
+            return Err(Error::UnknownTypeOverride {
+                type_name: proto_name.as_str().to_string(),
+            });
+        };
+        let oneofs = validated_real_oneofs(proto_name.as_str(), message)?;
+        let Some(oneof) = oneof_by_name(&oneofs, oneof_name) else {
+            return Err(Error::InvalidTypeOverrideField {
+                message: proto_name.as_str().to_string(),
+                field: oneof_name.to_string(),
+                property: "source",
+                reason: format!("protobuf message has no oneof `{oneof_name}`"),
+            });
+        };
+        validate_oneof_variant_source(proto_name.as_str(), oneof, variant)?;
     }
 
     Ok(())
@@ -418,6 +450,7 @@ fn validate_oneof_model_config(
                 reason: format!("unknown variant `{variant_name}`"),
             });
         };
+        validate_oneof_variant_source(message_name, oneof, variant)?;
 
         for (_, member) in &oneof.fields {
             if field_label(member) == Some(Label::Repeated) {
@@ -485,6 +518,49 @@ fn validate_oneof_model_config(
                 });
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_oneof_variant_source(
+    message_name: &str,
+    oneof: &ProtoOneofGroup<'_>,
+    variant: &crate::spec::VariantSpec,
+) -> Result<()> {
+    let Some(source) = &variant.source else {
+        return Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: oneof.name.to_string(),
+            property: "type",
+            reason: format!(
+                "variant `{}` must bind to protobuf oneof `{}.{}`",
+                variant.name, message_name, oneof.name
+            ),
+        });
+    };
+    let Some(source) = source.proto_oneof() else {
+        return Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: oneof.name.to_string(),
+            property: "type",
+            reason: format!(
+                "variant `{}` must bind to protobuf oneof `{}.{}`",
+                variant.name, message_name, oneof.name
+            ),
+        });
+    };
+    if source.message.as_str() != message_name || source.name != oneof.name {
+        return Err(Error::InvalidTypeOverrideField {
+            message: message_name.to_string(),
+            field: oneof.name.to_string(),
+            property: "type",
+            reason: format!(
+                "variant `{}` binds to protobuf oneof `{}.{}`",
+                variant.name,
+                source.message.as_str(),
+                source.name,
+            ),
+        });
     }
     Ok(())
 }

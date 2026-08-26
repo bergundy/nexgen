@@ -4,7 +4,8 @@ use prost_types::field_descriptor_proto::{Label, Type};
 
 use crate::descriptors::{DescriptorIndex, EnumMetadata, MessageMetadata, real_oneof_groups};
 use crate::spec::{
-    ApiSpec, ExternalSourceSpec, ExternalTypeSpec, IntSpec, RecordSpec, TypeDeclSpec, TypeSpec,
+    ApiSpec, ExternalTypeSourceSpec, ExternalTypeSpec, IntSpec, ProtoTypeSpec, RecordSpec,
+    TypeDeclSpec, TypeSpec,
 };
 
 use super::OperationLoweredFamily;
@@ -43,21 +44,19 @@ impl PlannedProtoTypeInfo {
 fn native_source_for_proto<'a>(
     spec: &'a ApiSpec<OperationLoweredFamily>,
     proto_name: &str,
-) -> Option<&'a ExternalSourceSpec<OperationLoweredFamily>> {
+) -> Option<&'a ProtoTypeSpec<OperationLoweredFamily>> {
     let proto_name = proto_name.trim_start_matches('.');
     spec.types.values().find_map(|entry| {
         let source = match &entry.declaration {
             TypeDeclSpec::Record(record) => record.source.as_ref(),
             TypeDeclSpec::Enum(enumeration) => enumeration.source.as_ref(),
             TypeDeclSpec::Flags(flags) => flags.source.as_ref(),
-            TypeDeclSpec::Variant(variant) => variant.source.as_ref(),
+            TypeDeclSpec::Variant(_) => None,
             TypeDeclSpec::External(_) => None,
         }?;
-        matches!(
-            &source.external_type,
-            ExternalTypeSpec::Proto(source_proto) if source_proto.as_ref() == proto_name
-        )
-        .then_some(source)
+        source
+            .proto()
+            .filter(|source| source.proto.as_ref() == proto_name)
     })
 }
 
@@ -274,14 +273,11 @@ pub(super) fn planned_record_field_type(
 }
 
 fn record_proto_name(record: &RecordSpec<OperationLoweredFamily>) -> Option<&str> {
-    let Some(ExternalSourceSpec {
-        external_type: ExternalTypeSpec::Proto(proto_name),
-        ..
-    }) = record.source.as_ref()
-    else {
-        return None;
-    };
-    Some(proto_name.as_str())
+    record
+        .source
+        .as_ref()
+        .and_then(ExternalTypeSourceSpec::proto_type)
+        .map(|symbol| symbol.as_str())
 }
 
 fn descriptor_field_by_name<'a>(

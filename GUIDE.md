@@ -183,7 +183,10 @@ export enum UserCapability {
 
 ### Variants
 
-WIT variants become discriminated unions using a `tag` field.
+Python represents WIT variants as tagged tuples. A variant backed by a protobuf
+`oneof` uses case dataclasses, as described under
+[`@nexus.proto`](#nexusproto). TypeScript represents variants as tagged object
+unions.
 
 ```wit
 variant notification-target {
@@ -212,7 +215,8 @@ export type NotificationTarget =
   | { tag: "none" };
 ```
 
-Cases with a payload carry a `value` field; cases without a payload do not.
+TypeScript cases with a payload carry a `value` field. Cases without a payload
+do not.
 
 ### Results
 
@@ -1234,6 +1238,8 @@ package nexus:temporal-types@1.0.0;
 **Placement:** Type alias, record, variant, enum, or flags
 **Syntax:** `@nexus.proto "<fully.qualified.proto.MessageName>"`
 
+For variants, use `@nexus.proto "<fully.qualified.proto.MessageName>.<oneof>"`.
+
 Maps a WIT type to a protobuf message or enum. The generator emits
 target-specific transfer-type conversion code and validates field mappings
 against the proto descriptor. Requires `--descriptors` on the CLI.
@@ -1250,12 +1256,14 @@ record activity-options { ... }
 ```
 
 Protobuf `oneof` groups are authored as a single record field whose name
-matches the oneof and whose type is a WIT variant. Each variant case must match
-a protobuf member name (with kebab-case WIT naming) and carry the corresponding
-member value. Use `option<variant>` when the protobuf oneof may be unset, or a
+matches the oneof and whose type is a WIT variant. The variant's directive
+identifies that same message and oneof. Each variant case must match a protobuf
+member name (with kebab-case WIT naming) and carry the corresponding member
+value. Use `option<variant>` when the protobuf oneof may be unset, or a
 required `variant` when an unset value should be rejected during conversion.
 
 ```wit
+/// @nexus.proto "example.v1.Response.result"
 variant outcome {
   success(list<u8>),
   failure(string),
@@ -1267,9 +1275,14 @@ record response {
 }
 ```
 
-Python performs bidirectional oneof conversion using tagged tuples such as
-`("success", value)`. Other targets reject a reachable model containing a
-oneof they cannot convert; unreachable declarations and omitted oneofs remain valid.
+Python represents a protobuf oneof-backed variant as a union of slotted case
+dataclasses. Each case contains its payload in a `value` field. For example, the
+variant above generates `OutcomeSuccess(value)` and `OutcomeFailure(value)`.
+The containing record's protobuf conversion constructs and matches those case
+classes.
+
+Other targets reject a reachable model containing a oneof they cannot convert.
+Unreachable declarations and omitted oneofs remain valid.
 
 ---
 
@@ -1314,10 +1327,11 @@ type converter registration cannot instantiate an open generic converter. The
 generator reports this explicitly rather than emitting a model that cannot be
 serialized through the SDK.
 
-Generic variants retain each target's normal tagged representation: tagged
-tuples in Python, tagged object unions in TypeScript, sealed interfaces and
-case structs in Go, and nested records in .NET. References to generic variants
-are closed automatically wherever they occur.
+Python represents generic variants as tagged tuples and protobuf oneof-backed
+generic variants as unions of generic case dataclasses. TypeScript uses tagged
+object unions, Go uses sealed interfaces and case structs, and .NET uses nested
+records. References to generic variants are closed automatically wherever they
+occur.
 
 ---
 

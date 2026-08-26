@@ -406,8 +406,9 @@ where
                 return None;
             };
             matches!(
-                record.source.as_ref().map(|source| &source.external_type),
-                Some(ExternalTypeSpec::Proto(source_proto)) if source_proto.as_ref() == proto_name
+                record.source.as_ref().and_then(ExternalTypeSourceSpec::proto_type),
+                Some(source_proto)
+                    if source_proto.as_ref() == proto_name
             )
             .then_some(record)
         })
@@ -790,7 +791,7 @@ pub struct RecordSpec<F: TypeFamily = AuthoredFamily> {
     pub name: String,
     pub full_name: String,
     pub doc: F::Text,
-    pub source: Option<ExternalSourceSpec<F>>,
+    pub source: Option<ExternalTypeSourceSpec<F>>,
     pub experimental: bool,
     pub flatten_in_api: bool,
     pub fields: IndexMap<String, RecordFieldSpec<F>>,
@@ -828,7 +829,7 @@ pub struct EnumSpec<F: TypeFamily = AuthoredFamily> {
     pub name: String,
     pub full_name: String,
     pub values: Vec<EnumValueSpec>,
-    pub source: Option<ExternalSourceSpec<F>>,
+    pub source: Option<ExternalTypeSourceSpec<F>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -843,7 +844,7 @@ pub struct FlagsSpec<F: TypeFamily = AuthoredFamily> {
     pub name: String,
     pub full_name: String,
     pub flags: Vec<FlagSpec>,
-    pub source: Option<ExternalSourceSpec<F>>,
+    pub source: Option<ExternalTypeSourceSpec<F>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -857,7 +858,7 @@ pub struct VariantSpec<F: TypeFamily = AuthoredFamily> {
     pub name: String,
     pub full_name: String,
     pub cases: Vec<VariantCaseSpec<F>>,
-    pub source: Option<ExternalSourceSpec<F>>,
+    pub source: Option<ExternalVariantSourceSpec<F>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1197,32 +1198,135 @@ impl TextSpec for SelectedTextSpec {
     }
 }
 
-/// External wire metadata owned by a native WIT declaration.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExternalSourceSpec<F: TypeFamily = AuthoredFamily> {
-    pub external_type: ExternalTypeSpec<F>,
+pub struct ProtoTypeSpec<F: TypeFamily = AuthoredFamily> {
+    pub proto: F::Proto,
     pub reference: F::Text,
     pub type_name: F::Text,
 }
 
-impl<F: TypeFamily> ExternalSourceSpec<F> {
-    fn map_names_with<G, M>(self, map: &mut M) -> ExternalSourceSpec<G>
+#[derive(Debug, Clone, PartialEq)]
+pub struct AliasTypeSpec<F: TypeFamily = AuthoredFamily> {
+    pub name: F::Alias,
+    pub target: Box<TypeSpec<F>>,
+    pub type_name: F::Text,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtoOneofSpec<F: TypeFamily = AuthoredFamily> {
+    pub message: F::Proto,
+    pub name: String,
+}
+
+/// External backing for declarations represented by complete value types.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternalTypeSourceSpec<F: TypeFamily = AuthoredFamily> {
+    Proto(ProtoTypeSpec<F>),
+    Alias(AliasTypeSpec<F>),
+}
+
+/// External backing for variants, including protobuf oneofs that are not
+/// independently usable value types.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternalVariantSourceSpec<F: TypeFamily = AuthoredFamily> {
+    ProtoOneof(ProtoOneofSpec<F>),
+    Alias(AliasTypeSpec<F>),
+}
+
+impl<F: TypeFamily> ExternalTypeSourceSpec<F> {
+    pub fn proto_type(&self) -> Option<&F::Proto> {
+        match self {
+            Self::Proto(proto) => Some(&proto.proto),
+            Self::Alias(_) => None,
+        }
+    }
+
+    pub fn proto(&self) -> Option<&ProtoTypeSpec<F>> {
+        match self {
+            Self::Proto(proto) => Some(proto),
+            Self::Alias(_) => None,
+        }
+    }
+
+    fn map_names_with<G, M>(self, map: &mut M) -> ExternalTypeSourceSpec<G>
     where
         G: TypeFamily,
         M: ApiSpecTransform<F, G>,
     {
-        ExternalSourceSpec {
-            external_type: self.external_type.map_names_with(map),
+        match self {
+            Self::Proto(proto) => ExternalTypeSourceSpec::Proto(proto.map_names_with(map)),
+            Self::Alias(alias) => ExternalTypeSourceSpec::Alias(alias.map_names_with(map)),
+        }
+    }
+}
+
+impl<F: TypeFamily> ExternalVariantSourceSpec<F> {
+    pub fn proto_oneof(&self) -> Option<&ProtoOneofSpec<F>> {
+        match self {
+            Self::ProtoOneof(oneof) => Some(oneof),
+            Self::Alias(_) => None,
+        }
+    }
+
+    fn map_names_with<G, M>(self, map: &mut M) -> ExternalVariantSourceSpec<G>
+    where
+        G: TypeFamily,
+        M: ApiSpecTransform<F, G>,
+    {
+        match self {
+            Self::ProtoOneof(oneof) => {
+                ExternalVariantSourceSpec::ProtoOneof(oneof.map_names_with(map))
+            }
+            Self::Alias(alias) => ExternalVariantSourceSpec::Alias(alias.map_names_with(map)),
+        }
+    }
+}
+
+impl<F: TypeFamily> ProtoTypeSpec<F> {
+    fn map_names_with<G, M>(self, map: &mut M) -> ProtoTypeSpec<G>
+    where
+        G: TypeFamily,
+        M: ApiSpecTransform<F, G>,
+    {
+        ProtoTypeSpec {
+            proto: map.map_proto(self.proto),
             reference: map.map_text(self.reference),
             type_name: map.map_text(self.type_name),
         }
     }
 }
 
+impl<F: TypeFamily> AliasTypeSpec<F> {
+    fn map_names_with<G, M>(self, map: &mut M) -> AliasTypeSpec<G>
+    where
+        G: TypeFamily,
+        M: ApiSpecTransform<F, G>,
+    {
+        AliasTypeSpec {
+            name: map.map_alias(self.name),
+            target: Box::new(self.target.map_names_with(map)),
+            type_name: map.map_text(self.type_name),
+        }
+    }
+}
+
+impl<F: TypeFamily> ProtoOneofSpec<F> {
+    fn map_names_with<G, M>(self, map: &mut M) -> ProtoOneofSpec<G>
+    where
+        G: TypeFamily,
+        M: ApiSpecTransform<F, G>,
+    {
+        ProtoOneofSpec {
+            message: map.map_proto(self.message),
+            name: self.name,
+        }
+    }
+}
+
 /// A declaration whose shape is owned by an input format other than native WIT.
 ///
-/// Native WIT records, variants, enums, and flags carry [`ExternalSourceSpec`]
-/// when they map to a protobuf type. This enum is deliberately limited to the
+/// Native WIT declarations carry declaration-specific source metadata when
+/// they map to a protobuf type. This enum is deliberately limited to the
 /// two remaining cases: a WIT type alias for a protobuf type, or a JSON Schema
 /// model. In particular, it cannot represent a native WIT declaration.
 #[derive(Debug, Clone, PartialEq)]
@@ -1398,11 +1502,7 @@ pub enum IntSpec {
 pub enum ExternalTypeSpec<F: TypeFamily = AuthoredFamily> {
     Proto(F::Proto),
     Json(F::Json),
-    Alias {
-        name: F::Alias,
-        target: Box<TypeSpec<F>>,
-        type_name: F::Text,
-    },
+    Alias(AliasTypeSpec<F>),
 }
 
 impl<F: TypeFamily> TypeSpec<F> {
@@ -1460,7 +1560,7 @@ impl<F: TypeFamily> TypeSpec<F> {
 
     pub(crate) fn validation_type(&self) -> &TypeSpec<F> {
         match self {
-            TypeSpec::External(ExternalTypeSpec::Alias { target, .. }) => target.validation_type(),
+            TypeSpec::External(ExternalTypeSpec::Alias(alias)) => alias.target.validation_type(),
             _ => self,
         }
     }
@@ -1541,15 +1641,7 @@ impl<F: TypeFamily> ExternalTypeSpec<F> {
         match self {
             ExternalTypeSpec::Proto(type_name) => ExternalTypeSpec::Proto(map.map_proto(type_name)),
             ExternalTypeSpec::Json(type_name) => ExternalTypeSpec::Json(map.map_json(type_name)),
-            ExternalTypeSpec::Alias {
-                name,
-                target,
-                type_name,
-            } => ExternalTypeSpec::Alias {
-                name: map.map_alias(name),
-                target: Box::new(target.map_names_with(map)),
-                type_name: map.map_text(type_name),
-            },
+            ExternalTypeSpec::Alias(alias) => ExternalTypeSpec::Alias(alias.map_names_with(map)),
         }
     }
 }
@@ -1565,7 +1657,7 @@ where
         match self {
             ExternalTypeSpec::Proto(type_name) => Some(type_name.as_ref()),
             ExternalTypeSpec::Json(type_name) => Some(type_name.as_ref()),
-            ExternalTypeSpec::Alias { name, .. } => Some(name.as_ref()),
+            ExternalTypeSpec::Alias(alias) => Some(alias.name.as_ref()),
         }
     }
 
@@ -1716,8 +1808,8 @@ where
                 visiting,
                 parameters,
             ),
-            TypeSpec::External(ExternalTypeSpec::Alias { target, .. }) => {
-                self.collect_type_parameters(target, language, visiting, parameters)
+            TypeSpec::External(ExternalTypeSpec::Alias(alias)) => {
+                self.collect_type_parameters(&alias.target, language, visiting, parameters)
             }
             TypeSpec::Bool
             | TypeSpec::Int(_)

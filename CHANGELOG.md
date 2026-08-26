@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- Protobuf-backed native WIT variants must now bind directly to their oneof with
+  `@nexus.proto "<message>.<oneof>"`. A message-only `@nexus.proto` directive
+  remains valid for records, enums, and flags.
+
 ### Fixed
 
 ### Security
@@ -40,9 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available in supported releases, while Java inlines the SDK call with the
   corresponding TODO. Python packages continue to export
   `Violation` from their root `__init__.py`.
+- Python JSON Schema packages now export `ValidationError` and `Violation`
+  from their root `__init__.py`; callers no longer need to import the private
+  `_definitions` module.
+- Python WIT variants now generate one tagged slotted dataclass per case and a
+  union alias over those classes. Generated constructors assign non-init
+  literal tag fields. Direct JSON payloads use adjacent-tagged objects, and
+  concrete records and resources that contain variants register transfer type
+  converters with Temporal's default data converter. Private functions own the
+  nested variant dispatch. Protobuf `oneof` converters construct and match the
+  same public case classes without using the JSON representation.
 - Added grouped protobuf `oneof` authoring and bidirectional Python conversion,
   including required and optional oneofs, scaffolding through `add-rpc` and
-  `add-message`, and explicit diagnostics for unsupported target backends.
+  `add-message`, generated Python case dataclasses for the backing WIT variants,
+  and explicit diagnostics for unsupported target backends.
 - Python proto-backed generic records may use Temporal `Payload` and `Payloads`
   fields (including oneof members) as runtime value carriers. Decoding preserves
   concrete runtime type arguments through nested models and `Payload` values.
@@ -163,6 +178,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `model_extra`, aggregate structured validation errors, collapse absent and
   explicit-null optional-and-nullable values to `None`, and surface schema
   defaults through mutable properties whose deleter restores unset state.
+- Python WIT variant values now use generated case objects instead of tagged
+  tuples. Existing callers must construct and match the exported case classes.
+  WIT `result<T, E>` and JSON Schema `oneOf` behavior are unchanged.
+- Python variants that back protobuf `oneof` fields now use generated case
+  dataclasses instead of tagged tuples. Python variants outside protobuf-backed
+  models retain their tagged tuple representation.
 - Java: A map-shaped model (a pure typed map — `additionalProperties` with no
   declared `properties`) now names its catch-all member `additionalProperties`,
   matching the struct-shaped POJOs and the other languages (Go

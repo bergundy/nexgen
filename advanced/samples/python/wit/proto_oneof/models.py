@@ -41,12 +41,11 @@ class _OutcomeTransferTypeConverter(
         if _oneof_value_case is None:
             raise ValueError("missing required field Outcome.value")
         elif _oneof_value_case == "success":
-            _oneof_value = (
-                "success",
-                payloads_from_proto(value.success, [output_type])[0],
+            _oneof_value = OutcomeValueSuccess(
+                payloads_from_proto(value.success, [output_type])[0]
             )
         elif _oneof_value_case == "failure":
-            _oneof_value = ("failure", failure_from_proto(value.failure))
+            _oneof_value = OutcomeValueFailure(failure_from_proto(value.failure))
         else:
             raise ValueError(
                 f"unknown protobuf oneof case Outcome.value: {_oneof_value_case}"
@@ -60,16 +59,18 @@ class _OutcomeTransferTypeConverter(
         self,
         value: "Outcome[typing.Any]",
     ) -> temporalio.api.update.v1.message_pb2.Outcome:
+        runtime_value: typing.Any = value
         message = temporalio.api.update.v1.message_pb2.Outcome()
-        if value.value is None:
+        if runtime_value.value is None:
             raise ValueError("missing required field Outcome.value")
-        if value.value[0] == "success":
-            message.success.CopyFrom(payloads_to_proto([value.value[1]]))
-        elif value.value[0] == "failure":
-            message.failure.CopyFrom(failure_to_proto(value.value[1]))
+        _oneof_value_value = runtime_value.value
+        if isinstance(_oneof_value_value, OutcomeValueSuccess):
+            message.success.CopyFrom(payloads_to_proto([_oneof_value_value.value]))
+        elif isinstance(_oneof_value_value, OutcomeValueFailure):
+            message.failure.CopyFrom(failure_to_proto(_oneof_value_value.value))
         else:
-            raise ValueError(
-                f"unknown protobuf oneof tag Outcome.value: {value.value[0]}"
+            raise TypeError(
+                f"unsupported variant case Outcome.value: {_oneof_value_value!r}"
             )
         return message
 
@@ -112,9 +113,9 @@ class _PauseActivityRequestTransferTypeConverter(
         if _oneof_activity_case is None:
             _oneof_activity = None
         elif _oneof_activity_case == "id":
-            _oneof_activity = ("id", value.id)
+            _oneof_activity = ActivitySelectionId(value.id)
         elif _oneof_activity_case == "type":
-            _oneof_activity = ("type", value.type)
+            _oneof_activity = ActivitySelectionType(value.type)
         else:
             raise ValueError(
                 f"unknown protobuf oneof case PauseActivityRequest.activity: {_oneof_activity_case}"
@@ -153,13 +154,14 @@ class _PauseActivityRequestTransferTypeConverter(
             )
         message.identity = value.identity
         if value.activity is not None:
-            if value.activity[0] == "id":
-                message.id = value.activity[1]
-            elif value.activity[0] == "type":
-                message.type = value.activity[1]
+            _oneof_activity_value = typing.cast(typing.Any, value.activity)
+            if isinstance(_oneof_activity_value, ActivitySelectionId):
+                message.id = _oneof_activity_value.value
+            elif isinstance(_oneof_activity_value, ActivitySelectionType):
+                message.type = _oneof_activity_value.value
             else:
-                raise ValueError(
-                    f"unknown protobuf oneof tag PauseActivityRequest.activity: {value.activity[0]}"
+                raise TypeError(
+                    f"unsupported variant case PauseActivityRequest.activity: {_oneof_activity_value!r}"
                 )
         message.reason = value.reason
         message.request_id = value.request_id
@@ -223,12 +225,27 @@ class WorkflowExecution:
     run_id: str
 
 
-OutcomeValue = (
-    tuple[typing.Literal["success"], OutputT]
-    | tuple[typing.Literal["failure"], BaseException]
-)
+@dataclasses.dataclass(slots=True)
+class OutcomeValueSuccess(typing.Generic[OutputT]):
+    value: OutputT
 
 
-ActivitySelection = (
-    tuple[typing.Literal["id"], str] | tuple[typing.Literal["type"], str]
-)
+@dataclasses.dataclass(slots=True)
+class OutcomeValueFailure:
+    value: BaseException
+
+
+OutcomeValue = OutcomeValueSuccess[OutputT] | OutcomeValueFailure
+
+
+@dataclasses.dataclass(slots=True)
+class ActivitySelectionId:
+    value: str
+
+
+@dataclasses.dataclass(slots=True)
+class ActivitySelectionType:
+    value: str
+
+
+ActivitySelection = ActivitySelectionId | ActivitySelectionType

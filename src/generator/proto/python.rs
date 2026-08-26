@@ -1,11 +1,14 @@
-use heck::ToSnakeCase;
+use std::collections::{BTreeMap, BTreeSet};
+
+use heck::{ToSnakeCase, ToUpperCamelCase};
 
 use crate::error::{Error, Result};
 use crate::generator::ExternalModelBackend;
 use crate::generator::python::{
-    PythonFieldDefaultKind, PythonImports, RenderedField, RenderedModel, RenderedModelFragments,
-    RenderedRecordWireBlock, ResolvedFieldKind, ResolvedFieldType, WireValueConversion,
-    python_authored_type_annotation, python_string_literal,
+    PythonFieldDefaultKind, PythonGeneratedName, PythonImports, RenderedField, RenderedModel,
+    RenderedModelFragments, RenderedRecordWireBlock, RenderedVariant, ResolvedFieldKind,
+    ResolvedFieldType, RootPackageImports, WireValueConversion, python_authored_type_annotation,
+    python_string_literal,
 };
 use crate::language::Language;
 use crate::planning::{
@@ -39,7 +42,7 @@ enum ProtoGenericCarrier {
 
 #[derive(Debug, Clone)]
 struct ProtoOneofCase {
-    tag: String,
+    class_name: String,
     proto_name: String,
     payload_type: ResolvedFieldType,
     generic_carrier: Option<ProtoGenericCarrier>,
@@ -58,13 +61,16 @@ struct ProtoField {
 }
 
 #[derive(Debug, Default)]
-pub(in crate::generator) struct ModelBackend;
+pub(in crate::generator) struct ModelBackend {
+    variant_names: BTreeSet<String>,
+}
 
 impl ExternalModelBackend for ModelBackend {
     type ModelFragments = RenderedModelFragments;
     type WireConversion = WireValueConversion;
 
-    fn prepare(&mut self, _api_plan: &PlannedSpec) -> Result<()> {
+    fn prepare(&mut self, api_plan: &PlannedSpec) -> Result<()> {
+        self.variant_names = oneof_variant_names(api_plan);
         Ok(())
     }
 
@@ -111,6 +117,74 @@ impl ExternalModelBackend for ModelBackend {
                 planned_record.and_then(|record| generated_wire_conversion(model_type, record))
             })
     }
+}
+
+fn oneof_variant_names(api_plan: &PlannedSpec) -> BTreeSet<String> {
+    api_plan
+        .variants()
+        .filter(|(_, variant)| {
+            variant
+                .source
+                .as_ref()
+                .is_some_and(|source| source.proto_oneof().is_some())
+        })
+        .map(|(full_name, _)| full_name.to_string())
+        .collect()
+}
+
+fn variant_case_class_name(variant_name: &str, case_name: &str) -> String {
+    format!("{variant_name}{}", case_name.to_upper_camel_case())
+}
+
+fn render_oneof_variant_body(variant: &RenderedVariant) -> String {
+    let mut body = String::new();
+    for case in &variant.cases {
+        let class_name = variant_case_class_name(&variant.name, &case.name);
+        body.push_str("@dataclasses.dataclass(slots=True)\n");
+        body.push_str("class ");
+        body.push_str(&class_name);
+        if !case.type_parameters.is_empty() {
+            body.push_str("(typing.Generic[");
+            body.push_str(&case.type_parameters.join(", "));
+            body.push_str("])");
+        }
+        body.push_str(":\n");
+        if let Some(payload_annotation) = &case.payload_annotation {
+            body.push_str("    value: ");
+            body.push_str(payload_annotation);
+            body.push('\n');
+        } else {
+            body.push_str("    pass\n");
+        }
+        body.push_str("\n\n");
+    }
+
+    body.push_str(&variant.name);
+    body.push_str(" = ");
+    if variant.cases.is_empty() {
+        body.push_str("typing.Never\n");
+        return body;
+    }
+    if variant.cases.len() > 1 {
+        body.push_str("(\n    ");
+    }
+    for (index, case) in variant.cases.iter().enumerate() {
+        let class_name = variant_case_class_name(&variant.name, &case.name);
+        if index > 0 {
+            body.push_str("\n    | ");
+        }
+        body.push_str(&class_name);
+        if !case.type_parameters.is_empty() {
+            body.push('[');
+            body.push_str(&case.type_parameters.join(", "));
+            body.push(']');
+        }
+    }
+    if variant.cases.len() > 1 {
+        body.push_str("\n)");
+    }
+    body.push('\n');
+    body
 }
 
 fn build_oneof(
@@ -164,8 +238,9 @@ fn build_oneof(
                 property: "type",
                 reason: format!("planned variant case `{}` has no payload", case.name),
             })?;
+        let class_name = variant_case_class_name(&variant.name, &case.name);
         cases.push(ProtoOneofCase {
-            tag: case.name.clone(),
+            class_name,
             proto_name: member.wire_name.clone(),
             payload_type: resolve_type(&payload)?,
             generic_carrier: matches!(payload.validation_type(), PlannedType::TypeParameter(_))
@@ -237,6 +312,89 @@ impl ModelBackend {
         resolve_type: &impl Fn(&PlannedType) -> Result<ResolvedFieldType>,
     ) -> Result<Option<RenderedRecordWireBlock>> {
         render_record_wire_block(api_plan, model, planned_model, resolve_type)
+    }
+
+    pub(in crate::generator) fn owns_variant(&self, full_name: &str) -> bool {
+        self.variant_names.contains(full_name)
+    }
+
+    pub(in crate::generator) fn render_variant_models(
+        &self,
+        api_plan: &PlannedSpec,
+        variants: &[&RenderedVariant],
+        declared_type_parameters: &BTreeSet<String>,
+    ) -> RenderedModelFragments {
+        let variants = variants
+            .iter()
+            .copied()
+            .filter(|variant| self.owns_variant(&variant.full_name))
+            .collect::<Vec<_>>();
+        if variants.is_empty() {
+            return RenderedModelFragments::default();
+        }
+
+        let type_parameters = variants
+            .iter()
+            .flat_map(|variant| variant.type_parameters.iter())
+            .filter(|parameter| !declared_type_parameters.contains(parameter.as_str()))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut body = String::new();
+        for parameter in &type_parameters {
+            body.push_str(parameter);
+            body.push_str(" = typing.TypeVar(");
+            body.push_str(&python_string_literal(parameter));
+            body.push_str(")\n");
+        }
+        if !type_parameters.is_empty() {
+            body.push_str("\n\n");
+        }
+
+        let mut exported_names = BTreeSet::new();
+        let mut module_exported_names = BTreeSet::new();
+        let mut generated_names = Vec::new();
+        let mut export_sort_keys = BTreeMap::new();
+        for (variant_index, variant) in variants.iter().enumerate() {
+            if variant_index > 0 {
+                body.push_str("\n\n");
+            }
+            body.push_str(&render_oneof_variant_body(variant));
+            exported_names.insert(variant.name.clone());
+            export_sort_keys.insert(variant.name.clone(), (variant.name.clone(), 0));
+            let module_export = api_plan
+                .types
+                .get(&variant.full_name)
+                .is_some_and(|entry| entry.is_module_export());
+            if module_export {
+                module_exported_names.insert(variant.name.clone());
+            }
+            for (case_index, case) in variant.cases.iter().enumerate() {
+                let name = variant_case_class_name(&variant.name, &case.name);
+                exported_names.insert(name.clone());
+                export_sort_keys.insert(name.clone(), (variant.name.clone(), case_index + 1));
+                generated_names.push(PythonGeneratedName {
+                    name: name.clone(),
+                    generated_by: format!("variant case `{}.{}`", variant.full_name, case.name),
+                });
+                if module_export {
+                    module_exported_names.insert(name);
+                }
+            }
+        }
+
+        RenderedModelFragments {
+            body,
+            post_model_statements: String::new(),
+            module_imports: BTreeSet::from(["dataclasses".to_string(), "typing".to_string()]),
+            relative_imports: BTreeMap::new(),
+            root_package_imports: RootPackageImports::new(),
+            exported_names,
+            module_exported_names,
+            generated_names,
+            export_sort_keys,
+            declared_type_parameters: type_parameters,
+            allows_private_wire_access: false,
+        }
     }
 
     pub(in crate::generator) fn service_wire_model_ref(
@@ -1082,6 +1240,8 @@ fn render_record_wire_block(
     }
     let wrote_method = true;
     {
+        let generic_oneof = !model.type_parameters.is_empty()
+            && proto_fields.iter().any(|field| field.oneof.is_some());
         if model.fields.is_empty() {
             if wrote_method {
                 output.push('\n');
@@ -1101,6 +1261,9 @@ fn render_record_wire_block(
         output.push_str("    ) -> ");
         output.push_str(&proto_ref.type_ref);
         output.push_str(":\n");
+        if generic_oneof {
+            output.push_str("        runtime_value: typing.Any = value\n");
+        }
         output.push_str("        message = ");
         output.push_str(&proto_ref.type_ref);
         output.push_str("()\n");
@@ -1112,7 +1275,15 @@ fn render_record_wire_block(
             .zip(model.fields.iter())
             .zip(proto_fields.iter())
         {
-            let value_expr = format!("value.{}", rendered_field.attr_name);
+            let value_expr = format!(
+                "{}.{}",
+                if generic_oneof {
+                    "runtime_value"
+                } else {
+                    "value"
+                },
+                rendered_field.attr_name
+            );
             let write = field_write_for_rendered_field(
                 &model.name,
                 field_name,
@@ -1120,6 +1291,7 @@ fn render_record_wire_block(
                 rendered_field,
                 proto_field,
                 &value_expr,
+                generic_oneof,
             );
             for line in &write.lines {
                 output.push_str("        ");
@@ -1189,6 +1361,7 @@ fn field_write_for_rendered_field(
     rendered_field: &RenderedField,
     proto_field: &ProtoField,
     value_expr: &str,
+    value_is_any: bool,
 ) -> RenderedWireWrite {
     if let Some(oneof) = &proto_field.oneof {
         return oneof_field_write(
@@ -1200,6 +1373,7 @@ fn field_write_for_rendered_field(
                 rendered_field.default_kind,
                 PythonFieldDefaultKind::Required
             ),
+            value_is_any,
         );
     }
     let optional_guard = matches!(
@@ -1268,8 +1442,8 @@ fn oneof_field_read(
             python_string_literal(&case.proto_name)
         ));
         setup_lines.push(format!(
-            "    {local_var} = ({}, {})",
-            python_string_literal(&case.tag),
+            "    {local_var} = {}({})",
+            case.class_name,
             match case.generic_carrier {
                 Some(carrier) => generic_carrier_from_proto_expr(
                     carrier,
@@ -1302,6 +1476,7 @@ fn oneof_field_write(
     oneof: &ProtoOneof,
     value_expr: &str,
     required: bool,
+    value_is_any: bool,
 ) -> RenderedWireWrite {
     let mut lines = Vec::new();
     let case_indent = if required {
@@ -1315,13 +1490,19 @@ fn oneof_field_write(
         lines.push(format!("if {value_expr} is not None:"));
         "    "
     };
+    let public_value_expr = format!("_oneof_{}_value", attr_name.to_snake_case());
+    lines.push(if value_is_any {
+        format!("{case_indent}{public_value_expr} = {value_expr}")
+    } else {
+        format!("{case_indent}{public_value_expr} = typing.cast(typing.Any, {value_expr})")
+    });
     for (index, case) in oneof.cases.iter().enumerate() {
         let keyword = if index == 0 { "if" } else { "elif" };
         lines.push(format!(
-            "{case_indent}{keyword} {value_expr}[0] == {}:",
-            python_string_literal(&case.tag)
+            "{case_indent}{keyword} isinstance({public_value_expr}, {}):",
+            case.class_name
         ));
-        let case_value_expr = format!("{value_expr}[1]");
+        let case_value_expr = format!("{public_value_expr}.value");
         let case_lines = match case.generic_carrier {
             Some(carrier) => {
                 generic_carrier_to_proto_lines(carrier, &case_value_expr, &case.proto_name, false)
@@ -1339,8 +1520,8 @@ fn oneof_field_write(
     }
     lines.push(format!("{case_indent}else:"));
     lines.push(format!(
-        "{case_indent}    raise ValueError(f\"unknown protobuf oneof tag {model_name}.{}: {{{value_expr}[0]}}\")",
-        oneof.name
+        "{case_indent}    raise TypeError(f\"unsupported variant case {model_name}.{}: {{{public_value_expr}!r}}\")",
+        oneof.name,
     ));
     RenderedWireWrite { lines }
 }
