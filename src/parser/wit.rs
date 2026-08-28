@@ -4415,7 +4415,7 @@ world system {
 interface workflow-service {
   /// @nexus.proto "temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest"
   record request {
-    /// @nexus.doc "Default field doc" python="Python field doc" typescript="TypeScript field doc"
+    /// @nexus.doc "Default field doc" python="Python field doc. Defaults to an empty string." typescript="TypeScript field doc"
     id: string,
   }
 
@@ -4472,7 +4472,7 @@ interface workflow-service {
                 .unwrap()
                 .field_doc("id")
                 .and_then(|doc| doc.for_language(Language::Python)),
-            Some("Python field doc")
+            Some("Python field doc. Defaults to an empty string.")
         );
     }
 
