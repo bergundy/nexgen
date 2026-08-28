@@ -6,6 +6,7 @@ pub mod error;
 pub mod generator;
 pub mod json_schema;
 pub mod language;
+pub mod nexgen_config;
 pub mod parser;
 pub mod spec;
 
@@ -31,13 +32,13 @@ pub struct SupportFiles {
 }
 
 pub struct GenerateRequest {
+    pub config: nexgen_config::NexgenConfig,
     pub language: Language,
     pub input_paths: Vec<PathBuf>,
     pub support_paths: Vec<PathBuf>,
     pub descriptor_paths: Vec<PathBuf>,
     pub output_path: PathBuf,
     pub format: bool,
-    pub generate_native_api: bool,
     /// Java-only: the base package for generated types. Its last
     /// dot-separated segment must match the output directory's name. Ignored
     /// for other languages.
@@ -48,6 +49,7 @@ pub struct GenerateRequest {
 }
 
 pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
+    let _config_scope = nexgen_config::scope(request.config);
     // A resolved output path with no name at all (the filesystem root, or
     // `..` past it) is never a real output directory: Go and Java derive
     // package names from its basename, and for every language it means the
@@ -80,18 +82,7 @@ pub fn generate_to_file(request: &GenerateRequest) -> Result<()> {
         },
         ts_date_time_types: request.ts_date_time_types,
     };
-    let generated = compile_tree_to_files(
-        request.language,
-        tree,
-        &descriptors,
-        &support,
-        if request.generate_native_api {
-            GenerationMode::NativeApi
-        } else {
-            GenerationMode::DefinitionsOnly
-        },
-        options,
-    )?;
+    let generated = compile_tree_to_files(request.language, tree, &descriptors, &support, options)?;
     print_warnings(&generated);
 
     write_generated_files(&request.output_path, &generated)?;
@@ -111,9 +102,9 @@ pub(crate) fn compile_tree_to_files(
     authored_tree: ApiSpecTree,
     descriptors: &DescriptorIndex,
     support: &SupportFiles,
-    mode: GenerationMode,
     options: GenerateFilesOptions,
 ) -> Result<GeneratedFiles> {
+    let mode = nexgen_config::current().mode;
     // parse (frontend) -> validate authored intent -> select target metadata
     let authored_tree =
         planning::AuthoredValidationPass::new(descriptors, language).apply(authored_tree)?;
@@ -142,13 +133,7 @@ pub(crate) fn compile_tree_to_files(
     // planned IR -> emitted JSON names -> render target-language files
     let name_resolution = planning::EmittedNameResolutionPass::new(language, &planned_tree)?;
     let generator_ready_tree = name_resolution.apply(planned_tree)?;
-    generator::generate_files_from_planned_tree(
-        language,
-        &generator_ready_tree,
-        support,
-        mode,
-        options,
-    )
+    generator::generate_files_from_planned_tree(language, &generator_ready_tree, support, options)
 }
 
 /// The output directory's basename, used as the Go package name — matching
@@ -450,13 +435,13 @@ mod tests {
 
     fn java_request(output_path: &str, java_package_name: Option<&str>) -> GenerateRequest {
         GenerateRequest {
+            config: Default::default(),
             language: Language::Java,
             input_paths: Vec::new(),
             support_paths: Vec::new(),
             descriptor_paths: Vec::new(),
             output_path: PathBuf::from(output_path),
             format: false,
-            generate_native_api: false,
             java_package_name: java_package_name.map(str::to_string),
             ts_date_time_types: Default::default(),
         }

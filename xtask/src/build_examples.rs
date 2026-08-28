@@ -6,6 +6,7 @@ use heck::ToSnakeCase;
 use nexgen::error::{Error, Result};
 use nexgen::generator::{GenerationMode, TsDateTimeTypes};
 use nexgen::language::Language;
+use nexgen::nexgen_config::NexgenConfig;
 use nexgen::{GenerateRequest, generate_to_file};
 
 #[derive(Clone)]
@@ -381,18 +382,22 @@ fn build_example(repo_root: &Path, language: Language, example_id: &str) -> Resu
     let output_path = example_output_path(repo_root, language, example_id);
     let language_root = advanced_language_root(repo_root, language);
     reset_example_output_directory(&language_root, &output_path)?;
-    generate_to_file(&GenerateRequest {
+    let generate_request = GenerateRequest {
+        config: NexgenConfig {
+            mode: GenerationMode::NativeApi,
+            system_nexus: language == Language::Python && example_id == "workflow-service",
+        },
         language,
         input_paths,
         support_paths: Vec::new(),
         descriptor_paths: vec![repo_root.join("advanced/samples/descriptors/temporal_api.bin")],
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: true,
         java_package_name: (language == Language::Java)
             .then(|| example_directory_name(language, example_id)),
         ts_date_time_types: Default::default(),
-    })?;
+    };
+    generate_to_file(&generate_request)?;
     format_example_output(&language_root, language, &output_path)?;
     println!("Built {} with nexgen", output_path.display());
     Ok(())
@@ -441,13 +446,16 @@ fn build_json_example_variant(
         let output_path = json_example_output_path(repo_root, language, output_id, mode);
         reset_example_output_directory(&root, &output_path)?;
         generate_to_file(&GenerateRequest {
+            config: NexgenConfig {
+                mode,
+                ..Default::default()
+            },
             language,
             input_paths: vec![input_path.clone()],
             support_paths: Vec::new(),
             descriptor_paths: Vec::new(),
             output_path: output_path.clone(),
             format: false,
-            generate_native_api: mode == GenerationMode::NativeApi,
             java_package_name: (language == Language::Java)
                 .then(|| json_example_java_package(&dir_name, mode)),
             ts_date_time_types,

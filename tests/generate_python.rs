@@ -761,13 +761,16 @@ fn generate_python_to_string(input_paths: &[PathBuf], descriptor_paths: &[PathBu
     let temp_dir = unique_output_path("python-rendered");
     let output_path = temp_dir.join("output");
     generate_to_file(&GenerateRequest {
+        config: nexgen::nexgen_config::NexgenConfig {
+            mode: nexgen::generator::GenerationMode::NativeApi,
+            ..Default::default()
+        },
         language: nexgen::language::Language::Python,
         input_paths: input_paths.to_vec(),
         support_paths: Vec::new(),
         descriptor_paths: descriptor_paths.to_vec(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: true,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -788,13 +791,13 @@ fn generate_python_package_files(
     let temp_dir = unique_output_path("python-package");
     let output_path = temp_dir.join("output");
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: input_paths.to_vec(),
         support_paths: Vec::new(),
         descriptor_paths: descriptor_paths.to_vec(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: true,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -816,6 +819,9 @@ fn generate_formatted_python_output(root: &Path, example_id: &str, output_path: 
             output_path.to_str().unwrap(),
             "--native-api",
         ]);
+    if example_id == PRIMARY_EXAMPLE_ID {
+        command.arg("--system-nexus");
+    }
     let status = command.status().unwrap();
     assert!(status.success());
 
@@ -1606,13 +1612,13 @@ fn python_json_names_inline_object_union_branch() {
     let output_path = temp_dir.join("detail");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -1643,13 +1649,13 @@ fn python_json_validates_non_object_union_branch_constraints() {
     let output_path = temp_dir.join("bc");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -1691,13 +1697,13 @@ fn python_json_enforces_remaining_scalar_and_typed_extra_contracts() {
     let output_path = temp_dir.join("contract_package");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -1747,13 +1753,13 @@ $defs:
     let output_path = temp_dir.join("contract_package");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: true,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -1800,13 +1806,13 @@ fn python_json_union_serializer_validates_before_dispatching() {
     let output_path = temp_dir.join("bag_package");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -1866,13 +1872,13 @@ fn python_json_annotates_element_position_unions() {
     let output_path = temp_dir.join("bag");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -1956,13 +1962,13 @@ fn python_json_cross_module_py_name_override_moves_every_reference() {
     let output_path = temp_dir.join("output");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_dir],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -2018,13 +2024,13 @@ fn python_json_rejects_same_type_name_in_two_modules() {
     .unwrap();
 
     let request = |output: &str| GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_dir.clone()],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: temp_dir.join(output),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     };
@@ -2091,13 +2097,13 @@ services:
 
     let output_path = temp_dir.join("out");
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_dir],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -2143,13 +2149,13 @@ fn python_json_property_names_never_shadow_converter_locals() {
     let output_path = temp_dir.join("shadow_package");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -2226,13 +2232,13 @@ fn python_json_model_properties_use_union_none_and_defaults_preserve_presence() 
     let output_path = temp_dir.join("default_package");
 
     generate_to_file(&GenerateRequest {
+        config: Default::default(),
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api: false,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -2272,20 +2278,20 @@ fn python_json_model_properties_use_union_none_and_defaults_preserve_presence() 
 fn generate_unformatted_python_package(
     temp_dir: &Path,
     schema_source: &str,
-    generate_native_api: bool,
+    config: nexgen::nexgen_config::NexgenConfig,
 ) -> PathBuf {
     fs::create_dir_all(temp_dir).unwrap();
     let input_path = temp_dir.join("probe.nexusrpc.yaml");
     fs::write(&input_path, schema_source).unwrap();
     let output_path = temp_dir.join("probe_package");
     generate_to_file(&GenerateRequest {
+        config,
         language: nexgen::language::Language::Python,
         input_paths: vec![input_path],
         support_paths: Vec::new(),
         descriptor_paths: Vec::new(),
         output_path: output_path.clone(),
         format: false,
-        generate_native_api,
         java_package_name: None,
         ts_date_time_types: Default::default(),
     })
@@ -2325,7 +2331,7 @@ $defs:
         description: 'Trailing quote "'
         type: string
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let models = fs::read_to_string(output_path.join("models.py")).unwrap();
@@ -2380,7 +2386,7 @@ $defs:
     properties:
       a: { type: string }
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let services = fs::read_to_string(output_path.join("services.py")).unwrap();
@@ -2421,7 +2427,7 @@ $defs:
         uniqueItems: true
         items: { type: string }
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let models = fs::read_to_string(output_path.join("models.py")).unwrap();
@@ -2455,7 +2461,7 @@ $defs:
       dd: { type: string, format: date }
       tt: { type: string, format: time }
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let definitions = fs::read_to_string(output_path.join("_definitions.py")).unwrap();
@@ -2517,7 +2523,7 @@ $defs:
         maximum: 9007199254740992
       i: { type: integer }
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let models = fs::read_to_string(output_path.join("models.py")).unwrap();
@@ -2589,7 +2595,7 @@ $defs:
         items: { type: number }
         contains: { enum: [1.5, 2] }
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let models = fs::read_to_string(output_path.join("models.py")).unwrap();
@@ -2643,13 +2649,13 @@ $defs:
         )
         .unwrap();
         let error = generate_to_file(&GenerateRequest {
+            config: Default::default(),
             language: nexgen::language::Language::Python,
             input_paths: vec![input_path],
             support_paths: Vec::new(),
             descriptor_paths: Vec::new(),
             output_path: temp_dir.join("out"),
             format: false,
-            generate_native_api: false,
             java_package_name: None,
             ts_date_time_types: Default::default(),
         })
@@ -2680,7 +2686,7 @@ $defs:
       - { type: string }
       - { type: integer }
 "##,
-        false,
+        nexgen::nexgen_config::NexgenConfig::default(),
     );
 
     let models = fs::read_to_string(output_path.join("models.py")).unwrap();
