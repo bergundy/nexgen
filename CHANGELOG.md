@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Deprecated
+
+### Breaking Changes
+
+### Fixed
+
+### Security
+
+## [0.2.3] - 2026-08-28
+
+### Changed
+
 - `cargo build-examples` now rebuilds both WIT and JSON Schema samples by
   default. Use `--format wit` or `--format json-schema` for focused generation;
   the separate `cargo build-json-examples` command has been removed.
@@ -18,21 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Generated callers explicitly provide values supplied by `@nexus.source`;
   wire deserialization retains the value carried by the request.
 
-### Deprecated
-
 ### Breaking Changes
 
 - Protobuf-backed native WIT variants must now bind directly to their oneof with
   `@nexus.proto "<message>.<oneof>"`. A message-only `@nexus.proto` directive
   remains valid for records, enums, and flags.
-
-### Fixed
-
-- Python proto-backed models now consistently register their Temporal transfer
-  type converters after the model and converter definitions. Generic models
-  preserve static type information without casting class decorators to `Any`.
-
-### Security
 
 ## [0.2.2] - 2026-08-25
 
@@ -215,6 +217,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python proto-backed models now consistently register their Temporal transfer
+  type converters after the model and converter definitions. Generic models
+  preserve static type information without casting class decorators to `Any`.
 - JSON Schema: Go and Java now enforce constraints from nullable schemas, and
   Java supports nested nullable array elements. Recursive `allOf` merges no
   longer discard `$ref` or `oneOf` children.
