@@ -177,6 +177,9 @@ fn generate_dotnet_output(root: &Path, example_id: &str, output_path: &Path) {
             output_path.to_str().unwrap(),
             "--native-api",
         ]);
+    if example_id == WORKFLOW_SERVICE_EXAMPLE_ID {
+        command.arg("--system-nexus");
+    }
     let status = command.status().unwrap();
     assert!(status.success());
 }
@@ -209,6 +212,146 @@ fn dotnet_examples_generation_matches_checked_in_output() {
         assert_eq!(rendered, expected, "snapshot mismatch for {example_id}");
         fs::remove_dir_all(output_path).unwrap();
     }
+}
+
+#[test]
+fn dotnet_system_nexus_generation_emits_typed_outbound_interceptor() {
+    let root = project_root();
+    let output_path = unique_output_path("dotnet-system-nexus-interceptor");
+    generate_dotnet_output(&root, WORKFLOW_SERVICE_EXAMPLE_ID, &output_path);
+    let interceptor =
+        fs::read_to_string(output_path.join("SystemNexusWorkflowOutboundInterceptor.cs")).unwrap();
+    let models = fs::read_to_string(output_path.join("Models.cs")).unwrap();
+
+    assert!(interceptor.contains("namespace Temporalio.Worker.Interceptors"));
+    assert!(interceptor.contains("public partial class WorkflowOutboundInterceptor"));
+    assert!(!interceptor.contains("#pragma warning disable CS1591"));
+    assert!(!interceptor.contains(
+        "[GeneratedCode(\"nexgen\", null)]\n    public partial class WorkflowOutboundInterceptor"
+    ));
+    assert!(!interceptor.contains(
+        "[GeneratedCode(\"nexgen\", null)]\n    internal partial class WorkflowInstance"
+    ));
+    assert!(interceptor.contains(
+        "[GeneratedCode(\"nexgen\", null)]\n        private Task<NexusWorkflowOperationHandle<TResult>> StartSystemNexusOperationAsync<TResult>"
+    ));
+    assert!(interceptor.contains("outbound.Value.SignalWithStartWorkflowAsync(request)"));
+    assert!(interceptor.contains("if (arg is not SignalWithStartWorkflowRequest request)"));
+    assert!(
+        interceptor.contains("if (typeof(TResult) != typeof(SignalWithStartWorkflowResponse))")
+    );
+    assert!(interceptor.contains("expects a SignalWithStartWorkflowRequest request."));
+    assert!(interceptor.contains("expects a SignalWithStartWorkflowResponse result."));
+    assert!(interceptor.contains(
+        "Task<NexusWorkflowOperationHandle<SignalWithStartWorkflowResponse>> SignalWithStartWorkflowAsync(SignalWithStartWorkflowRequest request)"
+    ));
+    assert!(interceptor.contains("Next.SignalWithStartWorkflowAsync(request)"));
+    assert!(interceptor.contains("internal partial class WorkflowInstance"));
+    assert!(interceptor.contains("internal partial class OutboundImpl"));
+    assert!(interceptor.contains(
+        "[GeneratedCode(\"nexgen\", null)]\n            public override Task<NexusWorkflowOperationHandle<SignalWithStartWorkflowResponse>> SignalWithStartWorkflowAsync(SignalWithStartWorkflowRequest request) => instance.outbound.Value.ScheduleSystemNexusOperationAsync<SignalWithStartWorkflowResponse>"
+    ));
+    assert!(models.contains("/// Static metadata for a workflow execution."));
+    assert!(models.contains("/// Result of signaling a workflow and starting it if needed."));
+
+    let project_path = unique_output_path("dotnet-system-nexus-interceptor-build");
+    fs::create_dir_all(&project_path).unwrap();
+    fs::write(project_path.join("Generated.cs"), interceptor).unwrap();
+    fs::write(
+        project_path.join("SdkStubs.cs"),
+        r#"
+using System;
+using System.Threading.Tasks;
+
+namespace NexusRpc
+{
+    public sealed record OperationDefinition(string Name, System.Type InputType, System.Type OutputType);
+}
+
+namespace Temporalio.Workflows
+{
+    public sealed class SignalWithStartWorkflowRequest { }
+    public sealed class SignalWithStartWorkflowResponse { }
+    public class NexusWorkflowOperationHandle<TResult> { }
+    public sealed record NexusWorkflowClientOptions(string Endpoint);
+    public sealed class NexusWorkflowOperationOptions { }
+}
+
+namespace Temporalio.Worker.Interceptors
+{
+    public sealed record ScheduleNexusOperationInput(
+        string Service,
+        Temporalio.Workflows.NexusWorkflowClientOptions ClientOptions,
+        string OperationName,
+        object? Arg,
+        Temporalio.Workflows.NexusWorkflowOperationOptions Options,
+        object? Headers);
+
+    public sealed record ScheduleSystemNexusOperationInput<TResult>(
+        string Service,
+        NexusRpc.OperationDefinition Operation,
+        object? Arg,
+        object? Headers);
+
+    public partial class WorkflowOutboundInterceptor
+    {
+        protected WorkflowOutboundInterceptor Next { get; }
+
+        protected WorkflowOutboundInterceptor(WorkflowOutboundInterceptor next) => Next = next;
+
+        public virtual Task<Temporalio.Workflows.NexusWorkflowOperationHandle<TResult>> ScheduleNexusOperationAsync<TResult>(
+            ScheduleNexusOperationInput input) => Next.ScheduleNexusOperationAsync<TResult>(input);
+
+        public virtual Task<Temporalio.Workflows.NexusWorkflowOperationHandle<TResult>> ScheduleSystemNexusOperationAsync<TResult>(
+            ScheduleSystemNexusOperationInput<TResult> input) => Next.ScheduleSystemNexusOperationAsync<TResult>(input);
+    }
+
+    public sealed class TestInterceptor : WorkflowOutboundInterceptor
+    {
+        public TestInterceptor(WorkflowOutboundInterceptor next) : base(next) { }
+
+        public override Task<Temporalio.Workflows.NexusWorkflowOperationHandle<Temporalio.Workflows.SignalWithStartWorkflowResponse>> SignalWithStartWorkflowAsync(
+            Temporalio.Workflows.SignalWithStartWorkflowRequest request) =>
+            base.SignalWithStartWorkflowAsync(request);
+    }
+}
+
+namespace Temporalio.Worker
+{
+    internal partial class WorkflowInstance
+    {
+        private readonly Lazy<Temporalio.Worker.Interceptors.WorkflowOutboundInterceptor> outbound = null!;
+
+        internal partial class OutboundImpl : Temporalio.Worker.Interceptors.WorkflowOutboundInterceptor
+        {
+            private readonly WorkflowInstance instance = null!;
+
+            internal OutboundImpl(Temporalio.Worker.Interceptors.WorkflowOutboundInterceptor next) : base(next) { }
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project_path.join("GeneratedInterceptor.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework><LangVersion>9.0</LangVersion></PropertyGroup></Project>",
+    )
+    .unwrap();
+    let (_dotnet_guard, mut command) = dotnet_command();
+    let output = command
+        .current_dir(&project_path)
+        .args(["build", "--nologo"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(output_path).unwrap();
+    fs::remove_dir_all(project_path).unwrap();
 }
 
 #[test]
@@ -330,7 +473,7 @@ fn dotnet_renders_nexus_service_interface_and_resources() {
     assert!(rendered.contains("public sealed record None : NotificationTarget;"));
     assert!(rendered.contains("public record User"));
     assert!(rendered.contains("public class GetUserOptions"));
-    assert!(rendered.contains("internal record GetUserRequest"));
+    assert!(rendered.contains("public record GetUserRequest"));
     assert!(rendered.contains("using System.Threading.Tasks;"));
     assert!(
         rendered.contains("private static async Task<User> GetUserAsync(GetUserRequest request)")
@@ -357,6 +500,7 @@ fn dotnet_renders_proto_backed_temporal_types() {
         &example_input_paths(&root, WORKFLOW_SERVICE_EXAMPLE_ID),
         &[descriptor_path(&root)],
     );
+    assert!(!files.contains_key(&PathBuf::from("SystemNexusWorkflowOutboundInterceptor.cs")));
     let services = files.get(&PathBuf::from("Services.cs")).unwrap().clone();
     let operations = files.get(&PathBuf::from("Operations.cs")).unwrap().clone();
     let rendered = render_output_files(files);
@@ -443,7 +587,7 @@ fn dotnet_renders_proto_backed_temporal_types() {
     assert!(rendered.contains("using System.CodeDom.Compiler;"));
     assert!(rendered.contains("[GeneratedCode(\"nexgen\", null)]\n    [NexusService(\"temporal.api.workflowservice.v1.WorkflowService\")]\n    internal interface IWorkflowService"));
     assert!(rendered.contains(
-        "[GeneratedCode(\"nexgen\", null)]\n    internal record SignalWithStartWorkflowRequest"
+        "[GeneratedCode(\"nexgen\", null)]\n    public record SignalWithStartWorkflowRequest"
     ));
     assert!(rendered.contains(
         "[GeneratedCode(\"nexgen\", null)]\n    public class SignalWithStartWorkflowOptions"
@@ -463,7 +607,7 @@ fn dotnet_renders_proto_backed_temporal_types() {
     assert!(
         rendered.contains("public SignalWithStartWorkflowOptions(string id, string taskQueue)")
     );
-    assert!(rendered.contains("internal SignalWithStartWorkflowRequest(string workflow, string id, string taskQueue, string signal, string @namespace)"));
+    assert!(rendered.contains("public SignalWithStartWorkflowRequest(string workflow, string id, string taskQueue, string signal, string @namespace)"));
     assert!(rendered.contains("public string Id { get; set; }\n"));
     assert!(rendered.contains("public string TaskQueue { get; set; }\n"));
     assert!(rendered.contains("public string Workflow { get; init; }\n"));
@@ -477,10 +621,8 @@ fn dotnet_renders_proto_backed_temporal_types() {
     assert!(!rendered.contains("get => _namespace"));
     assert!(!rendered.contains("default!"));
     assert!(!rendered.contains("required "));
-    assert!(rendered.contains("internal record SignalWithStartWorkflowRequest"));
-    assert!(!rendered.contains("public record SignalWithStartWorkflowRequest"));
-    assert!(rendered.contains("internal record UserMetadata"));
-    assert!(!rendered.contains("public record UserMetadata"));
+    assert!(rendered.contains("public record SignalWithStartWorkflowRequest"));
+    assert!(rendered.contains("public record UserMetadata"));
     assert!(!rendered.contains("IReadOnlyCollection<object?>? Args { get; set; }"));
     assert!(!rendered.contains("IReadOnlyCollection<object?>? SignalArgs { get; set; }"));
     assert!(rendered.contains("SignalWithStartWorkflowAsync<TWorkflow, TResult>(Expression<Func<TWorkflow, Task<TResult>>> workflow, Expression<Func<TWorkflow, Task>> signal, SignalWithStartWorkflowOptions options)"));

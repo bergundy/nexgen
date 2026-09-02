@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
@@ -345,6 +345,12 @@ impl<'a> ApiPlanner<'a> {
             .operations_class
             .for_language(Language::Dotnet)
             .is_some();
+        render_xml_summary(
+            output,
+            "",
+            Some("Provides generated workflow operation helpers."),
+            service.experimental,
+        );
         if !explicit_operations_class {
             output.push_str(GENERATED_CODE_ATTRIBUTE);
             output.push('\n');
@@ -613,8 +619,7 @@ impl<'a> ApiPlanner<'a> {
         }
         output.push_str(GENERATED_CODE_ATTRIBUTE);
         output.push('\n');
-        let access = self.model_access(model);
-        output.push_str(access);
+        output.push_str("public");
         output.push_str(" record ");
         let type_name = csharp_type_name(&model.name);
         output.push_str(&type_name);
@@ -633,7 +638,7 @@ impl<'a> ApiPlanner<'a> {
             output.push('>');
         }
         output.push_str("\n{\n");
-        self.render_model_constructor(output, access, &type_name, model);
+        self.render_model_constructor(output, "public", &type_name, model);
         for (field_name, field) in model.model_fields() {
             render_field_xml_doc(output, "    ", field);
             output.push_str("    public ");
@@ -933,6 +938,11 @@ impl<'a> ApiPlanner<'a> {
         if required_fields.is_empty() && sourced_fields.is_empty() {
             return;
         }
+        output.push_str("    /// <summary>\n");
+        output.push_str("    /// Initializes a new instance of the <see cref=\"");
+        output.push_str(type_name);
+        output.push_str("\"/> class.\n");
+        output.push_str("    /// </summary>\n");
         output.push_str("    ");
         output.push_str(access);
         output.push(' ');
@@ -1225,123 +1235,6 @@ impl<'a> ApiPlanner<'a> {
         } else {
             "public"
         }
-    }
-
-    fn model_access(&self, model: &PlannedModel) -> &'static str {
-        if !self
-            .api_plan
-            .record_type_parameters(&model.full_name, Language::Dotnet)
-            .is_empty()
-            || self.public_model_names().contains(&model.full_name)
-        {
-            "public"
-        } else {
-            "internal"
-        }
-    }
-
-    fn public_model_names(&self) -> HashSet<String> {
-        let mut names = HashSet::new();
-        names.extend(self.api_plan.records().filter_map(|(_, record)| {
-            (!self
-                .api_plan
-                .record_type_parameters(&record.full_name, Language::Dotnet)
-                .is_empty())
-            .then(|| record.full_name.clone())
-        }));
-        for service in &self.api_plan.services {
-            for operation in &service.operations {
-                self.collect_public_operation_models(&mut names, operation);
-            }
-            for resource in &service.resources {
-                collect_public_resource_models(&mut names, &resource.data, self.api_plan);
-            }
-        }
-
-        loop {
-            let before = names.len();
-            for name in names.clone() {
-                let Some(model) = self.api_plan.record(&name) else {
-                    continue;
-                };
-                for (_, field) in model.public_fields() {
-                    collect_public_field_kind_models(&mut names, &field.field_type, self.api_plan);
-                }
-            }
-            if names.len() == before {
-                break;
-            }
-        }
-
-        names
-    }
-
-    fn collect_public_operation_models(
-        &self,
-        names: &mut HashSet<String>,
-        operation: &PlannedOperation,
-    ) {
-        let has_input = self.operation_has_input(operation);
-        let raw_input_type = has_input
-            .then(|| self.operation_raw_input_type(operation.input_model()))
-            .unwrap_or_default();
-        let high_level_input_type = has_input
-            .then(|| self.operation_input_type(operation.input_model()))
-            .unwrap_or_default();
-        if has_input {
-            let request_kind = if high_level_input_type == raw_input_type {
-                RequestArgumentKind::Raw
-            } else {
-                RequestArgumentKind::HighLevel
-            };
-            if self.operation_request_method_access(operation, request_kind) == "public" {
-                collect_public_operation_input_models(
-                    names,
-                    operation.input_model(),
-                    &high_level_input_type,
-                    self.api_plan,
-                );
-            }
-        }
-
-        if let Some(
-            model_type @ (PlannedType::External(ExternalTypeSpec::Proto(
-                PlannedProtoType::Message(_),
-            ))
-            | PlannedType::External(ExternalTypeSpec::Json(_))
-            | PlannedType::Record(_)),
-        ) = &operation.output
-            && operation.output_transform.is_none()
-            && operation.data.output_resource_return.is_none()
-            && self.operation_return_type(operation)
-                == csharp_type_name(match model_type {
-                    PlannedType::External(ExternalTypeSpec::Proto(PlannedProtoType::Message(
-                        proto,
-                    ))) => &proto.model_name,
-                    PlannedType::External(ExternalTypeSpec::Json(json)) => &json.model_name,
-                    PlannedType::Record(record) => &record.model_name,
-                    _ => unreachable!("model type pattern checked"),
-                })
-        {
-            collect_public_message_models(names, model_type, self.api_plan);
-        }
-
-        if !has_input {
-            return;
-        }
-        let PlannedType::Record(input_record) = operation.input_model() else {
-            return;
-        };
-        let Some(model) = self.api_plan.record(&input_record.full_name) else {
-            return;
-        };
-        if !operation_has_flattened_convenience(operation, model, self.api_plan) {
-            return;
-        }
-        for overload in flattened_overloads(model) {
-            collect_public_flattened_parameter_models(names, model, self.api_plan, &overload);
-        }
-        collect_public_operation_options_models(names, model, self.api_plan);
     }
 
     fn operation_has_input(&self, operation: &PlannedOperation) -> bool {
@@ -2299,6 +2192,12 @@ fn generate_leaf(
             generator.render_operations_file(&namespace),
         );
     }
+    if mode == GenerationMode::NativeApi && crate::nexgen_config::current().system_nexus {
+        files.insert(
+            "SystemNexusWorkflowOutboundInterceptor.cs".into(),
+            generator.render_system_nexus_workflow_outbound_interceptor_file(),
+        );
+    }
     if api_plan
         .services
         .iter()
@@ -2316,6 +2215,119 @@ fn generate_leaf(
         );
     }
     Ok(GeneratedFiles::directory(files))
+}
+
+impl<'a> ApiPlanner<'a> {
+    fn render_system_nexus_workflow_outbound_interceptor_file(&self) -> String {
+        let mut output = String::from(GENERATED_HEADER);
+        output.push_str("\n#nullable enable\n\n");
+        output.push_str("using System.CodeDom.Compiler;\n");
+        output.push_str("using System.Threading.Tasks;\n");
+        output.push_str("using Temporalio.Workflows;\n\n");
+        output.push_str("namespace Temporalio.Worker.Interceptors\n{\n\n    public partial class WorkflowOutboundInterceptor\n    {\n");
+        for service in &self.api_plan.services {
+            for operation in &service.operations {
+                let request_type = if self.operation_has_input(operation) {
+                    self.dotnet_erased_model_type(operation.input_model())
+                } else {
+                    "object".to_string()
+                };
+                let response_type = self.operation_registry_response_type(operation);
+                output.push_str("        /// <summary>\n");
+                output.push_str("        /// Intercept the ");
+                output.push_str(&operation.name);
+                output.push_str(" operation.\n");
+                output.push_str("        /// </summary>\n");
+                output.push_str(
+                    "        /// <param name=\"request\">Request for the operation.</param>\n",
+                );
+                output.push_str("        /// <returns>Operation handle.</returns>\n");
+                output.push_str("        ");
+                output.push_str(GENERATED_CODE_ATTRIBUTE);
+                output.push('\n');
+                output.push_str("        public virtual Task<NexusWorkflowOperationHandle<");
+                output.push_str(&response_type);
+                output.push_str(">> ");
+                output.push_str(&csharp_type_name(&operation.name));
+                output.push_str("Async(");
+                output.push_str(&request_type);
+                output.push_str(" request) => Next.");
+                output.push_str(&csharp_type_name(&operation.name));
+                output.push_str("Async(request);\n\n");
+            }
+        }
+        output.push_str("    }\n\n");
+        output.push_str("}\n\n");
+        output.push_str("namespace Temporalio.Worker\n{\n\n    internal partial class WorkflowInstance\n    {\n");
+        output.push_str("        ");
+        output.push_str(GENERATED_CODE_ATTRIBUTE);
+        output.push('\n');
+        output.push_str("        private Task<NexusWorkflowOperationHandle<TResult>> StartSystemNexusOperationAsync<TResult>(\n            string service,\n            string operationName,\n            object? arg)\n        {\n");
+        for service in &self.api_plan.services {
+            for operation in &service.operations {
+                if !self.operation_has_input(operation) {
+                    continue;
+                }
+                let request_type = self.dotnet_erased_model_type(operation.input_model());
+                let response_type = self.operation_registry_response_type(operation);
+                output.push_str("            if (service == ");
+                output.push_str(&csharp_string_literal(&service.wire_name));
+                output.push_str(" &&\n                operationName == ");
+                output.push_str(&csharp_string_literal(&operation.wire_name));
+                output.push_str(")\n            {\n                if (arg is not ");
+                output.push_str(&request_type);
+                output.push_str(" request)\n                {\n                    throw new System.ArgumentException(\"System Nexus operation expects a ");
+                output.push_str(&request_type);
+                output.push_str(" request.\", nameof(arg));\n                }\n");
+                output.push_str("                if (typeof(TResult) != typeof(");
+                output.push_str(&response_type);
+                output.push_str("))\n                {\n                    throw new System.ArgumentException(\"System Nexus operation expects a ");
+                output.push_str(&response_type);
+                output.push_str(
+                    " result.\");\n                }\n                var handle = outbound.Value.",
+                );
+                output.push_str(&csharp_type_name(&operation.name));
+                output.push_str("Async(request);\n                return (Task<NexusWorkflowOperationHandle<TResult>>)(object)handle;\n            }\n");
+            }
+        }
+        output.push_str("            throw new System.ArgumentException($\"Unsupported System Nexus operation: {service}/{operationName}\");\n        }\n\n");
+        output.push_str("        internal partial class OutboundImpl\n        {\n");
+        for service in &self.api_plan.services {
+            for operation in &service.operations {
+                if !self.operation_has_input(operation) {
+                    continue;
+                }
+                let request_type = self.dotnet_erased_model_type(operation.input_model());
+                let response_type = self.operation_registry_response_type(operation);
+                output.push_str("            ");
+                output.push_str(GENERATED_CODE_ATTRIBUTE);
+                output.push('\n');
+                output.push_str("            public override Task<NexusWorkflowOperationHandle<");
+                output.push_str(&response_type);
+                output.push_str(">> ");
+                output.push_str(&csharp_type_name(&operation.name));
+                output.push_str("Async(");
+                output.push_str(&request_type);
+                output.push_str(
+                    " request) => instance.outbound.Value.ScheduleSystemNexusOperationAsync<",
+                );
+                output.push_str(&response_type);
+                output.push_str(">(new(\n                Service: ");
+                output.push_str(&csharp_string_literal(&service.wire_name));
+                output.push_str(",\n                Operation: new(\n                    ");
+                output.push_str(&csharp_string_literal(&operation.wire_name));
+                output.push_str(",\n                    typeof(");
+                output.push_str(&request_type);
+                output.push_str("),\n                    typeof(");
+                output.push_str(&response_type);
+                output.push_str(
+                    ")),\n                Arg: request,\n                Headers: null));\n\n",
+                );
+            }
+        }
+        output.push_str("        }\n    }\n}\n");
+        output
+    }
 }
 
 fn generate_tree(
@@ -2554,7 +2566,7 @@ fn generated_file_prelude(namespace: &str, imports: &[&str]) -> String {
     let mut output = String::new();
     output.push_str(GENERATED_HEADER);
     output.push_str("\n#nullable enable\n");
-    output.push_str("#pragma warning disable CS1591\n\n");
+    output.push('\n');
     for import in imports {
         output.push_str("using ");
         output.push_str(import);
@@ -3165,6 +3177,11 @@ fn render_operation_options_constructor(
     if required_fields.is_empty() {
         return;
     }
+    output.push_str("    /// <summary>\n");
+    output.push_str("    /// Initializes a new instance of the <see cref=\"");
+    output.push_str(type_name);
+    output.push_str("\"/> class.\n");
+    output.push_str("    /// </summary>\n");
     output.push_str("    public ");
     output.push_str(type_name);
     output.push('(');
@@ -3370,207 +3387,6 @@ fn render_flags(output: &mut String, flag_set: &PlannedFlags) {
         output.push_str(",\n");
     }
     output.push_str("}\n\n");
-}
-
-fn collect_public_flattened_parameter_models(
-    names: &mut HashSet<String>,
-    model: &PlannedModel,
-    api_plan: &PlannedSpec,
-    overload: &FlattenedOverload,
-) {
-    for (field_name, field) in model.public_fields() {
-        if field.function.is_none() {
-            continue;
-        }
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
-            let _ = field_name;
-            for (_, nested_field) in nested_model.public_fields() {
-                if nested_field.function.is_some() {
-                    collect_public_field_kind_models(names, &nested_field.field_type, api_plan);
-                }
-            }
-            continue;
-        }
-        collect_public_field_kind_models(names, &field.field_type, api_plan);
-        if matches!(
-            overload.function_mode(field_name),
-            FlattenedFunctionMode::String
-        ) && let Some(function) = &field.function
-        {
-            for arg_field_name in &function.arg_fields {
-                if let Some(arg_field) = model.fields.get(arg_field_name) {
-                    collect_public_field_kind_models(names, &arg_field.field_type, api_plan);
-                }
-            }
-        }
-    }
-}
-
-fn collect_public_operation_options_models(
-    names: &mut HashSet<String>,
-    model: &PlannedModel,
-    api_plan: &PlannedSpec,
-) {
-    if !model_has_options_fields(model, api_plan) {
-        return;
-    }
-    for (field_name, field) in model.public_fields() {
-        if let Some(nested_model) = flattened_nested_model(field, api_plan) {
-            let _ = field_name;
-            for (nested_field_name, nested_field) in nested_model.public_fields() {
-                if field_is_options_field(nested_model, nested_field_name, nested_field) {
-                    collect_public_field_kind_models(names, &nested_field.field_type, api_plan);
-                }
-            }
-            continue;
-        }
-        if field_is_options_field(model, field_name, field) {
-            collect_public_field_kind_models(names, &field.field_type, api_plan);
-        }
-    }
-}
-
-fn collect_public_resource_models(
-    names: &mut HashSet<String>,
-    resource: &PlannedResource,
-    api_plan: &PlannedSpec,
-) {
-    for field in &resource.fields {
-        collect_public_field_kind_models(names, &field.kind, api_plan);
-    }
-    for method in &resource.methods {
-        for param in &method.params {
-            collect_public_field_kind_models(names, &param.kind, api_plan);
-        }
-        if let Some(result) = &method.result
-            && let PlannedResourceMethodResultKind::Value(kind) = &result.kind
-        {
-            collect_public_field_kind_models(names, kind, api_plan);
-        }
-    }
-}
-
-fn collect_public_field_kind_models(
-    names: &mut HashSet<String>,
-    kind: &PlannedType,
-    api_plan: &PlannedSpec,
-) {
-    match kind {
-        PlannedType::Option(value) | PlannedType::List(value) => {
-            collect_public_value_models(names, value, api_plan)
-        }
-        PlannedType::Map(key, value) => {
-            collect_public_value_models(names, key, api_plan);
-            collect_public_value_models(names, value, api_plan);
-        }
-        value => collect_public_value_models(names, value, api_plan),
-    }
-}
-
-fn collect_public_value_models(
-    names: &mut HashSet<String>,
-    value: &PlannedType,
-    api_plan: &PlannedSpec,
-) {
-    collect_public_value_models_inner(names, value, api_plan, &mut HashSet::new());
-}
-
-fn collect_public_value_models_inner(
-    names: &mut HashSet<String>,
-    value: &PlannedType,
-    api_plan: &PlannedSpec,
-    visiting_variants: &mut HashSet<String>,
-) {
-    match value {
-        PlannedType::Option(inner) | PlannedType::List(inner) => {
-            collect_public_value_models_inner(names, inner, api_plan, visiting_variants);
-        }
-        PlannedType::Map(key, value) => {
-            collect_public_value_models_inner(names, key, api_plan, visiting_variants);
-            collect_public_value_models_inner(names, value, api_plan, visiting_variants);
-        }
-        model_type @ (PlannedType::External(ExternalTypeSpec::Proto(
-            PlannedProtoType::Message(_),
-        ))
-        | PlannedType::Record(_)) => collect_public_message_models(names, model_type, api_plan),
-        PlannedType::Resource(_) => {}
-        PlannedType::Variant(variant) => {
-            if !visiting_variants.insert(variant.full_name.clone()) {
-                return;
-            }
-            if let Some(declaration) = api_plan.variant(&variant.full_name) {
-                for case in &declaration.cases {
-                    if let Some(payload) = &case.payload {
-                        collect_public_value_models_inner(
-                            names,
-                            payload,
-                            api_plan,
-                            visiting_variants,
-                        );
-                    }
-                }
-            }
-            visiting_variants.remove(&variant.full_name);
-        }
-        PlannedType::Tuple(items) => {
-            for item in items {
-                collect_public_value_models_inner(names, item, api_plan, visiting_variants);
-            }
-        }
-        PlannedType::Result { ok, err } => {
-            if let Some(ok) = ok {
-                collect_public_value_models_inner(names, ok, api_plan, visiting_variants);
-            }
-            if let Some(err) = err {
-                collect_public_value_models_inner(names, err, api_plan, visiting_variants);
-            }
-        }
-        PlannedType::External(ExternalTypeSpec::Alias(AliasTypeSpec {
-            type_name,
-            target: fallback,
-            ..
-        })) => {
-            if type_name.for_language(Language::Dotnet).is_none() {
-                collect_public_value_models_inner(names, fallback, api_plan, visiting_variants);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_public_message_models(
-    names: &mut HashSet<String>,
-    model_type: &PlannedType,
-    api_plan: &PlannedSpec,
-) {
-    match model_type {
-        PlannedType::External(ExternalTypeSpec::Proto(PlannedProtoType::Message(proto)))
-            if proto.replacement.is_some() => {}
-        PlannedType::Record(record) if api_plan.record(&record.full_name).is_some() => {
-            names.insert(record.full_name.clone());
-        }
-        _ => {}
-    }
-}
-
-fn collect_public_operation_input_models(
-    names: &mut HashSet<String>,
-    model_type: &PlannedType,
-    input_type: &str,
-    api_plan: &PlannedSpec,
-) {
-    if input_type
-        == csharp_type_name(match model_type {
-            PlannedType::External(ExternalTypeSpec::Proto(PlannedProtoType::Message(proto))) => {
-                &proto.model_name
-            }
-            PlannedType::External(ExternalTypeSpec::Json(json)) => &json.model_name,
-            PlannedType::Record(record) => &record.model_name,
-            _ => panic!("operation input should be a model"),
-        })
-    {
-        collect_public_message_models(names, model_type, api_plan);
-    }
 }
 
 fn render_resource_method_operation_body(
