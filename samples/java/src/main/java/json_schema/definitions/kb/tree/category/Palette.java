@@ -64,12 +64,32 @@ public final class Palette {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Palette> {
         @Override
         public void serialize(Palette value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
+            List<Violation> violations = new ArrayList<>();
+            if (value.swatches == null) {
+                violations.add(new Violation("swatches", "required"));
+            } else {
+                for (int validationIndex0 = 0; validationIndex0 < value.swatches.size(); validationIndex0++) {
+                    String validationValue0 = value.swatches.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("swatches" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
+            }
+            if (!violations.isEmpty()) {
+                // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
+                throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+            }
             gen.writeStartObject();
             if (value.swatches != null) {
                 gen.writeFieldName("swatches");
                 serializers.defaultSerializeValue(value.swatches, gen);
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -86,11 +106,12 @@ public final class Palette {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "swatches":
                         break;
                     default:
-                        violations.add(new Violation(key, "unknown field"));
+                        violations.add(new Violation(path, "unknown field"));
                 }
             }
             List<String> swatches = null;

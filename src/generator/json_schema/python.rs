@@ -10,12 +10,13 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::generator::ExternalModelBackend;
 use crate::generator::json_schema::build_json_name_manifest;
-use crate::generator::json_schema::register_cross_module_ref_names;
+use crate::generator::json_schema::{
+    bare_ref_target, register_cross_module_ref_names, violation_member_segment,
+};
 use crate::generator::python::{
     PythonImports, PythonModelHoists, RenderedModelFragments, WireValueConversion,
-    module_common_prefix_len, python_field_name, python_string_literal,
-    render_generated_file_header, render_named_python_import, render_optional_python_imports,
-    render_python_docstring,
+    module_common_prefix_len, python_field_name, render_generated_file_header,
+    render_named_python_import, render_optional_python_imports, render_python_docstring,
 };
 use crate::json_schema::scalar::{ScalarKind, ScalarMatcher};
 use crate::language::Language;
@@ -86,6 +87,17 @@ struct Schema {
     x_py_name: Option<String>,
 }
 
+/// JSON's quoted-string grammar is a subset of Python's string-literal grammar.
+/// In particular it uses fixed-width `\uXXXX` escapes instead of Rust
+/// `Debug`'s Python-invalid `\u{...}` spelling.
+fn python_string_literal(value: &str) -> String {
+    serde_json::to_string(value).expect("a Rust string is always JSON-serializable")
+}
+
+fn python_violation_path_literal(key: &str) -> String {
+    python_string_literal(&violation_member_segment(key))
+}
+
 impl Schema {
     /// The emitted Python attribute identifier for a property: the `x-py-name`
     /// override if present (used verbatim), otherwise the snake-cased JSON name.
@@ -151,6 +163,10 @@ thread_local! {
     /// no converter class — its conversion is a pair of module-private free
     /// functions — so a `$ref` at one dispatches differently.
     static UNION_NAMES: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    /// Exact bare-ref aliases keyed by emitted alias identifier. Conversion
+    /// follows this map to the declaration that owns the runtime converter,
+    /// while annotations keep the authored alias name.
+    static ALIAS_TARGETS: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 fn set_ref_names(ref_names: &BTreeMap<String, String>) {
@@ -161,6 +177,7 @@ fn set_ref_names(ref_names: &BTreeMap<String, String>) {
 fn set_module_context(json_models: &[&PlannedJsonType]) -> Result<()> {
     let locals = json_models
         .iter()
+        .filter(|model| bare_ref_target(model).is_none())
         .map(|model| model.model_name.clone())
         .collect::<BTreeSet<_>>();
     let unions = json_models
@@ -170,6 +187,14 @@ fn set_module_context(json_models: &[&PlannedJsonType]) -> Result<()> {
         .collect::<BTreeSet<_>>();
     LOCAL_MODELS.with(|cell| *cell.borrow_mut() = locals);
     UNION_NAMES.with(|cell| *cell.borrow_mut() = unions);
+    let aliases = json_models
+        .iter()
+        .filter_map(|model| {
+            bare_ref_target(model)
+                .map(|reference| (model.model_name.clone(), reference_model_name(reference)))
+        })
+        .collect();
+    ALIAS_TARGETS.with(|cell| *cell.borrow_mut() = aliases);
     Ok(())
 }
 
@@ -181,13 +206,23 @@ fn is_union_type_name(name: &str) -> bool {
     UNION_NAMES.with(|cell| cell.borrow().contains(name))
 }
 
+fn alias_runtime_name(name: &str) -> String {
+    let mut current = name.to_string();
+    for _ in 0..64 {
+        let Some(next) = ALIAS_TARGETS.with(|cell| cell.borrow().get(&current).cloned()) else {
+            break;
+        };
+        current = next;
+    }
+    current
+}
+
 /// The private converter class a model's wire contract lives in.
 pub(crate) fn converter_class_name(model_name: &str) -> String {
     format!("_{model_name}TransferTypeConverter")
 }
 
-/// The converter body's local holding one declared property's parsed value,
-/// until the final keyword-argument construction reads it back.
+/// The converter body's local holding one declared property's untrusted value.
 ///
 /// The name is **not** the member identifier: `from_transfer_type` is one Python
 /// scope, so a property-derived local shares it with the converter's own locals
@@ -208,7 +243,7 @@ pub(crate) fn converter_class_name(model_name: &str) -> String {
 /// `_path`), none of which ends in `_value`, so no property's slot can be
 /// another property's temporary and distinct members (already one P15 scope)
 /// stay distinct here.
-fn parse_slot_local(field_name: &str) -> String {
+fn property_value_local(field_name: &str) -> String {
     format!("{field_name}_value")
 }
 
@@ -217,8 +252,9 @@ fn parse_slot_local(field_name: &str) -> String {
 /// imported from a sibling module is reached through the class attribute the SDK
 /// decorator set, because the converter itself is module-private there.
 fn converter_expr(model_name: &str) -> String {
-    if is_local_model(model_name) {
-        format!("{}()", converter_class_name(model_name))
+    let model_name = alias_runtime_name(model_name);
+    if is_local_model(&model_name) {
+        format!("{}()", converter_class_name(&model_name))
     } else {
         format!("getattr({model_name}, \"__temporal_transfer_type_converter\")")
     }
@@ -401,41 +437,84 @@ impl ModelBackend {
 struct JsonModelHoistPlan {
     hoisted: BTreeMap<ModulePath, BTreeSet<String>>,
     hoisted_models: Vec<PlannedJsonType>,
+    source_paths: BTreeSet<PathBuf>,
+    runtime_imports: BTreeMap<ModulePath, BTreeSet<String>>,
     dependency_imports: BTreeMap<ModulePath, BTreeSet<String>>,
 }
 
 impl JsonModelHoistPlan {
     fn for_tree(branch: &ApiSpecBranch<PlannedFamily>) -> Self {
-        let mut models = BTreeMap::<String, (ModulePath, PlannedJsonType)>::new();
+        let mut models = BTreeMap::<String, (ModulePath, PathBuf, PlannedJsonType)>::new();
         collect_tree_json_models(branch, &mut models);
 
         let mut graph = BTreeMap::<String, BTreeSet<String>>::new();
-        for (full_name, (_, model)) in &models {
+        for (full_name, (_, _, model)) in &models {
             let mut refs = BTreeSet::new();
             collect_json_schema_model_refs(&model.schema, &models, &mut refs);
             graph.insert(full_name.clone(), refs);
         }
 
+        // Hoist whole strongly-connected components, not merely the endpoints
+        // of cross-module edges. An SCC member whose adjacent edges happen to be
+        // intra-module still moves with its siblings; leaving it behind creates
+        // a runtime NameError when it names a class that moved to `_recursive`.
         let mut hoisted_full_names = BTreeSet::new();
-        for (source_name, (source_module, _)) in &models {
-            for target_name in graph.get(source_name).into_iter().flatten() {
-                let Some((target_module, _)) = models.get(target_name) else {
-                    continue;
-                };
-                if source_module == target_module {
-                    continue;
-                }
-                if json_model_can_reach(target_name, source_name, &graph, &mut BTreeSet::new()) {
-                    hoisted_full_names.insert(source_name.clone());
-                    hoisted_full_names.insert(target_name.clone());
-                }
+        for source_name in models.keys() {
+            let component = models
+                .keys()
+                .filter(|target_name| {
+                    json_model_reaches(source_name, target_name, &graph)
+                        && json_model_reaches(target_name, source_name, &graph)
+                })
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let modules = component
+                .iter()
+                .filter_map(|name| models.get(name).map(|(module, _, _)| module))
+                .collect::<BTreeSet<_>>();
+            if modules.len() > 1 {
+                hoisted_full_names.extend(component);
             }
+        }
+
+        // Avoid recreating a module-level import cycle through a leaf dependency:
+        // if `_recursive` needs a model from module M while another model in M
+        // imports a hoisted class, move that dependency into `_recursive` too.
+        // Iterate because moving one dependency can expose the same shape at its
+        // own outgoing edges.
+        loop {
+            let consumer_modules = graph
+                .iter()
+                .filter(|(source, targets)| {
+                    !hoisted_full_names.contains(*source)
+                        && targets
+                            .iter()
+                            .any(|target| hoisted_full_names.contains(target))
+                })
+                .filter_map(|(source, _)| models.get(source).map(|(module, _, _)| module.clone()))
+                .collect::<BTreeSet<_>>();
+            let additions = hoisted_full_names
+                .iter()
+                .flat_map(|source| graph.get(source).into_iter().flatten())
+                .filter(|target| !hoisted_full_names.contains(*target))
+                .filter(|target| {
+                    models
+                        .get(*target)
+                        .is_some_and(|(module, _, _)| consumer_modules.contains(module))
+                })
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            if additions.is_empty() {
+                break;
+            }
+            hoisted_full_names.extend(additions);
         }
 
         let mut hoisted = BTreeMap::<ModulePath, BTreeSet<String>>::new();
         let mut hoisted_models = Vec::new();
+        let mut source_paths = BTreeSet::new();
         for full_name in &hoisted_full_names {
-            let Some((module_path, model)) = models.get(full_name) else {
+            let Some((module_path, source_path, model)) = models.get(full_name) else {
                 continue;
             };
             hoisted
@@ -443,6 +522,7 @@ impl JsonModelHoistPlan {
                 .or_default()
                 .insert(model.model_name.clone());
             hoisted_models.push(model.clone());
+            source_paths.insert(source_path.clone());
         }
 
         let mut dependency_imports = BTreeMap::<ModulePath, BTreeSet<String>>::new();
@@ -451,7 +531,7 @@ impl JsonModelHoistPlan {
                 if hoisted_full_names.contains(target_name) {
                     continue;
                 }
-                let Some((module_path, model)) = models.get(target_name) else {
+                let Some((module_path, _, model)) = models.get(target_name) else {
                     continue;
                 };
                 dependency_imports
@@ -461,9 +541,37 @@ impl JsonModelHoistPlan {
             }
         }
 
+        // References emitted by models that remain in their authored module
+        // must follow a moved target into `_recursive`. Preserve those edges as
+        // IR-derived import metadata rather than rediscovering them by scanning
+        // rendered Python (where comments and docstrings are false witnesses).
+        let mut runtime_imports = BTreeMap::<ModulePath, BTreeSet<String>>::new();
+        for (source_name, targets) in &graph {
+            if hoisted_full_names.contains(source_name) {
+                continue;
+            }
+            let Some((source_module, _, _)) = models.get(source_name) else {
+                continue;
+            };
+            for target_name in targets {
+                if !hoisted_full_names.contains(target_name) {
+                    continue;
+                }
+                let Some((_, _, target)) = models.get(target_name) else {
+                    continue;
+                };
+                runtime_imports
+                    .entry(source_module.clone())
+                    .or_default()
+                    .insert(target.model_name.clone());
+            }
+        }
+
         Self {
             hoisted,
             hoisted_models,
+            source_paths,
+            runtime_imports,
             dependency_imports,
         }
     }
@@ -484,10 +592,14 @@ pub(in crate::generator) fn tree_model_hoists(
     for (module_path, names) in &plan.hoisted {
         hoists.add_module_hoists(module_path.clone(), names.clone());
     }
+    for (module_path, names) in &plan.runtime_imports {
+        hoists.add_runtime_imports(module_path.clone(), names.clone());
+    }
     hoists.add_file(
         PathBuf::from("_recursive.py"),
         render_hoisted_models_module(&plan)?,
     );
+    hoists.add_source_paths(plan.source_paths);
     hoists.add_exported_names(
         plan.hoisted_models
             .iter()
@@ -566,7 +678,7 @@ fn render_hoisted_models_module(hoists: &JsonModelHoistPlan) -> Result<String> {
 
 fn collect_tree_json_models(
     branch: &ApiSpecBranch<PlannedFamily>,
-    models: &mut BTreeMap<String, (ModulePath, PlannedJsonType)>,
+    models: &mut BTreeMap<String, (ModulePath, PathBuf, PlannedJsonType)>,
 ) {
     for node in branch.children.values() {
         match node {
@@ -575,7 +687,11 @@ fn collect_tree_json_models(
                     if let Some(json_type) = binding.json_model() {
                         models.insert(
                             json_type.full_name.clone(),
-                            (leaf.module_path.clone(), json_type.clone()),
+                            (
+                                leaf.module_path.clone(),
+                                leaf.source_path.clone(),
+                                json_type.clone(),
+                            ),
                         );
                     }
                 }
@@ -587,7 +703,7 @@ fn collect_tree_json_models(
 
 fn collect_json_schema_model_refs(
     value: &serde_json::Value,
-    models: &BTreeMap<String, (ModulePath, PlannedJsonType)>,
+    models: &BTreeMap<String, (ModulePath, PathBuf, PlannedJsonType)>,
     refs: &mut BTreeSet<String>,
 ) {
     match value {
@@ -617,7 +733,18 @@ fn json_schema_ref_full_name(reference: &str) -> Option<String> {
         .map(|(_, fragment)| fragment)
         .unwrap_or(reference);
     let name = fragment.strip_prefix("/$defs/")?;
-    Some(name.replace("~1", "/").replace("~0", "~"))
+    // Planning has already resolved and decoded each RFC 6901 token. Decoding
+    // this full-name identity a second time corrupts authored `~1`/`~0` text and
+    // drops the graph edge for an otherwise valid escaped `$defs` name.
+    Some(name.to_string())
+}
+
+fn json_model_reaches(
+    source: &str,
+    target: &str,
+    graph: &BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    json_model_can_reach(source, target, graph, &mut BTreeSet::new())
 }
 
 fn json_model_can_reach(
@@ -673,12 +800,17 @@ pub(in crate::generator) fn render_external_models(
     let class_models: Vec<&PlannedJsonType> = json_models
         .iter()
         .copied()
-        .filter(|model| !is_python_union_model(model))
+        .filter(|model| bare_ref_target(model).is_none() && !is_python_union_model(model))
         .collect();
     let union_models: Vec<&PlannedJsonType> = json_models
         .iter()
         .copied()
-        .filter(|model| is_python_union_model(model))
+        .filter(|model| bare_ref_target(model).is_none() && is_python_union_model(model))
+        .collect();
+    let alias_models: Vec<&PlannedJsonType> = json_models
+        .iter()
+        .copied()
+        .filter(|model| bare_ref_target(model).is_some())
         .collect();
 
     set_module_context(json_models)?;
@@ -742,6 +874,36 @@ pub(in crate::generator) fn render_external_models(
         );
     }
 
+    // Python assignments evaluate their right-hand side immediately. Emit
+    // aliases after ordinary classes/unions and order alias chains so every
+    // local target already exists; cross-module targets are imported above.
+    let mut pending = alias_models;
+    let alias_names = pending
+        .iter()
+        .map(|model| model.model_name.clone())
+        .collect::<BTreeSet<_>>();
+    let mut emitted = BTreeSet::new();
+    while !pending.is_empty() {
+        let index = pending
+            .iter()
+            .position(|model| {
+                let target = reference_model_name(
+                    bare_ref_target(model).expect("alias model carries a target"),
+                );
+                !alias_names.contains(&target) || emitted.contains(&target)
+            })
+            .expect("bare-ref alias cycles are rejected by the parser");
+        let model = pending.remove(index);
+        let target =
+            reference_model_name(bare_ref_target(model).expect("alias model carries a target"));
+        push_section(&mut body);
+        body.push_str(&model.model_name);
+        body.push_str(" = ");
+        body.push_str(&target);
+        body.push('\n');
+        emitted.insert(model.model_name.clone());
+    }
+
     // Each is emitted only when the rendered body actually references the module
     // (a materialized temporal field, a `multipleOf` on a number, a hoisted
     // `pattern`/`format` regex); the shared import writer does that filtering.
@@ -793,6 +955,7 @@ const JSON_RUNTIME_SYMBOLS: &[&str] = &[
     "_check_unique_items",
     "_collect",
     "_json_values_equal",
+    "_member_path",
     "_format_base64",
     "_format_base64url",
     "_format_date",
@@ -885,6 +1048,7 @@ fn render_json_runtime_module() -> String {
         "_check_unique_items",
         "_collect",
         "_json_values_equal",
+        "_member_path",
         "_format_base64",
         "_format_base64url",
         "_format_date",
@@ -949,6 +1113,14 @@ def _quote(value: object) -> str:
         return repr(value)
 
 
+def _member_path(key: str) -> str:
+    """Returns one escaped member segment in the public violation-path grammar."""
+
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        return key
+    return '["' + key.replace("\\", "\\\\").replace('"', '\\"') + '"]'
+
+
 def _collect(
     violations: list[Violation],
     path: str,
@@ -965,7 +1137,13 @@ def _collect(
         # A nested violation about the value *itself* carries no path of its own
         # (a union branch's own constraint, an element-level check), so the
         # prefix is the whole path -- never a dangling separator (P11).
-        nested = f"{path}.{inner.path}" if inner.path else path
+        nested = (
+            path
+            if not inner.path
+            else f"{path}{inner.path}"
+            if inner.path.startswith("[")
+            else f"{path}.{inner.path}"
+        )
         violations.append(Violation(path=nested, reason=inner.reason))
 "#;
 
@@ -1179,8 +1357,10 @@ def _check_temporal_offset(
     path: str,
     violations: list[Violation],
 ) -> None:
-    """Asserts a UTC offset is a whole number of minutes, the finest the wire
-    form spells (`tzinfo` allows seconds, which the offset would silently lose).
+    """Asserts a UTC offset is a whole number of minutes in -18:00..+18:00.
+
+    `tzinfo` allows seconds and offsets up to almost 24 hours, both wider than
+    the materialized wire grammar.
     """
 
     if offset % datetime.timedelta(minutes=1):
@@ -1190,6 +1370,16 @@ def _check_temporal_offset(
                 reason=(
                     f"must be a valid {name}, got {_quote(str(value))}: "
                     f"the UTC offset {offset} is not a whole number of minutes"
+                ),
+            )
+        )
+    elif abs(offset) > datetime.timedelta(hours=18):
+        violations.append(
+            Violation(
+                path=path,
+                reason=(
+                    f"must be a valid {name}, got {_quote(str(value))}: "
+                    "the UTC offset is outside -18:00 through +18:00"
                 ),
             )
         )
@@ -1729,7 +1919,23 @@ fn render_py_array_checks(
     path_expr: &str,
     schema: &Schema,
     indent: &str,
+    serialize: bool,
 ) -> Result<()> {
+    // `uniqueItems` and `contains` compare the canonical wire value. Native
+    // bytes/temporal elements must therefore be projected before matching on
+    // serialize, just as the parse side already sees raw strings.
+    let values_expr = if serialize
+        && let Some(items) = schema.items.as_deref()
+        && (temporal_kind_direct(nullable_member_schema(items).unwrap_or(items)).is_some()
+            || content_encoding_direct(nullable_member_schema(items).unwrap_or(items)).is_some())
+    {
+        format!(
+            "[{} for element in {array_expr}]",
+            serialize_expr(items, "element", 0)
+        )
+    } else {
+        array_expr.to_string()
+    };
     let length = format!("len({array_expr})");
     if let Some(min) = schema.min_items {
         render_py_violation_if(
@@ -1752,7 +1958,7 @@ fn render_py_array_checks(
     if schema.unique_items == Some(true) {
         output.push_str(indent);
         output.push_str(&format!(
-            "_check_unique_items({array_expr}, {path_expr}, violations)\n"
+            "_check_unique_items({values_expr}, {path_expr}, violations)\n"
         ));
     }
     if let Some(matcher) = &schema.contains {
@@ -1769,7 +1975,7 @@ fn render_py_array_checks(
         };
         output.push_str(indent);
         output.push_str(&format!(
-            "_check_contains({array_expr}, lambda element: {condition}, {effective_min}, {max_arg}, {bounded_min}, {path_expr}, violations)\n"
+            "_check_contains({values_expr}, lambda element: {condition}, {effective_min}, {max_arg}, {bounded_min}, {path_expr}, violations)\n"
         ));
     }
     Ok(())
@@ -1842,7 +2048,7 @@ fn render_py_property_name_checks(
             output,
             &inner,
             &format!("len(key) < {min}"),
-            "key",
+            "_member_path(key)",
             &format!(
                 "f\"invalid property name {{_quote(key)}}: must have length >= {min}, got {{len(key)}}\""
             ),
@@ -1853,7 +2059,7 @@ fn render_py_property_name_checks(
             output,
             &inner,
             &format!("len(key) > {max}"),
-            "key",
+            "_member_path(key)",
             &format!(
                 "f\"invalid property name {{_quote(key)}}: must have length <= {max}, got {{len(key)}}\""
             ),
@@ -1866,7 +2072,7 @@ fn render_py_property_name_checks(
             output,
             &inner,
             &format!("{const_name}.search(key) is None"),
-            "key",
+            "_member_path(key)",
             &format!(
                 "f'invalid property name {{_quote(key)}}: must match pattern {{{const_name}.pattern}}'"
             ),
@@ -1892,7 +2098,7 @@ fn render_py_property_name_checks(
                 output,
                 &inner,
                 &format!("key not in {}", py_value_tuple(&allowed)),
-                "key",
+                "_member_path(key)",
                 &format!(
                     "f'invalid property name {{_quote(key)}}: must be one of [{}], got {{_quote(key)}}'",
                     py_fstring_text(&rendered)
@@ -1913,7 +2119,7 @@ fn render_py_property_name_checks(
             output,
             &inner,
             &format!("{length_guard}{const_name}.search(key) is None"),
-            "key",
+            "_member_path(key)",
             &format!(
                 "f'invalid property name {{_quote(key)}}: must be a valid {}'",
                 check.name
@@ -1935,6 +2141,11 @@ fn render_py_dependent_required(
         return;
     };
     for (trigger, deps) in dependent_required {
+        // The accepted `{trigger: []}` form is a no-op. Emitting its guard with
+        // no body produces an `IndentationError`; omit the whole predicate.
+        if deps.is_empty() {
+            continue;
+        }
         output.push_str(indent);
         output.push_str(&format!(
             "if {} in {obj_expr}:\n",
@@ -2000,6 +2211,9 @@ fn py_field_needs_serialize_check(schema: &Schema) -> bool {
     if let Some(non_null) = nullable_member_schema(schema) {
         return py_field_needs_serialize_check(non_null);
     }
+    if schema.reference.is_some() {
+        return true;
+    }
     if schema.const_value.is_some() || schema.enum_values.is_some() {
         return true;
     }
@@ -2021,12 +2235,7 @@ fn py_field_needs_serialize_check(schema: &Schema) -> bool {
             .any(py_field_needs_serialize_check);
     }
     match schema.ty.as_ref().and_then(Value::as_str) {
-        Some("string") => {
-            schema.min_length.is_some()
-                || schema.max_length.is_some()
-                || schema.pattern.is_some()
-                || schema.format.is_some()
-        }
+        Some("string") | Some("boolean") => true,
         // A `number` always carries one: the finiteness guard applies whether or
         // not a bound is declared, because `json.dumps` would otherwise write an
         // in-memory `inf`/`nan` out as bytes no other target can read (see
@@ -2036,16 +2245,7 @@ fn py_field_needs_serialize_check(schema: &Schema) -> bool {
         // the ±(2^53−1) cap has to be asserted before the value reaches the wire
         // whether or not a bound is declared.
         Some("integer") => true,
-        Some("array") => {
-            schema.min_items.is_some()
-                || schema.max_items.is_some()
-                || schema.unique_items == Some(true)
-                || schema.contains.is_some()
-                || schema
-                    .items
-                    .as_deref()
-                    .is_some_and(py_field_needs_serialize_check)
-        }
+        Some("array") => true,
         _ => false,
     }
 }
@@ -2090,6 +2290,92 @@ fn py_model_needs_serialize_validation(schema: &Schema) -> Result<bool> {
 enum PyCheckSide {
     Parse,
     Serialize,
+    SerializeTypeChecked,
+}
+
+/// Emits serialize constraints after the caller has proved the value's outer
+/// runtime kind. Arrays get an explicit `list[Any]` view so their constraints
+/// and recursive element checks never inherit trust from `list[T]`.
+fn render_py_type_checked_field_checks(
+    output: &mut String,
+    schema: &Schema,
+    models: &[&PlannedJsonType],
+    value_expr: &str,
+    path_expr: &str,
+    indent: &str,
+) -> Result<()> {
+    let checked_array = (schema.ty.as_ref().and_then(Value::as_str) == Some("array"))
+        .then(|| format!("checked_array_{}", indent.len()));
+    let checked_expr = checked_array.as_deref().unwrap_or(value_expr);
+    let mut body = String::new();
+    render_py_field_checks(
+        &mut body,
+        schema,
+        models,
+        checked_expr,
+        path_expr,
+        indent,
+        PyCheckSide::SerializeTypeChecked,
+    )?;
+    if body.is_empty() {
+        return Ok(());
+    }
+    if let Some(checked_array) = checked_array {
+        output.push_str(indent);
+        output.push_str(&format!(
+            "{checked_array} = typing.cast(\"list[typing.Any]\", {value_expr})\n"
+        ));
+    }
+    output.push_str(&body);
+    Ok(())
+}
+
+fn py_serialize_type_check(schema: &Schema, value_expr: &str) -> Option<(String, &'static str)> {
+    let schema = nullable_member_schema(schema).unwrap_or(schema);
+    if let Some(kind) = temporal_kind_direct(schema) {
+        use crate::json_schema::format::TemporalKind;
+        let predicate = match kind {
+            TemporalKind::DateTime => format!("isinstance({value_expr}, datetime.datetime)"),
+            TemporalKind::Date => format!(
+                "isinstance({value_expr}, datetime.date) and not isinstance({value_expr}, datetime.datetime)"
+            ),
+            TemporalKind::Time => format!("isinstance({value_expr}, datetime.time)"),
+            TemporalKind::Duration => format!("isinstance({value_expr}, datetime.timedelta)"),
+        };
+        return Some((
+            predicate,
+            match kind {
+                TemporalKind::DateTime => "expected date-time",
+                TemporalKind::Date => "expected date",
+                TemporalKind::Time => "expected time",
+                TemporalKind::Duration => "expected duration",
+            },
+        ));
+    }
+    if content_encoding_direct(schema).is_some() {
+        return Some((format!("isinstance({value_expr}, bytes)"), "expected bytes"));
+    }
+    match schema.ty.as_ref().and_then(Value::as_str) {
+        Some("string") => Some((format!("isinstance({value_expr}, str)"), "expected string")),
+        Some("boolean") => Some((
+            format!("isinstance({value_expr}, bool)"),
+            "expected boolean",
+        )),
+        Some("number") => Some((
+            format!(
+                "not isinstance({value_expr}, bool) and isinstance({value_expr}, (int, float))"
+            ),
+            "expected number",
+        )),
+        Some("integer") => Some((
+            format!(
+                "not isinstance({value_expr}, bool) and (isinstance({value_expr}, int) or (isinstance({value_expr}, float) and {value_expr}.is_integer()))"
+            ),
+            "expected integer",
+        )),
+        Some("array") => Some((format!("isinstance({value_expr}, list)"), "expected array")),
+        _ => None,
+    }
 }
 
 /// Emits the per-value constraint checks over an in-memory `value_expr`,
@@ -2114,6 +2400,31 @@ fn render_py_field_checks(
         return render_py_field_checks(
             output, non_null, models, value_expr, path_expr, indent, side,
         );
+    }
+    if side == PyCheckSide::Serialize
+        && let Some((predicate, reason)) = py_serialize_type_check(schema, value_expr)
+    {
+        let mut body = String::new();
+        render_py_type_checked_field_checks(
+            &mut body,
+            schema,
+            models,
+            value_expr,
+            path_expr,
+            &format!("{indent}    "),
+        )?;
+        output.push_str(indent);
+        output.push_str(&format!("if not ({predicate}):\n"));
+        output.push_str(indent);
+        output.push_str(&format!(
+            "    violations.append(Violation(path={path_expr}, reason=\"{reason}\"))\n"
+        ));
+        if !body.is_empty() {
+            output.push_str(indent);
+            output.push_str("else:\n");
+            output.push_str(&body);
+        }
+        return Ok(());
     }
     // An inline sum type narrows to the branch it holds and runs that branch's
     // own checks. An object branch validates through its own converter instead,
@@ -2188,7 +2499,7 @@ fn render_py_field_checks(
             // including this module's own. Serializing it would write bytes
             // nothing can read back (P12). Go emits the same assertion with the
             // same reason (`go.rs:2745-2762`).
-            if side == PyCheckSide::Serialize {
+            if side != PyCheckSide::Parse {
                 render_py_violation_if(
                     output,
                     indent,
@@ -2200,7 +2511,6 @@ fn render_py_field_checks(
             render_py_numeric_checks(output, value_expr, path_expr, schema, indent);
         }
         Some("array") => {
-            render_py_array_checks(output, value_expr, path_expr, schema, indent)?;
             if let Some(items) = schema.items.as_deref()
                 && py_field_needs_serialize_check(items)
             {
@@ -2227,7 +2537,11 @@ fn render_py_field_checks(
                     &element,
                     &item_path,
                     &check_indent,
-                    side,
+                    if side == PyCheckSide::Parse {
+                        PyCheckSide::Parse
+                    } else {
+                        PyCheckSide::Serialize
+                    },
                 )?;
                 // Some materialized schemas (for example `date`) report that
                 // they need serialize validation but their native helper proves
@@ -2245,6 +2559,7 @@ fn render_py_field_checks(
                     output.push_str(&checks);
                 }
             }
+            render_py_array_checks(output, value_expr, path_expr, schema, indent, true)?;
         }
         _ => {}
     }
@@ -2792,11 +3107,12 @@ fn classify_py_union(schema: &Schema, models: &[&PlannedJsonType]) -> Result<Opt
                 let (py_type, converter, union_base, memory_type, label) = match &branch.reference {
                     Some(reference) => {
                         let name = reference_model_name(reference);
-                        if is_union_type_name(&name) {
+                        let runtime_name = alias_runtime_name(&name);
+                        if is_union_type_name(&runtime_name) {
                             (
                                 name.clone(),
                                 None,
-                                Some(union_fn_base(&name)),
+                                Some(union_fn_base(&runtime_name)),
                                 Some(name.clone()),
                                 name,
                             )
@@ -3119,10 +3435,6 @@ fn render_py_union_object_branch(
     output.push_str("    return None\n");
 }
 
-/// The local a union's in-memory value is widened through before the
-/// no-branch-matched test. See [`render_py_union_value_checks`].
-const PY_UNION_CANDIDATE: &str = "candidate";
-
 /// Emits the constraint checks a union's **in-memory** value is held to, narrowed
 /// to the branch it holds: one guarded block per non-object branch that declares
 /// anything (P12), then the terminal test that *some* branch matched at all.
@@ -3138,14 +3450,13 @@ fn render_py_union_value_checks(
 ) -> Result<()> {
     for variant in union.variants.iter().filter(|variant| !variant.is_object) {
         let mut body = String::new();
-        render_py_field_checks(
+        render_py_type_checked_field_checks(
             &mut body,
             &variant.schema,
             models,
             value_expr,
             path_expr,
             &format!("{indent}    "),
-            PyCheckSide::Serialize,
         )?;
         if body.is_empty() {
             continue;
@@ -3161,28 +3472,23 @@ fn render_py_union_value_checks(
     // unreported it would serialize verbatim, emitting bytes every parser
     // (Python's own included) rejects, so it is the same aggregated violation the
     // parse side reports for an inadmissible wire token (P12: both directions run
-    // the same checks). The value is widened to `object` first: read through the
-    // declared union a closed set of guards can be provably exhaustive, which puts
-    // the violation in code pyright reports as unreachable — and the widening
-    // costs nothing, because the guards are the runtime tests either way. This
-    // test is also what makes the dispatch's unguarded last branch safe, so a
+    // the same checks). Serialize-side callers deliberately pass a `typing.Any`
+    // runtime-boundary local, so these guards test the value that actually arrived
+    // rather than trusting its annotation. This test is also what makes the
+    // dispatch's unguarded last branch safe, so a
     // union that has a serializer runs it inside that function rather than at the
     // enclosing member (see `render_union_serialize_function`).
     let mut guards: Vec<String> = union
         .variants
         .iter()
-        .map(|variant| py_negatable(&variant.memory_guard(PY_UNION_CANDIDATE)))
+        .map(|variant| py_negatable(&variant.memory_guard(value_expr)))
         .collect();
     if union.nullable {
-        guards.push(format!("{PY_UNION_CANDIDATE} is None"));
+        guards.push(format!("{value_expr} is None"));
     }
     if guards.is_empty() {
         return Ok(());
     }
-    output.push_str(indent);
-    output.push_str(&format!(
-        "{PY_UNION_CANDIDATE} = typing.cast(\"object\", {value_expr})\n"
-    ));
     output.push_str(indent);
     output.push_str(&format!("if not ({}):\n", guards.join(" or ")));
     output.push_str(indent);
@@ -3302,8 +3608,9 @@ fn render_union_serialize_function(
         "def {}(value: {member_type}) -> typing.Any:\n",
         union_serialize_fn(base)
     ));
+    output.push_str("    runtime_value: typing.Any = value\n");
     let mut checks = String::new();
-    render_py_union_value_checks(&mut checks, union, models, "value", "\"\"", "    ")?;
+    render_py_union_value_checks(&mut checks, union, models, "runtime_value", "\"\"", "    ")?;
     if !checks.is_empty() {
         output.push_str("    violations: list[Violation] = []\n");
         output.push_str(&checks);
@@ -3312,7 +3619,7 @@ fn render_union_serialize_function(
             "        raise temporalio.converter.create_payload_validation_error(violations)\n",
         );
     }
-    render_py_union_serialize(output, union, "value", "    ");
+    render_py_union_serialize(output, union, "runtime_value", "    ");
     Ok(())
 }
 
@@ -3672,10 +3979,10 @@ fn render_model_parser_body(
     output.push_str(&format!("return {}(\n", model.model_name));
     for field_name in &fields {
         // The member identifier names the keyword; the value comes off the
-        // property's slot local (see `parse_slot_local`).
+        // property's slot local (see `property_value_local`).
         output.push_str(&format!(
             "    {field_name}={},\n",
-            parse_slot_local(field_name)
+            property_value_local(field_name)
         ));
     }
     if open {
@@ -3707,6 +4014,7 @@ fn render_map_parser_body(
         // Free-form members are carried verbatim, `null` included (P13).
         None => output.push_str("    additional_properties[key] = raw[key]\n"),
         Some(value_schema) => {
+            output.push_str("    path = _member_path(key)\n");
             render_py_slot_declaration(output, "    ", "member", &shape.value_annotation);
             output.push_str("    member_raw = raw[key]\n");
             render_value_parser(
@@ -3714,7 +4022,7 @@ fn render_map_parser_body(
                 value_schema,
                 "member_raw",
                 "member",
-                "key",
+                "path",
                 "    ",
                 "member",
             )?;
@@ -3743,6 +4051,14 @@ fn render_model_serializer_body(
     // the wire object — both directions over one set of check emitters. A nested
     // conversion aggregates into the same list, so the violations declared here
     // also hold everything the members below report (P11).
+    output.push_str("runtime_value: typing.Any = value\n");
+    output.push_str(&format!(
+        "if not isinstance(runtime_value, {}):\n",
+        model.model_name
+    ));
+    output.push_str(
+        "    raise temporalio.converter.create_payload_validation_error([Violation(path=\"\", reason=\"expected object\")])\n",
+    );
     let needs_violations =
         py_model_needs_serialize_validation(schema)? || py_model_serialize_can_raise(schema)?;
     if needs_violations {
@@ -3751,20 +4067,40 @@ fn render_model_serializer_body(
     output.push_str("out: dict[str, typing.Any] = {}\n");
 
     if let Some(shape) = py_map_shape(schema)? {
-        output.push_str("for key, entry in value.additional_properties.items():\n");
+        output.push_str(
+            "additional_properties_value: typing.Any = runtime_value.additional_properties\n",
+        );
+        output.push_str("if not isinstance(additional_properties_value, dict):\n");
+        output.push_str(
+            "    raise temporalio.converter.create_payload_validation_error([Violation(path=\"\", reason=\"expected object\")])\n",
+        );
+        output.push_str(
+            "checked_additional_properties = typing.cast(\"dict[str, typing.Any]\", additional_properties_value)\n",
+        );
+        output.push_str("for key, entry in checked_additional_properties.items():\n");
         if let Some(value_schema) = &shape.value_schema {
-            render_py_member_check(output, value_schema, models, "entry", "key", "    ")?;
+            if serialize_expr(value_schema, "entry", 0) != "entry" {
+                output.push_str("    member_violation_count = len(violations)\n");
+            }
+            output.push_str("    path = _member_path(key)\n");
+            render_py_member_check(output, value_schema, models, "entry", "path", "    ")?;
         }
         match &shape.value_schema {
-            Some(value_schema) => render_py_serialize_value(
-                output,
-                value_schema,
-                PySerializeSink::Assign("out[key]"),
-                "entry",
-                "key",
-                "    ",
-                "entry",
-            )?,
+            Some(value_schema) => {
+                let gates_conversion = serialize_expr(value_schema, "entry", 0) != "entry";
+                if gates_conversion {
+                    output.push_str("    if len(violations) == member_violation_count:\n");
+                }
+                render_py_serialize_value(
+                    output,
+                    value_schema,
+                    PySerializeSink::Assign("out[key]"),
+                    "entry",
+                    "path",
+                    if gates_conversion { "        " } else { "    " },
+                    "entry",
+                )?;
+            }
             // Free-form members carry no declared shape to convert through.
             None => output.push_str("    out[key] = entry\n"),
         }
@@ -3786,14 +4122,16 @@ fn render_model_serializer_body(
     if let Some(properties) = &schema.properties {
         for (json_name, property) in properties {
             let field_name = property.py_member_name(json_name);
-            let value_expr = if property.default.is_some() {
-                format!("value._{field_name}")
+            let value_expr = property_value_local(&field_name);
+            let source_expr = if property.default.is_some() {
+                format!("runtime_value._{field_name}")
             } else {
-                format!("value.{field_name}")
+                format!("runtime_value.{field_name}")
             };
+            output.push_str(&format!("{value_expr}: typing.Any = {source_expr}\n"));
             let key = python_string_literal(json_name);
             let target = format!("out[{key}]");
-            let path_expr = python_string_literal(json_name);
+            let path_expr = python_violation_path_literal(json_name);
             // An optional member is emitted under an `is not None` guard, so the
             // nullability wrapper's own `None` branch is already ruled out and the
             // transform is taken straight from the member's non-null shape.
@@ -3817,8 +4155,17 @@ fn render_model_serializer_body(
                 )),
                 _ => None,
             };
-            let guarded = !required.contains(json_name);
-            let indent = if guarded {
+            let is_required = required.contains(json_name);
+            let requires_value = is_required && !allows_null(property);
+            let guarded = !is_required || requires_value;
+            let indent = if requires_value {
+                output.push_str(&format!("if {value_expr} is None:\n"));
+                output.push_str(&format!(
+                    "    violations.append(Violation(path={path_expr}, reason=\"required\"))\n"
+                ));
+                output.push_str("else:\n");
+                "    "
+            } else if guarded {
                 // Absent and explicit `null` collapsed to `None` on the way in,
                 // so both re-serialize as omitted.
                 output.push_str(&format!("if {value_expr} is not None:\n"));
@@ -3826,9 +4173,29 @@ fn render_model_serializer_body(
             } else {
                 ""
             };
+            let gates_conversion =
+                inline_union.is_some() || serialize_expr(emitted, &value_expr, 0) != value_expr;
+            let violation_count = format!("{field_name}_violation_count");
+            if gates_conversion {
+                output.push_str(indent);
+                output.push_str(&format!("{violation_count} = len(violations)\n"));
+            }
             render_py_serialize_property_check(
-                output, json_name, property, models, guarded, indent,
+                output,
+                json_name,
+                property,
+                models,
+                &value_expr,
+                guarded,
+                indent,
             )?;
+            let conversion_indent = if gates_conversion {
+                output.push_str(indent);
+                output.push_str(&format!("if len(violations) == {violation_count}:\n"));
+                format!("{indent}    ")
+            } else {
+                indent.to_string()
+            };
             match inline_union {
                 // Every union serializer validates before dispatching, so the
                 // call always needs its violations re-pathed under this member.
@@ -3837,7 +4204,7 @@ fn render_model_serializer_body(
                     PySerializeSink::Assign(&target),
                     &call,
                     &path_expr,
-                    indent,
+                    &conversion_indent,
                 ),
                 None => render_py_serialize_value(
                     output,
@@ -3845,32 +4212,54 @@ fn render_model_serializer_body(
                     PySerializeSink::Assign(&target),
                     &value_expr,
                     &path_expr,
-                    indent,
+                    &conversion_indent,
                     &field_name,
                 )?,
             }
         }
     }
     if is_open_object(schema) {
-        output.push_str("for key, entry in value.additional_properties.items():\n");
+        output.push_str(
+            "additional_properties_value: typing.Any = runtime_value.additional_properties\n",
+        );
+        output.push_str("if not isinstance(additional_properties_value, dict):\n");
+        output.push_str(
+            "    raise temporalio.converter.create_payload_validation_error([Violation(path=\"\", reason=\"expected object\")])\n",
+        );
+        output.push_str(
+            "checked_additional_properties = typing.cast(\"dict[str, typing.Any]\", additional_properties_value)\n",
+        );
+        output.push_str("for key, entry in checked_additional_properties.items():\n");
+        output.push_str("    path = _member_path(key)\n");
         output.push_str(&format!(
             "    if key in {}:\n",
             declared_fields_const_name(&model.model_name)
         ));
         output.push_str(
-            "        violations.append(Violation(path=key, reason=\"additional property collides with declared property\"))\n",
+            "        violations.append(Violation(path=path, reason=\"additional property collides with declared property\"))\n",
         );
         output.push_str("    else:\n");
         match typed_additional_properties_schema(schema)? {
             Some(value_schema) => {
-                render_py_member_check(output, &value_schema, models, "entry", "key", "        ")?;
+                let gates_conversion = serialize_expr(&value_schema, "entry", 0) != "entry";
+                if gates_conversion {
+                    output.push_str("        member_violation_count = len(violations)\n");
+                }
+                render_py_member_check(output, &value_schema, models, "entry", "path", "        ")?;
+                if gates_conversion {
+                    output.push_str("        if len(violations) == member_violation_count:\n");
+                }
                 render_py_serialize_value(
                     output,
                     &value_schema,
                     PySerializeSink::Assign("out[key]"),
                     "entry",
-                    "key",
-                    "        ",
+                    "path",
+                    if gates_conversion {
+                        "            "
+                    } else {
+                        "        "
+                    },
                     "entry",
                 )?;
             }
@@ -3971,12 +4360,6 @@ fn render_py_serialize_value(
     indent: &str,
     slot: &str,
 ) -> Result<()> {
-    if !py_serialize_can_raise(schema) {
-        output.push_str(indent);
-        output.push_str(&sink.statement(&serialize_expr(schema, value_expr, 0)));
-        output.push('\n');
-        return Ok(());
-    }
     // A nullability wrapper: `None` is the wire value, and the non-null branch
     // carries the conversion.
     if let Some(non_null) = nullable_member_schema(schema) {
@@ -3998,9 +4381,24 @@ fn render_py_serialize_value(
             slot,
         );
     }
-    if schema.ty.as_ref().and_then(Value::as_str) == Some("array")
-        && let Some(items) = schema.items.as_deref()
-    {
+    if schema.ty.as_ref().and_then(Value::as_str) == Some("array") {
+        let checked_local = format!("{slot}_checked");
+        output.push_str(indent);
+        output.push_str(&format!(
+            "{checked_local} = typing.cast(\"list[typing.Any]\", {value_expr})\n"
+        ));
+        let Some(items) = schema.items.as_deref() else {
+            output.push_str(indent);
+            output.push_str(&sink.statement(&checked_local));
+            output.push('\n');
+            return Ok(());
+        };
+        if !py_serialize_can_raise(items) {
+            output.push_str(indent);
+            output.push_str(&sink.statement(&serialize_expr(schema, &checked_local, 0)));
+            output.push('\n');
+            return Ok(());
+        }
         // Elementwise, so a bad element is reported at its own index and the rest
         // of the list is still converted (P11).
         let list_local = format!("{slot}_out");
@@ -4010,7 +4408,7 @@ fn render_py_serialize_value(
         output.push_str(&format!("{list_local}: list[typing.Any] = []\n"));
         output.push_str(indent);
         output.push_str(&format!(
-            "for {index_local}, {element_local} in enumerate({value_expr}):\n"
+            "for {index_local}, {element_local} in enumerate({checked_local}):\n"
         ));
         let loop_body = format!("{indent}    ");
         render_py_serialize_value(
@@ -4024,6 +4422,12 @@ fn render_py_serialize_value(
         )?;
         output.push_str(indent);
         output.push_str(&sink.statement(&list_local));
+        output.push('\n');
+        return Ok(());
+    }
+    if !py_serialize_can_raise(schema) {
+        output.push_str(indent);
+        output.push_str(&sink.statement(&serialize_expr(schema, value_expr, 0)));
         output.push('\n');
         return Ok(());
     }
@@ -4076,14 +4480,14 @@ fn render_py_serialize_property_check(
     json_name: &str,
     property: &Schema,
     models: &[&PlannedJsonType],
+    value_expr: &str,
     guarded: bool,
     indent: &str,
 ) -> Result<()> {
     if classify_py_union(property, models)?.is_some_and(|union| union.needs_serializer()) {
         return Ok(());
     }
-    let value_expr = format!("value.{}", property.py_member_name(json_name));
-    let path_expr = python_string_literal(json_name);
+    let path_expr = python_violation_path_literal(json_name);
     let guard_null = allows_null(property) && !guarded;
     let body_indent = if guard_null {
         format!("{indent}    ")
@@ -4095,7 +4499,7 @@ fn render_py_serialize_property_check(
         &mut body,
         property,
         models,
-        &value_expr,
+        value_expr,
         &path_expr,
         &body_indent,
         PyCheckSide::Serialize,
@@ -4162,11 +4566,11 @@ fn render_property_parser(
     required: bool,
 ) -> Result<()> {
     // Every local this position binds hangs off the property's slot name, never
-    // off the member identifier itself (see `parse_slot_local`).
-    let slot = parse_slot_local(&property.py_member_name(json_name));
+    // off the member identifier itself (see `property_value_local`).
+    let slot = property_value_local(&property.py_member_name(json_name));
     let member_type = annotation(property)?;
     let key = python_string_literal(json_name);
-    let path_expr = python_string_literal(json_name);
+    let path_expr = python_violation_path_literal(json_name);
     let raw_local = format!("{slot}_raw");
     let nullable = allows_null(property);
 
@@ -4224,7 +4628,7 @@ fn render_property_value_parser(
     raw_expr: &str,
     indent: &str,
 ) -> Result<()> {
-    let path_expr = python_string_literal(json_name);
+    let path_expr = python_violation_path_literal(json_name);
     // An inline `oneOf` sum type dispatches through the module's union parser (a
     // `$ref` at a named union routes through the reference path below).
     if classify_py_union(property, models)?.is_some() {
@@ -4262,12 +4666,13 @@ fn render_value_parser(
 ) -> Result<()> {
     if let Some(reference) = &schema.reference {
         let model_name = reference_model_name(reference);
-        if is_union_type_name(&model_name) {
+        let runtime_name = alias_runtime_name(&model_name);
+        if is_union_type_name(&runtime_name) {
             let parsed = format!("{slot}_parsed");
             output.push_str(indent);
             output.push_str(&format!(
                 "{parsed} = {}({raw_expr}, {path_expr}, violations)\n",
-                union_parse_fn(&union_fn_base(&model_name))
+                union_parse_fn(&union_fn_base(&runtime_name))
             ));
             output.push_str(indent);
             output.push_str(&format!("if {parsed} is not None:\n"));
@@ -4863,7 +5268,7 @@ fn render_py_array_elements(
     // outer quote inside an f-string replacement field is PEP 701, which is
     // Python 3.12+, and the declared floor is 3.10.
     let raw_array = format!("typing.cast('list[typing.Any]', {raw_expr})");
-    render_py_array_checks(output, &raw_array, path_expr, schema, &body)?;
+    render_py_array_checks(output, &raw_array, path_expr, schema, &body, false)?;
     Ok(list_local)
 }
 
@@ -4881,11 +5286,15 @@ fn render_closed_object_unknown_key_check(output: &mut String, schema: &Schema) 
     output.push_str("for key in raw:\n");
     if fields.is_empty() {
         // A closed object with no declared members admits nothing at all.
-        output.push_str("    violations.append(Violation(path=key, reason=\"unknown field\"))\n");
+        output.push_str(
+            "    violations.append(Violation(path=_member_path(key), reason=\"unknown field\"))\n",
+        );
         return;
     }
     output.push_str(&format!("    if {}:\n", fields.join(" and ")));
-    output.push_str("        violations.append(Violation(path=key, reason=\"unknown field\"))\n");
+    output.push_str(
+        "        violations.append(Violation(path=_member_path(key), reason=\"unknown field\"))\n",
+    );
 }
 
 fn render_open_object_collection(
@@ -4907,6 +5316,7 @@ fn render_open_object_collection(
     match value_schema {
         None => output.push_str("        additional_properties[key] = raw[key]\n"),
         Some(value_schema) => {
+            output.push_str("        path = _member_path(key)\n");
             render_py_slot_declaration(output, "        ", "member", &value_annotation);
             output.push_str("        member_raw = raw[key]\n");
             output.push_str("        member_violation_count = len(violations)\n");
@@ -4915,7 +5325,7 @@ fn render_open_object_collection(
                 &value_schema,
                 "member_raw",
                 "member",
-                "key",
+                "path",
                 "        ",
                 "member",
             )?;
@@ -4933,10 +5343,11 @@ fn render_open_object_collection(
 fn serialize_expr(schema: &Schema, value_expr: &str, depth: usize) -> String {
     if let Some(reference) = &schema.reference {
         let model_name = reference_model_name(reference);
-        if is_union_type_name(&model_name) {
+        let runtime_name = alias_runtime_name(&model_name);
+        if is_union_type_name(&runtime_name) {
             return format!(
                 "{}({value_expr})",
-                union_serialize_fn(&union_fn_base(&model_name))
+                union_serialize_fn(&union_fn_base(&runtime_name))
             );
         }
         return format!(

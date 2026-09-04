@@ -62,8 +62,8 @@ Rationale (citing [[PRINCIPLES.md]]):
 - **P14 / P15 ([[generated-file-layout]])**: bindings emit into the
   declaring file's module (Java the one-class-per-file exception); every
   synthesized identifier and I/O type name enters the collision pass for
-  that module — which in Go is the whole package, since every module
-  flattens into one.
+  its scope — run-wide for Go, TypeScript and Python, the declaring package
+  for Java.
 
 ## Document gating
 
@@ -228,15 +228,15 @@ signature, validation, or dispatch behavior. A non-boolean value rejects.
 
 | Aspect | Go | TypeScript | Python | Java |
 |---|---|---|---|---|
-| Service binding | pkg-level `var <Name> = struct{…}{…}` | `export const <name> = nexus.service(fqn, {…})` | `@nexusrpc.service(name=fqn)` class | `@Service(name=fqn)` interface |
-| Operation entry | field `nexus.OperationReference[In, Out]` set via `nexus.NewOperationReference[In,Out](wire)` | `nexus.operation<In, Out>({ name: wire, inputType, outputType })` | attr `nexusrpc.Operation[In, Out] = nexusrpc.Operation(name=wire)` | method `Out m(In input)` + `@Operation(name=wire)` |
+| Service binding | pkg-level `var <Name> = struct{…}{…}` | `export const <name> = nexus.service(fqn, {…})` | `@service(name=fqn)` class | `@Service(name=fqn)` interface |
+| Operation entry | field `nexus.OperationReference[In, Out]` set via `nexus.NewOperationReference[In,Out](wire)` | `nexus.operation<In, Out>({ name: wire, inputType, outputType })` | attr `Operation[In, Out] = Operation(name=wire)` | method `Out m(In input)` + `@Operation(name=wire)` |
 | Operation type info | — | `inputType`/`outputType` carry the I/O type's transfer type converter (below) | — | — |
 | Service wire name | `ServiceName` struct field | first arg to `nexus.service` | `service(name=…)` | `@Service(name=…)` |
 | Void output | `nexus.NoValue` | `void` | `None` | `void` return |
 | Void input | `nexus.NoValue` | `void` | `None` | **no-arg method** `Out m()` |
 | Deprecated | godoc `Deprecated:` paragraph | JSDoc `@deprecated` | PEP 702 `typing_extensions.deprecated(..., category=None)` | `@Deprecated` + Javadoc `@deprecated` |
-| Import | `github.com/nexus-rpc/sdk-go/nexus` | `nexus-rpc` | `nexusrpc` | `io.nexusrpc.{Service,Operation}` |
-| File | declaring module's `<module>.go` | `<module>.ts` | `<module>.py` | **own `<Service>.java`** |
+| Import | `github.com/nexus-rpc/sdk-go/nexus` | `nexus-rpc` | `from nexusrpc import Operation, service` | `io.nexusrpc.{Service,Operation}` |
+| File | declaring module's `<module>.go` | `services.ts` | `services.py` | **own `<Service>.java`** |
 
 ### Verified SDK signatures
 
@@ -252,8 +252,8 @@ signature, validation, or dispatch behavior. A non-boolean value rejects.
   `interface TransferTypeConverter<T, D = unknown> { fromTransferType(value:
   D): T; toTransferType(value: T): D }` — confirmed by the existing
   generator's compiling output.
-- **Python** (`nexusrpc`): `@nexusrpc.service` /
-  `@nexusrpc.service(name=…)` (name defaults to the class name);
+- **Python** (`nexusrpc`): `@service` /
+  `@service(name=…)` (name defaults to the class name);
   `Operation[InputT, OutputT]` dataclass, `Operation(name=…)`. **No
   `NoValue`** — void is `None` / `type(None)`.
 - **Java** (`io.nexusrpc`): `@Service` on an **interface**, `String
@@ -262,6 +262,30 @@ signature, validation, or dispatch behavior. A non-boolean value rejects.
   the unqualified method name); a method takes **zero or one** convertible
   param (zero ⇒ absent input) and returns `void` (absent output) or a
   convertible type, no `throws`.
+
+### The Go `--native-api` client
+
+In `--native-api` mode Go emits, beside the `var <Service>` binding, a
+workflow-side client per service:
+
+```go
+type <Service>Client struct{ client workflow.NexusClient }
+
+func New<Service>Client(endpoint string) *<Service>Client
+func (c *<Service>Client) <Op>(ctx workflow.Context, request In) workflow.Future
+```
+
+`<Service>` is the resolved Go service identifier, so an `x-go-name` moves the
+client with the binding, and `<Op>` is the operation's Go field identifier; a
+void-input operation takes no `request` parameter. This is the only place
+generated Go depends on `go.temporal.io/sdk/workflow`; definitions-only mode
+emits none of it.
+
+`<Service>Client` and `New<Service>Client` are synthesized from the service key,
+so per **P15** they are in the collision pass like any other name: a
+`$defs/AlphaClient` beside a service `Alpha` is a load reject, not a Go
+redeclaration. The pass runs over the same namespace in both modes, so a
+document does not load in one mode and emit uncompilable output in the other.
 
 ## Worked example
 
@@ -320,21 +344,21 @@ export const chatService = nexus.service("example.v1.ChatService", {
 ### Python
 
 ```python
-import nexusrpc
+from nexusrpc import Operation, service
 
 
-@nexusrpc.service(name="example.v1.ChatService")
+@service(name="example.v1.ChatService")
 class ChatService:
     """
     A service for sending chat messages.
     """
 
-    poll_messages: nexusrpc.Operation[PollMessagesInput, PollMessagesOutput] = nexusrpc.Operation(name="poll-messages")
+    poll_messages: Operation[PollMessagesInput, PollMessagesOutput] = Operation(name="poll-messages")
     """
     Poll for new messages.
     """
 
-    send_message: nexusrpc.Operation[SendMessageInput, None] = nexusrpc.Operation(name="SendMessage")
+    send_message: Operation[SendMessageInput, None] = Operation(name="SendMessage")
     """
     Send a message.
     """
@@ -395,9 +419,8 @@ type position.
   hatch is renaming the `$defs` type or switching the operation to a
   `$ref`.
 - The **TS service const is `camelCase`** (`chatService`) — a value
-  binding, recased like an operation/member. (The existing WIT generator
-  emits PascalCase `UserService`; that is **wrong** and must be fixed to
-  match this spec.) Go `var`, Python `class`, and Java `interface` keep
+  binding, recased like an operation/member. The shared WIT and JSON Schema
+  emitter uses this form. Go `var`, Python `class`, and Java `interface` keep
   the PascalCase service identifier (the key), which their regex already
   guarantees.
 - `description` → doc comment per target (Go `//`, TS/Java JSDoc/JavaDoc
@@ -407,21 +430,24 @@ type position.
 
 Per [[generated-file-layout]]:
 
-- A service binding emits into the **same per-input module** as the
-  models declared in that file (Go `<module>.go`, Python `<module>.py`,
-  TS `<module>.ts`). Synthesized `<Op>Input`/`<Op>Output` types are
-  ordinary types in that module.
+- A service binding emits into the **same per-input module directory** as the
+  models declared in that file: Go places both in `<module>.go`, while Python
+  and TypeScript use sibling `services.py` / `services.ts` files beside
+  `models.py` / `models.ts`. Synthesized `<Op>Input`/`<Op>Output` types are
+  ordinary model types in that module.
 - **Java** is the exception: each service is its **own `<Service>.java`**
   (one-public-class-per-file), exactly as each model is its own file.
-- Aggregators re-export services: `index.ts` (`export … from
-  './<module>'`), `__init__.py` (`__all__`). Go/Java rely on exported
+- Aggregators re-export services: `index.ts` re-exports `./services` and
+  `__init__.py` includes them in `__all__`. Go/Java rely on exported
   visibility (capitalized / `public`).
-- Service identifiers, operation field identifiers, and synthesized I/O
-  type names all live in the identifier namespace of the **declaring
-  module** (P15) — package-wide in Go, where every module flattens into one
-  package — and are checked **per emitted target** (normalization differs
-  per language, like [[properties]] / [[ref]]). A service declared in a
-  non-root input file is checked in that file's module, not the root's.
+- Service identifiers and synthesized I/O type names live in the declaring
+  module's identifier namespace and are checked **per emitted target**: the
+  scope is run-wide for Go, TypeScript and Python (flat package or root barrel)
+  and the declaring package for Java; see [[generated-file-layout]] and P15.
+- **Operation identifiers are members, not module-level bindings** — a Go struct
+  field, a TypeScript object key, a Python class attribute, a Java interface
+  method — so they share one scope **per service** and are checked there. An
+  operation `page` beside a `$defs/Page` in the same module does not collide.
 
 > **A generated service and a generated model that resolve to the same
 > identifier collide, and the generator fails the build (P7.1/P15).** A
@@ -442,6 +468,34 @@ Per [[generated-file-layout]]:
 > (the `fqn` wire name is unaffected — only the *code identifier*
 > collides). The check runs per emitted target, so a pair that collides
 > in one language may be fine in another and still rejects.
+
+**Two services collide too.** The key grammar admits both `HTTPService` and
+`HttpService`, which resolve to one identifier, so the check compares the
+**authored keys** and not the identifiers they fold to: a second service landing
+on an identifier another service in the same module already claims is a reject
+naming both keys, never a re-insertion of "the same" service. Python is why this
+cannot be left to the target — one module gets two `class HttpService:`
+statements, the later definition silently replaces the earlier, and one whole
+service binding is gone from the package with no diagnostic. This is the P15
+case-mapping rule applied to service keys.
+
+**A service file's imports occupy its namespace.** P15 makes an imported bare
+name reserved against everything else in the scope; what this spec supplies is
+*which* names each target's service file imports:
+
+| Target | Imported bare names |
+|---|---|
+| Go | `nexus` |
+| TypeScript | `nexus` |
+| Python | `Operation`, `service` |
+| Java | `Operation`, `Service` |
+
+Two routes reach them, and both are load rejects. An `x-<lang>-name` on a
+service or operation may name one directly. And a `$defs` model may be named
+`Operation` or `Service` with no override anywhere, entering the service file
+because an operation's `input`/`output` points at it — so the reservation covers
+model and synthesized I/O names reached through operation I/O, not only service
+identifiers.
 
 ## Validator / serializer (P12)
 
@@ -501,13 +555,11 @@ existing, tested output so the **future separate crate** can share the
 emission code rather than duplicate it:
 
 - Python `@service` + `Operation[...]` class attrs
-  (`examples/python/user_service/service.py`) and TS `nexus.service(...,
+  (`advanced/samples/python/wit/user_service/services.py`) and TS `nexus.service(...,
   { op: nexus.operation<…>({ name }) })`
-  (`examples/typescript/user-service/service.ts`) already match this
-  spec's shapes — the emitters are the reuse target. **One fix is owed in
-  the WIT generator:** its TS service const is PascalCase
-  (`UserService`); this spec mandates `camelCase` (`userService`), so the
-  shared emitter must recase it.
+  (`advanced/samples/typescript/wit/user-service/services.ts`) already match
+  this spec's shapes through the shared emitters, including the camelCase TS
+  service const.
 - Only the **input model** differs (JSON Schema here vs WIT there); none
   of WIT's input-side concepts (directives, proto backing, resources)
   cross into this spec. The TS transfer type converter wiring (below) is
@@ -534,6 +586,7 @@ emission code rather than duplicate it:
 | Acronym op name | `sendHTTPRequest` → field `SendHttpRequest`, type `SendHttpRequestInput` (folded; `x-*-name` to refine) |
 | `x-<lang>-name` on a service/op | code identifier overridden verbatim for that target; wire `fqn` independent |
 | `x-<lang>-name` on an operation | method/field renamed; synthesized `<Op>Input`/`Output` names still from the op key |
+| Operation identifier equal to a module type name | operation `page` + a `$defs/Page` in the same module — a member and a type, different scopes |
 
 ### Rejected at load time (negative)
 
@@ -542,11 +595,16 @@ emission code rather than duplicate it:
 | Service name regex | `chatService` / `Chat_Service` / `9Service` |
 | Service with no operations (P7.1) | `operations:` omitted, or an empty `operations: {}` |
 | Operation name regex | `PollMessages` / `poll_messages` / `2fa` |
+| Operation identifiers collide after target recasing | two operation keys that map to the same emitted method/field identifier |
+| Duplicate operation wire name | two operations in one service whose `fqn` values are equal |
 | Inline I/O without shape (P7.1) | `input: {}` / `input: {type: object}` (no `properties`/`additionalProperties`) |
 | Non-object I/O (inline) | `input: {type: string}` / `input: {type: array, …}` |
 | Non-object I/O (`$ref`) | `input: {$ref: '#/$defs/Y'}` where `Y` is not `type: object` |
 | Synthesized name collides | inline `sendMessage.input` + a `$defs/SendMessageInput` |
 | Service collides with a model | service `ChatService` + a `$defs/ChatService` model (same per-package identifier) |
+| Two service keys resolve to one identifier | `HTTPService` + `HttpService` in one document (Python would emit one `class HttpService:` twice) |
+| Identifier collides with a service file's SDK import | a `$defs/Operation` used as an operation's I/O; `x-py-name: Operation` on a service |
+| Go client identifier collides | `$defs/AlphaClient` beside service `Alpha` |
 | TS converter identifiers fold together | `$defs/HTTPError` (kept verbatim by `x-ts-name`) + `$defs/HttpError` → one `httpErrorTransferTypeConverter` |
 | `$ref` I/O unresolvable / non-`$defs` | `input: {$ref: '#/properties/x'}` — per [[ref]] |
 | Identifier invalid/reserved in an emitted lang (no override) | a service/op key mapping to a reserved word |

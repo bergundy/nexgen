@@ -60,11 +60,23 @@ public final class GetPageInput {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<GetPageInput> {
         @Override
         public void serialize(GetPageInput value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
+            List<Violation> violations = new ArrayList<>();
+            if (value.pageId == null) {
+                violations.add(new Violation("pageId", "required"));
+            }
+            if (!violations.isEmpty()) {
+                // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
+                throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+            }
             gen.writeStartObject();
             if (value.pageId != null) {
                 gen.writeStringField("pageId", value.pageId);
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -81,11 +93,12 @@ public final class GetPageInput {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "pageId":
                         break;
                     default:
-                        violations.add(new Violation(key, "unknown field"));
+                        violations.add(new Violation(path, "unknown field"));
                 }
             }
             String pageId = null;

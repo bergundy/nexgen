@@ -2,3 +2,4 @@
 
 export { chatService, ChatServiceClient } from "./services";
 export type { GetRoomInput, Room, SendMessageInput, SendMessageOutput } from "./models";
+export type { Violation } from "./definitions";

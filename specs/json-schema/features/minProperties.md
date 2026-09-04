@@ -32,6 +32,13 @@ Lowers to a boundary count check; no effect on emitted types. Citing
 Loader behavior:
 - Value not a non-negative integer (honors `1.0`-as-integer + the
   integer cap, see [[type]]) → reject.
+- The portable count ceiling from [[maxItems]] applies, and so does the
+  `long`-literal obligation the ceiling does not discharge: a bound in
+  `[2^31, 2^53−1]` does not compile in Java unless the emitter suffixes the
+  literal.
+- The keyword requires `type: "object"`; a missing or different type rejects
+  at load time under **P7.1**. One diagnostic covers the four object-constraint
+  keywords.
 - `minProperties: 0` → accepted (no-op; equals omission).
 - `minProperties > maxProperties` (both present) → reject
   (unsatisfiable).
@@ -39,6 +46,39 @@ Loader behavior:
   ever have — i.e. a closed object ([[additionalProperties]] `false`)
   with fewer declared [[properties]] than `minProperties` → reject
   (unsatisfiable). Diagnostic names the gap.
+- **The floor is reconciled against every keyword that caps the key space**, not
+  only the closed-object case above: a `minProperties` above the largest
+  inhabitable key count is a load reject whatever imposes the cap. Besides
+  `additionalProperties: false` with a declared member set, that is a
+  [[propertyNames]] whose key language is **finite and enumerable** — an `enum`,
+  or a `maxLength: 0` — which closes the key space to a countable set exactly as
+  a declared member list does. A key space bounded only by a [[pattern]] is not
+  required to be counted; the rule reaches the cases decidable by enumeration,
+  and no others. The count keywords own this duty because the count is what
+  makes the combination decidable, so the capping keyword's own spec need not
+  restate it. The mirror duty for the upper bound is in [[maxProperties]].
+  **Status: implemented** for both enumerable forms, including the zero-or-one
+  capacity of `maxLength: 0` after its sibling key assertions are applied.
+
+**Which object is counted, in both directions.** The count is over the **wire
+object at the boundary being validated**: inbound, the raw decoded object before
+default population; outbound, the object the encoder will actually write. A
+member the encoder omits is not a wire key and does not count — that covers an
+unset default, and in TypeScript any value the encoder drops (`undefined`, a
+function, a `toJSON` returning `undefined`) or replaces (a `toJSON` returning
+another object). **P12.2** names the failure mode directly: a predicate that
+counts wire keys on one side and in-memory fields on the other is not
+conformant, however the two sides share code.
+
+**Optional+nullable reconciliation.** A positive `minProperties` beside an
+optional nullable declared member rejects at load. An explicit `null` for that
+member is a wire key inbound, but Go, Java and Python deliberately collapse it
+to the same in-memory state as absence and omit it outbound; TypeScript retains
+it. Accepting the combination would therefore change validation semantics,
+which **P1**'s fidelity exception does not license. Make the member required or
+non-nullable, or remove the floor. `minProperties: 0` is still accepted because
+it asserts nothing. The check follows bare `$ref` aliases to the nullable
+definition, so moving the wrapper into `$defs` does not evade the rule.
 
 ## Type mapping
 
@@ -58,8 +98,8 @@ comparison:
 
 | Language | Strategy |
 |---|---|
-| Go | `UnmarshalJSON` counts decoded members (wire keys, pre-population) and hands the count to the shared `Validate`, whose `< min` predicate raises `Violation{Reason: fmt.Sprintf("must have at least %d properties, got %d", min, n)}`; collected into one `PayloadValidationError` application failure. |
-| TypeScript | count `Object.keys(parsed).length` on the raw parsed wire object (before defaults applied); the shared `Validate`'s `< min` check pushes ``Violation{path, reason: `must have at least ${min} properties, got ${n}`}`` + throw one `PayloadValidationError` application failure. |
+| Go | `UnmarshalJSON` applies the predicate to the raw wire-key count; `Validate` applies the same comparison and reason to the key set `MarshalJSON` will write. |
+| TypeScript | `fromTransferType` applies the predicate to the wire object's own enumerable keys; `toTransferType` applies it to the keys the outbound conversion will actually emit. The comparison is inlined in each converter. |
 | Python | `from_transfer_type` counts `len(raw)` on the raw wire dict — one number over the wire object, taken before any default is materialized — and appends `Violation(path="", reason=f"must have at least {min} properties, got {n}")` when `n < min`, into the single generated `PayloadValidationError` application failure. |
 | Java | the per-POJO collecting deserializer (PRINCIPLES Java §5) counts distinct keys in the parsed tree (`< min`) — one number over the wire object, **not** POJO fields + catch-all map summed post-bind; a violation joins the single `PayloadValidationError` application failure. |
 
@@ -91,8 +131,11 @@ an under-floor object; in Python the count is `len(out)` on the dict
 | Reason | Example |
 |---|---|
 | Not non-negative integer | `minProperties:-1`, `minProperties:1.5`, `minProperties:"1"` |
+| Missing/mismatched object type | `{minProperties:1}`, `{type:"array", minProperties:1}` |
 | `> maxProperties` | `minProperties:5, maxProperties:2` |
 | Unsatisfiable on closed object | `properties:{a:{…}}, additionalProperties:false, minProperties:2` |
+| Unsatisfiable against a finite key space | `additionalProperties:true, propertyNames:{type:string, enum:["a","b"]}, minProperties:3` |
+| Optional nullable member loses wire presence | `properties:{a:{oneOf:[{type:string},{type:null}]}}, minProperties:1` |
 
 ### Runtime fixtures (validator)
 
@@ -112,6 +155,12 @@ an under-floor object; in Python the count is `len(out)` on the dict
 - **[[additionalProperties]] `false`**: caps how many members can exist;
   a `minProperties` above the declared count is then unsatisfiable
   (load error).
+- **[[propertyNames]]**: composes freely with the count, and a finite key
+  language (an `enum`, a `maxLength: 0`) caps the count the same way a declared
+  member set does — reconciled here, per the loader-behavior rule above.
+- **[[nullability]]**: a positive floor beside an optional nullable declared
+  member rejects at load, preventing the three-target presence collapse from
+  changing the outbound count.
 - **`default`**: `default` is an annotation, not an assertion — a
   default-filled key is never on the wire, so it does **not** count
   toward the floor. The count is taken before default population

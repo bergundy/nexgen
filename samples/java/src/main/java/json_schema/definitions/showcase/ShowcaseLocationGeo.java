@@ -74,6 +74,9 @@ public final class ShowcaseLocationGeo {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<ShowcaseLocationGeo> {
         @Override
         public void serialize(ShowcaseLocationGeo value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
             if (value.lat != null) {
                 if (!Double.isFinite(value.lat)) {
@@ -95,7 +98,7 @@ public final class ShowcaseLocationGeo {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -117,6 +120,7 @@ public final class ShowcaseLocationGeo {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -134,6 +138,7 @@ public final class ShowcaseLocationGeo {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "lat":
                     case "lon":

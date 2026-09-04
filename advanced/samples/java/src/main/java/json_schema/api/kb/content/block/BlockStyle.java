@@ -71,6 +71,9 @@ public final class BlockStyle {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<BlockStyle> {
         @Override
         public void serialize(BlockStyle value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
             if (value.indent != null) {
                 if (value.indent < -SpecNumbers.INTEGER_CAP || value.indent > SpecNumbers.INTEGER_CAP) {
@@ -92,6 +95,7 @@ public final class BlockStyle {
                 gen.writeNumberField("indent", value.indent);
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -108,12 +112,13 @@ public final class BlockStyle {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "bold":
                     case "indent":
                         break;
                     default:
-                        violations.add(new Violation(key, "unknown field"));
+                        violations.add(new Violation(path, "unknown field"));
                 }
             }
             Boolean bold = null;

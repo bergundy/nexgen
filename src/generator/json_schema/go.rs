@@ -10,10 +10,11 @@ use crate::error::{Error, Result};
 use crate::generator::ExternalModelBackend;
 use crate::generator::go::{
     GoPackageContext, PlannedMessageSource, PlannedMessageType, PlannedValueType, go_field_name,
-    go_string_literal, render_go_doc_comment as render_wrapped_go_doc_comment,
+    render_go_doc_comment as render_wrapped_go_doc_comment,
 };
+use crate::generator::json_schema::bare_ref_target;
 use crate::generator::json_schema::build_json_name_manifest;
-use crate::generator::json_schema::register_cross_module_ref_names;
+use crate::generator::json_schema::{register_cross_module_ref_names, violation_member_segment};
 use crate::json_schema::scalar::{ScalarKind, ScalarMatcher};
 use crate::language::Language;
 use crate::parser::NameManifest;
@@ -82,6 +83,17 @@ struct Schema {
     x_go_const_name: Option<String>,
     #[serde(rename = "x-go-enum-names")]
     x_go_enum_names: Option<IndexMap<String, String>>,
+}
+
+/// A JSON string literal is also a valid interpreted Go string literal. Using
+/// JSON escaping here avoids Rust `Debug`'s `\u{...}` spelling, which Go does
+/// not accept for non-printable Unicode scalars.
+fn go_string_literal(value: &str) -> String {
+    serde_json::to_string(value).expect("a Rust string is always JSON-serializable")
+}
+
+fn go_violation_path_literal(key: &str) -> String {
+    go_string_literal(&violation_member_segment(key))
 }
 
 impl Schema {
@@ -293,128 +305,143 @@ fn go_unexported(name: &str) -> String {
     }
 }
 
-/// The package-level compiled-regex var name for a `pattern` on `json_name` of
-/// `model_name` — unique per (model, field) so the pattern compiles once at
-/// package init (the load-time gate already proved it compiles). See
-/// `specs/json-schema/features/pattern.md`.
-fn go_pattern_var_name(model_name: &str, json_name: &str) -> String {
-    go_unexported(&format!("{model_name}{}Pattern", go_field_name(json_name)))
+/// A collision-free identifier fragment for an arbitrary normalized pattern.
+/// The full UTF-8 spelling is encoded rather than hashed, so two patterns can
+/// never alias. The leading underscore keeps these generator-owned package
+/// variables outside every authored Go-name family.
+fn go_pattern_var_name(pattern: &str) -> String {
+    let mut name = String::from("_nexgenJsonSchemaPattern");
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in pattern.as_bytes() {
+        name.push(HEX[(byte >> 4) as usize] as char);
+        name.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    name
 }
 
-/// Emits the package-level `var <Model><Field>Pattern = regexp.MustCompile(...)`
-/// declarations for every string field of `schema` carrying a `pattern`. The
-/// pattern is the loader-normalized form (`\s`/`\S` already the explicit ASCII
-/// class); Go keeps `$` (RE2 end-anchor is already exception-free).
-fn render_go_pattern_vars(output: &mut String, model: &PlannedJsonType, schema: &Schema) {
-    // A typed map's member carries the same string refinements a property does,
-    // under the `Value` position name the loader uses for a member shape.
-    if let Ok(Some(value)) = typed_map_value_schema(schema) {
-        render_go_string_vars_recursive(output, &model.model_name, MAP_MEMBER_POSITION, &value);
-    }
-    // `propertyNames` asserts the key, and its regexes compile once at package
-    // init like every other pinned pattern — never inside the key loop.
-    if let Some(names) = &schema.property_names {
-        render_go_string_vars(output, &model.model_name, PROPERTY_NAMES_POSITION, names);
-    }
-    let Some(properties) = &schema.properties else {
-        return;
-    };
-    for (json_name, property) in properties {
-        render_go_string_vars_recursive(output, &model.model_name, json_name, property);
-    }
+/// Collects every semantic package-level compiled predicate in one schema.
+/// The declarations are emitted from `definitions.go`, whose census spans the
+/// whole flattened package rather than one input leaf.
+fn render_go_pattern_vars(output: &mut String, schema: &Schema, declared: &mut BTreeSet<String>) {
+    render_go_string_vars_recursive(output, schema, declared);
 }
 
 fn render_go_string_vars_recursive(
     output: &mut String,
-    model_name: &str,
-    position: &str,
     schema: &Schema,
+    declared: &mut BTreeSet<String>,
 ) {
-    render_go_string_vars(output, model_name, position, schema);
+    render_go_string_vars(output, schema, declared);
+    // A typed map's member carries the same string refinements a property does.
+    if let Ok(Some(value)) = typed_map_value_schema(schema) {
+        render_go_string_vars_recursive(output, &value, declared);
+    }
+    // `propertyNames` asserts the key and compiles once at package init.
+    if let Some(names) = &schema.property_names {
+        render_go_string_vars_recursive(output, names, declared);
+    }
     if let Some(matcher) = &schema.contains {
-        render_go_matcher_vars(output, model_name, position, matcher);
+        render_go_matcher_vars(output, matcher, declared);
     }
     if let Some(items) = &schema.items {
-        render_go_string_vars_recursive(output, model_name, &format!("{position}Item"), items);
+        render_go_string_vars_recursive(output, items, declared);
     }
-}
-
-/// The position a `contains` matcher's compiled regexes live under.
-fn go_contains_position(position: &str) -> String {
-    format!("{position}Contains")
+    if let Some(branches) = &schema.one_of {
+        for branch in branches {
+            render_go_string_vars_recursive(output, branch, declared);
+        }
+    }
+    if let Some(properties) = &schema.properties {
+        for property in properties.values() {
+            render_go_string_vars_recursive(output, property, declared);
+        }
+    }
 }
 
 /// Emits the compiled-regex vars a `contains` matcher needs. Like every other
 /// pinned pattern these compile once at package init — never per element inside
 /// the scan loop (P10, `pattern.md`'s compile-once rule).
-fn render_go_matcher_vars(output: &mut String, model_name: &str, position: &str, matcher: &Schema) {
+fn render_go_matcher_vars(output: &mut String, matcher: &Schema, declared: &mut BTreeSet<String>) {
     let matcher = scalar_matcher(matcher);
-    let position = go_contains_position(position);
     if let Some(pattern) = &matcher.pattern {
-        output.push_str("var ");
-        output.push_str(&go_pattern_var_name(model_name, &position));
-        output.push_str(" = regexp.MustCompile(");
-        output.push_str(&go_string_literal(pattern));
-        output.push_str(")\n");
+        let name = go_pattern_var_name(pattern);
+        if declared.insert(name.clone()) {
+            output.push_str("var ");
+            output.push_str(&name);
+            output.push_str(" = regexp.MustCompile(");
+            output.push_str(&go_string_literal(pattern));
+            output.push_str(")\n");
+        }
     }
     if let Some(format) = &matcher.format
         && let Some(check) = crate::json_schema::format::check_for(format)
     {
-        output.push_str("var ");
-        output.push_str(&go_format_var_name(model_name, &position));
-        output.push_str(" = regexp.MustCompile(");
-        output.push_str(&go_string_literal(&check.pattern));
-        output.push_str(")\n");
+        let name = go_format_var_name(format);
+        if declared.insert(name.clone()) {
+            output.push_str("var ");
+            output.push_str(&name);
+            output.push_str(" = regexp.MustCompile(");
+            output.push_str(&go_string_literal(&check.pattern));
+            output.push_str(")\n");
+        }
     }
 }
 
-/// Emits the compiled-regex vars one string schema needs at `position` (a JSON
-/// member name, or the `Value` position of a typed map's member).
-fn render_go_string_vars(output: &mut String, model_name: &str, position: &str, schema: &Schema) {
+/// Emits the compiled-regex vars one string schema needs.
+fn render_go_string_vars(output: &mut String, schema: &Schema, declared: &mut BTreeSet<String>) {
     let schema = nullable_non_null_schema(schema).unwrap_or(schema);
     if schema.ty.as_ref().and_then(Value::as_str) != Some("string") {
         return;
     }
     if let Some(pattern) = &schema.pattern {
-        output.push_str("var ");
-        output.push_str(&go_pattern_var_name(model_name, position));
-        output.push_str(" = regexp.MustCompile(");
-        output.push_str(&go_string_literal(pattern));
-        output.push_str(")\n");
+        let name = go_pattern_var_name(pattern);
+        if declared.insert(name.clone()) {
+            output.push_str("var ");
+            output.push_str(&name);
+            output.push_str(" = regexp.MustCompile(");
+            output.push_str(&go_string_literal(pattern));
+            output.push_str(")\n");
+        }
     }
     if let Some(format) = &schema.format
         && let Some(check) = crate::json_schema::format::check_for(format)
     {
         // Go keeps the `$` end-anchor (RE2 is exception-free); the pinned
         // regex compiles once at package init.
-        output.push_str("var ");
-        output.push_str(&go_format_var_name(model_name, position));
-        output.push_str(" = regexp.MustCompile(");
-        output.push_str(&go_string_literal(&check.pattern));
-        output.push_str(")\n");
+        let name = go_format_var_name(format);
+        if declared.insert(name.clone()) {
+            output.push_str("var ");
+            output.push_str(&name);
+            output.push_str(" = regexp.MustCompile(");
+            output.push_str(&go_string_literal(&check.pattern));
+            output.push_str(")\n");
+        }
     }
     if let Some(encoding) = content_encoding_kind(schema) {
-        output.push_str("var ");
-        output.push_str(&go_content_encoding_var_name(model_name, position));
-        output.push_str(" = regexp.MustCompile(");
-        output.push_str(&go_string_literal(encoding.pattern()));
-        output.push_str(")\n");
+        let name = go_content_encoding_var_name(encoding);
+        if declared.insert(name.clone()) {
+            output.push_str("var ");
+            output.push_str(&name);
+            output.push_str(" = regexp.MustCompile(");
+            output.push_str(&go_string_literal(encoding.pattern()));
+            output.push_str(")\n");
+        }
     }
 }
 
-/// The package-level compiled-regex var name for a `contentEncoding` on
-/// `json_name` of `model_name`. See `specs/json-schema/features/contentEncoding.md`.
-fn go_content_encoding_var_name(model_name: &str, json_name: &str) -> String {
-    go_unexported(&format!(
-        "{model_name}{}ContentEncoding",
-        go_field_name(json_name)
-    ))
+/// The shared package-level compiled-regex var for a `contentEncoding` kind.
+fn go_content_encoding_var_name(
+    encoding: crate::json_schema::content_encoding::Encoding,
+) -> String {
+    format!(
+        "_nexgenJsonSchema{}ContentEncoding",
+        go_field_name(encoding.name())
+    )
 }
 
-/// The package-level compiled-regex var name for a `format` on `json_name` of
-/// `model_name`. See `specs/json-schema/features/format.md`.
-fn go_format_var_name(model_name: &str, json_name: &str) -> String {
-    go_unexported(&format!("{model_name}{}Format", go_field_name(json_name)))
+/// The shared package-level compiled-regex var for a curated `format`.
+fn go_format_var_name(format: &str) -> String {
+    format!("_nexgenJsonSchema{}Format", go_field_name(format))
 }
 
 /// Emits the `format` predicate over `value_expr` (a `string` in scope): the
@@ -524,14 +551,11 @@ fn render_go_pattern_check_to(
 
 /// Renders a Go literal for a scalar matcher value in the element's static type
 /// (`int64`/`float64`/`string`/`bool`).
-fn go_scalar_literal(value: &Value, element_ty: Option<&str>) -> String {
+fn go_scalar_literal(value: &Value, integer: bool) -> String {
     match value {
         Value::String(text) => go_string_literal(text),
         Value::Bool(boolean) => boolean.to_string(),
-        Value::Number(number) => match element_ty {
-            Some("integer") => go_bound_literal(number, true),
-            _ => number.to_string(),
-        },
+        Value::Number(number) => go_bound_literal(number, integer),
         _ => "nil".to_string(),
     }
 }
@@ -569,13 +593,15 @@ fn go_matcher_condition(
     matcher: &Schema,
     elem: &str,
     element_ty: Option<&str>,
-    model_name: &str,
-    position: &str,
+    _model_name: &str,
+    _position: &str,
 ) -> String {
     let matcher = scalar_matcher(matcher);
-    let var_position = go_contains_position(position);
-    let is_integer = element_ty == Some("integer")
-        || matcher.kind == Some(ScalarKind::Integer) && element_ty != Some("number");
+    let is_integer = match matcher.kind {
+        Some(ScalarKind::Number) => false,
+        Some(ScalarKind::Integer) => element_ty != Some("number"),
+        _ => element_ty == Some("integer"),
+    };
     let mut parts: Vec<String> = Vec::new();
     if matcher.kind == Some(ScalarKind::Integer) && element_ty == Some("number") {
         // An `integer` matcher over `number` elements admits exactly [[type]]'s
@@ -589,14 +615,14 @@ fn go_matcher_condition(
     if let Some(value) = &matcher.const_value {
         parts.push(format!(
             "{elem} == {}",
-            go_scalar_literal(value, element_ty)
+            go_scalar_literal(value, is_integer)
         ));
     }
     if !matcher.enum_values.is_empty() {
         let alternatives = matcher
             .enum_values
             .iter()
-            .map(|value| format!("{elem} == {}", go_scalar_literal(value, element_ty)))
+            .map(|value| format!("{elem} == {}", go_scalar_literal(value, is_integer)))
             .collect::<Vec<_>>()
             .join(" || ");
         if !alternatives.is_empty() {
@@ -629,10 +655,10 @@ fn go_matcher_condition(
     if let Some(max) = matcher.max_length {
         parts.push(format!("utf8.RuneCountInString({elem}) <= {max}"));
     }
-    if matcher.pattern.is_some() {
+    if let Some(pattern) = &matcher.pattern {
         parts.push(format!(
             "{}.MatchString({elem})",
-            go_pattern_var_name(model_name, &var_position)
+            go_pattern_var_name(pattern)
         ));
     }
     if let Some(format) = &matcher.format
@@ -644,7 +670,7 @@ fn go_matcher_condition(
             .unwrap_or_default();
         parts.push(format!(
             "{length_guard}{}.MatchString({elem})",
-            go_format_var_name(model_name, &var_position)
+            go_format_var_name(format)
         ));
     }
     if parts.is_empty() {
@@ -778,7 +804,15 @@ fn render_go_array_checks(
         output.push_str("}\n");
     }
     if let Some(matcher) = &schema.contains {
-        let condition = go_matcher_condition(matcher, element, element_ty, model_name, position);
+        let matcher_element = if let Some(kind) = item.and_then(temporal_kind) {
+            format!("{}({element})", go_temporal_format_fn(kind))
+        } else if let Some(encoding) = item.and_then(content_encoding_kind) {
+            format!("{}({element})", go_content_encoding_encode_fn(encoding))
+        } else {
+            element.to_string()
+        };
+        let condition =
+            go_matcher_condition(matcher, &matcher_element, element_ty, model_name, position);
         let effective_min = schema.min_contains.unwrap_or(1);
         output.push_str(indent);
         output.push_str("{\n");
@@ -883,6 +917,9 @@ fn render_go_raw_array_checks(
         output.push_str(&format!(
             "{indent}for _, rawElement{level} := range {elements} {{\n"
         ));
+        output.push_str(&format!(
+            "{indent}\tif bytes.Equal(bytes.TrimSpace(rawElement{level}), []byte(\"null\")) {{\n{indent}\t\tcontinue\n{indent}\t}}\n"
+        ));
         match element_ty {
             Some("integer") => {
                 output.push_str(&format!(
@@ -970,7 +1007,7 @@ fn render_go_property_count_checks(
 /// `specs/json-schema/features/propertyNames.md`.
 fn render_go_property_name_checks(
     output: &mut String,
-    model_name: &str,
+    _model_name: &str,
     map_expr: &str,
     subschema: &Schema,
     indent: &str,
@@ -1001,7 +1038,7 @@ fn render_go_property_name_checks(
         ));
         output.push_str(&inner);
         output.push_str(&format!(
-            "\terrs = append(errs, Violation{{k, fmt.Sprintf({}, k, n)}})\n",
+            "\terrs = append(errs, Violation{{memberPath(k), fmt.Sprintf({}, k, n)}})\n",
             go_string_literal(&format!("invalid property name %q: {reason}"))
         ));
         output.push_str(&inner);
@@ -1023,11 +1060,11 @@ fn render_go_property_name_checks(
         output.push_str(&inner);
         output.push_str(&format!(
             "if !{}.MatchString(k) {{\n",
-            go_pattern_var_name(model_name, PROPERTY_NAMES_POSITION)
+            go_pattern_var_name(pattern)
         ));
         output.push_str(&inner);
         output.push_str(&format!(
-            "\terrs = append(errs, Violation{{k, fmt.Sprintf({}, k)}})\n",
+            "\terrs = append(errs, Violation{{memberPath(k), fmt.Sprintf({}, k)}})\n",
             go_string_literal(&format!(
                 "invalid property name %q: must match pattern {pattern}"
             ))
@@ -1047,7 +1084,7 @@ fn render_go_property_name_checks(
             output.push_str(&format!("if !({alternatives}) {{\n"));
             output.push_str(&inner);
             output.push_str(&format!(
-                "\terrs = append(errs, Violation{{k, fmt.Sprintf({}, k)}})\n",
+                "\terrs = append(errs, Violation{{memberPath(k), fmt.Sprintf({}, k)}})\n",
                 go_string_literal("invalid property name %q: must equal an allowed value")
             ));
             output.push_str(&inner);
@@ -1061,13 +1098,13 @@ fn render_go_property_name_checks(
         }
         condition.push_str(&format!(
             "!{}.MatchString(k)",
-            go_format_var_name(model_name, PROPERTY_NAMES_POSITION)
+            go_format_var_name(&check.name)
         ));
         output.push_str(&inner);
         output.push_str(&format!("if {condition} {{\n"));
         output.push_str(&inner);
         output.push_str(&format!(
-            "\terrs = append(errs, Violation{{k, fmt.Sprintf({}, k)}})\n",
+            "\terrs = append(errs, Violation{{memberPath(k), fmt.Sprintf({}, k)}})\n",
             go_string_literal(&format!(
                 "invalid property name %q: must be a valid {}",
                 check.name
@@ -1109,7 +1146,7 @@ fn render_go_dependent_required(
             let reason = format!("property {dep:?} is required when {trigger:?} is present");
             output.push_str(&format!(
                 "\t\terrs = append(errs, Violation{{{}, {}}})\n",
-                go_string_literal(dep),
+                go_violation_path_literal(dep),
                 go_string_literal(&reason)
             ));
             output.push_str(indent);
@@ -1564,7 +1601,7 @@ fn render_external_models(
         return Ok(ModelFragments::default());
     }
 
-    let mut imports = BTreeSet::from(["encoding/json".to_string()]);
+    let mut imports = BTreeSet::new();
     let mut output = String::new();
     let resolvable = models
         .iter()
@@ -1581,17 +1618,6 @@ fn render_external_models(
         output.push('\n');
         render_go_unions(&mut output, &declared_unions, models, model_names)?;
     }
-    if models.iter().any(|model| model_uses_temporal(model)) {
-        output.push('\n');
-        render_go_temporal_helpers(&mut output);
-    }
-    if models
-        .iter()
-        .any(|model| model_uses_content_encoding(model))
-    {
-        output.push('\n');
-        render_go_content_encoding_helpers(&mut output);
-    }
     for model in models {
         output.push('\n');
         render_model(&mut output, model, models, model_names, &unions)?;
@@ -1600,6 +1626,9 @@ fn render_external_models(
     // schema's own prose, and an unused import is a Go compile error, so a
     // description ending a sentence with "at a time." must not pull in `time`.
     let code = go_code_without_comments(&output);
+    if code.contains("json.") {
+        imports.insert("encoding/json".to_string());
+    }
     if code.contains("bytes.") {
         imports.insert("bytes".to_string());
     }
@@ -1636,12 +1665,23 @@ fn render_external_models(
     })
 }
 
-/// Renders the shared `definitions.go` file: the schema-independent runtime
-/// (`Violation`/payload-validation failure, `parseSpecInteger`, the (de)serialize
-/// helpers) defined once in the models' own package. The identifiers stay
-/// unexported because the generated model files reference them within the same
-/// package.
-pub(in crate::generator) fn render_definitions_file(package_name: &str) -> String {
+/// Renders the shared `definitions.go` file: the schema-independent runtime and
+/// the semantic regex predicates whose census must span the whole flattened Go
+/// package. The identifiers stay unexported because model files reference them
+/// within that package.
+pub(in crate::generator) fn render_definitions_file(
+    package_name: &str,
+    models: &[PlannedJsonType],
+) -> Result<String> {
+    let uses_temporal = models.iter().any(model_uses_temporal);
+    let uses_content_encoding = models.iter().any(model_uses_content_encoding);
+    let mut semantic_helpers = String::new();
+    let mut declared = BTreeSet::new();
+    for model in models {
+        let schema = decode_schema(model)?;
+        render_go_pattern_vars(&mut semantic_helpers, &schema, &mut declared);
+    }
+
     let mut output = String::new();
     output.push_str(crate::generator::go::GENERATED_HEADER);
     output.push_str("\n\n");
@@ -1650,21 +1690,46 @@ pub(in crate::generator) fn render_definitions_file(package_name: &str) -> Strin
     output.push_str("\n\n");
     output.push_str("import (\n");
     output.push_str("\t\"bytes\"\n");
+    if uses_content_encoding {
+        output.push_str("\t\"encoding/base64\"\n");
+    }
     output.push_str("\t\"encoding/json\"\n");
     output.push_str("\t\"errors\"\n");
+    if uses_temporal || uses_content_encoding {
+        output.push_str("\t\"fmt\"\n");
+    }
     output.push_str("\t\"math\"\n");
     output.push_str("\t\"reflect\"\n");
+    if !semantic_helpers.is_empty() || uses_temporal || uses_content_encoding {
+        output.push_str("\t\"regexp\"\n");
+    }
     output.push_str("\t\"strconv\"\n");
     output.push_str("\t\"strings\"\n");
+    if uses_temporal {
+        output.push_str("\t\"time\"\n");
+    }
     output.push_str("\t\"go.temporal.io/sdk/temporal\"\n");
     output.push_str(")\n\n");
     render_validator_core(&mut output);
-    output
+    if uses_temporal {
+        output.push('\n');
+        render_go_temporal_helpers(&mut output);
+    }
+    if uses_content_encoding {
+        output.push('\n');
+        render_go_content_encoding_helpers(&mut output);
+    }
+    if !semantic_helpers.is_empty() {
+        output.push('\n');
+        output.push_str(&semantic_helpers);
+    }
+    Ok(output)
 }
 
 fn render_validator_core(output: &mut String) {
     output.push_str("// Violation is a single constraint failure. Path is the JSON member path\n");
-    output.push_str("// (dotted for nested members); Reason is a human-readable message.\n");
+    output.push_str("// (dot segments for identifiers and escaped bracket segments otherwise);\n");
+    output.push_str("// Reason is a human-readable message.\n");
     output.push_str("type Violation struct {\n\tPath   string\n\tReason string\n}\n\n");
     output.push_str(
         "// String implements fmt.Stringer, returning \"Path: Reason\", or just Reason\n",
@@ -1673,6 +1738,14 @@ fn render_validator_core(output: &mut String) {
     output.push_str("func (v Violation) String() string {\n");
     output.push_str("\tif v.Path == \"\" {\n\t\treturn v.Reason\n\t}\n");
     output.push_str("\treturn v.Path + \": \" + v.Reason\n}\n\n");
+    output.push_str("func memberPath(key string) string {\n");
+    output.push_str("\tidentifier := key != \"\"\n\tfor i, r := range key {\n");
+    output.push_str("\t\tif !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {\n\t\t\tidentifier = false\n\t\t\tbreak\n\t\t}\n\t}\n");
+    output.push_str("\tif identifier {\n\t\treturn key\n\t}\n");
+    output.push_str(
+        "\tescaped := strings.ReplaceAll(strings.ReplaceAll(key, `\\`, `\\\\`), `\"`, `\\\"`)\n",
+    );
+    output.push_str("\treturn `[\"` + escaped + `\"]`\n}\n\n");
     output.push_str("func newPayloadValidationError(violations []Violation) error {\n");
     output.push_str("\t// TODO: Use temporal.NewPayloadValidationError once it is available in an SDK release.\n");
     output.push_str("\treturn temporal.NewNonRetryableApplicationError(\"Payload validation failed\", \"PayloadValidationError\", nil, violations)\n");
@@ -1769,7 +1842,7 @@ fn render_validator_core(output: &mut String) {
     output.push_str(
         "\tif len(*errs) > 0 {\n\t\tout[key] = json.RawMessage(\"null\")\n\t\treturn\n\t}\n",
     );
-    output.push_str("\tb, err := json.Marshal(v)\n\tif err != nil {\n\t\tmergeNested(errs, key, err)\n\t\treturn\n\t}\n\tout[key] = b\n}\n\n");
+    output.push_str("\tb, err := json.Marshal(v)\n\tif err != nil {\n\t\tmergeNested(errs, memberPath(key), err)\n\t\treturn\n\t}\n\tout[key] = b\n}\n\n");
 }
 
 /// Renders the closed-value (`const`/`enum`) defined types and their typed value
@@ -2298,15 +2371,6 @@ fn render_go_unions(
 
         for variant in &union.variants {
             if let Some(underlying) = &variant.synthesized {
-                // The compiled-regex vars the wrapper's `Validate` references for
-                // a `pattern`/`format` the branch declares, keyed by the wrapper
-                // type itself (`fooStringPattern`).
-                render_go_string_vars_recursive(
-                    output,
-                    &variant.go_type,
-                    UNION_VARIANT_POSITION,
-                    &variant.schema,
-                );
                 render_go_schema_doc(
                     output,
                     "",
@@ -2398,16 +2462,6 @@ fn render_go_variant_validate(
     let underlying = variant.synthesized.as_deref().unwrap_or("");
     // The wrapper is a defined type over `underlying`, so every predicate reads
     // the value through a conversion back to it.
-    render_go_member_checks(
-        output,
-        "\t",
-        &format!("{underlying}(v)"),
-        "\"\"",
-        &variant.go_type,
-        UNION_VARIANT_POSITION,
-        &variant.schema,
-        true,
-    );
     if variant.schema.ty.as_ref().and_then(Value::as_str) == Some("array") {
         render_go_array_items_validate(
             output,
@@ -2422,6 +2476,16 @@ fn render_go_variant_validate(
             0,
         );
     }
+    render_go_member_checks(
+        output,
+        "\t",
+        &format!("{underlying}(v)"),
+        "\"\"",
+        &variant.go_type,
+        UNION_VARIANT_POSITION,
+        &variant.schema,
+        true,
+    );
     output.push_str("\tif len(errs) > 0 {\n\t\treturn newPayloadValidationError(errs)\n\t}\n\treturn nil\n}\n\n");
     if variant.schema.ty.as_ref().and_then(Value::as_str) == Some("array")
         && schema_requires_go_wire_conversion(&variant.schema)
@@ -2606,25 +2670,7 @@ fn render_go_scalar_variant_decode(
             return;
         }
     }
-    if underlying.starts_with("[]") {
-        // Item validation renders against a value-owned accumulator. Adapt the
-        // union dispatcher's pointer here without re-running array-level
-        // constraints against the partially converted typed slice.
-        output.push_str("\t\t{\n\t\t\tunionErrs := errs\n\t\t\terrs := *unionErrs\n");
-        render_go_array_items_validate(
-            output,
-            "\t\t\t",
-            "arr",
-            "path",
-            &variant.schema,
-            &variant.go_type,
-            UNION_VARIANT_POSITION,
-            model_names,
-            unions,
-            0,
-        );
-        output.push_str("\t\t\t*unionErrs = errs\n\t\t}\n");
-    } else {
+    if !underlying.starts_with("[]") {
         output.push_str("\t\tmergeNested(errs, path, v.Validate())\n");
     }
     output.push_str("\t\treturn v, true\n");
@@ -2637,6 +2683,14 @@ fn render_model(
     model_names: &BTreeMap<String, String>,
     unions: &BTreeMap<String, GoUnion>,
 ) -> Result<()> {
+    if let Some(reference) = bare_ref_target(model) {
+        output.push_str("type ");
+        output.push_str(&model.model_name);
+        output.push_str(" = ");
+        output.push_str(&reference_model_name(reference, model_names));
+        output.push_str("\n");
+        return Ok(());
+    }
     let schema = decode_schema(model)?;
     // A named `oneOf` union model is emitted as a sealed interface by
     // `render_go_unions`, not as a struct.
@@ -2648,7 +2702,6 @@ fn render_model(
     } else {
         None
     };
-    render_go_pattern_vars(output, model, &schema);
     render_go_schema_doc(
         output,
         "",
@@ -2901,9 +2954,9 @@ fn render_validate(
                     output.push_str("\tif ");
                     output.push_str(&field);
                     output.push_str(" == nil {\n\t\terrs = append(errs, Violation{");
-                    output.push_str(&go_string_literal(json_name));
+                    output.push_str(&go_violation_path_literal(json_name));
                     output.push_str(", \"required\"})\n\t} else {\n\t\tmergeNested(&errs, ");
-                    output.push_str(&go_string_literal(json_name));
+                    output.push_str(&go_violation_path_literal(json_name));
                     output.push_str(", ");
                     output.push_str(&field);
                     output.push_str(".Validate())\n\t}\n");
@@ -2911,7 +2964,7 @@ fn render_validate(
                     output.push_str("\tif ");
                     output.push_str(&field);
                     output.push_str(" != nil {\n\t\tmergeNested(&errs, ");
-                    output.push_str(&go_string_literal(json_name));
+                    output.push_str(&go_violation_path_literal(json_name));
                     output.push_str(", ");
                     output.push_str(&field);
                     output.push_str(".Validate())\n\t}\n");
@@ -2923,6 +2976,7 @@ fn render_validate(
             let nullable = allows_null(property);
             let shape = property_shape(property);
             let property = shape.as_ref();
+            let emitted_position = property.go_member_name(json_name);
             let is_required = required_fields(schema).contains(json_name);
             // The field holds `T` directly only when it can be neither absent
             // nor `null`; otherwise it is a pointer (or an already-nilable slice).
@@ -2945,7 +2999,7 @@ fn render_validate(
                 output.push('(');
                 output.push_str(&value_expr);
                 output.push_str(", ");
-                output.push_str(&go_string_literal(json_name));
+                output.push_str(&go_violation_path_literal(json_name));
                 output.push_str(", &errs)\n");
                 if property.min_length.is_some()
                     || property.max_length.is_some()
@@ -2962,7 +3016,7 @@ fn render_validate(
                     render_go_string_checks(
                         output,
                         &wire,
-                        &go_string_literal(json_name),
+                        &go_violation_path_literal(json_name),
                         property,
                         indent,
                     );
@@ -2970,8 +3024,8 @@ fn render_validate(
                         render_go_pattern_check(
                             output,
                             &wire,
-                            &go_string_literal(json_name),
-                            &go_pattern_var_name(&model.model_name, json_name),
+                            &go_violation_path_literal(json_name),
+                            &go_pattern_var_name(pattern),
                             pattern,
                             indent,
                         );
@@ -2987,7 +3041,10 @@ fn render_validate(
             if let Some(encoding) = content_encoding_kind(property)
                 && (property.min_length.is_some()
                     || property.max_length.is_some()
-                    || property.pattern.is_some())
+                    || property.pattern.is_some()
+                    || property.format.as_deref().is_some_and(|format| {
+                        crate::json_schema::format::check_for(format).is_some()
+                    }))
             {
                 // A `[]byte` is nil-able, so the field is never behind a pointer;
                 // an optional one is skipped when absent.
@@ -3008,7 +3065,7 @@ fn render_validate(
                 render_go_string_checks(
                     output,
                     &wire,
-                    &go_string_literal(json_name),
+                    &go_violation_path_literal(json_name),
                     property,
                     indent,
                 );
@@ -3016,9 +3073,21 @@ fn render_validate(
                     render_go_pattern_check(
                         output,
                         &wire,
-                        &go_string_literal(json_name),
-                        &go_pattern_var_name(&model.model_name, json_name),
+                        &go_violation_path_literal(json_name),
+                        &go_pattern_var_name(pattern),
                         pattern,
+                        indent,
+                    );
+                }
+                if let Some(format) = &property.format
+                    && crate::json_schema::format::check_for(format).is_some()
+                {
+                    render_go_format_check(
+                        output,
+                        &wire,
+                        &go_violation_path_literal(json_name),
+                        &go_format_var_name(format),
+                        format,
                         indent,
                     );
                 }
@@ -3049,7 +3118,7 @@ fn render_validate(
                 output.push_str(" < -integerCap || ");
                 output.push_str(&expr);
                 output.push_str(" > integerCap) {\n\t\terrs = append(errs, Violation{");
-                output.push_str(&go_string_literal(json_name));
+                output.push_str(&go_violation_path_literal(json_name));
                 output.push_str(", \"exceeds ±(2^53-1) integer cap\"})\n\t}\n");
             }
             if property.ty.as_ref().and_then(Value::as_str) == Some("number") {
@@ -3075,7 +3144,7 @@ fn render_validate(
                 output.push_str(", 0) {\n");
                 output.push_str(if required { "\t\t" } else { "\t\t\t" });
                 output.push_str("errs = append(errs, Violation{");
-                output.push_str(&go_string_literal(json_name));
+                output.push_str(&go_violation_path_literal(json_name));
                 output.push_str(", fmt.Sprintf(\"must be a finite number, got %v\", ");
                 output.push_str(&expr);
                 output.push_str(")})\n");
@@ -3092,7 +3161,7 @@ fn render_validate(
                     render_go_numeric_checks(
                         output,
                         &field,
-                        &go_string_literal(json_name),
+                        &go_violation_path_literal(json_name),
                         property,
                         "\t",
                     );
@@ -3103,7 +3172,7 @@ fn render_validate(
                     render_go_numeric_checks(
                         output,
                         &format!("*{field}"),
-                        &go_string_literal(json_name),
+                        &go_violation_path_literal(json_name),
                         property,
                         "\t\t",
                     );
@@ -3115,13 +3184,11 @@ fn render_validate(
                 && temporal_kind(property).is_none()
                 && content_encoding_kind(property).is_none()
             {
-                let var_name = go_pattern_var_name(&model.model_name, json_name);
-                let format_var = go_format_var_name(&model.model_name, json_name);
                 if by_value {
                     render_go_string_checks(
                         output,
                         &field,
-                        &go_string_literal(json_name),
+                        &go_violation_path_literal(json_name),
                         property,
                         "\t",
                     );
@@ -3129,8 +3196,8 @@ fn render_validate(
                         render_go_pattern_check(
                             output,
                             &field,
-                            &go_string_literal(json_name),
-                            &var_name,
+                            &go_violation_path_literal(json_name),
+                            &go_pattern_var_name(pattern),
                             pattern,
                             "\t",
                         );
@@ -3139,8 +3206,8 @@ fn render_validate(
                         render_go_format_check(
                             output,
                             &field,
-                            &go_string_literal(json_name),
-                            &format_var,
+                            &go_violation_path_literal(json_name),
+                            &go_format_var_name(format),
                             format,
                             "\t",
                         );
@@ -3152,7 +3219,7 @@ fn render_validate(
                     render_go_string_checks(
                         output,
                         &format!("*{field}"),
-                        &go_string_literal(json_name),
+                        &go_violation_path_literal(json_name),
                         property,
                         "\t\t",
                     );
@@ -3160,8 +3227,8 @@ fn render_validate(
                         render_go_pattern_check(
                             output,
                             &format!("*{field}"),
-                            &go_string_literal(json_name),
-                            &var_name,
+                            &go_violation_path_literal(json_name),
+                            &go_pattern_var_name(pattern),
                             pattern,
                             "\t\t",
                         );
@@ -3170,41 +3237,12 @@ fn render_validate(
                         render_go_format_check(
                             output,
                             &format!("*{field}"),
-                            &go_string_literal(json_name),
-                            &format_var,
+                            &go_violation_path_literal(json_name),
+                            &go_format_var_name(format),
                             format,
                             "\t\t",
                         );
                     }
-                    output.push_str("\t}\n");
-                }
-            }
-            if property.has_array_constraints()
-                && property.ty.as_ref().and_then(Value::as_str) == Some("array")
-            {
-                if by_value {
-                    render_go_array_checks(
-                        output,
-                        &field,
-                        &go_string_literal(json_name),
-                        property,
-                        "\t",
-                        &model.model_name,
-                        json_name,
-                    );
-                } else {
-                    output.push_str("\tif ");
-                    output.push_str(&field);
-                    output.push_str(" != nil {\n");
-                    render_go_array_checks(
-                        output,
-                        &field,
-                        &go_string_literal(json_name),
-                        property,
-                        "\t\t",
-                        &model.model_name,
-                        json_name,
-                    );
                     output.push_str("\t}\n");
                 }
             }
@@ -3213,19 +3251,48 @@ fn render_validate(
                     output,
                     "\t",
                     &field,
-                    &go_string_literal(json_name),
+                    &go_violation_path_literal(json_name),
                     property,
                     &model.model_name,
-                    json_name,
+                    &emitted_position,
                     model_names,
                     unions,
                     0,
                 );
             }
+            if property.has_array_constraints()
+                && property.ty.as_ref().and_then(Value::as_str) == Some("array")
+            {
+                if by_value {
+                    render_go_array_checks(
+                        output,
+                        &field,
+                        &go_violation_path_literal(json_name),
+                        property,
+                        "\t",
+                        &model.model_name,
+                        &emitted_position,
+                    );
+                } else {
+                    output.push_str("\tif ");
+                    output.push_str(&field);
+                    output.push_str(" != nil {\n");
+                    render_go_array_checks(
+                        output,
+                        &field,
+                        &go_violation_path_literal(json_name),
+                        property,
+                        "\t\t",
+                        &model.model_name,
+                        &emitted_position,
+                    );
+                    output.push_str("\t}\n");
+                }
+            }
             if property.reference.is_some() {
                 if by_value {
                     output.push_str("\tmergeNested(&errs, ");
-                    output.push_str(&go_string_literal(json_name));
+                    output.push_str(&go_violation_path_literal(json_name));
                     output.push_str(", ");
                     output.push_str(&field);
                     output.push_str(".Validate())\n");
@@ -3233,7 +3300,7 @@ fn render_validate(
                     output.push_str("\tif ");
                     output.push_str(&field);
                     output.push_str(" != nil {\n\t\tmergeNested(&errs, ");
-                    output.push_str(&go_string_literal(json_name));
+                    output.push_str(&go_violation_path_literal(json_name));
                     output.push_str(", ");
                     output.push_str(&field);
                     output.push_str(".Validate())\n\t}\n");
@@ -3252,7 +3319,7 @@ fn render_validate(
                 output.push_str("\tif _, ok := m.AdditionalProperties[");
                 output.push_str(&go_string_literal(json_name));
                 output.push_str("]; ok {\n\t\terrs = append(errs, Violation{");
-                output.push_str(&go_string_literal(json_name));
+                output.push_str(&go_violation_path_literal(json_name));
                 output.push_str(", \"catch-all key collides with declared property\"})\n\t}\n");
             }
         }
@@ -3355,7 +3422,7 @@ fn render_unmarshal_json(
             output.push_str("\t\t\tm.AdditionalProperties[k] = v\n");
         }
     } else {
-        output.push_str("\t\t\terrs = append(errs, Violation{k, \"unknown field\"})\n");
+        output.push_str("\t\t\terrs = append(errs, Violation{memberPath(k), \"unknown field\"})\n");
     }
     output.push_str("\t\t}\n\t}\n");
     output.push_str("\tget := func(k string) *json.RawMessage {\n\t\tif v, ok := all[k]; ok {\n\t\t\treturn &v\n\t\t}\n\t\treturn nil\n\t}\n\t_ = get\n");
@@ -3418,24 +3485,26 @@ fn render_union_property_unmarshal(
     unions: &BTreeMap<String, GoUnion>,
 ) {
     let nullable = unions.get(union_name).is_some_and(|union| union.nullable);
+    let key = go_string_literal(json_name);
+    let path = go_violation_path_literal(json_name);
     output.push_str("\tif raw := get(");
-    output.push_str(&go_string_literal(json_name));
+    output.push_str(&key);
     output.push_str("); raw == nil {\n");
     if required {
         output.push_str("\t\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", \"required\"})\n");
     }
     output.push_str("\t} else if isNull(*raw) {\n");
     if !nullable {
         output.push_str("\t\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", \"explicit null not allowed\"})\n");
     }
     output.push_str("\t} else if v, ok := unmarshal");
     output.push_str(union_name);
     output.push_str("(*raw, ");
-    output.push_str(&go_string_literal(json_name));
+    output.push_str(&path);
     output.push_str(", &errs); ok {\n\t\tm.");
     output.push_str(field_name);
     output.push_str(" = v\n\t}\n");
@@ -3451,6 +3520,8 @@ fn render_property_unmarshal(
     unions: &BTreeMap<String, GoUnion>,
 ) -> Result<()> {
     let field = property.go_member_name(json_name);
+    let key = go_string_literal(json_name);
+    let path = go_violation_path_literal(json_name);
     // A nullable property is the `oneOf:[T, null]` wrapper: the wrapper carries
     // no `type` and no keywords, so dispatch and every co-occurring constraint
     // read the non-null branch (nullability.md:177-187).
@@ -3516,9 +3587,9 @@ fn render_property_unmarshal(
     }
     if property.ty.as_ref().and_then(Value::as_str) == Some("string") {
         output.push_str("\tif v, ok := parseStringField(get(");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&key);
         output.push_str("), ");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", ");
         output.push_str(if required { "true" } else { "false" });
         output.push_str(", ");
@@ -3532,14 +3603,14 @@ fn render_property_unmarshal(
             output.push_str("&v\n");
         }
         if property.has_string_constraints() {
-            render_go_string_checks(output, "v", &go_string_literal(json_name), property, "\t\t");
+            render_go_string_checks(output, "v", &path, property, "\t\t");
         }
         if let Some(pattern) = &property.pattern {
             render_go_pattern_check(
                 output,
                 "v",
-                &go_string_literal(json_name),
-                &go_pattern_var_name(&model.model_name, json_name),
+                &path,
+                &go_pattern_var_name(pattern),
                 pattern,
                 "\t\t",
             );
@@ -3548,8 +3619,8 @@ fn render_property_unmarshal(
             render_go_format_check(
                 output,
                 "v",
-                &go_string_literal(json_name),
-                &go_format_var_name(&model.model_name, json_name),
+                &path,
+                &go_format_var_name(format),
                 format,
                 "\t\t",
             );
@@ -3559,16 +3630,16 @@ fn render_property_unmarshal(
     }
     if property.ty.as_ref().and_then(Value::as_str) == Some("integer") {
         output.push_str("\tif v, ok := parseIntegerField(get(");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&key);
         output.push_str("), ");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", ");
         output.push_str(if required { "true" } else { "false" });
         output.push_str(", ");
         output.push_str(if nullable { "true" } else { "false" });
         output.push_str(", &errs); ok {\n");
         if property.has_numeric_constraints() {
-            render_go_numeric_checks(output, "v", &go_string_literal(json_name), property, "\t\t");
+            render_go_numeric_checks(output, "v", &path, property, "\t\t");
         }
         output.push_str("\t\tm.");
         output.push_str(&field);
@@ -3583,16 +3654,16 @@ fn render_property_unmarshal(
     }
     if property.ty.as_ref().and_then(Value::as_str) == Some("number") {
         output.push_str("\tif v, ok := parseNumberField(get(");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&key);
         output.push_str("), ");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", ");
         output.push_str(if required { "true" } else { "false" });
         output.push_str(", ");
         output.push_str(if nullable { "true" } else { "false" });
         output.push_str(", &errs); ok {\n");
         if property.has_numeric_constraints() {
-            render_go_numeric_checks(output, "v", &go_string_literal(json_name), property, "\t\t");
+            render_go_numeric_checks(output, "v", &path, property, "\t\t");
         }
         output.push_str("\t\tm.");
         output.push_str(&field);
@@ -3607,9 +3678,9 @@ fn render_property_unmarshal(
     }
     if property.ty.as_ref().and_then(Value::as_str) == Some("boolean") {
         output.push_str("\tif v, ok := parseBoolField(get(");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&key);
         output.push_str("), ");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", ");
         output.push_str(if required { "true" } else { "false" });
         output.push_str(", ");
@@ -3627,11 +3698,11 @@ fn render_property_unmarshal(
     }
     if property.ty.as_ref().and_then(Value::as_str) == Some("array") {
         output.push_str("\tif raw := get(");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&key);
         output.push_str("); raw == nil {\n");
         if required {
             output.push_str("\t\terrs = append(errs, Violation{");
-            output.push_str(&go_string_literal(json_name));
+            output.push_str(&path);
             output.push_str(", \"required\"})\n");
         }
         // A nullable array leaves the slice nil for a wire `null`
@@ -3639,7 +3710,7 @@ fn render_property_unmarshal(
         output.push_str("\t} else if isNull(*raw) {\n");
         if !nullable {
             output.push_str("\t\terrs = append(errs, Violation{");
-            output.push_str(&go_string_literal(json_name));
+            output.push_str(&path);
             output.push_str(", \"explicit null not allowed\"})\n");
         }
         output.push_str("\t} else {\n");
@@ -3648,7 +3719,7 @@ fn render_property_unmarshal(
             output,
             "\t\t",
             "*raw",
-            &go_string_literal(json_name),
+            &path,
             &format!("m.{field}"),
             &element_type,
             property,
@@ -3734,15 +3805,6 @@ fn render_go_array_items_validate(
                 "{inner}if {element} == nil {{\n{inner}\terrs = append(errs, Violation{{{element_path}, \"explicit null not allowed\"}})\n{inner}}} else {{\n"
             ));
         }
-        render_go_array_checks(
-            output,
-            &value_expr,
-            &element_path,
-            non_null,
-            &nested_indent,
-            model_name,
-            &item_position,
-        );
         render_go_array_items_validate(
             output,
             &nested_indent,
@@ -3754,6 +3816,15 @@ fn render_go_array_items_validate(
             model_names,
             unions,
             level + 1,
+        );
+        render_go_array_checks(
+            output,
+            &value_expr,
+            &element_path,
+            non_null,
+            &nested_indent,
+            model_name,
+            &item_position,
         );
         if !allows_null(item) {
             output.push_str(&format!("{inner}}}\n"));
@@ -3775,7 +3846,7 @@ fn render_go_array_items_validate(
                     output,
                     &wire,
                     &element_path,
-                    &go_pattern_var_name(model_name, &item_position),
+                    &go_pattern_var_name(pattern),
                     pattern,
                     &inner,
                 );
@@ -3801,7 +3872,7 @@ fn render_go_array_items_validate(
                     output,
                     &wire,
                     &element_path,
-                    &go_pattern_var_name(model_name, &item_position),
+                    &go_pattern_var_name(pattern),
                     pattern,
                     &inner,
                 );
@@ -4041,7 +4112,7 @@ fn render_go_array_position_unmarshal(
                 output,
                 &format!("s{level}"),
                 &element_path,
-                &go_pattern_var_name(model_name, &item_position),
+                &go_pattern_var_name(pattern),
                 pattern,
                 &format!("{body}\t"),
                 errs.value,
@@ -4057,7 +4128,7 @@ fn render_go_array_position_unmarshal(
         output.push_str(&format!("value{level})\n{body}\t}}\n{body}}}\n"));
     } else if let Some(encoding) = content_encoding_kind(non_null) {
         let decode_fn = go_content_encoding_decode_fn(encoding);
-        let re_var = go_content_encoding_var_name(model_name, &item_position);
+        let re_var = go_content_encoding_var_name(encoding);
         output.push_str(&format!(
             "{body}if s{level}, ok := parseStringField(&{element}, {element_path}, true, false, {errs_ref}); ok {{\n"
         ));
@@ -4075,7 +4146,7 @@ fn render_go_array_position_unmarshal(
                 output,
                 &format!("s{level}"),
                 &element_path,
-                &go_pattern_var_name(model_name, &item_position),
+                &go_pattern_var_name(pattern),
                 pattern,
                 &format!("{body}\t"),
             );
@@ -4133,6 +4204,27 @@ fn render_go_array_position_unmarshal(
         }
     }
     output.push_str(&format!("{inner}}}\n"));
+    if errs.value != "errs" && schema_requires_go_validation(item) {
+        // A union dispatcher owns its accumulator by pointer. Validate the
+        // successfully decoded typed elements before the raw array-level
+        // predicates so parse and serialize both report indexed failures first.
+        output.push_str(&format!(
+            "{inner}{{\n{inner}\tunionErrs := errs\n{inner}\terrs := *unionErrs\n"
+        ));
+        render_go_array_items_validate(
+            output,
+            &format!("{inner}\t"),
+            target,
+            path,
+            array,
+            model_name,
+            position,
+            model_names,
+            unions,
+            level,
+        );
+        output.push_str(&format!("{inner}\t*unionErrs = errs\n{inner}}}\n"));
+    }
     if array.has_array_constraints() {
         render_go_raw_array_checks(
             output, &elems, path, array, &inner, level, errs, model_name, position,
@@ -4147,7 +4239,7 @@ fn render_go_array_position_unmarshal(
 /// value; anything optional or nullable is a pointer.
 fn render_temporal_property_unmarshal(
     output: &mut String,
-    model_name: &str,
+    _model_name: &str,
     json_name: &str,
     field: &str,
     kind: crate::json_schema::format::TemporalKind,
@@ -4156,9 +4248,10 @@ fn render_temporal_property_unmarshal(
     schema: &Schema,
 ) {
     let parse_fn = go_temporal_parse_fn(kind);
-    let path = go_string_literal(json_name);
+    let key = go_string_literal(json_name);
+    let path = go_violation_path_literal(json_name);
     output.push_str("\tif s, ok := parseStringField(get(");
-    output.push_str(&path);
+    output.push_str(&key);
     output.push_str("), ");
     output.push_str(&path);
     output.push_str(", ");
@@ -4174,7 +4267,7 @@ fn render_temporal_property_unmarshal(
             output,
             "s",
             &path,
-            &go_pattern_var_name(model_name, json_name),
+            &go_pattern_var_name(pattern),
             pattern,
             "\t\t",
         );
@@ -4202,24 +4295,26 @@ fn render_reference_property_unmarshal(
     required: bool,
     nullable: bool,
 ) {
+    let key = go_string_literal(json_name);
+    let path = go_violation_path_literal(json_name);
     output.push_str("\tif raw := get(");
-    output.push_str(&go_string_literal(json_name));
+    output.push_str(&key);
     output.push_str("); raw == nil {\n");
     if required {
         output.push_str("\t\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", \"required\"})\n");
     }
     output.push_str("\t} else if isNull(*raw) {\n");
     if !nullable {
         output.push_str("\t\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", \"explicit null not allowed\"})\n");
     }
     output.push_str("\t} else {\n");
     if required && !nullable {
         output.push_str("\t\tmergeNested(&errs, ");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", json.Unmarshal(*raw, &m.");
         output.push_str(field);
         output.push_str("))\n");
@@ -4229,7 +4324,7 @@ fn render_reference_property_unmarshal(
         output.push_str(
             "\n\t\tif err := json.Unmarshal(*raw, &tmp); err != nil {\n\t\t\tmergeNested(&errs, ",
         );
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", err)\n\t\t} else {\n\t\t\tm.");
         output.push_str(field);
         output.push_str(" = &tmp\n\t\t}\n");
@@ -4495,6 +4590,7 @@ fn render_go_map_methods(
         && schema_requires_go_validation(value)
     {
         output.push_str("\tfor k, v := range m.AdditionalProperties {\n");
+        output.push_str("\t\tpath := memberPath(k)\n");
         let (subject, indent) = if shape.nullable {
             output.push_str("\t\tif v == nil {\n\t\t\tcontinue\n\t\t}\n");
             ("(*v)".to_string(), "\t\t")
@@ -4510,44 +4606,44 @@ fn render_go_map_methods(
             if !allows_null(value) {
                 output.push_str(indent);
                 output.push_str(
-                    "\terrs = append(errs, Violation{k, \"explicit null not allowed\"})\n",
+                    "\terrs = append(errs, Violation{path, \"explicit null not allowed\"})\n",
                 );
             }
             output.push_str(indent);
             output.push_str("} else {\n");
             output.push_str(indent);
-            output.push_str("\tmergeNested(&errs, k, ");
+            output.push_str("\tmergeNested(&errs, path, ");
             output.push_str(&subject);
             output.push_str(".Validate())\n");
             output.push_str(indent);
             output.push_str("}\n");
         } else if shape.element == GoMapElement::Model {
             output.push_str(indent);
-            output.push_str("mergeNested(&errs, k, ");
+            output.push_str("mergeNested(&errs, path, ");
             output.push_str(&subject);
             output.push_str(".Validate())\n");
         } else if non_null.ty.as_ref().and_then(Value::as_str) == Some("array") {
-            render_go_member_checks(
-                output,
-                indent,
-                &subject,
-                "k",
-                type_name,
-                MAP_MEMBER_POSITION,
-                non_null,
-                true,
-            );
             render_go_array_items_validate(
                 output,
                 indent,
                 &subject,
-                "k",
+                "path",
                 non_null,
                 type_name,
                 MAP_MEMBER_POSITION,
                 model_names,
                 unions,
                 0,
+            );
+            render_go_member_checks(
+                output,
+                indent,
+                &subject,
+                "path",
+                type_name,
+                MAP_MEMBER_POSITION,
+                non_null,
+                true,
             );
         } else if let Some(encoding) = content_encoding_kind(non_null) {
             output.push_str(indent);
@@ -4557,15 +4653,27 @@ fn render_go_map_methods(
             output.push_str(&subject);
             output.push_str(")\n");
             if non_null.min_length.is_some() || non_null.max_length.is_some() {
-                render_go_string_checks(output, "wire", "k", non_null, indent);
+                render_go_string_checks(output, "wire", "path", non_null, indent);
             }
             if let Some(pattern) = &non_null.pattern {
                 render_go_pattern_check(
                     output,
                     "wire",
-                    "k",
-                    &go_pattern_var_name(type_name, MAP_MEMBER_POSITION),
+                    "path",
+                    &go_pattern_var_name(pattern),
                     pattern,
+                    indent,
+                );
+            }
+            if let Some(format) = &non_null.format
+                && crate::json_schema::format::check_for(format).is_some()
+            {
+                render_go_format_check(
+                    output,
+                    "wire",
+                    "path",
+                    &go_format_var_name(format),
+                    format,
                     indent,
                 );
             }
@@ -4574,7 +4682,7 @@ fn render_go_map_methods(
             output.push_str(go_temporal_check_fn(kind));
             output.push('(');
             output.push_str(&subject);
-            output.push_str(", k, &errs)\n");
+            output.push_str(", path, &errs)\n");
             if non_null.min_length.is_some()
                 || non_null.max_length.is_some()
                 || non_null.pattern.is_some()
@@ -4586,13 +4694,13 @@ fn render_go_map_methods(
                 output.push('(');
                 output.push_str(&subject);
                 output.push_str(")\n");
-                render_go_string_checks(output, "wire", "k", non_null, indent);
+                render_go_string_checks(output, "wire", "path", non_null, indent);
                 if let Some(pattern) = &non_null.pattern {
                     render_go_pattern_check(
                         output,
                         "wire",
-                        "k",
-                        &go_pattern_var_name(type_name, MAP_MEMBER_POSITION),
+                        "path",
+                        &go_pattern_var_name(pattern),
                         pattern,
                         indent,
                     );
@@ -4609,13 +4717,13 @@ fn render_go_map_methods(
                 output.push('(');
                 output.push_str(&subject);
                 output.push_str(")\n");
-                render_go_string_checks(output, "wire", "k", non_null, indent);
+                render_go_string_checks(output, "wire", "path", non_null, indent);
                 if let Some(pattern) = &non_null.pattern {
                     render_go_pattern_check(
                         output,
                         "wire",
-                        "k",
-                        &go_pattern_var_name(type_name, MAP_MEMBER_POSITION),
+                        "path",
+                        &go_pattern_var_name(pattern),
                         pattern,
                         indent,
                     );
@@ -4626,7 +4734,7 @@ fn render_go_map_methods(
                 output,
                 indent,
                 &subject,
-                "k",
+                "path",
                 type_name,
                 MAP_MEMBER_POSITION,
                 non_null,
@@ -4647,6 +4755,9 @@ fn render_go_map_methods(
     output.push_str(element_type);
     output.push_str(", len(raw))\n");
     output.push_str("\tfor k, v := range raw {\n");
+    if shape.element != GoMapElement::Raw {
+        output.push_str("\t\tpath := memberPath(k)\n");
+    }
     // A `null` member of a nullable map decodes to `nil` rather than being
     // dropped from the map, so the key survives the round trip ([[nullability]]).
     if shape.nullable && shape.element != GoMapElement::Raw {
@@ -4675,13 +4786,13 @@ fn render_go_map_methods(
             };
             output.push_str("\t\tif value, ok := ");
             output.push_str(helper);
-            output.push_str("(&v, k, true, false, &errs); ok {\n");
+            output.push_str("(&v, path, true, false, &errs); ok {\n");
             if let Some(value) = &shape.value_schema {
                 render_go_member_checks(
                     output,
                     "\t\t\t",
                     "value",
-                    "k",
+                    "path",
                     type_name,
                     MAP_MEMBER_POSITION,
                     value,
@@ -4694,7 +4805,7 @@ fn render_go_map_methods(
         }
         GoMapElement::Model | GoMapElement::Other => {
             if !shape.nullable {
-                output.push_str("\t\tif isNull(v) {\n\t\t\terrs = append(errs, Violation{k, \"explicit null not allowed\"})\n\t\t\tcontinue\n\t\t}\n");
+                output.push_str("\t\tif isNull(v) {\n\t\t\terrs = append(errs, Violation{path, \"explicit null not allowed\"})\n\t\t\tcontinue\n\t\t}\n");
             }
             let decoded_type = element_type.trim_start_matches('*');
             let value_schema = shape
@@ -4707,7 +4818,7 @@ fn render_go_map_methods(
                 output.push_str("\t\tif value, ok := unmarshal");
                 output.push_str(decoded_type);
                 output.push_str(
-                    "(v, k, &errs); ok {\n\t\t\tm.AdditionalProperties[k] = value\n\t\t}\n",
+                    "(v, path, &errs); ok {\n\t\t\tm.AdditionalProperties[k] = value\n\t\t}\n",
                 );
             } else if let Some(value) = value_schema
                 && value.ty.as_ref().and_then(Value::as_str) == Some("array")
@@ -4719,7 +4830,7 @@ fn render_go_map_methods(
                     output,
                     "\t\t",
                     "v",
-                    "k",
+                    "path",
                     "value",
                     decoded_type,
                     value,
@@ -4737,65 +4848,62 @@ fn render_go_map_methods(
                 && let Some(kind) = temporal_kind(value)
             {
                 output.push_str(
-                    "\t\tif s, ok := parseStringField(&v, k, true, false, &errs); ok {\n",
+                    "\t\tif s, ok := parseStringField(&v, path, true, false, &errs); ok {\n",
                 );
                 if value.min_length.is_some() || value.max_length.is_some() {
-                    render_go_string_checks(output, "s", "k", value, "\t\t\t");
+                    render_go_string_checks(output, "s", "path", value, "\t\t\t");
                 }
                 if let Some(pattern) = &value.pattern {
                     render_go_pattern_check(
                         output,
                         "s",
-                        "k",
-                        &go_pattern_var_name(type_name, MAP_MEMBER_POSITION),
+                        "path",
+                        &go_pattern_var_name(pattern),
                         pattern,
                         "\t\t\t",
                     );
                 }
                 output.push_str("\t\t\tif value, ok := ");
                 output.push_str(go_temporal_parse_fn(kind));
-                output.push_str("(k, s, &errs); ok {\n\t\t\t\tm.AdditionalProperties[k] = ");
+                output.push_str("(path, s, &errs); ok {\n\t\t\t\tm.AdditionalProperties[k] = ");
                 store(output, "value");
                 output.push_str("\n\t\t\t}\n\t\t}\n");
             } else if let Some(value) = value_schema
                 && let Some(encoding) = content_encoding_kind(value)
             {
                 output.push_str(
-                    "\t\tif s, ok := parseStringField(&v, k, true, false, &errs); ok {\n",
+                    "\t\tif s, ok := parseStringField(&v, path, true, false, &errs); ok {\n",
                 );
                 if value.min_length.is_some() || value.max_length.is_some() {
-                    render_go_string_checks(output, "s", "k", value, "\t\t\t");
+                    render_go_string_checks(output, "s", "path", value, "\t\t\t");
                 }
                 if let Some(pattern) = &value.pattern {
                     render_go_pattern_check(
                         output,
                         "s",
-                        "k",
-                        &go_pattern_var_name(type_name, MAP_MEMBER_POSITION),
+                        "path",
+                        &go_pattern_var_name(pattern),
                         pattern,
                         "\t\t\t",
                     );
                 }
                 output.push_str("\t\t\tif value, ok := ");
                 output.push_str(go_content_encoding_decode_fn(encoding));
-                output.push_str("(k, s, ");
-                output.push_str(&go_content_encoding_var_name(
-                    type_name,
-                    MAP_MEMBER_POSITION,
-                ));
+                output.push_str("(path, s, ");
+                output.push_str(&go_content_encoding_var_name(encoding));
                 output.push_str(", &errs); ok {\n\t\t\t\tm.AdditionalProperties[k] = ");
                 store(output, "value");
                 output.push_str("\n\t\t\t}\n\t\t}\n");
             } else {
                 output.push_str("\t\tvar value ");
                 output.push_str(decoded_type);
-                output.push_str("\n\t\tif err := json.Unmarshal(v, &value); err != nil {\n\t\t\tmergeNested(&errs, k, err)\n\t\t\tcontinue\n\t\t}\n");
+                output.push_str("\n\t\tif err := json.Unmarshal(v, &value); err != nil {\n\t\t\tmergeNested(&errs, path, err)\n\t\t\tcontinue\n\t\t}\n");
                 if let Some(value) = &shape.value_schema {
                     render_go_member_checks(
                         output,
                         "\t\t",
                         "value",
-                        "k",
+                        "path",
                         type_name,
                         MAP_MEMBER_POSITION,
                         value,
@@ -4906,7 +5014,7 @@ fn render_go_member_checks(
         let values = closed_values(value);
         let literals = values
             .iter()
-            .map(|entry| go_scalar_literal(entry, ty))
+            .map(|entry| go_scalar_literal(entry, ty == Some("integer")))
             .collect::<Vec<_>>();
         let reason = go_closed_reason(&values, value_expr);
         output.push_str(indent);
@@ -4979,7 +5087,7 @@ fn render_go_member_checks(
                 output,
                 value_expr,
                 key_expr,
-                &go_pattern_var_name(type_name, position),
+                &go_pattern_var_name(pattern),
                 pattern,
                 indent,
             );
@@ -4989,7 +5097,7 @@ fn render_go_member_checks(
                 output,
                 value_expr,
                 key_expr,
-                &go_format_var_name(type_name, position),
+                &go_format_var_name(format),
                 format,
                 indent,
             );
@@ -5001,10 +5109,6 @@ fn render_go_member_checks(
         );
     }
 }
-
-/// The position name a `propertyNames` subschema contributes to a synthesized
-/// identifier (its compiled-regex vars).
-const PROPERTY_NAMES_POSITION: &str = "propertyName";
 
 /// The position name a typed map's member contributes to a synthesized
 /// identifier — the same `Value` suffix the loader uses when it names an inline
@@ -5291,12 +5395,15 @@ func checkTemporalYear(name string, v time.Time, path string, errs *[]Violation)
 	return false
 }
 
-// checkTemporalOffset asserts a UTC offset is a whole number of minutes, the
-// finest the wire form spells (a Go Location carries seconds, which the wire
-// form would silently lose).
+// checkTemporalOffset asserts the wire's whole-minute, +/-18-hour offset range.
+// A Go Location carries arbitrary seconds and magnitude, both wider than the
+// materialized wire grammar.
 func checkTemporalOffset(name string, v time.Time, path string, errs *[]Violation) {
-	if _, offset := v.Zone(); offset%60 != 0 {
+	_, offset := v.Zone()
+	if offset%60 != 0 {
 		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid %s, got %v: the UTC offset %d seconds is not a whole number of minutes", name, v, offset)})
+	} else if offset < -18*60*60 || offset > 18*60*60 {
+		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid %s, got %v: the UTC offset is outside -18:00 through +18:00", name, v)})
 	}
 }
 
@@ -5778,7 +5885,7 @@ fn go_content_encoding_encode_fn(
 #[allow(clippy::too_many_arguments)]
 fn render_content_encoding_property_unmarshal(
     output: &mut String,
-    model_name: &str,
+    _model_name: &str,
     json_name: &str,
     field: &str,
     encoding: crate::json_schema::content_encoding::Encoding,
@@ -5787,10 +5894,11 @@ fn render_content_encoding_property_unmarshal(
     property: &Schema,
 ) {
     let decode_fn = go_content_encoding_decode_fn(encoding);
-    let re_var = go_content_encoding_var_name(model_name, json_name);
-    let path = go_string_literal(json_name);
+    let re_var = go_content_encoding_var_name(encoding);
+    let key = go_string_literal(json_name);
+    let path = go_violation_path_literal(json_name);
     output.push_str("\tif s, ok := parseStringField(get(");
-    output.push_str(&path);
+    output.push_str(&key);
     output.push_str("), ");
     output.push_str(&path);
     output.push_str(", ");
@@ -5800,15 +5908,27 @@ fn render_content_encoding_property_unmarshal(
     output.push_str(", &errs); ok {\n");
     // Co-occurring wire-string constraints re-run over the encoded wire string.
     if property.min_length.is_some() || property.max_length.is_some() {
-        render_go_string_checks(output, "s", &go_string_literal(json_name), property, "\t\t");
+        render_go_string_checks(output, "s", &path, property, "\t\t");
     }
     if let Some(pattern) = &property.pattern {
         render_go_pattern_check(
             output,
             "s",
-            &go_string_literal(json_name),
-            &go_pattern_var_name(model_name, json_name),
+            &path,
+            &go_pattern_var_name(pattern),
             pattern,
+            "\t\t",
+        );
+    }
+    if let Some(format) = &property.format
+        && crate::json_schema::format::check_for(format).is_some()
+    {
+        render_go_format_check(
+            output,
+            "s",
+            &path,
+            &go_format_var_name(format),
+            format,
             "\t\t",
         );
     }
@@ -6090,13 +6210,14 @@ fn go_value_constant_override<'a>(schema: &'a Schema, value: &Value) -> Option<&
     map.get(&enum_names_lookup_key(value)?).map(String::as_str)
 }
 
-/// The `x-go-enum-names` map key for one closed value: its JSON wire spelling.
+/// The `x-go-enum-names` map key for one closed value: its canonical JSON
+/// spelling, shared with the loader's manifest validation.
 /// Mirrors the loader's `enum_names_lookup_key`, which validates the same map.
 fn enum_names_lookup_key(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.clone()),
         Value::Bool(flag) => Some(flag.to_string()),
-        Value::Number(number) => Some(number.to_string()),
+        Value::Number(number) => Some(crate::json_schema::scalar::value_token_decimal(number)),
         _ => None,
     }
 }
@@ -6237,7 +6358,7 @@ fn render_go_closed_validate(
         output.push_str(" {\n");
         output.push_str(indent);
         output.push_str("\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&go_violation_path_literal(json_name));
         output.push_str(", ");
         output.push_str(&reason);
         output.push_str("})\n");
@@ -6256,7 +6377,7 @@ fn render_go_closed_validate(
         output.push_str("default:\n");
         output.push_str(indent);
         output.push_str("\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&go_violation_path_literal(json_name));
         output.push_str(", ");
         output.push_str(&reason);
         output.push_str("})\n");
@@ -6278,6 +6399,8 @@ fn render_closed_value_unmarshal(
     required: bool,
     nullable: bool,
 ) {
+    let key = go_string_literal(json_name);
+    let path = go_violation_path_literal(json_name);
     let field = property.go_member_name(json_name);
     let type_name = const_type_name(model_name, &field);
     let underlying = go_closed_underlying(property);
@@ -6302,9 +6425,9 @@ fn render_closed_value_unmarshal(
     output.push_str("\tif v, ok := ");
     output.push_str(parser);
     output.push_str("(get(");
-    output.push_str(&go_string_literal(json_name));
+    output.push_str(&key);
     output.push_str("), ");
-    output.push_str(&go_string_literal(json_name));
+    output.push_str(&path);
     output.push_str(", ");
     output.push_str(if required { "true" } else { "false" });
     output.push_str(", ");
@@ -6317,7 +6440,7 @@ fn render_closed_value_unmarshal(
         output.push_str("\t\tif typed != ");
         output.push_str(&names[0]);
         output.push_str(" {\n\t\t\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", ");
         output.push_str(&reason);
         output.push_str("})\n\t\t} else {\n\t\t\tm.");
@@ -6333,7 +6456,7 @@ fn render_closed_value_unmarshal(
         output.push_str(" = ");
         output.push_str(assign);
         output.push_str("\n\t\tdefault:\n\t\t\terrs = append(errs, Violation{");
-        output.push_str(&go_string_literal(json_name));
+        output.push_str(&path);
         output.push_str(", ");
         output.push_str(&reason);
         output.push_str("})\n\t\t}\n");

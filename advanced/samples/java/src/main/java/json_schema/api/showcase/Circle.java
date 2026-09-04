@@ -127,7 +127,13 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Circle> {
         @Override
         public void serialize(Circle value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
+            if (value.kind == null) {
+                violations.add(new Violation("kind", "required"));
+            }
             {
                 if (!Double.isFinite(value.radius)) {
                     violations.add(new Violation("radius", "must be a finite number, got " + value.radius));
@@ -141,7 +147,7 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -162,6 +168,7 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -179,6 +186,7 @@ public final class Circle implements ChoicesValue, Shape, Showcase.ShapeOrName {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "kind":
                     case "radius":

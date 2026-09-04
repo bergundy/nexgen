@@ -127,8 +127,16 @@ public final class LinkNote implements Note {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<LinkNote> {
         @Override
         public void serialize(LinkNote value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
-            if (value.href != null) {
+            if (value.kind == null) {
+                violations.add(new Violation("kind", "required"));
+            }
+            if (value.href == null) {
+                violations.add(new Violation("href", "required"));
+            } else {
                 int length = value.href.codePointCount(0, value.href.length());
                 if (length < 1) {
                     violations.add(new Violation("href", "must have length >= 1, got " + length));
@@ -144,7 +152,7 @@ public final class LinkNote implements Note {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -166,6 +174,7 @@ public final class LinkNote implements Note {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -183,6 +192,7 @@ public final class LinkNote implements Note {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "href":
                     case "kind":

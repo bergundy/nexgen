@@ -3,3 +3,4 @@
 export * from "./content";
 export * from "./kb";
 export * from "./tree";
+export type { Violation } from "./definitions";

@@ -66,8 +66,13 @@ public final class ShowcaseAudit {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<ShowcaseAudit> {
         @Override
         public void serialize(ShowcaseAudit value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
-            if (value.by != null) {
+            if (value.by == null) {
+                violations.add(new Violation("by", "required"));
+            } else {
                 int length = value.by.codePointCount(0, value.by.length());
                 if (length < 1) {
                     violations.add(new Violation("by", "must have length >= 1, got " + length));
@@ -80,7 +85,7 @@ public final class ShowcaseAudit {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -99,6 +104,7 @@ public final class ShowcaseAudit {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -116,6 +122,7 @@ public final class ShowcaseAudit {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "by":
                         break;

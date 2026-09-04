@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nexgen::{GenerateRequest, generate_to_file};
 
 mod common;
-use common::json_input_path;
+use common::{json_input_path, write_bare_ref_alias_closure};
 
 static OUTPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -131,7 +132,6 @@ title: Java conformance
 description: Mixed declared and typed catch-all object.
 deprecated: true
 type: object
-minProperties: 1
 maxProperties: 4
 properties:
   id:
@@ -480,6 +480,53 @@ fn java_json_validates_non_object_union_branch_constraints() {
 }
 
 #[test]
+fn java_json_inline_union_names_follow_the_emitted_member() {
+    let temp_dir = unique_output_path("java-json-inline-union-member-name");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("renamed.yaml");
+    fs::write(
+        &input_path,
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: RenamedUnion
+type: object
+properties:
+  serializer:
+    x-java-name: payload
+    oneOf:
+      - { type: string }
+      - { type: integer }
+"#,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("renamed");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Java,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: Some("renamed".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let rendered = read_java_files(&output_path);
+    let model = &rendered[&PathBuf::from("Renamed.java")];
+    for expected in [
+        "public interface Payload {",
+        "public static final class PayloadString implements Payload {",
+        "private final @Nullable Payload payload;",
+        "payload = Payload.fromNode(field, \"serializer\", violations, context);",
+    ] {
+        assert!(model.contains(expected), "{expected}\n{model}");
+    }
+    assert!(!model.contains("public interface Serializer {"), "{model}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
 fn java_json_rejects_non_finite_numbers_in_every_serialize_position() {
     let temp_dir = unique_output_path("java-json-finite-numbers");
     fs::create_dir_all(&temp_dir).unwrap();
@@ -532,7 +579,7 @@ fn java_json_rejects_non_finite_numbers_in_every_serialize_position() {
     for expected in [
         "for (Map.Entry<String, List<Double>> entry : value.additionalProperties.entrySet()) {",
         "for (int finiteIndex0 = 0; finiteIndex0 < entry.getValue().size(); finiteIndex0++) {",
-        "new Violation(entry.getKey() + \"[\" + finiteIndex0 + \"]\", \"must be a finite number, got \" + finiteValue0)",
+        "new Violation(Violation.memberPath(entry.getKey()) + \"[\" + finiteIndex0 + \"]\", \"must be a finite number, got \" + finiteValue0)",
     ] {
         assert!(map.contains(expected), "{expected}\n{map}");
     }
@@ -610,6 +657,259 @@ fn java_json_emits_runtime_support_for_nested_materialized_values() {
     ] {
         assert!(root.contains(expected), "{expected}\n{root}");
     }
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn java_json_description_does_not_select_datetime_runtime_imports() {
+    let temp_dir = unique_output_path("java-json-datetime-prose");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("prose.yaml");
+    fs::write(
+        &input_path,
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: Prose
+description: DateTime is mentioned only as ordinary documentation.
+type: object
+properties:
+  note:
+    type: string
+    description: Another DateTime prose mention.
+"#,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("prose");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Java,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: Some("example.prose".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let model = fs::read_to_string(output_path.join("Prose.java")).unwrap();
+    assert!(!model.contains("TemporalSupport.DateTime"), "{model}");
+    assert!(
+        !model.contains("import example.prose.TemporalSupport"),
+        "{model}"
+    );
+    assert!(!output_path.join("TemporalSupport.java").exists());
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn java_json_authored_datetime_does_not_shadow_offset_date_time() {
+    let temp_dir = unique_output_path("java-json-datetime-shadow");
+    let gradle_root = temp_dir.join("project");
+    fs::create_dir_all(&gradle_root).unwrap();
+    fs::copy(
+        project_root().join("samples/java/build.gradle"),
+        gradle_root.join("build.gradle"),
+    )
+    .unwrap();
+    fs::copy(
+        project_root().join("samples/java/settings.gradle"),
+        gradle_root.join("settings.gradle"),
+    )
+    .unwrap();
+    let input_path = temp_dir.join("shadow.nexusrpc.yaml");
+    fs::write(
+        &input_path,
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+nexusrpc: "1.0.0"
+$defs:
+  DateTime:
+    type: object
+    properties:
+      label: { type: string }
+  Event:
+    type: object
+    required: [authored, timestamp, nullableCollection, nullableElement]
+    properties:
+      authored: { $ref: "#/$defs/DateTime" }
+      timestamp: { type: string, format: date-time }
+      optionalTimestamp: { type: string, format: date-time }
+      optionalCollection:
+        type: array
+        items: { type: string, format: date-time }
+      nullableCollection:
+        oneOf:
+          - type: array
+            items: { type: string, format: date-time }
+          - { type: "null" }
+      nullableElement:
+        type: array
+        items:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+      bothCombined:
+        oneOf:
+          - type: array
+            items:
+              oneOf:
+                - { type: string, format: date-time }
+                - { type: "null" }
+          - { type: "null" }
+"##,
+    )
+    .unwrap();
+    let output_path = gradle_root.join("src/main/java/example/shadow");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Java,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: Some("example.shadow".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let event = fs::read_to_string(output_path.join("Event.java")).unwrap();
+    assert!(event.contains("OffsetDateTime timestamp"), "{event}");
+    assert!(
+        event.contains("@Nullable OffsetDateTime optionalTimestamp"),
+        "{event}"
+    );
+    for declaration in [
+        "@Nullable List<OffsetDateTime> optionalCollection",
+        "@Nullable List<OffsetDateTime> nullableCollection",
+        "List<@Nullable OffsetDateTime> nullableElement",
+        "@Nullable List<@Nullable OffsetDateTime> bothCombined",
+    ] {
+        assert!(event.contains(declaration), "{declaration}\n{event}");
+    }
+    assert!(event.contains("DateTime authored"), "{event}");
+    assert!(event.contains("import java.time.OffsetDateTime;"));
+
+    let test_package = gradle_root.join("src/test/java/example/shadow");
+    fs::create_dir_all(&test_package).unwrap();
+    fs::write(
+        test_package.join("DateTimeTypeIdentityTest.java"),
+        r#"package example.shadow;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.OffsetDateTime;
+import org.junit.jupiter.api.Test;
+
+final class DateTimeTypeIdentityTest {
+    @Test
+    void authoredAndTemporalDateTimesRemainDistinct() throws Exception {
+        assertEquals(DateTime.class, Event.class.getMethod("getAuthored").getReturnType());
+        assertEquals(OffsetDateTime.class, Event.class.getMethod("getTimestamp").getReturnType());
+    }
+
+    @Test
+    void collectionAndElementNullabilityRemainIndependent() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        Event event = mapper.readValue(
+            "{\"authored\":{},\"timestamp\":\"2024-01-02T03:04:05Z\"," +
+            "\"nullableCollection\":null," +
+            "\"nullableElement\":[null,\"2024-01-02T03:04:05Z\"]," +
+            "\"bothCombined\":[null]}",
+            Event.class);
+        assertNull(event.getOptionalCollection());
+        assertNull(event.getNullableCollection());
+        assertNull(event.getNullableElement().get(0));
+        assertNull(event.getBothCombined().get(0));
+        assertEquals(2, mapper.readValue(mapper.writeValueAsString(event), Event.class)
+            .getNullableElement().size());
+    }
+}
+"#,
+    )
+    .unwrap();
+    let status = Command::new(project_root().join("samples/java/gradlew"))
+        .args(["test", "--no-daemon"])
+        .current_dir(&gradle_root)
+        .status()
+        .expect("run Gradle DateTime identity test");
+    assert!(status.success());
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn java_json_rejects_model_shadowing_schema_dependent_offset_date_time_import() {
+    let temp_dir = unique_output_path("java-json-offset-date-time-import");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let colliding_input = temp_dir.join("colliding.yaml");
+    fs::write(
+        &colliding_input,
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  value: { $ref: "#/$defs/OffsetDateTime" }
+$defs:
+  OffsetDateTime:
+    type: object
+    properties:
+      timestamp: { type: string, format: date-time }
+"##,
+    )
+    .unwrap();
+
+    let error = generate_to_file(&GenerateRequest {
+        config: Default::default(),
+        language: nexgen::language::Language::Java,
+        input_paths: vec![colliding_input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("colliding"),
+        format: false,
+        java_package_name: Some("example.collision".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("type `OffsetDateTime`")
+            && error.contains("java.time.OffsetDateTime")
+            && error.contains("x-java-name"),
+        "{error}"
+    );
+
+    let plain_input = temp_dir.join("plain.yaml");
+    fs::write(
+        &plain_input,
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  value: { $ref: "#/$defs/OffsetDateTime" }
+$defs:
+  OffsetDateTime:
+    type: object
+    properties:
+      timestamp: { type: string }
+"##,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("plain");
+    generate_to_file(&GenerateRequest {
+        config: Default::default(),
+        language: nexgen::language::Language::Java,
+        input_paths: vec![plain_input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        java_package_name: Some("example.plain".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .expect("a non-temporal OffsetDateTime model emits no conflicting import");
+    let plain_model = fs::read_to_string(output_path.join("OffsetDateTime.java")).unwrap();
+    assert!(plain_model.contains("public final class OffsetDateTime"));
+    assert!(!plain_model.contains("import java.time.OffsetDateTime;"));
+
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -693,7 +993,7 @@ fn java_json_emits_wave2_object_and_matcher_contracts() {
     let native_extras = &rendered[&PathBuf::from("NativeExtras.java")];
     for expected in [
         "Map<String, LocalDate> additionalProperties",
-        "TemporalSupport.parseDate(element.textValue(), key, violations)",
+        "TemporalSupport.parseDate(element.textValue(), path, violations)",
         "TemporalSupport.formatDate(entry.getValue())",
         "declared property key collision",
         "wireKeys.size() < 1",
@@ -825,7 +1125,7 @@ fn java_json_decodes_element_position_unions() {
     let map = &rendered[&PathBuf::from("Entries.java")];
     for expected in [
         "Map<String, EntriesValue> additionalProperties",
-        "EntriesValue parsedAdditionalProperties = EntriesValue.fromNode(element, key, violations, context);",
+        "EntriesValue parsedAdditionalProperties = EntriesValue.fromNode(element, path, violations, context);",
     ] {
         assert!(map.contains(expected), "{expected}\n{map}");
     }
@@ -947,6 +1247,93 @@ fn java_json_cross_module_java_name_override_moves_every_reference() {
         assert!(!service.contains(stale), "{stale}\n{service}");
         assert!(!consuming.contains(stale), "{stale}\n{consuming}");
     }
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn java_json_bare_ref_root_alias_collapses_to_the_target_class() {
+    let temp_dir = unique_output_path("java-json-bare-ref-alias");
+    let input = write_bare_ref_alias_closure(&temp_dir);
+    let gradle_root = temp_dir.join("project");
+    fs::create_dir_all(&gradle_root).unwrap();
+    fs::copy(
+        project_root().join("samples/java/build.gradle"),
+        gradle_root.join("build.gradle"),
+    )
+    .unwrap();
+    fs::copy(
+        project_root().join("samples/java/settings.gradle"),
+        gradle_root.join("settings.gradle"),
+    )
+    .unwrap();
+    let output_path = gradle_root.join("src/main/java/example/aliases");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Java,
+        input_paths: vec![input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: Some("example.aliases".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    assert!(output_path.join("target/main/Main.java").is_file());
+    assert!(
+        !output_path.join("alias/alternate/Alternate.java").exists(),
+        "Java must not synthesize a class for a bare-ref alias"
+    );
+    assert!(
+        !output_path.join("target/main/Mirror.java").exists(),
+        "Java must also collapse a bare-ref `$defs` alias"
+    );
+    let service = fs::read_to_string(output_path.join("service/AliasService.java")).unwrap();
+    assert!(
+        service.contains("import example.aliases.target.main.Main;"),
+        "{service}"
+    );
+    assert!(service.contains("Main echo(Main input);"), "{service}");
+    assert!(!service.contains("Alternate"), "{service}");
+    let holder = fs::read_to_string(output_path.join("service/Holder.java")).unwrap();
+    assert!(holder.contains("private final Main item;"), "{holder}");
+    assert!(!holder.contains("Alternate"), "{holder}");
+
+    let test_package = gradle_root.join("src/test/java/example/aliases");
+    fs::create_dir_all(&test_package).unwrap();
+    fs::write(
+        test_package.join("BareAliasTest.java"),
+        r#"package example.aliases;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import example.aliases.service.Holder;
+import example.aliases.target.main.Main;
+import org.junit.jupiter.api.Test;
+
+final class BareAliasTest {
+    @Test
+    void aliasPositionsUseTheTargetClassAtRuntime() throws Exception {
+        Main value = new Main("ok");
+        Holder holder = new Holder(value);
+        assertEquals(value, holder.getItem());
+
+        ObjectMapper mapper = new ObjectMapper();
+        Main decoded = mapper.readValue(mapper.writeValueAsBytes(value), Main.class);
+        assertEquals(value, decoded);
+    }
+}
+"#,
+    )
+    .unwrap();
+    let status = Command::new(project_root().join("samples/java/gradlew"))
+        .args(["--no-daemon", "test"])
+        .current_dir(&gradle_root)
+        .status()
+        .expect("run Gradle alias compile/runtime test");
+    assert!(status.success(), "Gradle alias test failed: {status}");
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -1245,6 +1632,7 @@ fn java_json_dispatches_a_non_string_discriminant_by_value() {
 /// parent's list, in both directions (`03#8`, P11).
 const JAVA_NESTED_PATH_SCHEMA: &str = r##"$schema: https://json-schema.org/draft/2020-12/schema
 type: object
+required: [address]
 properties:
   address: { $ref: "#/$defs/Addr" }
   addresses:
@@ -1285,6 +1673,12 @@ fn java_json_repaths_nested_violations_on_serialize() {
     let serializer = model.split("class Serializer").nth(1).unwrap();
     let serializer = serializer.split("class Deserializer").next().unwrap();
     for expected in [
+        "if (value.address == null) {",
+        "violations.add(new Violation(\"address\", \"required\"));",
+        "TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);",
+        "TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);",
+        "nestedBuffer0.serialize(gen);",
+        "pending.serialize(target);",
         "} catch (ApplicationFailure nested0) {",
         "if (!\"PayloadValidationError\".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {",
         "List<Violation> nestedViolations0 = (List<Violation>) nested0.getDetails().get(0, List.class);",
@@ -1899,6 +2293,69 @@ properties:
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
+#[test]
+fn java_json_large_portable_counts_use_long_literals() {
+    let temp_dir = unique_output_path("java-json-long-counts");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("counts.yaml");
+    fs::write(
+        &input_path,
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+minProperties: 2147483648
+maxProperties: 4294967295
+properties:
+  text:
+    type: string
+    minLength: 2147483648
+    maxLength: 4294967295
+  values:
+    type: array
+    items: { type: string }
+    minItems: 2147483648
+    maxItems: 4294967295
+    contains: { type: string, minLength: 2147483648 }
+    minContains: 2147483648
+    maxContains: 4294967295
+"##,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("counts");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Java,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: Some("counts".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let model = &read_java_files(&output_path)[&PathBuf::from("Counts.java")];
+    for predicate in [
+        "wireKeys.size() < 2147483648L",
+        "wireKeys.size() > 4294967295L",
+        "length < 2147483648L",
+        "length > 4294967295L",
+        ".size() < 2147483648L",
+        ".size() > 4294967295L",
+        "matchCount < 2147483648L",
+        "matchCount > 4294967295L",
+    ] {
+        assert!(model.contains(predicate), "{predicate}\n{model}");
+    }
+    assert!(
+        model.contains("must have at least 2147483648 items")
+            && !model.contains("must have at least 2147483648L items"),
+        "diagnostic counts must remain plain decimal text\n{model}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
 /// The pinned temporal grammar admits a fractional second of any width, and
 /// every target keeps what its own type can hold rather than rejecting: Go, Java
 /// and TypeScript at nanoseconds, Python at microseconds. That is P1's exception
@@ -1909,19 +2366,43 @@ properties:
 #[test]
 fn java_json_truncates_an_over_long_fractional_second() {
     let temp_dir = unique_output_path("java-json-fractional-second");
-    fs::create_dir_all(&temp_dir).unwrap();
+    let gradle_root = temp_dir.join("project");
+    fs::create_dir_all(&gradle_root).unwrap();
+    fs::copy(
+        project_root().join("samples/java/build.gradle"),
+        gradle_root.join("build.gradle"),
+    )
+    .unwrap();
+    fs::copy(
+        project_root().join("samples/java/settings.gradle"),
+        gradle_root.join("settings.gradle"),
+    )
+    .unwrap();
     let input_path = temp_dir.join("fracsec.yaml");
     fs::write(
         &input_path,
         r##"$schema: https://json-schema.org/draft/2020-12/schema
+title: Fractional Defaults
 type: object
 properties:
   ts: { type: string, format: date-time }
   tod: { type: string, format: time }
+  wideDefault:
+    type: string
+    format: date-time
+    default: "2021-06-15t12:30:45.123456789012+18:00"
+  plusBoundary:
+    type: string
+    format: date-time
+    default: "2021-06-15T12:30:45+18:00"
+  minusBoundary:
+    type: string
+    format: date-time
+    default: "2021-06-15T12:30:45-18:00"
 "##,
     )
     .unwrap();
-    let output_path = temp_dir.join("fracsec");
+    let output_path = gradle_root.join("src/main/java/fracsec");
 
     generate_to_file(&GenerateRequest {
         config: Default::default(),
@@ -1943,18 +2424,97 @@ properties:
         support.contains("(\\\\.[0-9]+)?"),
         "the pinned fraction must stay unbounded\n{support}"
     );
-    // Both parsers that can see a fraction truncate before handing it to
-    // `java.time`; `parseDate` has no fraction to truncate.
+    // The typed date-time truncates to OffsetDateTime's nanoseconds;
+    // string-carried time keeps every digit and uses owned string arithmetic.
     for expected in [
         "private static String truncateFraction(String value) {",
+        "public static OffsetDateTime parseDateTimeLiteral(String value) {",
         "return OffsetDateTime.parse(truncateFraction(value).toUpperCase());",
-        "String upper = truncateFraction(value).toUpperCase();",
+        "return parseDateTimeLiteral(value);",
+        "return canonicalTime(value);",
     ] {
         assert!(support.contains(expected), "{expected}\n{support}");
     }
     assert!(
         !support.contains("LocalDate.parse(truncateFraction("),
         "a date carries no fraction\n{support}"
+    );
+
+    let model = &rendered[&PathBuf::from("Fracsec.java")];
+    assert!(
+        model.contains(
+            "TemporalSupport.parseDateTimeLiteral(\"2021-06-15T12:30:45.123456789012+18:00\")"
+        ),
+        "{model}"
+    );
+
+    let test_package = gradle_root.join("src/test/java/fracsec");
+    fs::create_dir_all(&test_package).unwrap();
+    fs::write(
+        test_package.join("FractionalDefaultsTest.java"),
+        r#"package fracsec;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Collections;
+import org.junit.jupiter.api.Test;
+
+final class FractionalDefaultsTest {
+    @Test
+    void dateTimeDefaultsUseTheMaterializedParser() {
+        Fracsec value = new Fracsec(null, null, null, null, null, Collections.emptyMap());
+        assertEquals(
+            OffsetDateTime.parse("2021-06-15T12:30:45.123456789+18:00"),
+            value.getWideDefaultOrDefault());
+        assertEquals(ZoneOffset.ofHours(18), value.getPlusBoundaryOrDefault().getOffset());
+        assertEquals(ZoneOffset.ofHours(-18), value.getMinusBoundaryOrDefault().getOffset());
+    }
+}
+"#,
+    )
+    .unwrap();
+    let status = Command::new(project_root().join("samples/java/gradlew"))
+        .args([
+            "test",
+            "--no-daemon",
+            "--tests",
+            "fracsec.FractionalDefaultsTest",
+        ])
+        .current_dir(&gradle_root)
+        .status()
+        .expect("run Gradle fractional date-time default test");
+    assert!(status.success());
+
+    let invalid_input = temp_dir.join("invalid-default.yaml");
+    fs::write(
+        &invalid_input,
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+properties:
+  invalid:
+    type: string
+    format: date-time
+    default: "2021-06-15T12:30:45+18:01"
+"#,
+    )
+    .unwrap();
+    let error = generate_to_file(&GenerateRequest {
+        config: Default::default(),
+        language: nexgen::language::Language::Java,
+        input_paths: vec![invalid_input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("invalid"),
+        format: false,
+        java_package_name: Some("invalid".to_string()),
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("is not a valid date-time") && error.contains("+18:01"),
+        "{error}"
     );
     fs::remove_dir_all(temp_dir).unwrap();
 }

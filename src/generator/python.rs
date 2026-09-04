@@ -8,7 +8,9 @@ use crate::error::{Error, Result};
 use crate::generator::json_schema::python as python_json;
 use crate::generator::proto::python as python_proto;
 use crate::generator::render_request_plan;
-use crate::generator::{ExternalModelBackend, GeneratedFiles, GenerationMode};
+use crate::generator::{
+    ExternalModelBackend, GeneratedFileMap, GeneratedFileOrigin, GeneratedFiles, GenerationMode,
+};
 use crate::language::Language;
 use crate::planning::{
     PlannedFamily, PlannedOperationResourceFieldBinding, PlannedOperationResourceReturn,
@@ -37,7 +39,8 @@ const EXPERIMENTAL_WARNING: &str = "This API is experimental and subject to chan
 pub(in crate::generator) type RootPackageImports = BTreeMap<String, BTreeSet<String>>;
 
 struct PythonGenerationResult {
-    generated_files: GeneratedFiles,
+    files: GeneratedFileMap,
+    warnings: Vec<String>,
     root_package_imports: RootPackageImports,
     exported_names: BTreeSet<String>,
 }
@@ -49,7 +52,16 @@ pub(crate) fn generate(
     match &tree.root {
         ApiSpecNode::Leaf(leaf) => {
             let support_fragments = support_fragments_for_plan(&leaf.spec, support);
-            generate_leaf(&leaf.spec, &support_fragments)
+            let generated = generate_leaf(
+                &leaf.spec,
+                &support_fragments,
+                GeneratedFileOrigin::fixed("generated Python package module"),
+            )?;
+            Ok(GeneratedFiles {
+                layout: crate::generator::GeneratedOutputLayout::Directory,
+                files: generated.files.into_files(),
+                warnings: generated.warnings,
+            })
         }
         ApiSpecNode::Branch(branch) => generate_tree(branch, support),
     }
@@ -58,25 +70,25 @@ pub(crate) fn generate(
 fn generate_leaf(
     api_plan: &PlannedSpec,
     support_fragments: &[SupportFragmentSpec],
-) -> Result<GeneratedFiles> {
+    module_origin: GeneratedFileOrigin,
+) -> Result<PythonGenerationResult> {
     reject_support_namespaces(Language::Python, support_fragments)?;
     let inline_model_rebuilds = api_plan
         .data
         .module_imports
         .values()
         .all(BTreeSet::is_empty);
-    let generated =
-        ApiPlanner::new(api_plan, inline_model_rebuilds, None)?.build(support_fragments)?;
-    Ok(generated.generated_files)
+    ApiPlanner::new(api_plan, inline_model_rebuilds, None)?.build(support_fragments, module_origin)
 }
 
 fn generate_leaf_with_model_hoists(
     api_plan: &PlannedSpec,
     support_fragments: &[SupportFragmentSpec],
     model_hoists: &PythonModelHoists,
+    module_origin: GeneratedFileOrigin,
 ) -> Result<PythonGenerationResult> {
     reject_support_namespaces(Language::Python, support_fragments)?;
-    ApiPlanner::new(api_plan, true, Some(model_hoists))?.build(support_fragments)
+    ApiPlanner::new(api_plan, true, Some(model_hoists))?.build(support_fragments, module_origin)
 }
 
 fn generate_tree(
@@ -84,12 +96,25 @@ fn generate_tree(
     support: &crate::SupportFiles,
 ) -> Result<GeneratedFiles> {
     let model_hoists = tree_model_hoists(branch)?;
-    let mut files = BTreeMap::new();
+    let mut files = GeneratedFileMap::default();
     let mut warnings = Vec::new();
     let mut root_package_imports = RootPackageImports::new();
-    insert_files(&mut files, render_tree_support_files(branch))?;
+    files.insert_multi(
+        render_tree_support_files(branch),
+        GeneratedFileOrigin::fixed(format!(
+            "generated Python validation runtime for {}",
+            source_paths_label(&tree_json_source_paths(branch))
+        )),
+    )?;
     for (path, contents) in model_hoists.files() {
-        insert_generated_file(&mut files, path.clone(), contents.clone())?;
+        files.insert(
+            path.clone(),
+            contents.clone(),
+            GeneratedFileOrigin::fixed(format!(
+                "generated Python recursive-model module for {}",
+                source_paths_label(model_hoists.source_paths())
+            )),
+        )?;
     }
     let mut child_exports = BTreeMap::new();
     for (name, node) in &branch.children {
@@ -112,7 +137,7 @@ fn generate_tree(
     )?;
     Ok(GeneratedFiles {
         layout: crate::generator::GeneratedOutputLayout::Directory,
-        files,
+        files: files.into_files(),
         warnings,
     })
 }
@@ -121,21 +146,23 @@ fn generate_tree_node(
     node: &ApiSpecNode<PlannedFamily>,
     support: &crate::SupportFiles,
     model_hoists: &PythonModelHoists,
-    files: &mut BTreeMap<PathBuf, String>,
+    files: &mut GeneratedFileMap,
     warnings: &mut Vec<String>,
     root_package_imports: &mut RootPackageImports,
 ) -> Result<BTreeSet<String>> {
     match node {
         ApiSpecNode::Leaf(leaf) => {
             let support_fragments = support_fragments_for_plan(&leaf.spec, support);
-            let generated =
-                generate_leaf_with_model_hoists(&leaf.spec, &support_fragments, model_hoists)?;
+            let generated = generate_leaf_with_model_hoists(
+                &leaf.spec,
+                &support_fragments,
+                model_hoists,
+                GeneratedFileOrigin::input_module(Language::Python, &leaf.source_path),
+            )?;
             extend_root_package_imports(root_package_imports, generated.root_package_imports);
-            warnings.extend(generated.generated_files.warnings);
+            warnings.extend(generated.warnings);
             let prefix = leaf.module_path.to_path_buf();
-            for (path, contents) in generated.generated_files.files {
-                insert_generated_file(files, prefix.join(path), contents)?;
-            }
+            files.extend(generated.files.prefix(prefix)?)?;
             Ok(generated.exported_names)
         }
         ApiSpecNode::Branch(branch) => {
@@ -163,30 +190,8 @@ fn generate_tree_node(
     }
 }
 
-fn insert_files(
-    files: &mut BTreeMap<PathBuf, String>,
-    generated: BTreeMap<PathBuf, String>,
-) -> Result<()> {
-    for (path, contents) in generated {
-        insert_generated_file(files, path, contents)?;
-    }
-    Ok(())
-}
-
-fn insert_generated_file(
-    files: &mut BTreeMap<PathBuf, String>,
-    path: impl Into<PathBuf>,
-    contents: String,
-) -> Result<()> {
-    let path = path.into();
-    if files.insert(path.clone(), contents).is_some() {
-        return Err(Error::GeneratedFileConflict { path });
-    }
-    Ok(())
-}
-
 fn insert_branch_index_file(
-    files: &mut BTreeMap<PathBuf, String>,
+    files: &mut GeneratedFileMap,
     branch: &ApiSpecBranch<PlannedFamily>,
     model_hoists: &PythonModelHoists,
     child_exports: &BTreeMap<String, BTreeSet<String>>,
@@ -247,7 +252,14 @@ fn insert_branch_index_file(
         }
         contents.push_str("]\n");
     }
-    insert_generated_file(files, path, contents)
+    files.insert(
+        path,
+        contents,
+        GeneratedFileOrigin::fixed(format!(
+            "generated Python package initializer for module `{}`",
+            branch.module_path.as_module_key()
+        )),
+    )
 }
 
 fn planned_module_export_model_names(plan: &PlannedSpec) -> BTreeSet<String> {
@@ -498,6 +510,7 @@ impl<'a> ApiPlanner<'a> {
     fn build(
         mut self,
         support_fragments: &[SupportFragmentSpec],
+        module_origin: GeneratedFileOrigin,
     ) -> Result<PythonGenerationResult> {
         let api_plan = self.api_plan;
         let services = api_plan
@@ -552,10 +565,15 @@ impl<'a> ApiPlanner<'a> {
             self.render_model_fragments(model_refs.as_slice(), variant_refs.as_slice())?;
         validate_python_generated_names(self.api_plan, &model_fragments.generated_names)?;
 
-        let (generated_files, exported_names) =
-            self.render_package(&model_fragments, &services, support_fragments)?;
+        let (files, exported_names) = self.render_package(
+            &model_fragments,
+            &services,
+            support_fragments,
+            module_origin,
+        )?;
         Ok(PythonGenerationResult {
-            generated_files,
+            files,
+            warnings: Vec::new(),
             root_package_imports: model_fragments.root_package_imports,
             exported_names,
         })
@@ -575,13 +593,15 @@ impl<'a> ApiPlanner<'a> {
         model_fragments: &RenderedModelFragments,
         services: &[RenderedService<'_>],
         support_fragments: &[SupportFragmentSpec],
-    ) -> Result<(GeneratedFiles, BTreeSet<String>)> {
+        module_origin: GeneratedFileOrigin,
+    ) -> Result<(GeneratedFileMap, BTreeSet<String>)> {
         let mode = crate::nexgen_config::current().mode;
-        let mut files = BTreeMap::new();
+        let mut files = GeneratedFileMap::default();
         render_support_package(&mut files, support_fragments)?;
-        for (path, contents) in self.external_models.render_support_files()? {
-            insert_generated_file(&mut files, path, contents)?;
-        }
+        files.insert_multi(
+            self.external_models.render_support_files()?,
+            GeneratedFileOrigin::fixed("generated Python external-model runtime"),
+        )?;
         let variants = self
             .variants
             .iter()
@@ -678,7 +698,11 @@ impl<'a> ApiPlanner<'a> {
             },
             root_package_imports,
         );
-        insert_generated_file(&mut files, "__init__.py", render_init(root_package_imports))?;
+        files.insert(
+            "__init__.py",
+            render_init(root_package_imports),
+            module_origin.clone(),
+        )?;
         // A module that declares nothing emits no models file. Emitting the file
         // anyway leaves a header and unused imports behind.
         if let Some(models_source) = render_models_module(
@@ -692,18 +716,17 @@ impl<'a> ApiPlanner<'a> {
             self.inline_model_rebuilds,
             self.model_hoists,
         )? {
-            insert_generated_file(&mut files, "models.py", models_source)?;
+            files.insert("models.py", models_source, module_origin.clone())?;
         }
         if !resource_names.is_empty() {
-            insert_generated_file(
-                &mut files,
+            files.insert(
                 "_resources/__init__.py",
                 render_resources_package_init(services),
+                GeneratedFileOrigin::fixed("generated Python resources package initializer"),
             )?;
         }
         if !services.is_empty() {
-            insert_generated_file(
-                &mut files,
+            files.insert(
                 "services.py",
                 render_service_module(
                     services,
@@ -711,20 +734,21 @@ impl<'a> ApiPlanner<'a> {
                     self.model_hoists,
                     mode == GenerationMode::NativeApi,
                 ),
+                module_origin.clone(),
             )?;
         }
         if has_standalone_operations {
-            insert_generated_file(
-                &mut files,
+            files.insert(
                 "operations/__init__.py",
                 render_operations_package_init(),
+                GeneratedFileOrigin::fixed("generated Python operations package initializer"),
             )?;
         }
         if crate::nexgen_config::current().system_nexus && mode == GenerationMode::NativeApi {
-            insert_generated_file(
-                &mut files,
+            files.insert(
                 "_system_nexus_interceptor.py",
                 render_system_nexus_interceptor(services),
+                GeneratedFileOrigin::fixed("generated Python system Nexus interceptor"),
             )?;
         }
 
@@ -735,8 +759,7 @@ impl<'a> ApiPlanner<'a> {
                 } else {
                     Vec::new()
                 };
-                insert_generated_file(
-                    &mut files,
+                files.insert(
                     format!("_resources/{}.py", resource_module_name(resource)),
                     self.render_resource_module_file(
                         service,
@@ -746,6 +769,7 @@ impl<'a> ApiPlanner<'a> {
                         &resource_names,
                         &support_names,
                     ),
+                    GeneratedFileOrigin::resource(Language::Python, service.name, &resource.name),
                 )?;
             }
             if mode == GenerationMode::NativeApi {
@@ -758,8 +782,7 @@ impl<'a> ApiPlanner<'a> {
                     {
                         continue;
                     }
-                    insert_generated_file(
-                        &mut files,
+                    files.insert(
                         format!("operations/{}.py", operation.attr_name),
                         render_operation_module(
                             service,
@@ -771,12 +794,17 @@ impl<'a> ApiPlanner<'a> {
                             self.api_plan,
                             self.model_hoists,
                         ),
+                        GeneratedFileOrigin::operation(
+                            Language::Python,
+                            service.name,
+                            operation.name,
+                        ),
                     )?;
                 }
             }
         }
 
-        Ok((GeneratedFiles::directory(files), exported_names))
+        Ok((files, exported_names))
     }
 
     fn render_resource_module_file(
@@ -2877,7 +2905,9 @@ pub(crate) fn render_tree_support_files(
 #[derive(Debug, Default)]
 pub(crate) struct PythonModelHoists {
     hoisted: BTreeMap<ModulePath, BTreeSet<String>>,
+    runtime_imports: BTreeMap<ModulePath, BTreeSet<String>>,
     files: BTreeMap<PathBuf, String>,
+    source_paths: BTreeSet<PathBuf>,
     exported_names: BTreeSet<String>,
 }
 
@@ -2897,6 +2927,24 @@ impl PythonModelHoists {
         self.files.insert(path, contents);
     }
 
+    pub(in crate::generator) fn add_source_paths(&mut self, paths: BTreeSet<PathBuf>) {
+        self.source_paths.extend(paths);
+    }
+
+    pub(in crate::generator) fn add_runtime_imports(
+        &mut self,
+        module_path: ModulePath,
+        names: BTreeSet<String>,
+    ) {
+        if names.is_empty() {
+            return;
+        }
+        self.runtime_imports
+            .entry(module_path)
+            .or_default()
+            .extend(names);
+    }
+
     pub(in crate::generator) fn add_exported_names(&mut self, names: BTreeSet<String>) {
         self.exported_names.extend(names);
     }
@@ -2911,8 +2959,16 @@ impl PythonModelHoists {
             .is_some_and(|names| names.contains(name))
     }
 
+    fn runtime_imports_for(&self, module_path: &ModulePath) -> impl Iterator<Item = &String> {
+        self.runtime_imports.get(module_path).into_iter().flatten()
+    }
+
     pub(crate) fn files(&self) -> &BTreeMap<PathBuf, String> {
         &self.files
+    }
+
+    pub(crate) fn source_paths(&self) -> &BTreeSet<PathBuf> {
+        &self.source_paths
     }
 
     pub(crate) fn exported_names(&self) -> &BTreeSet<String> {
@@ -2935,6 +2991,34 @@ fn branch_has_json_models(branch: &ApiSpecBranch<PlannedFamily>) -> bool {
             .any(|binding| binding.json_model().is_some()),
         ApiSpecNode::Branch(branch) => branch_has_json_models(branch),
     })
+}
+
+fn tree_json_source_paths(branch: &ApiSpecBranch<PlannedFamily>) -> BTreeSet<PathBuf> {
+    let mut paths = BTreeSet::new();
+    for node in branch.children.values() {
+        match node {
+            ApiSpecNode::Leaf(leaf) => {
+                if leaf
+                    .spec
+                    .external_types()
+                    .map(|(_, binding)| binding)
+                    .any(|binding| binding.json_model().is_some())
+                {
+                    paths.insert(leaf.source_path.clone());
+                }
+            }
+            ApiSpecNode::Branch(branch) => paths.extend(tree_json_source_paths(branch)),
+        }
+    }
+    paths
+}
+
+fn source_paths_label(paths: &BTreeSet<PathBuf>) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn python_function_result_annotation(result: &FunctionResultSpec<PlannedFamily>) -> String {
@@ -3381,16 +3465,16 @@ fn resource_operation_owners(services: &[RenderedService<'_>]) -> BTreeMap<Strin
 }
 
 fn render_support_package(
-    files: &mut BTreeMap<std::path::PathBuf, String>,
+    files: &mut GeneratedFileMap,
     support_fragments: &[SupportFragmentSpec],
 ) -> Result<Vec<String>> {
     let mut module_names = Vec::new();
     for fragment in support_fragments {
         let module_name = support_module_name(fragment)?;
-        insert_generated_file(
-            files,
+        files.insert(
             format!("_support/{module_name}.py"),
             fragment.contents.clone(),
+            GeneratedFileOrigin::support_fragment(Language::Python, &fragment.path),
         )?;
         module_names.push(module_name);
     }
@@ -3404,7 +3488,11 @@ fn render_support_package(
             output.push_str(module_name);
             output.push_str(" import *  # noqa: F401,F403\n");
         }
-        insert_generated_file(files, "_support/__init__.py", output)?;
+        files.insert(
+            "_support/__init__.py",
+            output,
+            GeneratedFileOrigin::fixed("generated Python support package initializer"),
+        )?;
     }
 
     Ok(module_names)
@@ -4558,6 +4646,17 @@ fn render_python_module_model_runtime_imports(
     wrote_previous_imports: bool,
 ) -> bool {
     let mut imports = BTreeMap::<String, BTreeSet<String>>::new();
+    // A local reference becomes cross-module after its target is hoisted.
+    // Seed these imports from the actual model-reference graph retained by the
+    // hoist plan. Rendered text is not an authority: a docstring can mention a
+    // type name without creating an edge, while a generated expression may
+    // require one regardless of how its source happens to be formatted.
+    for name in model_hoists.runtime_imports_for(&api_plan.module_path) {
+        imports
+            .entry(root_python_model_hoist_module(&api_plan.module_path))
+            .or_default()
+            .insert(name.clone());
+    }
     for (module_path, names) in &api_plan.data.module_imports {
         for name in names {
             if !body_uses_python_symbol(body, name) {
@@ -7825,6 +7924,19 @@ mod tests {
                     BTreeSet::from(["Support".to_string()]),
                 ),
             ])
+        );
+    }
+
+    #[test]
+    fn generated_tree_source_label_names_every_input() {
+        let paths = BTreeSet::from([
+            PathBuf::from("schemas/a.yaml"),
+            PathBuf::from("schemas/nested/b.yaml"),
+        ]);
+
+        assert_eq!(
+            super::source_paths_label(&paths),
+            "schemas/a.yaml, schemas/nested/b.yaml"
         );
     }
 

@@ -13,6 +13,7 @@ from showcase import (
     Circle,
     ContactPy,
     Extras,
+    ItemRules,
     Labels,
     LinkNote,
     Metrics,
@@ -49,6 +50,24 @@ def test_validation_types_are_exported_from_the_package() -> None:
         non_retryable=True,
     )
     assert violation_pairs(error) == [("name", "required")]
+
+
+def test_closed_items_precede_array_level_violations() -> None:
+    expected = [
+        ("values[0]", 'must equal "fixed"'),
+        ("values[1]", 'must equal "fixed"'),
+        ("values", "must have at least 3 items, got 2"),
+        ("values", "duplicate items: element at index 1 equals index 0"),
+    ]
+    converter = converter_for(ItemRules)
+    with pytest.raises(temporalio.exceptions.ApplicationError) as parsed:
+        _ = converter.from_transfer_type({"values": ["bad", "bad"]}, ItemRules)
+    assert violation_pairs(parsed.value) == expected
+
+    with pytest.raises(temporalio.exceptions.ApplicationError) as serialized:
+        invalid_values = typing.cast(list[typing.Literal["fixed"]], ["bad", "bad"])
+        _ = converter.to_transfer_type(ItemRules(values=invalid_values))
+    assert violation_pairs(serialized.value) == expected
 
 
 # The ten required members of Showcase; every negative payload starts here so the
@@ -1111,10 +1130,50 @@ def test_serialize_rejects_invalid_in_memory_values() -> None:
             ),
         ),
         ({"revision": typing.cast(typing.Any, 2)}, ("revision", "must equal 1")),
+        ({"count": typing.cast(typing.Any, True)}, ("count", "expected integer")),
+        ({"count": typing.cast(typing.Any, 1.5)}, ("count", "expected integer")),
+        (
+            {"count": 10**400},
+            ("count", "exceeds ±(2^53-1) integer cap"),
+        ),
+        ({"active": typing.cast(typing.Any, 1)}, ("active", "expected boolean")),
+        ({"nickname": typing.cast(typing.Any, [])}, ("nickname", "expected string")),
+        ({"tags": typing.cast(typing.Any, "ab")}, ("tags", "expected array")),
+        ({"dates": typing.cast(typing.Any, [7])}, ("dates[0]", "expected date")),
+        ({"name": typing.cast(typing.Any, None)}, ("name", "required")),
     ]:
         with pytest.raises(temporalio.exceptions.ApplicationError) as excinfo:
             _ = converter.to_transfer_type(dataclasses.replace(full, **replacement))
         assert violation_pairs(excinfo.value) == [expected]
+
+    with pytest.raises(temporalio.exceptions.ApplicationError) as excinfo:
+        _ = converter.to_transfer_type(
+            dataclasses.replace(
+                full,
+                addresses=typing.cast(typing.Any, 7),
+                dates=typing.cast(typing.Any, 7),
+            )
+        )
+    assert violation_pairs(excinfo.value) == [
+        ("addresses", "expected array"),
+        ("dates", "expected array"),
+    ]
+
+    with pytest.raises(temporalio.exceptions.ApplicationError) as excinfo:
+        _ = converter_for(Address).to_transfer_type(typing.cast(typing.Any, 7))
+    assert violation_pairs(excinfo.value) == [("", "expected object")]
+
+    with pytest.raises(temporalio.exceptions.ApplicationError) as excinfo:
+        _ = converter_for(Attributes).to_transfer_type(
+            Attributes(additional_properties={"host": typing.cast(typing.Any, [])})
+        )
+    assert violation_pairs(excinfo.value) == [("host", "expected string")]
+
+    with pytest.raises(temporalio.exceptions.ApplicationError) as excinfo:
+        _ = converter_for(Attributes).to_transfer_type(
+            Attributes(additional_properties=typing.cast(typing.Any, None))
+        )
+    assert violation_pairs(excinfo.value) == [("", "expected object")]
 
     # Object-level checks fire on serialize too.
     with pytest.raises(temporalio.exceptions.ApplicationError) as excinfo:

@@ -36,38 +36,41 @@ export const categoryTransferTypeConverter =
       }
 
       let id: string = undefined as unknown as string;
-      if (raw.id === undefined || raw.id === null) {
+      if (!Object.prototype.hasOwnProperty.call(raw, "id") || raw["id"] === null) {
         violations.push({ path: "id", reason: "required" });
       } else {
-        if (typeof raw.id !== "string") {
+        if (typeof raw["id"] !== "string") {
           violations.push({ path: "id", reason: "expected string" });
         } else {
-          id = raw.id;
+          id = raw["id"];
         }
       }
 
       let name: string = undefined as unknown as string;
-      if (raw.name === undefined || raw.name === null) {
+      if (!Object.prototype.hasOwnProperty.call(raw, "name") || raw["name"] === null) {
         violations.push({ path: "name", reason: "required" });
       } else {
-        if (typeof raw.name !== "string") {
+        if (typeof raw["name"] !== "string") {
           violations.push({ path: "name", reason: "expected string" });
         } else {
-          name = raw.name;
+          name = raw["name"];
         }
       }
 
       let children: Category[] | undefined = undefined as unknown as
         | Category[]
         | undefined;
-      if (raw.children === null) {
+      if (
+        Object.prototype.hasOwnProperty.call(raw, "children") &&
+        raw["children"] === null
+      ) {
         violations.push({ path: "children", reason: "explicit null not allowed" });
-      } else if (raw.children !== undefined) {
-        if (!Array.isArray(raw.children)) {
+      } else if (Object.prototype.hasOwnProperty.call(raw, "children")) {
+        if (!Array.isArray(raw["children"])) {
           violations.push({ path: "children", reason: "expected array" });
         } else {
           children = [];
-          raw.children.forEach((element: unknown, index: number) => {
+          raw["children"].forEach((element: unknown, index: number) => {
             let item: Category = undefined as unknown as Category;
             try {
               item = categoryTransferTypeConverter.fromTransferType(element);
@@ -83,7 +86,10 @@ export const categoryTransferTypeConverter =
 
       for (const key of Object.keys(raw)) {
         if (key !== "id" && key !== "name" && key !== "children") {
-          violations.push({ path: key, reason: "unknown field" });
+          violations.push({
+            path: __nexgenDefinitions.memberPath(key),
+            reason: "unknown field",
+          });
         }
       }
 
@@ -98,22 +104,56 @@ export const categoryTransferTypeConverter =
     }
 
     public toTransferType(value: Category): unknown {
+      const candidate: unknown = value;
+      if (!__nexgenDefinitions.isPlainObject(candidate)) {
+        throw __nexgenDefinitions.payloadValidationError([
+          { path: "", reason: "expected object" },
+        ]);
+      }
       const violations: __nexgenDefinitions.Violation[] = [];
-      const out: Record<string, unknown> = {};
-      out.id = value.id;
-      out.name = value.name;
+      const out: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      if (value.id === undefined || value.id === null) {
+        violations.push({ path: "id", reason: "required" });
+      } else {
+        if (!(typeof value.id === "string")) {
+          violations.push({ path: "id", reason: "expected string" });
+        }
+        out["id"] = value.id;
+      }
+      if (value.name === undefined || value.name === null) {
+        violations.push({ path: "name", reason: "required" });
+      } else {
+        if (!(typeof value.name === "string")) {
+          violations.push({ path: "name", reason: "expected string" });
+        }
+        out["name"] = value.name;
+      }
       if (value.children !== undefined) {
-        value.children.forEach((element, index) => {});
-        out.children = value.children.map((element, index) =>
-          (() => {
-            try {
-              return categoryTransferTypeConverter.toTransferType(element);
-            } catch (error) {
-              __nexgenDefinitions.collect(violations, `children[${index}]`, error);
-              return undefined;
-            }
-          })(),
-        );
+        if (value.children === null) {
+          violations.push({ path: "children", reason: "explicit null not allowed" });
+        } else {
+          const childrenViolationCount = violations.length;
+          if (!Array.isArray(value.children)) {
+            violations.push({ path: "children", reason: "expected array" });
+          } else {
+            value.children.forEach((element, index) => {});
+          }
+          if (violations.length === childrenViolationCount) {
+            out["children"] = value.children.map((element, index) =>
+              (() => {
+                try {
+                  return categoryTransferTypeConverter.toTransferType(element);
+                } catch (error) {
+                  __nexgenDefinitions.collect(violations, `children[${index}]`, error);
+                  return undefined;
+                }
+              })(),
+            );
+          }
+        }
       }
       if (violations.length) {
         throw __nexgenDefinitions.payloadValidationError(violations);
@@ -133,14 +173,17 @@ export const paletteTransferTypeConverter =
       }
 
       let swatches: string[] = undefined as unknown as string[];
-      if (raw.swatches === undefined || raw.swatches === null) {
+      if (
+        !Object.prototype.hasOwnProperty.call(raw, "swatches") ||
+        raw["swatches"] === null
+      ) {
         violations.push({ path: "swatches", reason: "required" });
       } else {
-        if (!Array.isArray(raw.swatches)) {
+        if (!Array.isArray(raw["swatches"])) {
           violations.push({ path: "swatches", reason: "expected array" });
         } else {
           swatches = [];
-          raw.swatches.forEach((element: unknown, index: number) => {
+          raw["swatches"].forEach((element: unknown, index: number) => {
             let item: string = undefined as unknown as string;
             if (typeof element !== "string") {
               violations.push({
@@ -159,7 +202,10 @@ export const paletteTransferTypeConverter =
 
       for (const key of Object.keys(raw)) {
         if (key !== "swatches") {
-          violations.push({ path: key, reason: "unknown field" });
+          violations.push({
+            path: __nexgenDefinitions.memberPath(key),
+            reason: "unknown field",
+          });
         }
       }
 
@@ -171,8 +217,37 @@ export const paletteTransferTypeConverter =
     }
 
     public toTransferType(value: Palette): unknown {
-      const out: Record<string, unknown> = {};
-      out.swatches = value.swatches;
+      const candidate: unknown = value;
+      if (!__nexgenDefinitions.isPlainObject(candidate)) {
+        throw __nexgenDefinitions.payloadValidationError([
+          { path: "", reason: "expected object" },
+        ]);
+      }
+      const violations: __nexgenDefinitions.Violation[] = [];
+      const out: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      if (value.swatches === undefined || value.swatches === null) {
+        violations.push({ path: "swatches", reason: "required" });
+      } else {
+        if (!Array.isArray(value.swatches)) {
+          violations.push({ path: "swatches", reason: "expected array" });
+        } else {
+          value.swatches.forEach((element, index) => {
+            if (!(typeof element === "string")) {
+              violations.push({
+                path: `swatches[${index}]`,
+                reason: "expected string",
+              });
+            }
+          });
+        }
+        out["swatches"] = value.swatches;
+      }
+      if (violations.length) {
+        throw __nexgenDefinitions.payloadValidationError(violations);
+      }
       return out;
     }
   })();

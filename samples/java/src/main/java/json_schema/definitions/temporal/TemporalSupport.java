@@ -3,9 +3,7 @@ package json_schema.definitions.temporal;
 
 import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.OffsetTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -16,9 +14,9 @@ import org.jspecify.annotations.Nullable;
 public final class TemporalSupport {
     private TemporalSupport() {}
 
-    private static final Pattern DATE_TIME = Pattern.compile("^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])\\z");
+    private static final Pattern DATE_TIME = Pattern.compile("^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]((0[0-9]|1[0-7]):[0-5][0-9]|18:00))\\z");
     private static final Pattern DATE = Pattern.compile("^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])\\z");
-    private static final Pattern TIME = Pattern.compile("^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?\\z");
+    private static final Pattern TIME = Pattern.compile("^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]((0[0-9]|1[0-7]):[0-5][0-9]|18:00))?\\z");
     private static final Pattern DURATION = Pattern.compile("^PT(?:[0-9]+H(?:[0-9]+M(?:[0-9]+S)?)?|[0-9]+M(?:[0-9]+S)?|[0-9]+S)\\z");
     private static final long MAX_DURATION_SECONDS = Long.MAX_VALUE / 1_000_000_000L;
 
@@ -101,13 +99,17 @@ public final class TemporalSupport {
         return value.substring(0, dot + 10) + value.substring(end);
     }
 
+    public static OffsetDateTime parseDateTimeLiteral(String value) {
+        return OffsetDateTime.parse(truncateFraction(value).toUpperCase());
+    }
+
     public static @Nullable OffsetDateTime parseDateTime(String value, String path, List<Violation> violations) {
         if (!DATE_TIME.matcher(value).matches() || !validCalendar(value)) {
             violations.add(new Violation(path, "must be a valid date-time, got \"" + value + "\""));
             return null;
         }
         try {
-            return OffsetDateTime.parse(truncateFraction(value).toUpperCase());
+            return parseDateTimeLiteral(value);
         } catch (DateTimeParseException e) {
             violations.add(new Violation(path, "must be a valid date-time, got \"" + value + "\""));
             return null;
@@ -137,6 +139,27 @@ public final class TemporalSupport {
         return String.format("%04d-%02d-%02d", value.getYear(), value.getMonthValue(), value.getDayOfMonth());
     }
 
+    private static String canonicalTime(String value) {
+        String upper = value.toUpperCase();
+        int dot = upper.indexOf('.');
+        if (dot >= 0) {
+            int fractionEnd = dot + 1;
+            while (fractionEnd < upper.length() && Character.isDigit(upper.charAt(fractionEnd))) {
+                fractionEnd++;
+            }
+            int trimmedEnd = fractionEnd;
+            while (trimmedEnd > dot + 1 && upper.charAt(trimmedEnd - 1) == '0') {
+                trimmedEnd--;
+            }
+            String fraction = trimmedEnd == dot + 1 ? "" : upper.substring(dot, trimmedEnd);
+            upper = upper.substring(0, dot) + fraction + upper.substring(fractionEnd);
+        }
+        if (upper.endsWith("+00:00") || upper.endsWith("-00:00")) {
+            upper = upper.substring(0, upper.length() - 6) + "Z";
+        }
+        return upper;
+    }
+
     // time -> validated, canonicalized String (no single java.time type holds
     // both an offset-bearing and an offset-less time-of-day).
     public static @Nullable String parseTime(String value, String path, List<Violation> violations) {
@@ -144,16 +167,11 @@ public final class TemporalSupport {
             violations.add(new Violation(path, "must be a valid time, got \"" + value + "\""));
             return null;
         }
-        String upper = truncateFraction(value).toUpperCase();
-        try {
-            OffsetTime t = OffsetTime.parse(upper);
-            return String.format("%02d:%02d:%02d", t.getHour(), t.getMinute(), t.getSecond())
-                    + frac(t.getNano()) + offset(t.getOffset().getTotalSeconds());
-        } catch (DateTimeParseException e) {
-            LocalTime t = LocalTime.parse(upper);
-            return String.format("%02d:%02d:%02d", t.getHour(), t.getMinute(), t.getSecond())
-                    + frac(t.getNano());
-        }
+        return canonicalTime(value);
+    }
+
+    public static String formatTime(String value) {
+        return canonicalTime(value);
     }
 
     public static @Nullable Duration parseDuration(String value, String path, List<Violation> violations) {
@@ -192,9 +210,13 @@ public final class TemporalSupport {
     // is a string this module's own parser rejects.
 
     private static void checkOffset(String name, Object value, ZoneOffset offset, String path, List<Violation> violations) {
-        if (offset.getTotalSeconds() % 60 != 0) {
+        int offsetSeconds = offset.getTotalSeconds();
+        if (offsetSeconds % 60 != 0) {
             violations.add(new Violation(path, "must be a valid " + name + ", got " + value
                     + ": the UTC offset " + offset + " is not a whole number of minutes"));
+        } else if (offsetSeconds < -18 * 60 * 60 || offsetSeconds > 18 * 60 * 60) {
+            violations.add(new Violation(path, "must be a valid " + name + ", got " + value
+                    + ": the UTC offset is outside -18:00 through +18:00"));
         }
     }
 
@@ -221,11 +243,6 @@ public final class TemporalSupport {
         if (!TIME.matcher(value).matches()) {
             violations.add(new Violation(path, "must be a valid time, got \"" + value + "\""));
             return;
-        }
-        try {
-            checkOffset("time", value, OffsetTime.parse(value.toUpperCase()).getOffset(), path, violations);
-        } catch (DateTimeParseException e) {
-            // Offset-less; the grammar allows it and there is no offset to hold.
         }
     }
 

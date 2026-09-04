@@ -4,13 +4,9 @@ package showcase
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -319,12 +315,12 @@ func (ShowcaseAddressListOrLabelArray) isShowcaseAddressListOrLabel() {}
 // listing any violations.
 func (v ShowcaseAddressListOrLabelArray) Validate() error {
 	var errs []Violation
-	if n := len([]Address(v)); n < 1 {
-		errs = append(errs, Violation{"", fmt.Sprintf("must have at least 1 items, got %d", n)})
-	}
 	for i0, v0 := range []Address(v) {
 		p0 := fmt.Sprintf("%s[%d]", "", i0)
 		mergeNested(&errs, p0, v0.Validate())
+	}
+	if n := len([]Address(v)); n < 1 {
+		errs = append(errs, Violation{"", fmt.Sprintf("must have at least 1 items, got %d", n)})
 	}
 	if len(errs) > 0 {
 		return newPayloadValidationError(errs)
@@ -378,20 +374,20 @@ func unmarshalShowcaseAddressListOrLabel(raw json.RawMessage, path string, errs 
 					arr = append(arr, value0)
 				}
 			}
+			{
+				unionErrs := errs
+				errs := *unionErrs
+				for i0, v0 := range arr {
+					p0 := fmt.Sprintf("%s[%d]", path, i0)
+					mergeNested(&errs, p0, v0.Validate())
+				}
+				*unionErrs = errs
+			}
 			if n := len(elems0); n < 1 {
 				*errs = append(*errs, Violation{path, fmt.Sprintf("must have at least 1 items, got %d", n)})
 			}
 		}
 		v := ShowcaseAddressListOrLabelArray(arr)
-		{
-			unionErrs := errs
-			errs := *unionErrs
-			for i0, v0 := range arr {
-				p0 := fmt.Sprintf("%s[%d]", path, i0)
-				mergeNested(&errs, p0, v0.Validate())
-			}
-			*unionErrs = errs
-		}
 		return v, true
 	case '"':
 		var s string
@@ -553,6 +549,12 @@ func (ShowcaseMeasurementsArray) isShowcaseMeasurements() {}
 // listing any violations.
 func (v ShowcaseMeasurementsArray) Validate() error {
 	var errs []Violation
+	for i0, v0 := range []float64(v) {
+		p0 := fmt.Sprintf("%s[%d]", "", i0)
+		if math.IsNaN(v0) || math.IsInf(v0, 0) {
+			errs = append(errs, Violation{p0, fmt.Sprintf("must be a finite number, got %v", v0)})
+		}
+	}
 	if n := len([]float64(v)); n < 1 {
 		errs = append(errs, Violation{"", fmt.Sprintf("must have at least 1 items, got %d", n)})
 	}
@@ -566,19 +568,11 @@ func (v ShowcaseMeasurementsArray) Validate() error {
 			}
 		}
 	}
-	for i0, v0 := range []float64(v) {
-		p0 := fmt.Sprintf("%s[%d]", "", i0)
-		if math.IsNaN(v0) || math.IsInf(v0, 0) {
-			errs = append(errs, Violation{p0, fmt.Sprintf("must be a finite number, got %v", v0)})
-		}
-	}
 	if len(errs) > 0 {
 		return newPayloadValidationError(errs)
 	}
 	return nil
 }
-
-var showcaseMeasurementsStringPattern = regexp.MustCompile("^[a-z]+$")
 
 // ShowcaseMeasurementsString wraps a string value admissible in the
 // ShowcaseMeasurements union.
@@ -590,7 +584,7 @@ func (ShowcaseMeasurementsString) isShowcaseMeasurements() {}
 // listing any violations.
 func (v ShowcaseMeasurementsString) Validate() error {
 	var errs []Violation
-	if !showcaseMeasurementsStringPattern.MatchString(string(v)) {
+	if !_nexgenJsonSchemaPattern5e5b612d7a5d2b24.MatchString(string(v)) {
 		errs = append(errs, Violation{"", fmt.Sprintf("must match pattern %q, got %q", "^[a-z]+$", string(v))})
 	}
 	if len(errs) > 0 {
@@ -623,6 +617,17 @@ func unmarshalShowcaseMeasurements(raw json.RawMessage, path string, errs *[]Vio
 					arr = append(arr, value0)
 				}
 			}
+			{
+				unionErrs := errs
+				errs := *unionErrs
+				for i0, v0 := range arr {
+					p0 := fmt.Sprintf("%s[%d]", path, i0)
+					if math.IsNaN(v0) || math.IsInf(v0, 0) {
+						errs = append(errs, Violation{p0, fmt.Sprintf("must be a finite number, got %v", v0)})
+					}
+				}
+				*unionErrs = errs
+			}
 			if n := len(elems0); n < 1 {
 				*errs = append(*errs, Violation{path, fmt.Sprintf("must have at least 1 items, got %d", n)})
 			}
@@ -647,17 +652,6 @@ func unmarshalShowcaseMeasurements(raw json.RawMessage, path string, errs *[]Vio
 			}
 		}
 		v := ShowcaseMeasurementsArray(arr)
-		{
-			unionErrs := errs
-			errs := *unionErrs
-			for i0, v0 := range arr {
-				p0 := fmt.Sprintf("%s[%d]", path, i0)
-				if math.IsNaN(v0) || math.IsInf(v0, 0) {
-					errs = append(errs, Violation{p0, fmt.Sprintf("must be a finite number, got %v", v0)})
-				}
-			}
-			*unionErrs = errs
-		}
 		return v, true
 	case '"':
 		var s string
@@ -1091,347 +1085,6 @@ func unmarshalShowcaseShapeOrName(raw json.RawMessage, path string, errs *[]Viol
 	return nil, false
 }
 
-var jsonTemporalDateTimeRE = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
-var jsonTemporalDateRE = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$`)
-var jsonTemporalTimeRE = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?$`)
-var jsonTemporalDurationRE = regexp.MustCompile(`^PT(?:[0-9]+H(?:[0-9]+M(?:[0-9]+S)?)?|[0-9]+M(?:[0-9]+S)?|[0-9]+S)$`)
-
-// daysInTemporalMonth returns the Gregorian day count of a 1-based month.
-func daysInTemporalMonth(year, month int) int {
-	switch month {
-	case 1, 3, 5, 7, 8, 10, 12:
-		return 31
-	case 4, 6, 9, 11:
-		return 30
-	case 2:
-		if (year%4 == 0 && year%100 != 0) || year%400 == 0 {
-			return 29
-		}
-		return 28
-	}
-	return 0
-}
-
-// validTemporalCalendar checks day-in-month over a YYYY-MM-DD prefix; the regex
-// has already fixed the digit shape and the month/day ranges.
-func validTemporalCalendar(s string) bool {
-	if len(s) < 10 {
-		return false
-	}
-	year, err1 := strconv.Atoi(s[0:4])
-	month, err2 := strconv.Atoi(s[5:7])
-	day, err3 := strconv.Atoi(s[8:10])
-	if err1 != nil || err2 != nil || err3 != nil {
-		return false
-	}
-	if year < 1 {
-		return false
-	}
-	max := daysInTemporalMonth(year, month)
-	return max > 0 && day >= 1 && day <= max
-}
-
-func temporalFracNanos(nanos int) string {
-	if nanos == 0 {
-		return ""
-	}
-	return "." + strings.TrimRight(fmt.Sprintf("%09d", nanos), "0")
-}
-
-func temporalOffset(secs int) string {
-	if secs == 0 {
-		return "Z"
-	}
-	sign := "+"
-	if secs < 0 {
-		sign = "-"
-		secs = -secs
-	}
-	return fmt.Sprintf("%s%02d:%02d", sign, secs/3600, (secs%3600)/60)
-}
-
-// parseDateTime validates the wire string (narrowed regex + calendar) then parses
-// it into a time.Time, uppercasing the case-insensitive T/Z first (Go's parser
-// rejects lowercase). Offset and nanoseconds are preserved; no truncation.
-func parseDateTime(path, s string, errs *[]Violation) (time.Time, bool) {
-	if !jsonTemporalDateTimeRE.MatchString(s) || !validTemporalCalendar(s) {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid date-time, got %q", s)})
-		return time.Time{}, false
-	}
-	t, err := time.Parse(time.RFC3339Nano, strings.ToUpper(s))
-	if err != nil {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid date-time, got %q", s)})
-		return time.Time{}, false
-	}
-	return t, true
-}
-
-// formatDateTime re-serializes via time.RFC3339Nano, which matches the
-// generator-owned form exactly (offset preserved, Z for zero offset, trailing
-// fractional zeros trimmed).
-func formatDateTime(t time.Time) string {
-	return t.Format(time.RFC3339Nano)
-}
-
-func parseDate(path, s string, errs *[]Violation) (time.Time, bool) {
-	if !jsonTemporalDateRE.MatchString(s) || !validTemporalCalendar(s) {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid date, got %q", s)})
-		return time.Time{}, false
-	}
-	t, _ := time.Parse("2006-01-02", s)
-	return t, true
-}
-
-func formatDate(t time.Time) string {
-	return t.Format("2006-01-02")
-}
-
-// Go has no time-of-day type; time.Time carries a phantom date. An offset-less
-// value is stored with a sentinel year so the serializer can distinguish it from
-// an explicit Z/offset (whose offset parse yields year 0).
-const temporalNoOffsetYear = 1
-
-func parseTime(path, s string, errs *[]Violation) (time.Time, bool) {
-	if !jsonTemporalTimeRE.MatchString(s) {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid time, got %q", s)})
-		return time.Time{}, false
-	}
-	w := strings.ToUpper(s)
-	if t, err := time.Parse("15:04:05.999999999Z07:00", w); err == nil {
-		return t, true
-	}
-	t, err := time.Parse("15:04:05.999999999", w)
-	if err != nil {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid time, got %q", s)})
-		return time.Time{}, false
-	}
-	return time.Date(temporalNoOffsetYear, 1, 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), true
-}
-
-func formatTime(t time.Time) string {
-	s := fmt.Sprintf("%02d:%02d:%02d%s", t.Hour(), t.Minute(), t.Second(), temporalFracNanos(t.Nanosecond()))
-	if t.Year() != temporalNoOffsetYear {
-		_, off := t.Zone()
-		s += temporalOffset(off)
-	}
-	return s
-}
-
-// parseDuration validates the time-only wire string then sums it into a
-// time.Duration, rejecting an overflow of the int64-nanosecond capacity.
-func parseDuration(path, s string, errs *[]Violation) (time.Duration, bool) {
-	fail := func() (time.Duration, bool) {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid duration, got %q", s)})
-		return 0, false
-	}
-	if !jsonTemporalDurationRE.MatchString(s) {
-		return fail()
-	}
-	const maxSeconds = int64(9223372036854775807) / 1000000000
-	var totalSeconds int64
-	num := ""
-	for _, ch := range s[2:] {
-		if ch >= '0' && ch <= '9' {
-			num += string(ch)
-			continue
-		}
-		mag, err := strconv.ParseInt(num, 10, 64)
-		if err != nil {
-			return fail()
-		}
-		num = ""
-		var unit int64
-		switch ch {
-		case 'H':
-			unit = 3600
-		case 'M':
-			unit = 60
-		case 'S':
-			unit = 1
-		}
-		prod := mag * unit
-		if unit != 0 && prod/unit != mag {
-			return fail()
-		}
-		totalSeconds += prod
-		if totalSeconds < 0 || totalSeconds > maxSeconds {
-			return fail()
-		}
-	}
-	return time.Duration(totalSeconds) * time.Second, true
-}
-
-// formatDuration canonicalizes to time-only PT…H…M…S (PT0S for zero); a
-// non-canonical input collapses (PT90M → PT1H30M).
-func formatDuration(d time.Duration) string {
-	total := int64(d / time.Second)
-	if total == 0 {
-		return "PT0S"
-	}
-	out := "PT"
-	if h := total / 3600; h != 0 {
-		out += fmt.Sprintf("%dH", h)
-	}
-	if m := (total % 3600) / 60; m != 0 {
-		out += fmt.Sprintf("%dM", m)
-	}
-	if sec := total % 60; sec != 0 {
-		out += fmt.Sprintf("%dS", sec)
-	}
-	return out
-}
-
-func mustParseDateTime(s string) time.Time {
-	var errs []Violation
-	v, ok := parseDateTime("", s, &errs)
-	if !ok {
-		panic(errs[0].Reason)
-	}
-	return v
-}
-
-func mustParseDate(s string) time.Time {
-	var errs []Violation
-	v, ok := parseDate("", s, &errs)
-	if !ok {
-		panic(errs[0].Reason)
-	}
-	return v
-}
-
-func mustParseTime(s string) time.Time {
-	var errs []Violation
-	v, ok := parseTime("", s, &errs)
-	if !ok {
-		panic(errs[0].Reason)
-	}
-	return v
-}
-
-func mustParseDuration(s string) time.Duration {
-	var errs []Violation
-	v, ok := parseDuration("", s, &errs)
-	if !ok {
-		panic(errs[0].Reason)
-	}
-	return v
-}
-
-// checkTemporalYear asserts a year is one the four-digit wire grammar spells.
-func checkTemporalYear(name string, v time.Time, path string, errs *[]Violation) bool {
-	switch y := v.Year(); {
-	case y < 1:
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid %s, got %v: year must be >= 0001", name, v)})
-	case y > 9999:
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid %s, got %v: year must be <= 9999", name, v)})
-	default:
-		return true
-	}
-	return false
-}
-
-// checkTemporalOffset asserts a UTC offset is a whole number of minutes, the
-// finest the wire form spells (a Go Location carries seconds, which the wire
-// form would silently lose).
-func checkTemporalOffset(name string, v time.Time, path string, errs *[]Violation) {
-	if _, offset := v.Zone(); offset%60 != 0 {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid %s, got %v: the UTC offset %d seconds is not a whole number of minutes", name, v, offset)})
-	}
-}
-
-// checkDateTime asserts a time.Time is writable as a wire date-time (P12): a
-// value is constructed unchecked, so anything the grammar cannot spell has to
-// be caught before a byte is emitted.
-func checkDateTime(v time.Time, path string, errs *[]Violation) {
-	if checkTemporalYear("date-time", v, path, errs) {
-		checkTemporalOffset("date-time", v, path, errs)
-	}
-}
-
-// checkDate asserts a time.Time is writable as a wire date (P12).
-func checkDate(v time.Time, path string, errs *[]Violation) {
-	checkTemporalYear("date", v, path, errs)
-}
-
-// checkTime asserts a time.Time is writable as a wire time (P12). The offset is
-// optional in the grammar, so only its precision is held to anything.
-func checkTime(v time.Time, path string, errs *[]Violation) {
-	if v.Year() != temporalNoOffsetYear {
-		checkTemporalOffset("time", v, path, errs)
-	}
-}
-
-// checkDuration asserts a time.Duration is writable as a wire duration (P12):
-// the grammar is unsigned and whole-second, and a time.Duration is neither.
-func checkDuration(v time.Duration, path string, errs *[]Violation) {
-	var reason string
-	switch {
-	case v < 0:
-		reason = "a duration cannot be negative"
-	case v%time.Second != 0:
-		reason = "a duration cannot carry a fraction of a second"
-	default:
-		return
-	}
-	*errs = append(*errs, Violation{path, fmt.Sprintf("must be a valid duration, got %v: %s", v, reason)})
-}
-
-// decodeBase64 validates the wire string against the pinned canonical base64
-// regex, then decodes it via the standard (padded) alphabet into bytes.
-func decodeBase64(path, s string, re *regexp.Regexp, errs *[]Violation) ([]byte, bool) {
-	if !re.MatchString(s) {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be base64-encoded, got %q", s)})
-		return nil, false
-	}
-	b, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be base64-encoded, got %q", s)})
-		return nil, false
-	}
-	return b, true
-}
-
-// encodeBase64 re-encodes bytes to canonical padded standard base64.
-func encodeBase64(b []byte) string {
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-// decodeBase64URL validates the wire string against the pinned canonical
-// (unpadded) base64url regex, then decodes it via the URL-safe alphabet.
-func decodeBase64URL(path, s string, re *regexp.Regexp, errs *[]Violation) ([]byte, bool) {
-	if !re.MatchString(s) {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be base64url-encoded, got %q", s)})
-		return nil, false
-	}
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		*errs = append(*errs, Violation{path, fmt.Sprintf("must be base64url-encoded, got %q", s)})
-		return nil, false
-	}
-	return b, true
-}
-
-// encodeBase64URL re-encodes bytes to canonical unpadded URL-safe base64.
-func encodeBase64URL(b []byte) string {
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func mustDecodeBase64(s string) []byte {
-	b, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
-
-func mustDecodeBase64URL(s string) []byte {
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
-
 // Address A nested object, open to forward-compatible extension.
 type Address struct {
 	// Street corresponds to the "street" JSON property.
@@ -1537,7 +1190,8 @@ type AddressBook struct {
 func (m AddressBook) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
-		mergeNested(&errs, k, v.Validate())
+		path := memberPath(k)
+		mergeNested(&errs, path, v.Validate())
 	}
 	if len(errs) > 0 {
 		return newPayloadValidationError(errs)
@@ -1555,13 +1209,14 @@ func (m *AddressBook) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]Address, len(raw))
 	for k, v := range raw {
+		path := memberPath(k)
 		if isNull(v) {
-			errs = append(errs, Violation{k, "explicit null not allowed"})
+			errs = append(errs, Violation{path, "explicit null not allowed"})
 			continue
 		}
 		var value Address
 		if err := json.Unmarshal(v, &value); err != nil {
-			mergeNested(&errs, k, err)
+			mergeNested(&errs, path, err)
 			continue
 		}
 		m.AdditionalProperties[k] = value
@@ -1605,7 +1260,7 @@ func (m Attributes) Validate() error {
 	}
 	for k := range m.AdditionalProperties {
 		if n := utf8.RuneCountInString(k); n > 8 {
-			errs = append(errs, Violation{k, fmt.Sprintf("invalid property name %q: must have length <= 8, got %d", k, n)})
+			errs = append(errs, Violation{memberPath(k), fmt.Sprintf("invalid property name %q: must have length <= 8, got %d", k, n)})
 		}
 	}
 	if len(errs) > 0 {
@@ -1624,7 +1279,8 @@ func (m *Attributes) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]string, len(raw))
 	for k, v := range raw {
-		if value, ok := parseStringField(&v, k, true, false, &errs); ok {
+		path := memberPath(k)
+		if value, ok := parseStringField(&v, path, true, false, &errs); ok {
 			m.AdditionalProperties[k] = value
 		}
 	}
@@ -1636,7 +1292,7 @@ func (m *Attributes) UnmarshalJSON(data []byte) error {
 	}
 	for k := range raw {
 		if n := utf8.RuneCountInString(k); n > 8 {
-			errs = append(errs, Violation{k, fmt.Sprintf("invalid property name %q: must have length <= 8, got %d", k, n)})
+			errs = append(errs, Violation{memberPath(k), fmt.Sprintf("invalid property name %q: must have length <= 8, got %d", k, n)})
 		}
 	}
 	if len(errs) > 0 {
@@ -1657,8 +1313,6 @@ func (m Attributes) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(out)
 }
-
-var blobIndexValueContentEncoding = regexp.MustCompile("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$")
 
 // BlobIndex A typed map of materialized base64 byte strings.
 type BlobIndex struct {
@@ -1686,12 +1340,13 @@ func (m *BlobIndex) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string][]byte, len(raw))
 	for k, v := range raw {
+		path := memberPath(k)
 		if isNull(v) {
-			errs = append(errs, Violation{k, "explicit null not allowed"})
+			errs = append(errs, Violation{path, "explicit null not allowed"})
 			continue
 		}
-		if s, ok := parseStringField(&v, k, true, false, &errs); ok {
-			if value, ok := decodeBase64(k, s, blobIndexValueContentEncoding, &errs); ok {
+		if s, ok := parseStringField(&v, path, true, false, &errs); ok {
+			if value, ok := decodeBase64(path, s, _nexgenJsonSchemaBase64ContentEncoding, &errs); ok {
 				m.AdditionalProperties[k] = value
 			}
 		}
@@ -1730,10 +1385,11 @@ type Choices struct {
 func (m Choices) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
+		path := memberPath(k)
 		if isNilValue(v) {
-			errs = append(errs, Violation{k, "explicit null not allowed"})
+			errs = append(errs, Violation{path, "explicit null not allowed"})
 		} else {
-			mergeNested(&errs, k, v.Validate())
+			mergeNested(&errs, path, v.Validate())
 		}
 	}
 	if len(errs) > 0 {
@@ -1752,11 +1408,12 @@ func (m *Choices) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]ChoicesValue, len(raw))
 	for k, v := range raw {
+		path := memberPath(k)
 		if isNull(v) {
-			errs = append(errs, Violation{k, "explicit null not allowed"})
+			errs = append(errs, Violation{path, "explicit null not allowed"})
 			continue
 		}
-		if value, ok := unmarshalChoicesValue(v, k, &errs); ok {
+		if value, ok := unmarshalChoicesValue(v, path, &errs); ok {
 			m.AdditionalProperties[k] = value
 		}
 	}
@@ -2013,7 +1670,8 @@ type DateIndex struct {
 func (m DateIndex) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
-		checkDate(v, k, &errs)
+		path := memberPath(k)
+		checkDate(v, path, &errs)
 	}
 	if len(errs) > 0 {
 		return newPayloadValidationError(errs)
@@ -2031,12 +1689,13 @@ func (m *DateIndex) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]time.Time, len(raw))
 	for k, v := range raw {
+		path := memberPath(k)
 		if isNull(v) {
-			errs = append(errs, Violation{k, "explicit null not allowed"})
+			errs = append(errs, Violation{path, "explicit null not allowed"})
 			continue
 		}
-		if s, ok := parseStringField(&v, k, true, false, &errs); ok {
-			if value, ok := parseDate(k, s, &errs); ok {
+		if s, ok := parseStringField(&v, path, true, false, &errs); ok {
+			if value, ok := parseDate(path, s, &errs); ok {
 				m.AdditionalProperties[k] = value
 			}
 		}
@@ -2115,6 +1774,134 @@ func (m Extras) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// ItemRules Closed array elements are enforced before the array-level predicates, so
+// indexed violations precede minItems and uniqueItems deterministically.
+type ItemRules struct {
+	// Values corresponds to the "values" JSON property.
+	Values []string `json:"values"`
+}
+
+// Validate checks m against every constraint and returns a PayloadValidationError
+// listing any violations.
+func (m ItemRules) Validate() error {
+	var errs []Violation
+	for i0, v0 := range m.Values {
+		p0 := fmt.Sprintf("%s[%d]", "values", i0)
+		if v0 != "fixed" {
+			errs = append(errs, Violation{p0, "must equal \"fixed\""})
+		}
+	}
+	if n := len(m.Values); n < 3 {
+		errs = append(errs, Violation{"values", fmt.Sprintf("must have at least 3 items, got %d", n)})
+	}
+	{
+		seen := make(map[string]int, len(m.Values))
+		for i, e := range m.Values {
+			if j, ok := seen[e]; ok {
+				errs = append(errs, Violation{"values", fmt.Sprintf("duplicate items: element at index %d equals index %d", i, j)})
+			} else {
+				seen[e] = i
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return newPayloadValidationError(errs)
+	}
+	return nil
+}
+
+// UnmarshalJSON parses data into m and validates it, returning a
+// PayloadValidationError listing any violations.
+func (m *ItemRules) UnmarshalJSON(data []byte) error {
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err != nil {
+		return err
+	}
+	var errs []Violation
+	for k := range all {
+		switch k {
+		case "values":
+		default:
+			errs = append(errs, Violation{memberPath(k), "unknown field"})
+		}
+	}
+	get := func(k string) *json.RawMessage {
+		if v, ok := all[k]; ok {
+			return &v
+		}
+		return nil
+	}
+	_ = get
+	if raw := get("values"); raw == nil {
+		errs = append(errs, Violation{"values", "required"})
+	} else if isNull(*raw) {
+		errs = append(errs, Violation{"values", "explicit null not allowed"})
+	} else {
+		var elems0 []json.RawMessage
+		if err := json.Unmarshal(*raw, &elems0); err != nil {
+			errs = append(errs, Violation{"values", "expected array"})
+		} else {
+			m.Values = make([]string, 0, len(elems0))
+			for i0, e0 := range elems0 {
+				p0 := fmt.Sprintf("%s[%d]", "values", i0)
+				if isNull(e0) {
+					errs = append(errs, Violation{p0, "explicit null not allowed"})
+					continue
+				}
+				if value0, ok := parseStringField(&e0, p0, true, false, &errs); ok {
+					if value0 != "fixed" {
+						errs = append(errs, Violation{p0, "must equal \"fixed\""})
+					}
+					m.Values = append(m.Values, value0)
+				}
+			}
+			if n := len(elems0); n < 3 {
+				errs = append(errs, Violation{"values", fmt.Sprintf("must have at least 3 items, got %d", n)})
+			}
+			{
+				rawSeen0 := make(map[string]int, len(elems0))
+				for rawIndex0, rawElement0 := range elems0 {
+					var rawValue0 any
+					if err := json.Unmarshal(rawElement0, &rawValue0); err != nil {
+						continue
+					}
+					if rawNumber0, ok := rawValue0.(float64); ok && rawNumber0 == 0 {
+						rawValue0 = float64(0)
+					}
+					rawKeyBytes0, _ := json.Marshal(rawValue0)
+					rawKey0 := string(rawKeyBytes0)
+					if priorIndex0, ok := rawSeen0[rawKey0]; ok {
+						errs = append(errs, Violation{"values", fmt.Sprintf("duplicate items: element at index %d equals index %d", rawIndex0, priorIndex0)})
+					} else {
+						rawSeen0[rawKey0] = rawIndex0
+					}
+				}
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return newPayloadValidationError(errs)
+	}
+	return nil
+}
+
+// MarshalJSON validates m, then serializes it to JSON, returning a
+// PayloadValidationError if validation fails.
+func (m ItemRules) MarshalJSON() ([]byte, error) {
+	var errs []Violation
+	addViolations(&errs, m.Validate())
+	out := map[string]json.RawMessage{}
+	if m.Values == nil {
+		out["values"] = json.RawMessage("[]")
+	} else {
+		marshalField(out, "values", m.Values, &errs)
+	}
+	if len(errs) > 0 {
+		return nil, newPayloadValidationError(errs)
+	}
+	return json.Marshal(out)
+}
+
 // Labels Arbitrary string key/value labels (typed map).
 type Labels struct {
 	// AdditionalProperties holds every member of this map-shaped object.
@@ -2144,7 +1931,8 @@ func (m *Labels) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]string, len(raw))
 	for k, v := range raw {
-		if value, ok := parseStringField(&v, k, true, false, &errs); ok {
+		path := memberPath(k)
+		if value, ok := parseStringField(&v, path, true, false, &errs); ok {
 			m.AdditionalProperties[k] = value
 		}
 	}
@@ -2273,8 +2061,9 @@ type Metrics struct {
 func (m Metrics) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
+		path := memberPath(k)
 		if math.IsNaN(v) || math.IsInf(v, 0) {
-			errs = append(errs, Violation{k, fmt.Sprintf("must be a finite number, got %v", v)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must be a finite number, got %v", v)})
 		}
 	}
 	if len(errs) > 0 {
@@ -2293,9 +2082,10 @@ func (m *Metrics) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]float64, len(raw))
 	for k, v := range raw {
-		if value, ok := parseNumberField(&v, k, true, false, &errs); ok {
+		path := memberPath(k)
+		if value, ok := parseNumberField(&v, path, true, false, &errs); ok {
 			if math.IsNaN(value) || math.IsInf(value, 0) {
-				errs = append(errs, Violation{k, fmt.Sprintf("must be a finite number, got %v", value)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must be a finite number, got %v", value)})
 			}
 			m.AdditionalProperties[k] = value
 		}
@@ -2332,11 +2122,12 @@ type Nicknames struct {
 func (m Nicknames) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
+		path := memberPath(k)
 		if v == nil {
 			continue
 		}
 		if n := utf8.RuneCountInString((*v)); n < 2 {
-			errs = append(errs, Violation{k, fmt.Sprintf("must have length >= 2, got %d", n)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must have length >= 2, got %d", n)})
 		}
 	}
 	if len(errs) > 0 {
@@ -2355,13 +2146,14 @@ func (m *Nicknames) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]*string, len(raw))
 	for k, v := range raw {
+		path := memberPath(k)
 		if isNull(v) {
 			m.AdditionalProperties[k] = nil
 			continue
 		}
-		if value, ok := parseStringField(&v, k, true, false, &errs); ok {
+		if value, ok := parseStringField(&v, path, true, false, &errs); ok {
 			if n := utf8.RuneCountInString(value); n < 2 {
-				errs = append(errs, Violation{k, fmt.Sprintf("must have length >= 2, got %d", n)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must have length >= 2, got %d", n)})
 			}
 			m.AdditionalProperties[k] = &value
 		}
@@ -2399,17 +2191,18 @@ type Quotas struct {
 func (m Quotas) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
+		path := memberPath(k)
 		if v < -integerCap || v > integerCap {
-			errs = append(errs, Violation{k, "exceeds ±(2^53-1) integer cap"})
+			errs = append(errs, Violation{path, "exceeds ±(2^53-1) integer cap"})
 		}
 		if v < 0 {
-			errs = append(errs, Violation{k, fmt.Sprintf("must be >= 0, got %v", v)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must be >= 0, got %v", v)})
 		}
 		if v > 100 {
-			errs = append(errs, Violation{k, fmt.Sprintf("must be <= 100, got %v", v)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must be <= 100, got %v", v)})
 		}
 		if v%5 != 0 {
-			errs = append(errs, Violation{k, fmt.Sprintf("must be a multiple of 5, got %v", v)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must be a multiple of 5, got %v", v)})
 		}
 	}
 	if len(errs) > 0 {
@@ -2428,15 +2221,16 @@ func (m *Quotas) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]int64, len(raw))
 	for k, v := range raw {
-		if value, ok := parseIntegerField(&v, k, true, false, &errs); ok {
+		path := memberPath(k)
+		if value, ok := parseIntegerField(&v, path, true, false, &errs); ok {
 			if value < 0 {
-				errs = append(errs, Violation{k, fmt.Sprintf("must be >= 0, got %v", value)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must be >= 0, got %v", value)})
 			}
 			if value > 100 {
-				errs = append(errs, Violation{k, fmt.Sprintf("must be <= 100, got %v", value)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must be <= 100, got %v", value)})
 			}
 			if value%5 != 0 {
-				errs = append(errs, Violation{k, fmt.Sprintf("must be a multiple of 5, got %v", value)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must be a multiple of 5, got %v", value)})
 			}
 			m.AdditionalProperties[k] = value
 		}
@@ -2493,7 +2287,7 @@ func (m *Settings) UnmarshalJSON(data []byte) error {
 		switch k {
 		case "theme", "fontSize":
 		default:
-			errs = append(errs, Violation{k, "unknown field"})
+			errs = append(errs, Violation{memberPath(k), "unknown field"})
 		}
 	}
 	get := func(k string) *json.RawMessage {
@@ -2532,19 +2326,6 @@ func (m Settings) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(out)
 }
-
-var showcaseSkuPattern = regexp.MustCompile("^[A-Z]{2,4}$")
-var showcasePhrasePattern = regexp.MustCompile("^[^\\t\\n\\x0B\\f\\r ]+[\\t\\n\\x0B\\f\\r ][^\\t\\n\\x0B\\f\\r ]+$")
-var showcaseRequestIDFormat = regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-var showcaseContactEmailFormat = regexp.MustCompile("^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$")
-var showcaseHostFormat = regexp.MustCompile("^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
-var showcaseHomepageFormat = regexp.MustCompile("^(?:[A-Za-z][A-Za-z0-9+.-]*:(?://(?:(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*@)?(?:(?:\\[(?:([0-9a-fA-F]{1,4}:){6}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|::([0-9a-fA-F]{1,4}:){5}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){4}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,1}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){3}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){2}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:)([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4})?::[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::)\\]|\\[v[0-9A-Fa-f]+\\.[A-Za-z0-9._~!$&'()*+,;=:-]+\\])|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*)(?::[0-9]*)?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*|/(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?|(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?(?:\\?(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?(?:#(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?)$")
-var showcaseGatewayFormat = regexp.MustCompile("^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$")
-var showcaseBlobContentEncoding = regexp.MustCompile("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$")
-var showcaseUrlBlobContentEncoding = regexp.MustCompile("^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$")
-var showcaseLinksItemFormat = regexp.MustCompile("^(?:[A-Za-z][A-Za-z0-9+.-]*:(?://(?:(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*@)?(?:(?:\\[(?:([0-9a-fA-F]{1,4}:){6}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|::([0-9a-fA-F]{1,4}:){5}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){4}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,1}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){3}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){2}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:)([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4})?::[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::)\\]|\\[v[0-9A-Fa-f]+\\.[A-Za-z0-9._~!$&'()*+,;=:-]+\\])|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*)(?::[0-9]*)?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*|/(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?|(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?(?:\\?(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?(?:#(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?)$")
-var showcaseBlobsItemContentEncoding = regexp.MustCompile("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$")
-var showcaseWildcardPattern = regexp.MustCompile("a[^\\n]b")
 
 // Showcase
 //
@@ -2897,37 +2678,37 @@ func (m Showcase) Validate() error {
 		}
 	}
 	if m.Sku != nil {
-		if !showcaseSkuPattern.MatchString(*m.Sku) {
+		if !_nexgenJsonSchemaPattern5e5b412d5a5d7b322c347d24.MatchString(*m.Sku) {
 			errs = append(errs, Violation{"sku", fmt.Sprintf("must match pattern %q, got %q", "^[A-Z]{2,4}$", *m.Sku)})
 		}
 	}
 	if m.Phrase != nil {
-		if !showcasePhrasePattern.MatchString(*m.Phrase) {
+		if !_nexgenJsonSchemaPattern5e5b5e5c745c6e5c7830425c665c72205d2b5b5c745c6e5c7830425c665c72205d5b5e5c745c6e5c7830425c665c72205d2b24.MatchString(*m.Phrase) {
 			errs = append(errs, Violation{"phrase", fmt.Sprintf("must match pattern %q, got %q", "^[^\\t\\n\\x0B\\f\\r ]+[\\t\\n\\x0B\\f\\r ][^\\t\\n\\x0B\\f\\r ]+$", *m.Phrase)})
 		}
 	}
 	if m.RequestID != nil {
-		if !showcaseRequestIDFormat.MatchString(*m.RequestID) {
+		if !_nexgenJsonSchemaUuidFormat.MatchString(*m.RequestID) {
 			errs = append(errs, Violation{"requestId", fmt.Sprintf("must be a valid uuid, got %q", *m.RequestID)})
 		}
 	}
 	if m.ContactEmail != nil {
-		if utf8.RuneCountInString(*m.ContactEmail) > 254 || !showcaseContactEmailFormat.MatchString(*m.ContactEmail) {
+		if utf8.RuneCountInString(*m.ContactEmail) > 254 || !_nexgenJsonSchemaEmailFormat.MatchString(*m.ContactEmail) {
 			errs = append(errs, Violation{"contactEmail", fmt.Sprintf("must be a valid email, got %q", *m.ContactEmail)})
 		}
 	}
 	if m.Host != nil {
-		if utf8.RuneCountInString(*m.Host) > 253 || !showcaseHostFormat.MatchString(*m.Host) {
+		if utf8.RuneCountInString(*m.Host) > 253 || !_nexgenJsonSchemaHostnameFormat.MatchString(*m.Host) {
 			errs = append(errs, Violation{"host", fmt.Sprintf("must be a valid hostname, got %q", *m.Host)})
 		}
 	}
 	if m.Homepage != nil {
-		if !showcaseHomepageFormat.MatchString(*m.Homepage) {
+		if !_nexgenJsonSchemaUriFormat.MatchString(*m.Homepage) {
 			errs = append(errs, Violation{"homepage", fmt.Sprintf("must be a valid uri, got %q", *m.Homepage)})
 		}
 	}
 	if m.Gateway != nil {
-		if !showcaseGatewayFormat.MatchString(*m.Gateway) {
+		if !_nexgenJsonSchemaIpv4Format.MatchString(*m.Gateway) {
 			errs = append(errs, Violation{"gateway", fmt.Sprintf("must be a valid ipv4, got %q", *m.Gateway)})
 		}
 	}
@@ -3086,7 +2867,7 @@ func (m Showcase) Validate() error {
 	}
 	for i0, v0 := range m.Links {
 		p0 := fmt.Sprintf("%s[%d]", "links", i0)
-		if !showcaseLinksItemFormat.MatchString(v0) {
+		if !_nexgenJsonSchemaUriFormat.MatchString(v0) {
 			errs = append(errs, Violation{p0, fmt.Sprintf("must be a valid uri, got %q", v0)})
 		}
 	}
@@ -3211,6 +2992,12 @@ func (m Showcase) Validate() error {
 			errs = append(errs, Violation{"nullableMode", fmt.Sprintf("must be one of [\"auto\",\"manual\"], got %q", (*m.NullableMode))})
 		}
 	}
+	for i0, v0 := range m.IntegralMeasurements {
+		p0 := fmt.Sprintf("%s[%d]", "integralMeasurements", i0)
+		if math.IsNaN(v0) || math.IsInf(v0, 0) {
+			errs = append(errs, Violation{p0, fmt.Sprintf("must be a finite number, got %v", v0)})
+		}
+	}
 	if m.IntegralMeasurements != nil {
 		{
 			matchCount := 0
@@ -3224,12 +3011,6 @@ func (m Showcase) Validate() error {
 			}
 		}
 	}
-	for i0, v0 := range m.IntegralMeasurements {
-		p0 := fmt.Sprintf("%s[%d]", "integralMeasurements", i0)
-		if math.IsNaN(v0) || math.IsInf(v0, 0) {
-			errs = append(errs, Violation{p0, fmt.Sprintf("must be a finite number, got %v", v0)})
-		}
-	}
 	if m.ByFive != nil {
 		if math.IsNaN(*m.ByFive) || math.IsInf(*m.ByFive, 0) {
 			errs = append(errs, Violation{"byFive", fmt.Sprintf("must be a finite number, got %v", *m.ByFive)})
@@ -3241,7 +3022,7 @@ func (m Showcase) Validate() error {
 		}
 	}
 	if m.Wildcard != nil {
-		if !showcaseWildcardPattern.MatchString(*m.Wildcard) {
+		if !_nexgenJsonSchemaPattern615b5e5c6e5d62.MatchString(*m.Wildcard) {
 			errs = append(errs, Violation{"wildcard", fmt.Sprintf("must match pattern %q, got %q", "a[^\\n]b", *m.Wildcard)})
 		}
 	}
@@ -3263,7 +3044,7 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 		switch k {
 		case "kind", "revision", "enabled", "status", "tier", "scale", "name", "count", "active", "nickname", "code", "sku", "phrase", "requestId", "contactEmail", "host", "homepage", "gateway", "blob", "urlBlob", "retries", "verbose", "greeting", "debug", "legacyId", "middleName", "category", "priority", "level", "ratio", "score", "step", "tags", "aliases", "roles", "idOrName", "mode", "payload", "detail", "shapeOrName", "measurements", "shapes", "segments", "slots", "grid", "numberGrid", "links", "addresses", "addressBook", "dates", "dateIndex", "blobs", "blobIndex", "metrics", "metricOrLabel", "addressListOrLabel", "location", "audit", "rows", "ledger", "metadata", "quotas", "tokens", "nicknames", "choices", "extras", "shape", "note", "address", "labels", "settings", "attributes", "contact", "nullableCount", "nullableRatio", "nullableFlag", "nullableTags", "nullableMode", "integralMeasurements", "byFive", "wildcard", "quoted":
 		default:
-			errs = append(errs, Violation{k, "unknown field"})
+			errs = append(errs, Violation{memberPath(k), "unknown field"})
 		}
 	}
 	get := func(k string) *json.RawMessage {
@@ -3356,53 +3137,53 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 	}
 	if v, ok := parseStringField(get("sku"), "sku", false, false, &errs); ok {
 		m.Sku = &v
-		if !showcaseSkuPattern.MatchString(v) {
+		if !_nexgenJsonSchemaPattern5e5b412d5a5d7b322c347d24.MatchString(v) {
 			errs = append(errs, Violation{"sku", fmt.Sprintf("must match pattern %q, got %q", "^[A-Z]{2,4}$", v)})
 		}
 	}
 	if v, ok := parseStringField(get("phrase"), "phrase", false, false, &errs); ok {
 		m.Phrase = &v
-		if !showcasePhrasePattern.MatchString(v) {
+		if !_nexgenJsonSchemaPattern5e5b5e5c745c6e5c7830425c665c72205d2b5b5c745c6e5c7830425c665c72205d5b5e5c745c6e5c7830425c665c72205d2b24.MatchString(v) {
 			errs = append(errs, Violation{"phrase", fmt.Sprintf("must match pattern %q, got %q", "^[^\\t\\n\\x0B\\f\\r ]+[\\t\\n\\x0B\\f\\r ][^\\t\\n\\x0B\\f\\r ]+$", v)})
 		}
 	}
 	if v, ok := parseStringField(get("requestId"), "requestId", false, false, &errs); ok {
 		m.RequestID = &v
-		if !showcaseRequestIDFormat.MatchString(v) {
+		if !_nexgenJsonSchemaUuidFormat.MatchString(v) {
 			errs = append(errs, Violation{"requestId", fmt.Sprintf("must be a valid uuid, got %q", v)})
 		}
 	}
 	if v, ok := parseStringField(get("contactEmail"), "contactEmail", false, false, &errs); ok {
 		m.ContactEmail = &v
-		if utf8.RuneCountInString(v) > 254 || !showcaseContactEmailFormat.MatchString(v) {
+		if utf8.RuneCountInString(v) > 254 || !_nexgenJsonSchemaEmailFormat.MatchString(v) {
 			errs = append(errs, Violation{"contactEmail", fmt.Sprintf("must be a valid email, got %q", v)})
 		}
 	}
 	if v, ok := parseStringField(get("host"), "host", false, false, &errs); ok {
 		m.Host = &v
-		if utf8.RuneCountInString(v) > 253 || !showcaseHostFormat.MatchString(v) {
+		if utf8.RuneCountInString(v) > 253 || !_nexgenJsonSchemaHostnameFormat.MatchString(v) {
 			errs = append(errs, Violation{"host", fmt.Sprintf("must be a valid hostname, got %q", v)})
 		}
 	}
 	if v, ok := parseStringField(get("homepage"), "homepage", false, false, &errs); ok {
 		m.Homepage = &v
-		if !showcaseHomepageFormat.MatchString(v) {
+		if !_nexgenJsonSchemaUriFormat.MatchString(v) {
 			errs = append(errs, Violation{"homepage", fmt.Sprintf("must be a valid uri, got %q", v)})
 		}
 	}
 	if v, ok := parseStringField(get("gateway"), "gateway", false, false, &errs); ok {
 		m.Gateway = &v
-		if !showcaseGatewayFormat.MatchString(v) {
+		if !_nexgenJsonSchemaIpv4Format.MatchString(v) {
 			errs = append(errs, Violation{"gateway", fmt.Sprintf("must be a valid ipv4, got %q", v)})
 		}
 	}
 	if s, ok := parseStringField(get("blob"), "blob", false, false, &errs); ok {
-		if v, ok := decodeBase64("blob", s, showcaseBlobContentEncoding, &errs); ok {
+		if v, ok := decodeBase64("blob", s, _nexgenJsonSchemaBase64ContentEncoding, &errs); ok {
 			m.Blob = v
 		}
 	}
 	if s, ok := parseStringField(get("urlBlob"), "urlBlob", false, false, &errs); ok {
-		if v, ok := decodeBase64URL("urlBlob", s, showcaseUrlBlobContentEncoding, &errs); ok {
+		if v, ok := decodeBase64URL("urlBlob", s, _nexgenJsonSchemaBase64urlContentEncoding, &errs); ok {
 			m.UrlBlob = v
 		}
 	}
@@ -3548,6 +3329,9 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 			}
 			rawMatchCount0 := 0
 			for _, rawElement0 := range elems0 {
+				if bytes.Equal(bytes.TrimSpace(rawElement0), []byte("null")) {
+					continue
+				}
 				var rawCandidate0 string
 				if err := json.Unmarshal(rawElement0, &rawCandidate0); err == nil && (rawCandidate0 == "admin") {
 					rawMatchCount0++
@@ -3754,7 +3538,7 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 					continue
 				}
 				if value0, ok := parseStringField(&e0, p0, true, false, &errs); ok {
-					if !showcaseLinksItemFormat.MatchString(value0) {
+					if !_nexgenJsonSchemaUriFormat.MatchString(value0) {
 						errs = append(errs, Violation{p0, fmt.Sprintf("must be a valid uri, got %q", value0)})
 					}
 					m.Links = append(m.Links, value0)
@@ -3847,7 +3631,7 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 					continue
 				}
 				if s0, ok := parseStringField(&e0, p0, true, false, &errs); ok {
-					if value0, ok := decodeBase64(p0, s0, showcaseBlobsItemContentEncoding, &errs); ok {
+					if value0, ok := decodeBase64(p0, s0, _nexgenJsonSchemaBase64ContentEncoding, &errs); ok {
 						m.Blobs = append(m.Blobs, value0)
 					}
 				}
@@ -4170,6 +3954,9 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 			}
 			rawMatchCount0 := 0
 			for _, rawElement0 := range elems0 {
+				if bytes.Equal(bytes.TrimSpace(rawElement0), []byte("null")) {
+					continue
+				}
 				var rawCandidate0 float64
 				if err := json.Unmarshal(rawElement0, &rawCandidate0); err == nil && math.IsInf(rawCandidate0, 0) == false && (math.Trunc(rawCandidate0) == rawCandidate0 && rawCandidate0 >= -integerCap && rawCandidate0 <= integerCap) {
 					rawMatchCount0++
@@ -4188,7 +3975,7 @@ func (m *Showcase) UnmarshalJSON(data []byte) error {
 	}
 	if v, ok := parseStringField(get("wildcard"), "wildcard", false, false, &errs); ok {
 		m.Wildcard = &v
-		if !showcaseWildcardPattern.MatchString(v) {
+		if !_nexgenJsonSchemaPattern615b5e5c6e5d62.MatchString(v) {
 			errs = append(errs, Violation{"wildcard", fmt.Sprintf("must match pattern %q, got %q", "a[^\\n]b", v)})
 		}
 	}
@@ -4628,7 +4415,8 @@ type ShowcaseLedger struct {
 func (m ShowcaseLedger) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
-		mergeNested(&errs, k, v.Validate())
+		path := memberPath(k)
+		mergeNested(&errs, path, v.Validate())
 	}
 	if len(errs) > 0 {
 		return newPayloadValidationError(errs)
@@ -4646,13 +4434,14 @@ func (m *ShowcaseLedger) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]ShowcaseLedgerValue, len(raw))
 	for k, v := range raw {
+		path := memberPath(k)
 		if isNull(v) {
-			errs = append(errs, Violation{k, "explicit null not allowed"})
+			errs = append(errs, Violation{path, "explicit null not allowed"})
 			continue
 		}
 		var value ShowcaseLedgerValue
 		if err := json.Unmarshal(v, &value); err != nil {
-			mergeNested(&errs, k, err)
+			mergeNested(&errs, path, err)
 			continue
 		}
 		m.AdditionalProperties[k] = value
@@ -5107,7 +4896,7 @@ func (m *GetShowcaseInput) UnmarshalJSON(data []byte) error {
 		switch k {
 		case "id":
 		default:
-			errs = append(errs, Violation{k, "unknown field"})
+			errs = append(errs, Violation{memberPath(k), "unknown field"})
 		}
 	}
 	get := func(k string) *json.RawMessage {
@@ -5320,8 +5109,6 @@ func (m TextNote) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
-var tokensValuePattern = regexp.MustCompile("^[a-z]+$")
-
 // Tokens A typed map with a refined *string* member: 2 to 8 code points of lowercase
 // ASCII. Exercises the member-level `minLength`/`maxLength`/`pattern` in every
 // language.
@@ -5335,14 +5122,15 @@ type Tokens struct {
 func (m Tokens) Validate() error {
 	var errs []Violation
 	for k, v := range m.AdditionalProperties {
+		path := memberPath(k)
 		if n := utf8.RuneCountInString(v); n < 2 {
-			errs = append(errs, Violation{k, fmt.Sprintf("must have length >= 2, got %d", n)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must have length >= 2, got %d", n)})
 		}
 		if n := utf8.RuneCountInString(v); n > 8 {
-			errs = append(errs, Violation{k, fmt.Sprintf("must have length <= 8, got %d", n)})
+			errs = append(errs, Violation{path, fmt.Sprintf("must have length <= 8, got %d", n)})
 		}
-		if !tokensValuePattern.MatchString(v) {
-			errs = append(errs, Violation{k, fmt.Sprintf("must match pattern %q, got %q", "^[a-z]+$", v)})
+		if !_nexgenJsonSchemaPattern5e5b612d7a5d2b24.MatchString(v) {
+			errs = append(errs, Violation{path, fmt.Sprintf("must match pattern %q, got %q", "^[a-z]+$", v)})
 		}
 	}
 	if len(errs) > 0 {
@@ -5361,15 +5149,16 @@ func (m *Tokens) UnmarshalJSON(data []byte) error {
 	var errs []Violation
 	m.AdditionalProperties = make(map[string]string, len(raw))
 	for k, v := range raw {
-		if value, ok := parseStringField(&v, k, true, false, &errs); ok {
+		path := memberPath(k)
+		if value, ok := parseStringField(&v, path, true, false, &errs); ok {
 			if n := utf8.RuneCountInString(value); n < 2 {
-				errs = append(errs, Violation{k, fmt.Sprintf("must have length >= 2, got %d", n)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must have length >= 2, got %d", n)})
 			}
 			if n := utf8.RuneCountInString(value); n > 8 {
-				errs = append(errs, Violation{k, fmt.Sprintf("must have length <= 8, got %d", n)})
+				errs = append(errs, Violation{path, fmt.Sprintf("must have length <= 8, got %d", n)})
 			}
-			if !tokensValuePattern.MatchString(value) {
-				errs = append(errs, Violation{k, fmt.Sprintf("must match pattern %q, got %q", "^[a-z]+$", value)})
+			if !_nexgenJsonSchemaPattern5e5b612d7a5d2b24.MatchString(value) {
+				errs = append(errs, Violation{path, fmt.Sprintf("must match pattern %q, got %q", "^[a-z]+$", value)})
 			}
 			m.AdditionalProperties[k] = value
 		}

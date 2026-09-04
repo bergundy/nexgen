@@ -28,7 +28,8 @@
 //!   `\p{…}`/`\pL` (Python; `\pL` also JS);
 //! - **lone `{`, `}`, `]`** outside a class — JS `u` (and Java, for `{`) treat
 //!   them as malformed quantifier/class brackets;
-//! - `\A` / `\z` / `\b{start}` … — JS (and Python, for `\z`) cannot compile them;
+//! - `\A` / `\z` / word-boundary assertions — either fail to compile in a
+//!   target or disagree beside non-ASCII input;
 //! - **named capture groups** — `(?P<n>…)` breaks Java, `(?<n>…)` breaks Python;
 //! - **POSIX classes** (`[[:alpha:]]`), **nested classes** (`[a[\s]]`) and
 //!   **class set operations** (`[a&&b]`, `[a--b]`, `[a~~b]`) — JS cannot compile
@@ -54,6 +55,8 @@ use regex_syntax::ast::{self, Ast};
 /// agree. Deliberately ASCII (ECMA-262's Unicode spaces dropped), consistent
 /// with the ASCII `\d`/`\w` pinning.
 const WS: &str = r"\t\n\x0B\f\r ";
+const DIGIT: &str = "0-9";
+const WORD: &str = "A-Za-z0-9_";
 
 /// The portable spelling of `.`. Go/RE2 and Python `re` exclude only `\n` from
 /// `.`; JS additionally excludes `\r`, U+2028 and U+2029; Java additionally
@@ -199,11 +202,12 @@ fn walk_normalize(ast: &Ast, pattern: &str, edits: &mut Vec<Edit>) -> Result<(),
              which Python's `re` cannot compile (and the one-letter form is a JavaScript \
              SyntaxError); spell the intended set as an explicit character class"
         ))),
-        Ast::ClassPerl(perl) if matches!(perl.kind, ast::ClassPerlKind::Space) => {
+        Ast::ClassPerl(perl) => {
+            let members = perl_class_members(&perl.kind);
             let replacement = if perl.negated {
-                format!("[^{WS}]") // \S -> [^WS]
+                format!("[^{members}]")
             } else {
-                format!("[{WS}]") // \s -> [WS]
+                format!("[{members}]")
             };
             edits.push(Edit {
                 start: perl.span.start.offset,
@@ -212,8 +216,6 @@ fn walk_normalize(ast: &Ast, pattern: &str, edits: &mut Vec<Edit>) -> Result<(),
             });
             Ok(())
         }
-        // `\d` / `\D` / `\w` / `\W` are already identical ASCII in all four.
-        Ast::ClassPerl(_) => Ok(()),
         Ast::ClassBracketed(class) => handle_class(class, pattern, edits),
         Ast::Concat(concat) => {
             for child in &concat.asts {
@@ -258,13 +260,21 @@ fn walk_normalize(ast: &Ast, pattern: &str, edits: &mut Vec<Edit>) -> Result<(),
     }
 }
 
-/// Zero-width assertions: `^`, `$`, `\b` and `\B` are portable (and `$` is
-/// normalized per target at emit time). `\A`, `\z` and the `\b{…}` family are
-/// Rust/Go spellings with no ECMA-262 equivalent.
+/// Zero-width assertions: `^` and `$` are portable (`$` is normalized per
+/// target at emit time). Word boundaries are not: Java's default `\b` uses a
+/// Unicode-aware word definition while the other targets use the portable
+/// ASCII `\w` set, so inputs such as `éfoo` disagree. `\A`, `\z` and the
+/// extended `\b{…}` family also have no shared spelling.
 fn check_assertion(assertion: &ast::Assertion, pattern: &str) -> Result<(), PatternError> {
     use ast::AssertionKind::*;
     match assertion.kind {
-        StartLine | EndLine | WordBoundary | NotWordBoundary => Ok(()),
+        StartLine | EndLine => Ok(()),
+        WordBoundary | NotWordBoundary => Err(PatternError(format!(
+            "pattern {pattern:?} uses a word-boundary assertion (`\\b` / `\\B`), whose \
+             meaning beside non-ASCII text differs across the supported engines (Java uses \
+             Unicode word boundaries while the portable word class is ASCII); avoid word \
+             boundaries and spell the intended ASCII delimiter structure explicitly"
+        ))),
         StartText => Err(PatternError(format!(
             "pattern {pattern:?} uses the `\\A` start-of-text anchor, which is a JavaScript \
              SyntaxError; use `^` (the generator never enables multiline mode, so `^` already \
@@ -283,7 +293,8 @@ fn check_assertion(assertion: &ast::Assertion, pattern: &str) -> Result<(), Patt
         | WordBoundaryEndHalf => Err(PatternError(format!(
             "pattern {pattern:?} uses a Rust/Go-only word-boundary assertion \
              (`\\b{{start}}` / `\\b{{end}}` / `\\<` / `\\>`), which no other target engine \
-             can compile; use the plain `\\b` / `\\B` boundaries"
+             can compile; avoid word-boundary assertions and spell the intended ASCII \
+             delimiter structure explicitly"
         ))),
     }
 }
@@ -366,20 +377,32 @@ fn handle_class(
     pattern: &str,
     edits: &mut Vec<Edit>,
 ) -> Result<(), PatternError> {
+    let spelling = &pattern[class.span.start.offset..class.span.end.offset];
+    let after_open = spelling
+        .strip_prefix('[')
+        .and_then(|body| body.strip_prefix('^').or(Some(body)))
+        .unwrap_or(spelling);
+    if after_open.starts_with(']') {
+        return Err(PatternError(format!(
+            "pattern {pattern:?} places `]` first in a character class, which JavaScript's `u` mode rejects; escape it as `\\]`"
+        )));
+    }
     let mut items = Vec::new();
     collect_class_set(&class.kind, pattern, &mut items)?;
 
-    // Sole-member reductions: `[\s]`→`[WS]`, `[^\s]`→`[^WS]`, `[\S]`→`[^WS]`,
-    // `[^\S]`→`[WS]` (the class reduces to a standalone `\s`/`\S`).
+    // A sole Perl class reduces to its explicit ASCII member set. Rust's
+    // compile gate uses Unicode `\d`/`\w`, while the emitted runtimes are pinned
+    // to ASCII; normalization keeps both the literal checks and runtimes on the
+    // same operand.
     if items.len() == 1
         && let ast::ClassSetItem::Perl(perl) = items[0]
-        && matches!(perl.kind, ast::ClassPerlKind::Space)
     {
         let effective_negated = class.negated ^ perl.negated;
+        let members = perl_class_members(&perl.kind);
         let replacement = if effective_negated {
-            format!("[^{WS}]")
+            format!("[^{members}]")
         } else {
-            format!("[{WS}]")
+            format!("[{members}]")
         };
         edits.push(Edit {
             start: class.span.start.offset,
@@ -389,15 +412,13 @@ fn handle_class(
         return Ok(());
     }
 
-    // Multi-member class: `\s` becomes the bare member list; `\S` is an
-    // open-ended complement with no portable positive form — reject.
+    // Multi-member class: a positive Perl class becomes its bare member list;
+    // an open-ended complement has no portable positive form — reject.
     for item in &items {
-        if let ast::ClassSetItem::Perl(perl) = item
-            && matches!(perl.kind, ast::ClassPerlKind::Space)
-        {
+        if let ast::ClassSetItem::Perl(perl) = item {
             if perl.negated {
                 return Err(PatternError(format!(
-                    "pattern {pattern:?} uses `\\S` inside a multi-member character class \
+                    "pattern {pattern:?} uses a negated Perl class inside a multi-member character class \
                      (an open-ended complement with no portable positive form); \
                      spell the intended set explicitly (e.g. `[^\\t\\n\\x0B\\f\\r ]`)"
                 )));
@@ -405,11 +426,19 @@ fn handle_class(
             edits.push(Edit {
                 start: perl.span.start.offset,
                 end: perl.span.end.offset,
-                replacement: WS.to_string(),
+                replacement: perl_class_members(&perl.kind).to_string(),
             });
         }
     }
     Ok(())
+}
+
+fn perl_class_members(kind: &ast::ClassPerlKind) -> &'static str {
+    match kind {
+        ast::ClassPerlKind::Digit => DIGIT,
+        ast::ClassPerlKind::Space => WS,
+        ast::ClassPerlKind::Word => WORD,
+    }
 }
 
 /// Flatten a `ClassSet` into its leaf items, rejecting every non-portable class
@@ -499,13 +528,21 @@ fn collect_class_item<'a>(
 ///   `(a+|b)*`) — "reduces to" meaning after stripping groups, and for a
 ///   concatenation, when every other element is nullable (`(a+b*)+`), or
 /// - the body is an alternation with two textually identical branches
-///   (`(a|a)*`).
+///   (`(a|a)*`), or
+/// - the body is an alternation whose branches have the same positive fixed
+///   width (`(a|b)*`, `(ab|cd)*`). Java recursively evaluates each iteration
+///   of these forms and can overflow its stack on otherwise ordinary input.
 ///
 /// An **exact-count** inner repetition is unambiguous and stays accepted, which
 /// is what keeps the generator's own pinned `format` / `contentEncoding` regexes
 /// (`(?:[A-Za-z0-9+/]{4})*`, the `hostname` / `email` / `uri` bodies, the `ipv6`
 /// grammar) inside the gate.
 fn check_repetition(repetition: &ast::Repetition, pattern: &str) -> Result<(), PatternError> {
+    if matches!(repetition.ast.as_ref(), Ast::Repetition(_)) {
+        return Err(PatternError(format!(
+            "pattern {pattern:?} applies a repetition operator directly to another repetition, which Go, JavaScript and Python reject; group or rewrite the repeated expression"
+        )));
+    }
     if !is_unbounded(&repetition.op.kind) {
         return Ok(());
     }
@@ -516,6 +553,8 @@ fn check_repetition(repetition: &ast::Repetition, pattern: &str) -> Result<(), P
         "it applies a quantifier to another open-ended quantifier"
     } else if has_duplicate_alternation_branch(body, pattern) {
         "its body is an alternation with two identical branches"
+    } else if has_equal_fixed_width_alternation(body) {
+        "Java's backtracking engine recurses once per alternation iteration and can overflow its stack"
     } else {
         return Ok(());
     };
@@ -617,6 +656,57 @@ fn has_duplicate_alternation_branch(ast: &Ast, pattern: &str) -> bool {
         .any(|branch| !seen.insert(&pattern[branch.span().start.offset..branch.span().end.offset]))
 }
 
+/// Java recursively evaluates a repeated alternation even when its branches
+/// are disjoint fixed-width strings (`(a|b)*`, `(ab|cd)*`), overflowing on only
+/// a few thousand characters. The equal-width guard catches that reproduced
+/// family without rejecting the generator's pinned URI grammar, whose repeated
+/// alternatives consume different-sized chunks (for example one literal byte
+/// or a three-byte percent escape).
+fn has_equal_fixed_width_alternation(ast: &Ast) -> bool {
+    let Ast::Alternation(alternation) = strip_groups(ast) else {
+        return false;
+    };
+    let mut branches = alternation.asts.iter();
+    let Some(first_width) = branches.next().and_then(fixed_width) else {
+        return false;
+    };
+    first_width > 0 && branches.all(|branch| fixed_width(branch) == Some(first_width))
+}
+
+/// Exact code-point width when it is statically known. Assertions and empty
+/// nodes consume zero; character-producing atoms consume one; only exact-count
+/// repetitions and equal-width alternations preserve a fixed width.
+fn fixed_width(ast: &Ast) -> Option<u32> {
+    match ast {
+        Ast::Empty(_) | Ast::Flags(_) | Ast::Assertion(_) => Some(0),
+        Ast::Literal(_)
+        | Ast::Dot(_)
+        | Ast::ClassUnicode(_)
+        | Ast::ClassPerl(_)
+        | Ast::ClassBracketed(_) => Some(1),
+        Ast::Group(group) => fixed_width(&group.ast),
+        Ast::Concat(concat) => concat
+            .asts
+            .iter()
+            .try_fold(0_u32, |width, child| width.checked_add(fixed_width(child)?)),
+        Ast::Alternation(alternation) => {
+            let mut branches = alternation.asts.iter();
+            let width = fixed_width(branches.next()?)?;
+            branches
+                .all(|branch| fixed_width(branch) == Some(width))
+                .then_some(width)
+        }
+        Ast::Repetition(repetition) => {
+            let ast::RepetitionKind::Range(ast::RepetitionRange::Exactly(count)) =
+                repetition.op.kind
+            else {
+                return None;
+            };
+            fixed_width(&repetition.ast)?.checked_mul(count)
+        }
+    }
+}
+
 fn inline_flag_error(pattern: &str) -> PatternError {
     PatternError(format!(
         "pattern {pattern:?} uses an inline flag group (e.g. `(?i)` / `(?flags:…)`) \
@@ -653,8 +743,18 @@ mod tests {
     #[test]
     fn keeps_plain_patterns_unchanged() {
         assert_eq!(norm("^[A-Z]{2,4}$"), "^[A-Z]{2,4}$");
-        assert_eq!(norm(r"^\d{3}-\w{4}$"), r"^\d{3}-\w{4}$");
+        assert_eq!(norm(r"^\d{3}-\w{4}$"), r"^[0-9]{3}-[A-Za-z0-9_]{4}$");
         assert_eq!(norm(""), "");
+    }
+
+    #[test]
+    fn normalizes_perl_digit_and_word_to_ascii() {
+        assert_eq!(norm(r"\d"), "[0-9]");
+        assert_eq!(norm(r"\D"), "[^0-9]");
+        assert_eq!(norm(r"\w"), "[A-Za-z0-9_]");
+        assert_eq!(norm(r"\W"), "[^A-Za-z0-9_]");
+        assert_eq!(norm(r"[x\d]"), "[x0-9]");
+        assert!(gate_and_normalize(r"[x\D]").is_err());
     }
 
     #[test]
@@ -747,6 +847,12 @@ mod tests {
         assert!(gate_and_normalize("[{}]").is_ok());
         // A real quantifier is not a lone bracket.
         assert!(gate_and_normalize("^a{2,4}$").is_ok());
+        for leading_close in [r"[]]", r"[]a]", r"[^]]", r"[]-a]"] {
+            assert!(
+                gate_and_normalize(leading_close).is_err(),
+                "{leading_close} must reject for JavaScript u-mode"
+            );
+        }
     }
 
     /// `08#1`: named groups have no spelling that Python and Java both accept.
@@ -764,8 +870,10 @@ mod tests {
     fn rejects_non_portable_anchors() {
         assert!(gate_and_normalize(r"\Aabc").is_err());
         assert!(gate_and_normalize(r"abc\z").is_err());
-        assert!(gate_and_normalize(r"\bfoo\b").is_ok());
-        assert!(gate_and_normalize(r"foo\B").is_ok());
+        for boundary in [r"\bfoo\b", r"foo\B"] {
+            let error = gate_and_normalize(boundary).unwrap_err().0;
+            assert!(error.contains("non-ASCII"), "{boundary}: {error}");
+        }
     }
 
     /// `08#1` / `08#3`: POSIX classes, nested classes and class set operations
@@ -794,6 +902,7 @@ mod tests {
             "^(a+b*)+$",
             "^(a+|b)*$",
             "^(a|a)*$",
+            "^(ab|cd)*$",
             r"^(\w+\s*)+$",
         ] {
             assert!(
@@ -801,6 +910,13 @@ mod tests {
                 "{hostile} should gate-reject (ReDoS)"
             );
         }
+        for stacked in ["a{2}*", "a{2}{3}", "a*{3}", "a+{2}", "a?{2}"] {
+            assert!(
+                gate_and_normalize(stacked).is_err(),
+                "{stacked} must reject as a stacked repetition"
+            );
+        }
+        assert!(gate_and_normalize("^(a|b)*$").is_err());
         // Unambiguous loops stay accepted.
         for safe in [
             "^a+$",

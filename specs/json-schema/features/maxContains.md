@@ -49,9 +49,9 @@ elements are deferred there and therefore here too).
 
 Lowers to a single `≤` count comparison after tallying matches; no effect
 on emitted types. Citing [[PRINCIPLES.md]]: **P10** (enforced at the
-boundary), **P11** (aggregated), **P12** (a pure predicate over the decoded
-value in the **shared `Validate`** layer — identical in both directions, no
-parse/encode adapter logic of its own).
+boundary), **P11** (aggregated), **P12** — one comparison over one kind of
+operand, the match tally over the array's complete element sequence, applied at
+both boundaries with the same reason.
 
 Loader behavior:
 - Value not a non-negative integer → reject: a non-number
@@ -59,6 +59,8 @@ Loader behavior:
   **negative** value (`maxContains:-1`), or a **fractional** value
   (`maxContains:2.5`). `maxContains:2.0` is accepted (≡ `2`, honoring the
   `1.0`-as-integer rule from [[type]]).
+- The portable count ceiling from [[maxItems]], and the emitted-literal
+  obligation that comes with a bound above 2^31−1, apply here unchanged.
 - **`maxContains` without [[contains]]** on the same node → **reject**
   (**P7.1**, statically meaningless — the spec's "no effect" tightened to a
   loud error). Diagnostic: add a `contains` matcher or remove `maxContains`.
@@ -85,20 +87,16 @@ None. The emitted collection type is [[items]]'s `[]T` / `T[]` /
 ## Validator mapping
 
 Per **P10**/**P11**. A single `≤` comparison of the **match count** against
-the fixed bound, identical in both directions (a pure predicate over the
-decoded value — the **shared `Validate`** layer of **P12**). The presence
-of `maxContains` (or [[minContains]] ≥ 2) **defeats the [[contains]]
-short-circuit**: instead of stopping at the first match, the scan tallies
-**every** matching element, because the exact count is what the bound
-compares. `matchCount` reuses the [[contains]] matcher predicate
-(`matchesContains`).
+the fixed bound. Deserialize tallies every original wire element; serialize
+tallies the decoded collection. The same matcher predicate, comparison, and
+reason apply in both directions (**P12**).
 
 | Language | Strategy |
 |---|---|
-| Go | A predicate in the shared `Validate`, called by `UnmarshalJSON` after decoding into the `[]T`: `n := 0; for _, e := range v { if matchesContains(e) { n++ } }; if n > max { push(Violation{Path, Reason: fmt.Sprintf("too many matching items: at most %d, got %d", max, n)}) }`, collected into one `PayloadValidationError` application failure. |
-| TypeScript | After the `Array.isArray` guard ([[items]]), the shared `Validate` counts: ``const n = v.filter(matchesContains).length; if (n > max) push(Violation{path, reason: `too many matching items: at most ${max}, got ${n}`})``, throwing one `PayloadValidationError` application failure. `max` is an emitted numeric constant. |
-| Python | `_check_contains` in the transfer type converter tallies `n = sum(1 for e in v if _matches_contains(e))` and on `n > max` appends `Violation(path=…, reason=f"too many matching items: at most {max}, got {n}")` into the single generated `PayloadValidationError` application failure. |
-| Java | The per-POJO collecting deserializer (PRINCIPLES Java §5) reads the `List<T>`, tallies matches against the matcher predicate, and on `n > max` pushes a `Violation{path, "too many matching items: at most " + max + ", got " + n}` into the single `PayloadValidationError` application failure. Not bean-validation. |
+| Go | `UnmarshalJSON` tallies the original `json.RawMessage` elements; shared `Validate` tallies the typed slice before serialize. Both push the same bound/count violation. |
+| TypeScript | The transfer converters tally the raw array inbound and the typed array outbound after the `Array.isArray` guard. `max` is an emitted numeric constant. |
+| Python | `_check_contains` receives the raw list inbound and the typed list outbound, appending the same bound/count violation. |
+| Java | The collecting deserializer tallies the original Jackson array node; serialize tallies the typed `List<T>`. Not bean-validation. |
 
 **Informative `reason` strings.** The `reason` names the **concrete bound
 and the offending match count** — `too many matching items: at most 2, got
@@ -113,9 +111,10 @@ Identical to [[maxItems]]: the predicate **re-runs before emit** over the
 decoded value — a model constructed in memory whose elements yield too many
 matches fails serialize with the same aggregated primitive rather than
 being written. Real teeth in the statically-typed targets (Go/TS/Java),
-where in-memory construction is unchecked. The elements are the same in
-memory as on the wire, so the tally-and-compare is the identical predicate
-in both directions.
+where in-memory construction is unchecked. Both directions tally over the
+array's complete element sequence — the wire array inbound, the decoded
+collection outbound — so the tally-and-compare is the identical predicate in
+both directions.
 
 ## Property-testing matrix
 
@@ -136,6 +135,7 @@ in both directions.
 | Value not a number | `maxContains:"3"`, `maxContains:true`, `maxContains:null` |
 | Negative value | `maxContains:-1` |
 | Fractional value | `maxContains:2.5` |
+| Above the portable count ceiling | `maxContains:9007199254740992` |
 | No sibling `contains` (P7.1) | `{type:"array", items:{type:string}, maxContains:2}` |
 | Unsatisfiable range | `{type:"array", items:{type:string}, contains:{const:"x"}, minContains:3, maxContains:1}` |
 | `maxContains:0` at the default `minContains:1` (unsatisfiable) | `{type:"array", items:{type:string}, contains:{const:"x"}, maxContains:0}` |
@@ -160,9 +160,8 @@ in both directions.
 
 - **[[contains]]**: the gate — `maxContains` is meaningless without it and
   is a load reject on its own. It reuses [[contains]]' matcher predicate and
-  its scalar-only support envelope, and **cancels [[contains]]'
-  short-circuit** (the full match count is needed). `contains` alone is the
-  spec-default `minContains:1` with no ceiling.
+  its scalar-only support envelope and its full match tally. `contains` alone
+  is the spec-default `minContains:1` with no ceiling.
 - **[[minContains]] — satisfiability (canonical, owned here)**: the paired
   lower bound over the same match count. `minContains > maxContains` is a
   load error; `minContains == maxContains` pins an **exact** match count
@@ -200,11 +199,9 @@ in both directions.
 - [[minContains]] — the paired inclusive lower bound (shares this
   match-counting machinery; owns the `0` relaxation and the default of 1).
 - [[contains]] — supplies the matcher predicate and the scalar-only support
-  envelope; `maxContains` caps its match count and cancels its
-  short-circuit.
+  envelope; `maxContains` caps the match tally that scan yields.
 - [[maxItems]] / [[minItems]] — the **total**-element-count analog; same
   count-family `reason`-string convention and exact-pin idea.
 - [[items]] — supplies the emitted collection type and the scalar element
   type this keyword's matches are drawn from.
 - [[type]] — gates applicability to `type:"array"`.
-</content>

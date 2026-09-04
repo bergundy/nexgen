@@ -63,17 +63,28 @@ public final class Tokens {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Tokens> {
         @Override
         public void serialize(Tokens value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
-            for (Map.Entry<String, String> entry : value.additionalProperties.entrySet()) {
-                int length = entry.getValue().codePointCount(0, entry.getValue().length());
-                if (length < 2) {
-                    violations.add(new Violation(entry.getKey(), "must have length >= 2, got " + length));
-                }
-                if (length > 8) {
-                    violations.add(new Violation(entry.getKey(), "must have length <= 8, got " + length));
-                }
-                if (!VALUE_PATTERN.matcher(entry.getValue()).find()) {
-                    violations.add(new Violation(entry.getKey(), "must match pattern " + "^[a-z]+\\z" + ", got " + entry.getValue()));
+            if (value.additionalProperties == null) {
+                violations.add(new Violation("", "expected object"));
+            } else {
+                for (Map.Entry<String, String> entry : value.additionalProperties.entrySet()) {
+                    if (entry.getValue() == null) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "explicit null not allowed"));
+                        continue;
+                    }
+                    int length = entry.getValue().codePointCount(0, entry.getValue().length());
+                    if (length < 2) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "must have length >= 2, got " + length));
+                    }
+                    if (length > 8) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "must have length <= 8, got " + length));
+                    }
+                    if (!VALUE_PATTERN.matcher(entry.getValue()).find()) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "must match pattern " + "^[a-z]+\\z" + ", got " + entry.getValue()));
+                    }
                 }
             }
             if (!violations.isEmpty()) {
@@ -85,6 +96,7 @@ public final class Tokens {
                 gen.writeStringField(entry.getKey(), entry.getValue());
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -102,24 +114,25 @@ public final class Tokens {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 JsonNode element = node.get(key);
                 if (element.isNull()) {
-                    violations.add(new Violation(key, "explicit null not allowed"));
+                    violations.add(new Violation(path, "explicit null not allowed"));
                     continue;
                 }
                 if (!element.isTextual()) {
-                    violations.add(new Violation(key, "expected string value"));
+                    violations.add(new Violation(path, "expected string value"));
                 } else {
                     String value = element.textValue();
                     int length = value.codePointCount(0, value.length());
                     if (length < 2) {
-                        violations.add(new Violation(key, "must have length >= 2, got " + length));
+                        violations.add(new Violation(path, "must have length >= 2, got " + length));
                     }
                     if (length > 8) {
-                        violations.add(new Violation(key, "must have length <= 8, got " + length));
+                        violations.add(new Violation(path, "must have length <= 8, got " + length));
                     }
                     if (!VALUE_PATTERN.matcher(value).find()) {
-                        violations.add(new Violation(key, "must match pattern " + "^[a-z]+\\z" + ", got " + value));
+                        violations.add(new Violation(path, "must match pattern " + "^[a-z]+\\z" + ", got " + value));
                     }
                     additionalProperties.put(key, value);
                 }

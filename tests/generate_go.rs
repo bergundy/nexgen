@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nexgen::{GenerateRequest, generate_to_file};
 
 mod common;
-use common::json_input_path;
+use common::{json_input_path, write_bare_ref_alias_closure};
 
 static OUTPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -825,6 +825,9 @@ fn go_json_examples_render_expected_language_features() {
             let generated = actual
                 .get(&generated_file)
                 .unwrap_or_else(|| panic!("{} should be generated", generated_file.display()));
+            let definitions = actual
+                .get(&PathBuf::from("definitions.go"))
+                .expect("JSON generation emits package definitions");
             if native_api {
                 match example_id {
                     "chat" => {
@@ -938,7 +941,9 @@ fn go_json_examples_render_expected_language_features() {
                         assert!(generated.contains("type Temporal struct"));
                         assert!(generated.contains("CreatedAt time.Time"));
                         assert!(generated.contains("Timeout time.Duration"));
-                        assert!(generated.contains("func formatDuration(d time.Duration) string"));
+                        assert!(
+                            definitions.contains("func formatDuration(d time.Duration) string")
+                        );
                         assert!(!generated.contains("Service = struct"));
                         assert!(!generated.contains("ServiceClient"));
                     }
@@ -1712,14 +1717,29 @@ fn go_rejects_inputs_flattening_to_the_same_module_file() {
         ts_date_time_types: Default::default(),
     });
 
-    let error = result
-        .expect_err("inputs flattening to the same Go module file should be rejected")
-        .to_string();
-    assert!(error.contains("full_name.go"), "{error}");
+    let error =
+        result.expect_err("inputs flattening to the same Go module file should be rejected");
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("full_name.go"));
     assert!(
-        error.contains("conflicts with another generated file"),
-        "{error}"
+        first_source.contains("full/name.json") || first_source.contains("full_name.json"),
+        "{first_source}"
     );
+    assert!(
+        second_source.contains("full/name.json") || second_source.contains("full_name.json"),
+        "{second_source}"
+    );
+    assert_ne!(first_source, second_source);
+    assert!(remedy.contains("full/name.json"), "{remedy}");
+    assert!(remedy.contains("full_name.json"), "{remedy}");
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -1728,8 +1748,8 @@ fn go_rejects_reserved_generated_name_collision() {
     // An input file whose module segment is `definitions` would collide with the
     // schema-independent runtime file `definitions.go`. The loader rejects it up
     // front as a reserved module name (before the Go emit layer would raise a
-    // `GeneratedFileConflict`). Two inputs are used so the reserved file carries a
-    // real module segment rather than flattening to the root `api.go`.
+    // generated-file source conflict). Two inputs are used so the reserved file
+    // carries a real module segment rather than flattening to the root `api.go`.
     let temp_dir = unique_output_path("go-json-reserved-name");
     fs::create_dir_all(&temp_dir).unwrap();
     let schema =
@@ -1755,6 +1775,203 @@ fn go_rejects_reserved_generated_name_collision() {
         .to_string();
     assert!(error.contains("reserved module name"), "{error}");
     assert!(error.contains("definitions"), "{error}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn go_rejects_single_input_output_named_definitions_with_a_remedy() {
+    let temp_dir = unique_output_path("go-json-output-name-collision");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("other.json");
+    fs::write(
+        &input_path,
+        r#"{"type":"object","properties":{"id":{"type":"string"}}}"#,
+    )
+    .unwrap();
+
+    let request = |output_name: &str| GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_path.clone()],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join(output_name),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    };
+
+    for output_name in ["definitions", "Definitions", "definitions-"] {
+        let error = generate_to_file(&request(output_name))
+            .expect_err("the model file must not overwrite the generated runtime")
+            .to_string();
+        assert!(error.contains("definitions.go"), "{output_name}: {error}");
+        assert!(error.contains("output directory"), "{output_name}: {error}");
+        assert!(
+            error.contains("generated Go validation runtime"),
+            "{output_name}: {error}"
+        );
+        assert!(error.contains("--output"), "{output_name}: {error}");
+        assert!(
+            error.contains("name generates a different Go file path"),
+            "{output_name}: {error}"
+        );
+    }
+
+    generate_to_file(&request("api")).expect("a non-conflicting derived package name should load");
+    assert!(temp_dir.join("api/api.go").is_file());
+    assert!(temp_dir.join("api/definitions.go").is_file());
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn go_rejects_multi_input_module_colliding_with_support_file() {
+    let temp_dir = unique_output_path("go-json-module-support-collision");
+    fs::create_dir_all(&temp_dir).unwrap();
+    fs::write(
+        temp_dir.join("support.json"),
+        r#"{"title":"SupportModel","type":"object","properties":{"id":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        temp_dir.join("other.json"),
+        r#"{"title":"OtherModel","type":"object","properties":{"id":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    let support_path = temp_dir.join("custom.go");
+    fs::write(&support_path, "package generated\n").unwrap();
+
+    let error = generate_to_file(&GenerateRequest {
+        config: Default::default(),
+        language: nexgen::language::Language::Go,
+        input_paths: vec![temp_dir.clone()],
+        support_paths: vec![support_path],
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("output"),
+        format: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .expect_err("the input module must not be overwritten by support.go");
+
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("support.go"));
+    assert!(first_source.contains("support.json"), "{first_source}");
+    assert_eq!(second_source, "generated Go support file");
+    assert!(remedy.contains("support.json"), "{remedy}");
+    assert!(!remedy.contains("custom.go"), "{remedy}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn go_rejects_single_json_output_name_colliding_with_support_file() {
+    let temp_dir = unique_output_path("go-json-output-support-collision");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("model.json");
+    fs::write(
+        &input_path,
+        r#"{"title":"Model","type":"object","properties":{"id":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    let support_path = temp_dir.join("custom.go");
+    fs::write(&support_path, "package generated\n").unwrap();
+
+    let error = generate_to_file(&GenerateRequest {
+        config: Default::default(),
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_path],
+        support_paths: vec![support_path],
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("support"),
+        format: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .expect_err("the output-named module must not be overwritten by support.go");
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("support.go"));
+    assert_eq!(
+        first_source,
+        "Go module derived from output directory `support`"
+    );
+    assert_eq!(second_source, "generated Go support file");
+    assert!(remedy.contains("--output"), "{remedy}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn go_rejects_single_wit_service_name_colliding_with_support_file() {
+    let temp_dir = unique_output_path("go-wit-service-support-collision");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("support.wit");
+    fs::write(
+        &input_path,
+        r#"
+package temporal:collision@1.0.0;
+
+world system {
+  export support;
+}
+
+/// @nexus.endpoint "support"
+interface support {
+  record request { value: string }
+  run: func(request: request);
+}
+"#,
+    )
+    .unwrap();
+    let support_path = temp_dir.join("custom.go");
+    fs::write(&support_path, "package generated\n").unwrap();
+
+    let error = generate_to_file(&GenerateRequest {
+        config: Default::default(),
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_path.clone()],
+        support_paths: vec![support_path],
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("output"),
+        format: false,
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .expect_err("the service-named module must not be overwritten by support.go");
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("support.go"));
+    assert!(
+        first_source.contains("service declaration `Support`"),
+        "{first_source}"
+    );
+    assert!(
+        first_source.contains(&input_path.display().to_string()),
+        "{first_source}"
+    );
+    assert_eq!(second_source, "generated Go support file");
+    assert!(remedy.contains("rename service `Support`"), "{remedy}");
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -1875,7 +2092,7 @@ fn go_json_decodes_element_position_unions() {
     assert!(rendered.contains("errs = append(errs, Violation{p0, \"explicit null not allowed\"})"));
     // A map member routes through the dispatcher under its key.
     assert!(rendered.contains("AdditionalProperties map[string]EntriesValue"));
-    assert!(rendered.contains("if value, ok := unmarshalEntriesValue(v, k, &errs); ok {"));
+    assert!(rendered.contains("if value, ok := unmarshalEntriesValue(v, path, &errs); ok {"));
     // Element nullability stays the element's own concern.
     assert!(rendered.contains("Slots []*string `json:\"slots,omitempty\"`"));
 
@@ -1968,7 +2185,9 @@ fn go_json_recursively_converts_and_validates_element_positions() {
     assert!(rendered.contains("p1 := fmt.Sprintf(\"%s[%d]\", p0, i1)"));
     assert!(rendered.contains("parseNumberField(&e1, p1, true, false, &errs)"));
     assert!(rendered.contains("parseDate(p0, s0, &errs)"));
-    assert!(rendered.contains("decodeBase64(k, s, blobMapValueContentEncoding, &errs)"));
+    assert!(
+        rendered.contains("decodeBase64(path, s, _nexgenJsonSchemaBase64ContentEncoding, &errs)")
+    );
     assert!(rendered.contains("mergeNested(&errs, p0, v0.Validate())"));
 
     fs::write(
@@ -2091,11 +2310,16 @@ fn go_json_validates_non_object_union_branch_constraints() {
     })
     .unwrap();
     let rendered = fs::read_to_string(output_path.join("bc.go")).unwrap();
+    let definitions = fs::read_to_string(output_path.join("definitions.go")).unwrap();
 
     // The string branch: length, then the pattern through its own compiled var.
-    assert!(rendered.contains("var bcValueStringPattern = regexp.MustCompile(\"^[a-z]+$\")"));
+    assert!(definitions.contains(
+        "var _nexgenJsonSchemaPattern5e5b612d7a5d2b24 = regexp.MustCompile(\"^[a-z]+$\")"
+    ));
     assert!(rendered.contains("must have length >= 3, got %d"));
-    assert!(rendered.contains("if !bcValueStringPattern.MatchString(string(v)) {"));
+    assert!(
+        rendered.contains("if !_nexgenJsonSchemaPattern5e5b612d7a5d2b24.MatchString(string(v)) {")
+    );
     // The integer branch's own bound.
     assert!(rendered.contains("if int64(v) < 1 {"));
     assert!(rendered.contains("must be >= 1, got %v"));
@@ -2190,14 +2414,17 @@ properties:
     })
     .unwrap();
     let rendered = fs::read_to_string(output_path.join("output.go")).unwrap();
+    let definitions = fs::read_to_string(output_path.join("definitions.go")).unwrap();
 
     assert!(rendered.contains("utf8.RuneCountInString(e) >= 5"));
     // The matcher's regexes compile once at package init, never per element
     // inside the scan loop (`pattern.md`'s compile-once rule).
     assert!(
-        rendered.contains("var matchersHostsContainsPattern = regexp.MustCompile(\"^api\\\\.\")")
+        definitions.contains(
+            "var _nexgenJsonSchemaPattern5e6170695c2e = regexp.MustCompile(\"^api\\\\.\")"
+        )
     );
-    assert!(rendered.contains("matchersHostsContainsPattern.MatchString(e)"));
+    assert!(rendered.contains("_nexgenJsonSchemaPattern5e6170695c2e.MatchString(e)"));
     assert!(
         !rendered.contains("regexp.MustCompile(\"^api\\\\.\").MatchString("),
         "the matcher pattern must not be recompiled per element\n{rendered}"
@@ -2980,6 +3207,71 @@ fn go_json_cross_module_go_name_override_moves_every_reference() {
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
+#[test]
+fn go_json_bare_ref_root_is_a_runtime_alias_for_operation_io() {
+    let temp_dir = unique_output_path("go-json-bare-ref-alias");
+    let input = write_bare_ref_alias_closure(&temp_dir);
+    let output_path = temp_dir.join("aliases");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let alias = fs::read_to_string(output_path.join("alias_alternate.go")).unwrap();
+    assert!(alias.contains("type Alternate = Main"), "{alias}");
+    assert!(!alias.contains("type Alternate struct"), "{alias}");
+    let target = fs::read_to_string(output_path.join("target_main.go")).unwrap();
+    assert!(target.contains("type Mirror = Main"), "{target}");
+    assert!(!target.contains("type Mirror struct"), "{target}");
+    let service = fs::read_to_string(output_path.join("service.go")).unwrap();
+    assert!(
+        service.contains("Echo nexus.OperationReference[Alternate, Alternate]"),
+        "{service}"
+    );
+    assert!(
+        service.contains("Item Alternate `json:\"item\"`"),
+        "{service}"
+    );
+    fs::write(
+        output_path.join("alias_runtime_test.go"),
+        r#"package aliases
+
+import (
+    "encoding/json"
+    "testing"
+)
+
+func TestBareRefAliasRoundTrips(t *testing.T) {
+    var value Alternate
+    if err := json.Unmarshal([]byte(`{"value":"ok"}`), &value); err != nil {
+        t.Fatal(err)
+    }
+    if value.Value != "ok" { t.Fatalf("value = %q", value.Value) }
+    if _, err := json.Marshal(value); err != nil { t.Fatal(err) }
+}
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("go")
+            .args(["test", "./..."])
+            .env("GO111MODULE", "on")
+            .current_dir(&output_path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
 /// A property carrying a per-language name override alongside a `const` and an
 /// inline object: the closed-value type is member-derived and moves with the
 /// override, while the hoisted shape is position-derived and does not.
@@ -3112,6 +3404,14 @@ services:
         ts_date_time_types: Default::default(),
     })
     .expect("separate Java packages keep `Page` apart");
+    let service = fs::read_to_string(temp_dir.join("pkg/root/Svc.java")).unwrap();
+    assert!(
+        service.contains("one(com.example.pkg.a.page.Page input);")
+            && service.contains("two(com.example.pkg.b.page.Page input);"),
+        "ambiguous foreign model names must be package-qualified:\n{service}"
+    );
+    assert!(!service.contains("import com.example.pkg.a.page.Page;"));
+    assert!(!service.contains("import com.example.pkg.b.page.Page;"));
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -3589,6 +3889,7 @@ properties:
   blob: { type: string, contentEncoding: base64, minLength: 4, maxLength: 8 }
   blobConst: { type: string, contentEncoding: base64, const: "aGk=" }
   when: { type: string, format: date-time }
+  clock: { type: string, format: time }
   dur: { type: string, format: duration }
   times:
     type: array
@@ -3660,12 +3961,39 @@ func TestMaterializedSerializeChecks(t *testing.T) {
     }
 
     subMinuteOffset := time.Date(2021, 6, 15, 12, 30, 45, 0, time.FixedZone("", 30))
+    justOutOfRangeOffset := time.Date(2021, 6, 15, 12, 30, 45, 0, time.FixedZone("", 18*60*60+60))
+    negativeJustOutOfRangeOffset := time.Date(2021, 6, 15, 12, 30, 45, 0, time.FixedZone("", -(18*60*60+60)))
+    wideOutOfRangeOffset := time.Date(2021, 6, 15, 12, 30, 45, 0, time.FixedZone("", 23*60*60+59*60))
+    negativeWideOutOfRangeOffset := time.Date(2021, 6, 15, 12, 30, 45, 0, time.FixedZone("", -(23*60*60+59*60)))
     overflowYear := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
-    for name, value := range map[string]time.Time{"sub-minute offset": subMinuteOffset, "year 10000": overflowYear} {
+    for name, value := range map[string]time.Time{"sub-minute offset": subMinuteOffset, "offset +18:01": justOutOfRangeOffset, "offset -18:01": negativeJustOutOfRangeOffset, "offset +23:59": wideOutOfRangeOffset, "offset -23:59": negativeWideOutOfRangeOffset, "year 10000": overflowYear} {
         model := base
         model.When = &value
         if _, err := json.Marshal(model); err == nil {
             t.Errorf("%s date-time serialized", name)
+        }
+    }
+
+    for _, seconds := range []int{18 * 60 * 60, -18 * 60 * 60} {
+        boundary := time.Date(2021, 6, 15, 12, 30, 45, 0, time.FixedZone("", seconds))
+        boundaryModel := base
+        boundaryModel.When = &boundary
+        boundaryModel.Clock = &boundary
+        boundaryWire, err := json.Marshal(boundaryModel)
+        if err != nil {
+            t.Fatalf("%d-second boundary rejected on serialize: %v", seconds, err)
+        }
+        var boundaryRoundTrip Mat
+        if err := json.Unmarshal(boundaryWire, &boundaryRoundTrip); err != nil {
+            t.Fatalf("%d-second boundary output rejected on parse: %v", seconds, err)
+        }
+    }
+
+    for name, value := range map[string]time.Time{"offset +18:01": justOutOfRangeOffset, "offset -18:01": negativeJustOutOfRangeOffset, "offset +23:59": wideOutOfRangeOffset, "offset -23:59": negativeWideOutOfRangeOffset} {
+        model := base
+        model.Clock = &value
+        if _, err := json.Marshal(model); err == nil {
+            t.Errorf("%s time serialized", name)
         }
     }
 
@@ -3719,6 +4047,207 @@ func TestMaterializedSerializeChecks(t *testing.T) {
         .status()
         .unwrap();
     assert!(test_status.success());
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// Array-item and typed-map positions used to synthesize the same package var
+/// spelling as a declared `<name>Item` / `<name>Value` property. Keep all three
+/// compiled-regex families semantic and shared, so arbitrary member spellings
+/// cannot make an otherwise-valid package fail to compile.
+#[test]
+fn go_json_regex_helpers_do_not_collide_with_declared_member_positions() {
+    let temp_dir = unique_output_path("go-json-regex-collisions");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("collision.yaml");
+    fs::write(
+        &input_path,
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: Collision
+type: object
+properties:
+  blobs:
+    type: array
+    items: { type: string, contentEncoding: base64 }
+  blobsItem: { type: string, contentEncoding: base64 }
+  names:
+    type: array
+    items: { type: string, pattern: "^a+$" }
+  namesItem: { type: string, pattern: "^b+$" }
+  contacts:
+    type: array
+    items: { type: string, format: email }
+  contactsItem: { type: string, format: email }
+  values:
+    type: object
+    additionalProperties: { type: string, contentEncoding: base64url }
+  valuesValue: { type: string, contentEncoding: base64url }
+"#,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("collision");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let rendered = fs::read_to_string(output_path.join("definitions.go")).unwrap();
+    assert_eq!(
+        rendered
+            .matches("ContentEncoding = regexp.MustCompile")
+            .count(),
+        2
+    );
+    assert_eq!(rendered.matches("Format = regexp.MustCompile").count(), 1);
+    assert_eq!(rendered.matches("var _nexgenJsonSchemaPattern").count(), 2);
+
+    let format_status = Command::new("gofmt")
+        .args(["-w", output_path.to_str().unwrap()])
+        .status()
+        .unwrap();
+    assert!(format_status.success());
+    let build_status = Command::new("go")
+        .args(["test", "./..."])
+        .env("GO111MODULE", "on")
+        .current_dir(&output_path)
+        .status()
+        .unwrap();
+    assert!(build_status.success());
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+/// Semantic predicates belong to the flattened package, not to an input leaf:
+/// two files using the same format/encoding/pattern must share one declaration.
+#[test]
+fn go_json_semantic_helpers_emit_once_across_flattened_inputs() {
+    let temp_dir = unique_output_path("go-json-package-semantic-helpers");
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(&input_dir).unwrap();
+    for (file, title) in [("one.yaml", "One"), ("two.yaml", "Two")] {
+        fs::write(
+            input_dir.join(file),
+            format!(
+                r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: {title}
+type: object
+properties:
+  email: {{ type: string, format: email }}
+  token: {{ type: string, pattern: "^[a-z]+$" }}
+  bytes: {{ type: string, contentEncoding: base64 }}
+"#,
+            ),
+        )
+        .unwrap();
+    }
+    let output_path = temp_dir.join("out");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Go,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let definitions = fs::read_to_string(output_path.join("definitions.go")).unwrap();
+    assert_eq!(
+        definitions
+            .matches("EmailFormat = regexp.MustCompile")
+            .count(),
+        1
+    );
+    assert_eq!(
+        definitions
+            .matches("Base64ContentEncoding = regexp.MustCompile")
+            .count(),
+        1
+    );
+    assert_eq!(
+        definitions.matches("var _nexgenJsonSchemaPattern").count(),
+        1
+    );
+    assert!(
+        !fs::read_to_string(output_path.join("one.go"))
+            .unwrap()
+            .contains("regexp.MustCompile")
+    );
+    assert!(
+        !fs::read_to_string(output_path.join("two.go"))
+            .unwrap()
+            .contains("regexp.MustCompile")
+    );
+
+    assert!(
+        Command::new("gofmt")
+            .args(["-w", output_path.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("go")
+            .args(["test", "./..."])
+            .env("GO111MODULE", "on")
+            .current_dir(&output_path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn go_json_semantic_helper_names_participate_in_p15() {
+    let temp_dir = unique_output_path("go-json-semantic-helper-p15");
+    fs::create_dir_all(&temp_dir).unwrap();
+    for (case, helper, constraint) in [
+        ("format", "_nexgenJsonSchemaEmailFormat", "format: email"),
+        (
+            "encoding",
+            "_nexgenJsonSchemaBase64ContentEncoding",
+            "contentEncoding: base64",
+        ),
+        (
+            "pattern",
+            "_nexgenJsonSchemaPattern5e5b612d7a5d2b24",
+            "pattern: '^[a-z]+$'",
+        ),
+    ] {
+        let input_path = temp_dir.join(format!("{case}.yaml"));
+        fs::write(
+            &input_path,
+            format!(
+                "$schema: https://json-schema.org/draft/2020-12/schema\ntitle: Collision\nx-go-name: {helper}\ntype: object\nproperties:\n  value: {{ type: string, {constraint} }}\n"
+            ),
+        )
+        .unwrap();
+        let error = generate_to_file(&GenerateRequest {
+            language: nexgen::language::Language::Go,
+            input_paths: vec![input_path],
+            support_paths: Vec::new(),
+            descriptor_paths: Vec::new(),
+            output_path: temp_dir.join(format!("out-{case}")),
+            format: false,
+            config: Default::default(),
+            java_package_name: None,
+            ts_date_time_types: Default::default(),
+        })
+        .expect_err("the authored type collides with a package semantic helper")
+        .to_string();
+        assert!(error.contains(helper), "{case}: {error}");
+        assert!(error.contains("x-go-name"), "{case}: {error}");
+    }
     fs::remove_dir_all(temp_dir).unwrap();
 }
 

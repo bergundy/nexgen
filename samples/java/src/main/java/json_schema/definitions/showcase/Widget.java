@@ -100,7 +100,16 @@ public final class Widget {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Widget> {
         @Override
         public void serialize(Widget value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
+            if (value.id == null) {
+                violations.add(new Violation("id", "required"));
+            }
+            if (value.name == null) {
+                violations.add(new Violation("name", "required"));
+            }
             if (value.size != null) {
                 if (value.size < -SpecNumbers.INTEGER_CAP || value.size > SpecNumbers.INTEGER_CAP) {
                     violations.add(new Violation("size", "exceeds \u00b1(2^53-1) integer cap"));
@@ -128,7 +137,7 @@ public final class Widget {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -156,6 +165,7 @@ public final class Widget {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -173,6 +183,7 @@ public final class Widget {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "id":
                     case "kind":

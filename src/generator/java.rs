@@ -6,7 +6,9 @@ use heck::ToLowerCamelCase;
 use crate::error::{Error, Result};
 use crate::generator::json_schema::java as java_json;
 use crate::generator::json_schema::java::JavaContext;
-use crate::generator::{GeneratedFiles, GeneratedOutputLayout};
+use crate::generator::{
+    GeneratedFileMap, GeneratedFileOrigin, GeneratedFiles, GeneratedOutputLayout,
+};
 use crate::planning::{PlannedFamily, PlannedJsonType};
 use crate::spec::{ApiSpecLeaf, ApiSpecNode};
 use crate::spec::{ExternalTypeSpec, ModulePath, ServiceSpec, TypeSpec};
@@ -42,26 +44,9 @@ pub(crate) fn generate(
         }
     }
 
-    // Registry from each model's canonical `full_name` (the string that appears
-    // in planned `$ref` values) to its Java (package, class).
-    let mut registry: BTreeMap<String, (String, String)> = BTreeMap::new();
-    for leaf in &leaves {
-        for (_, binding) in leaf.spec.external_types() {
-            if let Some(json_type) = binding.json_model() {
-                let module = json_type.module_path.as_ref().unwrap_or(&leaf.module_path);
-                registry.insert(
-                    json_type.full_name.clone(),
-                    (
-                        JavaContext::package_for_module(base_package, &module.0),
-                        json_type.model_name.clone(),
-                    ),
-                );
-            }
-        }
-    }
-
     // Every JSON model keyed by its canonical `full_name`, so a `oneOf` union
-    // def can resolve its `$ref` object members' schemas + discriminants.
+    // def can resolve its `$ref` object members' schemas + discriminants, and
+    // bare-ref aliases can collapse to the class-owning target.
     let mut all_models: BTreeMap<String, PlannedJsonType> = BTreeMap::new();
     for leaf in &leaves {
         for (_, binding) in leaf.spec.external_types() {
@@ -71,7 +56,24 @@ pub(crate) fn generate(
         }
     }
 
-    let mut files = BTreeMap::new();
+    // Registry from each model's canonical `full_name` (the string that appears
+    // in planned `$ref` values) to its Java (package, class). Alias keys point
+    // directly at their final target because Java emits no alias declaration.
+    let mut registry: BTreeMap<String, (String, String)> = BTreeMap::new();
+    let root_module = ModulePath::default();
+    for (full_name, json_type) in &all_models {
+        let target = java_json::resolve_bare_ref_alias(json_type, &all_models);
+        let module = target.module_path.as_ref().unwrap_or(&root_module);
+        registry.insert(
+            full_name.clone(),
+            (
+                JavaContext::package_for_module(base_package, &module.0),
+                target.model_name.clone(),
+            ),
+        );
+    }
+
+    let mut files = GeneratedFileMap::default();
     let mut packages: BTreeSet<Vec<String>> = BTreeSet::new();
     packages.insert(Vec::new());
 
@@ -84,6 +86,11 @@ pub(crate) fn generate(
             let Some(json_type) = binding.json_model() else {
                 continue;
             };
+            if java_json::resolve_bare_ref_alias(json_type, &all_models).full_name
+                != json_type.full_name
+            {
+                continue;
+            }
             let contents = java_json::render_model_file(
                 json_type,
                 base_package,
@@ -93,38 +100,54 @@ pub(crate) fn generate(
                 &all_models,
             )?;
             let path = module_dir.join(format!("{}.java", json_type.model_name));
-            insert_file(&mut files, path, contents)?;
+            files.insert(
+                path,
+                contents,
+                GeneratedFileOrigin::type_declaration(
+                    crate::language::Language::Java,
+                    &leaf.source_path,
+                    &json_type.full_name,
+                ),
+            )?;
         }
 
         for service in &leaf.spec.services {
-            let contents = render_service_file(service, module, base_package)?;
+            let contents = render_service_file(service, module, base_package, &all_models)?;
             let service_ident = service
                 .code_name
                 .for_language(crate::language::Language::Java)
                 .unwrap_or(&service.name);
             let path = module_dir.join(format!("{service_ident}.java"));
-            insert_file(&mut files, path, contents)?;
+            files.insert(
+                path,
+                contents,
+                GeneratedFileOrigin::service_declaration(
+                    crate::language::Language::Java,
+                    &leaf.source_path,
+                    &service.name,
+                ),
+            )?;
         }
     }
 
     // Runtime classes live once at the package root.
-    insert_file(
-        &mut files,
+    files.insert(
         PathBuf::from("Violation.java"),
         java_json::render_violation_file(root_package),
+        GeneratedFileOrigin::fixed("generated Java runtime class `Violation`"),
     )?;
-    insert_file(
-        &mut files,
+    files.insert(
         PathBuf::from("SpecNumbers.java"),
         java_json::render_spec_numbers_file(root_package),
+        GeneratedFileOrigin::fixed("generated Java runtime class `SpecNumbers`"),
     )?;
     // The materialized-temporal runtime is emitted only when a model uses a
     // temporal `format`, so non-temporal packages stay lean.
     if all_models.values().any(java_json::model_uses_temporal) {
-        insert_file(
-            &mut files,
+        files.insert(
             PathBuf::from("TemporalSupport.java"),
             java_json::render_temporal_support_file(root_package),
+            GeneratedFileOrigin::fixed("generated Java runtime class `TemporalSupport`"),
         )?;
     }
     // The materialized-contentEncoding runtime is emitted only when a model uses
@@ -133,10 +156,10 @@ pub(crate) fn generate(
         .values()
         .any(java_json::model_uses_content_encoding)
     {
-        insert_file(
-            &mut files,
+        files.insert(
             PathBuf::from("Base64Support.java"),
             java_json::render_base64_support_file(root_package),
+            GeneratedFileOrigin::fixed("generated Java runtime class `Base64Support`"),
         )?;
     }
 
@@ -148,12 +171,16 @@ pub(crate) fn generate(
             path.push(segment);
         }
         path.push("package-info.java");
-        insert_file(&mut files, path, java_json::render_package_info(&package))?;
+        files.insert(
+            path,
+            java_json::render_package_info(&package),
+            GeneratedFileOrigin::fixed(format!("generated Java package metadata for `{package}`")),
+        )?;
     }
 
     Ok(GeneratedFiles {
         layout: GeneratedOutputLayout::Directory,
-        files,
+        files: files.into_files(),
         warnings: Vec::new(),
     })
 }
@@ -172,27 +199,38 @@ fn collect_leaves<'a>(
     }
 }
 
-fn insert_file(
-    files: &mut BTreeMap<PathBuf, String>,
-    path: PathBuf,
-    contents: String,
-) -> Result<()> {
-    if files.insert(path.clone(), contents).is_some() {
-        return Err(Error::GeneratedFileConflict { path });
-    }
-    Ok(())
-}
-
 fn render_service_file(
     service: &ServiceSpec<PlannedFamily>,
     module: &ModulePath,
     base_package: &str,
+    all_models: &BTreeMap<String, PlannedJsonType>,
 ) -> Result<String> {
     let package = JavaContext::package_for_module(base_package, &module.0);
 
     let mut imports: BTreeSet<String> = BTreeSet::new();
     imports.insert("io.nexusrpc.Operation".to_string());
     imports.insert("io.nexusrpc.Service".to_string());
+
+    // Java permits the same simple model name in separate packages. If one
+    // service refers to both, importing both would make the generated method
+    // signatures ambiguous, so spell those particular references with their
+    // qualified names. Unique foreign types retain the customary import.
+    let mut io_packages_by_class: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for operation in &service.operations {
+        for ty in [operation.input.as_ref(), operation.output.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Some((pkg, class)) = io_type(Some(ty), module, base_package, all_models) {
+                io_packages_by_class.entry(class).or_default().insert(pkg);
+            }
+        }
+    }
+    let ambiguous_io_classes = io_packages_by_class
+        .iter()
+        .filter(|(_, packages)| packages.len() > 1)
+        .map(|(class, _)| class.clone())
+        .collect::<BTreeSet<_>>();
 
     let mut body = String::new();
     render_service_javadoc(
@@ -233,14 +271,18 @@ fn render_service_file(
             body.push_str("    @Deprecated\n");
         }
 
-        let output = io_type(operation.output.as_ref(), module, base_package);
-        let input = io_type(operation.input.as_ref(), module, base_package);
+        let output = io_type(operation.output.as_ref(), module, base_package, all_models);
+        let input = io_type(operation.input.as_ref(), module, base_package, all_models);
         let return_type = match &output {
             Some((pkg, class)) => {
-                if pkg != &package {
-                    imports.insert(format!("{pkg}.{class}"));
+                if ambiguous_io_classes.contains(class) {
+                    format!("{pkg}.{class}")
+                } else {
+                    if pkg != &package {
+                        imports.insert(format!("{pkg}.{class}"));
+                    }
+                    class.clone()
                 }
-                class.clone()
             }
             None => "void".to_string(),
         };
@@ -251,10 +293,17 @@ fn render_service_file(
             .unwrap_or_else(|| operation.name.to_lower_camel_case());
         match &input {
             Some((pkg, class)) => {
-                if pkg != &package {
-                    imports.insert(format!("{pkg}.{class}"));
-                }
-                body.push_str(&format!("    {return_type} {method}({class} input);\n"));
+                let parameter_type = if ambiguous_io_classes.contains(class) {
+                    format!("{pkg}.{class}")
+                } else {
+                    if pkg != &package {
+                        imports.insert(format!("{pkg}.{class}"));
+                    }
+                    class.clone()
+                };
+                body.push_str(&format!(
+                    "    {return_type} {method}({parameter_type} input);\n"
+                ));
             }
             None => {
                 body.push_str(&format!("    {return_type} {method}();\n"));
@@ -278,10 +327,12 @@ fn io_type(
     ty: Option<&TypeSpec<PlannedFamily>>,
     module: &ModulePath,
     base_package: &str,
+    all_models: &BTreeMap<String, PlannedJsonType>,
 ) -> Option<(String, String)> {
     let ty = ty?;
     match ty.without_option() {
         TypeSpec::External(ExternalTypeSpec::Json(json_type)) => {
+            let json_type = java_json::resolve_bare_ref_alias(json_type, all_models);
             let target = json_type.module_path.as_ref().unwrap_or(module);
             Some((
                 JavaContext::package_for_module(base_package, &target.0),
@@ -380,7 +431,8 @@ fn push_wrapped_java_doc_line(
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace("*/", "* /");
+        .replace("*/", "* /")
+        .replace('\\', "&#92;");
     let mut prefix = first_prefix;
     let mut current = String::new();
     for word in escaped.split_whitespace() {

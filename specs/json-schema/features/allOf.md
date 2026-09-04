@@ -50,8 +50,22 @@ schema. The generator accepts an `allOf` iff its branches are **mergeable**
 into one coherent, satisfiable schema; it rejects an `allOf` whose branches
 contradict or cannot be represented as a single type.
 
-Concretely, `allOf` is a **rewrite that runs before the per-keyword
-loaders**. Its own logic is narrow:
+Concretely, `allOf` is a rewrite that runs after a raw branch-grammar gate and
+before the ordinary post-merge keyword lowering. The raw gate owns exactly the
+checks a merge could **silently discard** and that are decidable on one branch
+alone: the keyword allowlist, raw value shapes (`required` and
+`dependentRequired` grammar, raw property counts, a same-axis bound pair
+redundant *within one branch*), and per-branch malformations no merge can
+repair. A same-axis pair arriving from *different* branches is not one of
+these — it is the tightening the merge exists to do.
+
+**Naming and satisfiability checks are *not* in that gate.** A **P15**
+identifier collision, or the encodability of a value constant, is a property of
+the *merged* result — a branch may declare `enum: [user, USER]` that the merge
+intersects away — so running such a check per authored branch rejects schemas
+whose merged form is clean. They run on the merged schema only (step 3).
+
+The merge logic itself is narrow:
 
 1. **Flatten** — recursively inline nested `allOf`, resolve `$ref`
    branches (below), and drop identity branches (`true`/`{}`).
@@ -89,14 +103,27 @@ A branch may be a `$ref` to a named typed definition ([[ref]]). The merge
 type's constraints are copied into the merged result. This is the classic
 "extend a base type" composition (`allOf: [{$ref: Base}, {extra}]`).
 
-The 2020-12 **`$ref`-with-siblings** form is *the same operation spelled as
-sugar*: `{$ref: X, minLength: 3}` is an implicit `allOf` of the referenced
-schema and the sibling keywords. Because `allOf` now merges, the sugar is
+The 2020-12 **`$ref`-with-siblings** form is the same operation spelled as
+sugar: `{$ref: X, minLength: 3}` is an implicit `allOf` of the referenced
+schema and the sibling keywords. Because `allOf` merges, the sugar is
 **merged identically** — the loader rewrites `{$ref: X, …siblings}` to
-`allOf: [{$ref: X}, {…siblings}]` and folds it. The explicit and implicit
-spellings behave the same; there is no spelling that a user can write which
-the other spelling would reject. (This supersedes [[ref]]'s former
-sibling-reject rule, which existed only because `allOf` was rejected.)
+`allOf: [{$ref: X}, {…siblings}]` and folds it, and the explicit and implicit
+spellings then behave the same. Two sibling classes are the exception: they are
+not conjuncts, so the node stays a plain reference and no merge happens.
+
+- an **`x-<lang>-name`** renames the member the reference is bound to and
+  asserts nothing about the value;
+- the **non-conjunct annotations** `$comment`, `examples` and [[deprecated]] —
+  the last at **either value**, since it marks the member rather than asserting
+  anything about the referenced value — are dropped **before** the fold
+  decision, so they can neither clone the target into a new type nor add a
+  **P15** identifier.
+
+Every other sibling folds, and the merged node is therefore a **new standalone
+declaration** whose synthesized name enters **P15** — including a [[title]] or
+[[description]] sibling, which is not inert in this position because it survives
+into the merged declaration. [[ref]] states the obligation that entailment puts
+on the resulting collision diagnostic.
 
 **Keywords sibling to `allOf` fold in the same way** — the `$ref` case is
 just its most common instance. A node may carry keywords *alongside* its
@@ -115,9 +142,18 @@ unaffected by the position (intersection is order-independent).
 Ref-branch specifics:
 - Resolution reuses [[ref]] entirely: named-targets-only, local-file-only,
   no `$id`, no HTTP. An unresolvable branch is [[ref]]'s reject.
-- A `$ref` **cycle** reached through `allOf` (a type that merges itself,
-  directly or transitively) is **unsatisfiable** — the flatten would not
-  terminate — and is rejected reusing [[ref]]'s unsatisfiable-cycle reject.
+- A `$ref` **cycle** that an `allOf` merge must inline is unflattenable and is
+  rejected at merge time. This is distinct from [[ref]]'s no-finite-instance
+  satisfiability reject: an optional recursive value may be satisfiable while
+  still being impossible to flatten finitely, so [[ref]]'s pass cannot stand in
+  for this one. The reject is **position-independent** — it fires wherever the
+  back-edge sits, including under a `properties`, an `items`, a schema-valued
+  `additionalProperties`, a [[oneOf]] branch or a nested `$defs` entry, and not
+  only on a definition that merges itself directly. A bare recursive `$ref`
+  back-edge is unaffected and keeps working; what is rejected is a back-edge
+  that is *itself* a merged node. Exhausting the stack, or recursing without
+  bound, is never an acceptable outcome: the loader owes a diagnostic naming the
+  reference and the cycle path.
 - **The merge flattens; it does not subtype.** The base type's fields are
   *copied into* the merged type; the result is **not** a subtype of the
   base, and no inheritance/embedding is emitted (the subset has no
@@ -147,9 +183,12 @@ referenced target's. Per keyword:
 | `const` | all branch `const`s must be **deep-equal**; the shared value survives; it is then checked (decidably, at load) against every other merged keyword — kind, `enum` membership, numeric range, length | two branches carry **different** `const`s, or the `const` violates another merged constraint |
 | `enum` | **set intersection** of the members (kept in first-seen order) | the intersection is **empty** |
 | `const` + `enum` | the `const` must be a member of the `enum`; result is the `const` | the `const` is not in the `enum` |
-| `format` | identical → dedupe | two **different** `format`s (no single value is two formats) |
+| `format` | identical → dedupe; when one format's accepted value set **contains** the other's, keep the narrower one (the intersection *is* that format). The containment relation is [[format]]'s to define; this spec only consumes it | neither format contains the other — overlapping is not enough, since the intersection is then no single format |
 | `title` / `description` / `default` | **last-wins**: identical values dedupe; when they differ the **last** branch's value survives (metadata, no validation effect); the `$ref`-sibling rewrite makes the use-site value override the target's. A lone value is kept. | never — a differing metadata value is an override, not a conflict |
-| [[deprecated]] | **OR**: the merged node is deprecated if **any** branch marks it so. Not last-wins — deprecation is a warning that must not be silenced by a later branch omitting it (or writing `deprecated: false`, which is inert). | never |
+| [[deprecated]] | **OR**: the merged node is deprecated if **any** branch marks it so. Not last-wins — deprecation is a warning that must not be silenced by a later branch omitting it (or writing `deprecated: false`, which asserts nothing). Beside a `$ref` it is not a conjunct at all — see above. | never |
+| `contentEncoding` | identical → dedupe | differing encodings |
+| `x-<lang>-name`, value-constant naming overrides | a lone or identical value survives; a name inherited from a `$ref` target is stripped so the use site does not claim the target's declaration name | differing values, in every target, to keep the loader accept set language-independent |
+| `$defs` | a lone value survives; definitions inherited from a `$ref` target are stripped to avoid duplicate declarations | differing maps |
 
 ### Numeric bounds ([[minimum]] / [[maximum]] / exclusives / [[multipleOf]])
 
@@ -188,6 +227,16 @@ All are "keep the tighter":
 
 - `uniqueItems`: logical **OR** — `true` if any branch sets it (the
   tighter constraint wins).
+- **An omitted keyword contributes its default, not nothing**, whenever that
+  default is not the neutral element of the merge direction. `minItems`,
+  `minProperties` and `minLength` default to `0`, which is neutral for *keep
+  the max*, and `maxContains` defaults to unbounded, neutral for *keep the
+  min* — so omitting them is genuinely silent. [[minContains]] is the
+  exception: its omitted form is `1`, so a branch that declares [[contains]]
+  and no `minContains` contributes `minContains: 1` to the merge, and a
+  sibling branch's `minContains: 0` does **not** win by default. Treating the
+  omission as "no constraint" makes the merged schema weaker than the
+  conjunction of its branches, which the intersection semantics forbid.
 - Emptiness (`min* > max*`) is the owning spec's satisfiability reject on
   the merged schema.
 
@@ -232,10 +281,13 @@ object is closed to the union; if all are open, it stays open (**P13**).
   would produce an `anyOf` of merges — outside the subset). `anyOf`/`not`/
   `if` are rejected everywhere (**P6**); an `allOf` branch does not
   reintroduce them.
-- Two **distinct** `pattern`s, `format`s, or `contains` schemas: **reject**
-  as unmergeable — each is a constraint with no single-value representation
+- Two **distinct** `pattern`s or `contains` schemas: **reject** as
+  unmergeable — each is a constraint with no single-value representation
   (two regexes are not one regex; two existential matchers are two
   constraints). Identical values dedupe.
+- Two **distinct** `format`s: reject only when neither contains the other
+  (see *Type and value sets*); a containment pair merges to the narrower
+  format and is **not** an unmergeable pair.
 
 ## Loader behavior
 
@@ -246,18 +298,28 @@ object is closed to the union; if all are open, it stays open (**P13**).
 - **Single-branch `allOf: [X]`** → reject: it is just `X` (pointless
   wrapper; fix-it: inline the branch), mirroring the single-branch
   [[oneOf]] reject.
-- Flatten nested `allOf`, resolve `$ref` branches ([[ref]] rules; cycle →
-  unsatisfiable reject), rewrite `$ref`-with-siblings to `allOf`, fold any
-  keywords **sibling to `allOf`** in as a final branch, drop `true`/`{}`
-  branches.
+- Flatten nested `allOf`, resolve `$ref` branches ([[ref]] rules; a cycle the
+  merge must inline → the merge-time unflattenable reject above), rewrite
+  `$ref`-with-siblings to `allOf`, fold any keywords **sibling to `allOf`** in
+  as a final branch, drop `true`/`{}` branches.
 - `false` branch, or a branch that is a `oneOf`/`anyOf`/`not`/`if`
   combinator → reject.
 - Fold per *Merge algorithm*. Reject the unmergeable pairs: disjoint
   `type`, disagreeing `const`, empty `enum` intersection, `const` violating
-  a sibling constraint, differing `format`, distinct
+  a sibling constraint, two `format`s in no containment relation, distinct
   `pattern`/`contains`. A differing `title`/`description`/`default` is
   **not** an unmergeable pair — it is a last-wins override (see *Type and
   value sets*).
+- **A malformed branch keeps its own keyword's diagnostic** (**P7.2**). When a
+  branch's raw value is invalid for the keyword that owns it — a non-string
+  `format` or `pattern`, a `multipleOf` that is zero or fractional, an array
+  `type`, a keyword the subset rejects outright — the reject is the **owning
+  spec's**, with its fix-it, located at the branch that carries it
+  (`.allOf[i]`). A merge message must never be substituted for it, and must
+  never name a keyword the author did not write: the merge is reached only for
+  branches whose values are already well-formed for their own keyword. This
+  holds for the implicit conjunct of a `$ref`-with-siblings as well as for an
+  authored branch.
 - Hand the merged schema to the ordinary loader; **all** satisfiability /
   shape / collision checks (empty interval, `min* > max*`, integer-range
   emptiness, synthesized-name **P15** collision) are the owning specs'
@@ -274,9 +336,10 @@ wrapper type in any language.
 Naming follows the ordinary rule ([[properties]] §"Synthesized type
 names", reused verbatim by [[oneOf]]/[[const]]/[[enum]]):
 - an `allOf` that **is** a named `$defs` entry takes the def name;
-- an **anonymous** inline `allOf` that merges to an object/enum type is
-  named `<EnclosingType><Property>` (Go flat / Java nested), while TS and
-  Python inline it with no synthesized name.
+- an **anonymous** inline object merge is hoisted and named
+  `<EnclosingType><Property>` in all four targets;
+- an anonymous inline enum merge uses a named carrier in Go and Java, while
+  TypeScript and Python inline the literal set.
 
 Base-type extension therefore emits a flat, standalone type:
 
@@ -326,6 +389,8 @@ loader. Reason strings come from the owning constraint families
 | Overlapping property merged recursively | `{allOf:[{properties:{n:{minLength:2}}},{properties:{n:{maxLength:8}}}]}` |
 | Base-type extension via `$ref` | `Widget` example above |
 | `$ref`-with-siblings (implicit allOf) | `{$ref:'#/$defs/Base', minProperties:1}` |
+| `$ref` with a non-conjunct sibling (no fold, reference kept) | `{$ref:'#/$defs/Base', x-go-name:'Renamed'}`; `{$ref:'#/$defs/Base', $comment:'note'}`; `{$ref:'#/$defs/Base', deprecated:true}` |
+| `format` containment pair (merge to the narrower) | `{allOf:[{format:uri},{format:'uri-reference'}]}` → `uri` |
 | `allOf`-with-siblings (node keywords fold in, last) | `{allOf:[{$ref:'#/$defs/Base'}], properties:{extra:{type:string}}, required:[extra], description:"D"}` → `allOf:[{$ref:Base},{properties:{extra},required:[extra],description:"D"}]`; siblings extend Base, local `description` wins |
 | Closed base + extension (footgun-fixed) | `{allOf:[{properties:{a},additionalProperties:false},{properties:{b}}]}` → closed to `{a,b}` |
 | Nested `allOf` flattened | `{allOf:[{allOf:[{minimum:1}]},{maximum:9}]}` |
@@ -342,7 +407,8 @@ loader. Reason strings come from the owning constraint families
 | Empty `enum` intersection | `{allOf:[{enum:[a,b]},{enum:[c,d]}]}` |
 | Disagreeing `const` | `{allOf:[{const:1},{const:2}]}` |
 | `const` violates a sibling | `{allOf:[{const:5},{maximum:4}]}` |
-| Differing `format` | `{allOf:[{format:email},{format:uri}]}` |
+| Value literal not representable in the merged `type` | `{allOf:[{type:number,const:2.5},{type:integer}]}` — the merge is `integer`, and `2.5` is not one; likewise a fractional `enum` member or `default` |
+| `format`s with no containment relation | `{allOf:[{format:email},{format:uri}]}` (contrast `{format:uri}` + `{format:uri-reference}`, which merges to `uri`) |
 | Distinct `pattern`s (no single regex) | `{allOf:[{pattern:'^a'},{pattern:'z$'}]}` |
 | Distinct `contains` (two existentials) | `{allOf:[{contains:{const:1}},{contains:{const:2}}]}` |
 | `false` branch (unsatisfiable) | `{allOf:[{type:object},false]}` |
@@ -387,7 +453,9 @@ There is **no `allOf`-specific runtime behavior** — fixtures exercise the
 - **[[minLength]] / [[maxLength]] / [[minItems]] / [[maxItems]] /
   [[minProperties]] / [[maxProperties]] / [[minContains]] /
   [[maxContains]] / [[uniqueItems]]**: length/count bounds keep the
-  tighter; emptiness is the owning spec's reject.
+  tighter; emptiness is the owning spec's reject. [[minContains]]' omitted
+  default of `1` participates in the merge like an authored value, because it
+  is the one default in the family that is not neutral.
 - **[[const]] / [[enum]]**: closed value sets **intersect** on merge (empty
   → reject); a `const` must be consistent with a merged `enum` and every
   other merged constraint. Reuses their exact value-equality and
@@ -401,17 +469,26 @@ There is **no `allOf`-specific runtime behavior** — fixtures exercise the
 - **[[items]] / [[contains]]**: `items` schemas merge recursively; distinct
   `contains` matchers are unmergeable (two existential constraints) →
   reject.
+- **[[format]]**: owns which formats **contain** which; this spec consumes that
+  relation to merge a containment pair to the narrower format and to reject a
+  pair with no containment.
 - **[[ref]]**: a branch may `$ref` a named typed def; the target is
   resolved and **folded in** (flatten, not subtype). `$ref`-with-siblings
-  is the implicit-`allOf` sugar, now merged identically — **this
-  supersedes [[ref]]'s former sibling-reject**. Ref resolution rules and
-  the unsatisfiable-cycle reject are reused unchanged.
+  is the implicit-`allOf` sugar, except for a member-only language-name
+  override and the non-conjunct annotation set, which leave the reference
+  intact.
+  Ref resolution rules are reused; flattening cycles have their own merge-time
+  reject, distinct from [[ref]]'s no-finite-instance check.
 - **[[oneOf]]**: the sibling boolean-logic applicator that is admitted a
   *different* way — as a retained closed sum type with a decidable
   selector, because a union cannot collapse to one type. `allOf` collapses
   and disappears; `oneOf` stays and emits a union. An `allOf` branch that
   is itself a `oneOf` (or `anyOf`/`not`/`if`) is **rejected** — an
-  intersection with a union does not collapse.
+  intersection with a union does not collapse. When the union arrives as the
+  *resolved target* of a `$ref` carrying a constraint sibling, the reject is
+  the same but the diagnostic is [[oneOf]]'s: it names the union, the sibling
+  the author wrote, and the branch to move it into — never an "`allOf` branch",
+  a phrase naming a keyword the author never wrote.
 - **[[nullability]]**: nullability is expressed through [[type]]/[[oneOf]],
   not `allOf`; a `{type:"null"}` branch merged with any other kind is a
   disjoint-`type` reject.
@@ -424,7 +501,7 @@ There is **no `allOf`-specific runtime behavior** — fixtures exercise the
 
 | Source dialect | Action |
 |---|---|
-| JSON Schema 2020-12 | Native. Merged at load; mergeable branches supported, contradictory branches rejected. `$ref`-with-siblings is the implicit-`allOf` sugar, merged identically. |
+| JSON Schema 2020-12 | Native. Merged at load; mergeable branches supported, contradictory branches rejected. `$ref`-with-siblings is the implicit-`allOf` sugar, merged identically apart from the two non-conjunct sibling classes. |
 | OpenAPI 3.1 | Adopts 2020-12 — `allOf` identical. The dominant OpenAPI use (base-type extension, `{allOf:[{$ref:Base},{extra}]}`) is exactly the flatten-merge case. |
 | OpenAPI 3.0 / Swagger 2.0 | `allOf` exists with the same semantics and the same base-extension idiom; merged the same way. (3.0 `additionalProperties:false` composition inherits the same footgun-fix.) |
 | draft-4..7 | `allOf` present since draft-4 with identical semantics. Only difference: pre-2020-12 `$ref` **ignored** its siblings, so a draft-07 `{$ref, …siblings}` validated as the bare `$ref`; we merge the siblings (2020-12 semantics) — a stricter, more faithful reading, noted as the one cross-draft behavior change. |
@@ -439,11 +516,13 @@ There is **no `allOf`-specific runtime behavior** — fixtures exercise the
 - [[properties]] / [[required]] / [[additionalProperties]] — structural
   object merge and the closed-object footgun-fix.
 - [[ref]] — `$ref` branches fold in (flatten, not subtype); the
-  implicit-`allOf` sibling sugar is now merged, superseding the old reject.
+  implicit-`allOf` sibling sugar merges identically, apart from the two
+  sibling classes that leave the reference intact.
 - [[oneOf]] — the applicator admitted as a retained sum type; contrast with
   `allOf`, which collapses and disappears. A `oneOf` branch inside `allOf`
   is rejected.
 - [[PRINCIPLES.md]] — **P1** (one merged schema, identical across targets),
   **P6** (intersection meets the coherent-representation bar the applicator
-  rejection sets), **P7.1** (unmergeable pairs reject loudly), **P13**
-  (open objects; the closed-merge exception).
+  rejection sets), **P7.1** (unmergeable pairs reject loudly), **P7.2** (the
+  reject is the owning keyword's, never a merge message over a keyword the
+  author did not write), **P13** (open objects; the closed-merge exception).

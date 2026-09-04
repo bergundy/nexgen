@@ -16,7 +16,7 @@ use nexgen::spec::SupportFragmentSpec;
 use nexgen::{GenerateRequest, generate_to_file};
 
 mod common;
-use common::json_input_path;
+use common::{json_input_path, write_bare_ref_alias_closure};
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
 const TYPE_ROUNDTRIP_EXAMPLE_ID: &str = "type-roundtrip";
@@ -168,7 +168,6 @@ properties:
     enum: [true]
 additionalProperties:
   $ref: "#/$defs/Extra"
-minProperties: 1
 $defs:
   Extra:
     type: object
@@ -749,6 +748,18 @@ fn assert_python_validation_exports(package_init: &str) {
     assert!(!package_init.contains("ValidationError"), "{package_init}");
 }
 
+fn assert_no_generated_python_diagnostic_suppressions(files: &BTreeMap<PathBuf, String>) {
+    for (path, source) in files {
+        for suppression in ["# pyright:", "# type: ignore"] {
+            assert!(
+                !source.contains(suppression),
+                "generated module {} contains {suppression}",
+                path.display()
+            );
+        }
+    }
+}
+
 fn render_output_files(files: BTreeMap<PathBuf, String>) -> String {
     files
         .into_iter()
@@ -1002,6 +1013,7 @@ fn python_json_examples_expose_expected_runtime_features() {
         generate_formatted_json_python_output(&root, example_id, &output_path, false);
         assert_python_310_syntax_compatible(&output_path);
         let rendered = read_python_package_files(&output_path);
+        assert_no_generated_python_diagnostic_suppressions(&rendered);
         let package_init = rendered
             .get(&PathBuf::from("__init__.py"))
             .expect("JSON Schema package should include a root __init__.py");
@@ -1074,6 +1086,7 @@ fn python_json_api_examples_expose_validation_exports() {
         generate_formatted_json_python_output(&root, example_id, &output_path, true);
         assert_python_310_syntax_compatible(&output_path);
         let rendered = read_python_package_files(&output_path);
+        assert_no_generated_python_diagnostic_suppressions(&rendered);
         let package_init = rendered
             .get(&PathBuf::from("__init__.py"))
             .expect("JSON Schema package should include a root __init__.py");
@@ -1622,6 +1635,168 @@ fn python_rejects_support_namespace() {
     assert!(err.to_string().contains("support namespace"));
 }
 
+#[test]
+fn python_support_fragments_with_same_module_name_collide() {
+    let root = project_root();
+    let spec = nexgen::parser::load_api_spec_from_wit_for_language_with_inputs(
+        nexgen::language::Language::Python,
+        &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
+    )
+    .unwrap();
+    let descriptors = nexgen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
+    let error = generate_source(
+        nexgen::language::Language::Python,
+        spec,
+        &descriptors,
+        &SupportFiles {
+            fragments: vec![
+                SupportFragmentSpec {
+                    path: "first/helpers.py".to_string(),
+                    contents: String::new(),
+                    namespace: None,
+                },
+                SupportFragmentSpec {
+                    path: "second/helpers.py".to_string(),
+                    contents: String::new(),
+                    namespace: None,
+                },
+            ],
+        },
+    )
+    .unwrap_err();
+
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("_support/helpers.py"));
+    assert_eq!(first_source, "Python support file `first/helpers.py`");
+    assert_eq!(second_source, "Python support file `second/helpers.py`");
+    assert!(
+        remedy.contains("support file `first/helpers.py`"),
+        "{remedy}"
+    );
+    assert!(
+        remedy.contains("support file `second/helpers.py`"),
+        "{remedy}"
+    );
+}
+
+#[test]
+fn python_support_fragment_colliding_with_support_initializer_has_one_remedy() {
+    let root = project_root();
+    let spec = nexgen::parser::load_api_spec_from_wit_for_language_with_inputs(
+        nexgen::language::Language::Python,
+        &example_input_paths(&root, PRIMARY_EXAMPLE_ID),
+    )
+    .unwrap();
+    let descriptors = nexgen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
+    let error = generate_source(
+        nexgen::language::Language::Python,
+        spec,
+        &descriptors,
+        &SupportFiles {
+            fragments: vec![SupportFragmentSpec {
+                path: "custom/__init__.py".to_string(),
+                contents: String::new(),
+                namespace: None,
+            }],
+        },
+    )
+    .unwrap_err();
+
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("_support/__init__.py"));
+    assert_eq!(first_source, "Python support file `custom/__init__.py`");
+    assert_eq!(
+        second_source,
+        "generated Python support package initializer"
+    );
+    assert_eq!(
+        remedy,
+        "rename support file `custom/__init__.py` so it generates a different Python path"
+    );
+}
+
+#[test]
+fn python_generated_standalone_operation_path_collision_names_both_operations() {
+    let root = project_root();
+    let temp_dir = unique_output_path("python-operation-path-collision");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("operations-collision.wit");
+    fs::write(
+        &input_path,
+        r#"
+package temporal:collision@1.0.0;
+
+world system {
+  export first-service;
+  export second-service;
+}
+
+/// @nexus.endpoint "first"
+interface first-service {
+  record first-request {
+    value: string,
+  }
+  collide: func(request: first-request);
+}
+
+/// @nexus.endpoint "second"
+interface second-service {
+  record second-request {
+    value: string,
+  }
+  collide: func(request: second-request);
+}
+"#,
+    )
+    .unwrap();
+    let spec = nexgen::parser::load_api_spec_from_wit_for_language_with_inputs(
+        nexgen::language::Language::Python,
+        &[input_path],
+    )
+    .unwrap();
+    let descriptors = nexgen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
+    let error = generate_source(
+        nexgen::language::Language::Python,
+        spec,
+        &descriptors,
+        &SupportFiles::default(),
+    )
+    .unwrap_err();
+
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("operations/collide.py"));
+    assert_eq!(first_source, "Python operation `FirstService.Collide`");
+    assert_eq!(second_source, "Python operation `SecondService.Collide`");
+    assert!(remedy.contains("operation `Collide` in service `FirstService`"));
+    assert!(remedy.contains("operation `Collide` in service `SecondService`"));
+    assert!(!remedy.contains("generated output"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
 /// An inline **structured** object `oneOf` branch on a property: the branch is
 /// named `<Union>Object` and emitted as a module-level dataclass, which the
 /// union's dispatcher selects for the object member of the union.
@@ -1703,8 +1878,10 @@ fn python_json_validates_non_object_union_branch_constraints() {
     // its unconstrained `number` still contributes the uniform finiteness guard
     // at the indexed path.
     assert!(
-        rendered.contains("for item_index_8, item_element_8 in enumerate(value.list_or_name):")
+        rendered
+            .contains("checked_array_8 = typing.cast(\"list[typing.Any]\", list_or_name_value)")
     );
+    assert!(rendered.contains("for item_index_8, item_element_8 in enumerate(checked_array_8):"));
     assert!(rendered.contains(
         "Violation(path=f'listOrName[{item_index_8}]', reason=f\"must be a finite number, got {item_element_8}\")"
     ));
@@ -1849,27 +2026,31 @@ fn python_json_union_serializer_validates_before_dispatching() {
         .expect("no serialize function for the `pick` union")
         .1;
     assert!(dispatch.starts_with(concat!(
+        "    runtime_value: typing.Any = value\n",
         "    violations: list[Violation] = []\n",
-        "    candidate = typing.cast(\"object\", value)\n",
-        "    if not (isinstance(candidate, Circle) or isinstance(candidate, Square)):\n",
+        "    if not (isinstance(runtime_value, Circle) or isinstance(runtime_value, Square)):\n",
         "        violations.append(Violation(path=\"\", reason=\"expected one of: Circle, Square\"))\n",
         "    if violations:\n",
         "        raise temporalio.converter.create_payload_validation_error(violations)\n",
-        "    if isinstance(value, Circle):\n",
+        "    if isinstance(runtime_value, Circle):\n",
     )),
     "the `pick` dispatch is not preceded by the no-branch-matched test:\n{dispatch}");
 
-    // The enclosing member holds no copy of that test; it only re-paths.
+    // The enclosing member holds no copy of that test; it only gates the
+    // conversion after its own checks and re-paths the converter's failure.
     let member = rendered
-        .split_once("        if value.pick is not None:\n")
+        .split_once("        pick_value: typing.Any = runtime_value.pick\n")
         .expect("no serialize block for the `pick` member")
         .1;
     assert!(
         member.starts_with(concat!(
-            "            try:\n",
-            "                out[\"pick\"] = _bag_pick_to_transfer_type(value.pick)\n",
-            "            except temporalio.exceptions.ApplicationError as error:\n",
-            "                _collect(violations, \"pick\", error)\n",
+            "        if pick_value is not None:\n",
+            "            pick_violation_count = len(violations)\n",
+            "            if len(violations) == pick_violation_count:\n",
+            "                try:\n",
+            "                    out[\"pick\"] = _bag_pick_to_transfer_type(pick_value)\n",
+            "                except temporalio.exceptions.ApplicationError as error:\n",
+            "                    _collect(violations, \"pick\", error)\n",
         )),
         "the `pick` member repeats the union's checks:\n{member}"
     );
@@ -1973,6 +2154,184 @@ fn write_cross_module_closure(dir: &Path) -> PathBuf {
     input_dir
 }
 
+fn generate_python_schema_tree(name: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf) {
+    let temp_dir = unique_output_path(name);
+    let input_dir = temp_dir.join("input");
+    fs::create_dir_all(&input_dir).unwrap();
+    for (relative, contents) in files {
+        let path = input_dir.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+    let output_path = temp_dir.join("output");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input_dir],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    (temp_dir, output_path)
+}
+
+#[test]
+fn python_json_hoists_whole_cross_file_strong_component() {
+    let (temp_dir, output_path) = generate_python_schema_tree(
+        "py-json-whole-scc-hoist",
+        &[
+            (
+                "a.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  P: { type: object, additionalProperties: false, properties: { x: { $ref: "#/$defs/X" } } }
+  X: { type: object, additionalProperties: false, properties: { q: { $ref: "#/$defs/Q" } } }
+  Q: { type: object, additionalProperties: false, properties: { r: { $ref: "b.yaml#/$defs/R" } } }
+  Referrer: { type: object, additionalProperties: false, properties: { p: { $ref: "#/$defs/P" } } }
+  Witness:
+    description: "X is mentioned here, but prose is not a reference edge."
+    type: object
+    additionalProperties: false
+    properties: { note: { type: string } }
+"##,
+            ),
+            (
+                "b.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  R: { type: object, additionalProperties: false, properties: { p: { $ref: "a.yaml#/$defs/P" } } }
+"##,
+            ),
+        ],
+    );
+
+    let recursive = fs::read_to_string(output_path.join("_recursive.py")).unwrap();
+    for name in ["P", "X", "Q", "R"] {
+        assert!(
+            recursive.contains(&format!("class {name}:")),
+            "{name} was left outside its SCC\n{recursive}"
+        );
+    }
+    assert!(!recursive.contains("class Referrer:"), "{recursive}");
+    let a_models = fs::read_to_string(output_path.join("a/models.py")).unwrap();
+    assert!(
+        a_models.contains("from .._recursive import P"),
+        "a same-module reference must follow its target into the hoist\n{a_models}"
+    );
+    assert!(
+        !a_models.contains("from .._recursive import P, X")
+            && !a_models.contains("from .._recursive import X"),
+        "a docstring mention must not invent an import edge\n{a_models}"
+    );
+    assert_python_script_succeeds(
+        "import importlib, sys; sys.path.insert(0, sys.argv[1]); importlib.import_module('output.a.models')",
+        &[temp_dir.to_str().unwrap()],
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn python_json_cycle_graph_preserves_already_decoded_ref_names() {
+    let (temp_dir, output_path) = generate_python_schema_tree(
+        "py-json-escaped-cycle",
+        &[
+            (
+                "a.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  "a~1b":
+    type: object
+    properties:
+      link: { $ref: "b.yaml#/$defs/Bee" }
+"##,
+            ),
+            (
+                "b.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  Bee:
+    type: object
+    properties:
+      back: { $ref: "a.yaml#/$defs/a~01b" }
+"##,
+            ),
+        ],
+    );
+
+    let recursive = fs::read_to_string(output_path.join("_recursive.py")).unwrap();
+    assert!(recursive.contains("class A1b:"), "{recursive}");
+    assert!(recursive.contains("class Bee:"), "{recursive}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn python_json_hoist_closes_leaf_dependency_import_cycles() {
+    let (temp_dir, output_path) = generate_python_schema_tree(
+        "py-json-hoist-dependency-cycle",
+        &[
+            (
+                "a.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  b: { $ref: "b.yaml" }
+  leaf: { $ref: "c.yaml#/$defs/Leaf" }
+"##,
+            ),
+            (
+                "b.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  a: { $ref: "a.yaml" }
+"##,
+            ),
+            (
+                "c.yaml",
+                r##"
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties: false
+properties:
+  a: { $ref: "a.yaml" }
+$defs:
+  Leaf: { type: object, additionalProperties: false, properties: { n: { type: string } } }
+"##,
+            ),
+        ],
+    );
+
+    let recursive = fs::read_to_string(output_path.join("_recursive.py")).unwrap();
+    assert!(recursive.contains("class A:"), "{recursive}");
+    assert!(recursive.contains("class B:"), "{recursive}");
+    assert!(recursive.contains("class Leaf:"), "{recursive}");
+    assert!(
+        !recursive.contains("from .c.models import Leaf"),
+        "{recursive}"
+    );
+
+    let c_models = fs::read_to_string(output_path.join("c/models.py")).unwrap();
+    assert!(
+        c_models.contains("from .._recursive import A"),
+        "{c_models}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
 /// An `x-py-name` override on a model in *another* input file moves every
 /// reference the consuming module emits: the operation's `Operation[...]`
 /// parameter, the relative model imports, and the annotation of a cross-module
@@ -2020,6 +2379,55 @@ fn python_json_cross_module_py_name_override_moves_every_reference() {
         assert!(!services.contains(stale), "{stale}\n{services}");
         assert!(!models.contains(stale), "{stale}\n{models}");
     }
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn python_json_bare_ref_root_alias_is_the_target_class_at_runtime() {
+    let temp_dir = unique_output_path("py-json-bare-ref-alias");
+    let input = write_bare_ref_alias_closure(&temp_dir);
+    let output_path = temp_dir.join("output");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::Python,
+        input_paths: vec![input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let alias = fs::read_to_string(output_path.join("alias/alternate/models.py")).unwrap();
+    assert!(alias.contains("Alternate = Main"), "{alias}");
+    assert!(!alias.contains("class Alternate"), "{alias}");
+    let target = fs::read_to_string(output_path.join("target/main/models.py")).unwrap();
+    assert!(target.contains("Mirror = Main"), "{target}");
+    assert!(!target.contains("class Mirror"), "{target}");
+    let service = fs::read_to_string(output_path.join("service/services.py")).unwrap();
+    assert!(service.contains("Alternate"), "{service}");
+    let holder = fs::read_to_string(output_path.join("service/models.py")).unwrap();
+    assert!(holder.contains("item: Alternate"), "{holder}");
+
+    let status = Command::new("uv")
+        .current_dir(&temp_dir)
+        .args([
+            "run",
+            "--project",
+            project_root()
+                .join("advanced/samples/python")
+                .to_str()
+                .unwrap(),
+            "--locked",
+            "python",
+            "-c",
+            "from output.alias.alternate.models import Alternate, Main; from output.target.main.models import Mirror; assert Alternate is Main; assert Mirror is Main; assert Alternate(value='ok').value == 'ok'",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -2277,7 +2685,9 @@ fn python_json_model_properties_use_union_none_and_defaults_preserve_presence() 
     assert!(rendered.contains("def salutation(self) -> typing.Annotated[str,"));
     assert!(rendered.contains("value: typing.Annotated["));
     assert!(rendered.contains("@salutation.deleter\n    def salutation(self) -> None:"));
-    assert!(rendered.contains("if value._salutation is not None:"));
+    assert!(rendered.contains(
+        "salutation_value: typing.Any = runtime_value._salutation\n        if salutation_value is not None:"
+    ));
     assert!(!rendered.contains("DEFAULT_SALUTATION"));
     assert!(!rendered.contains("reportDeprecated=false"));
     assert!(!rendered.contains("reportPropertyTypeMismatch=false"));
@@ -2320,6 +2730,34 @@ fn generate_unformatted_python_package(
     })
     .unwrap();
     output_path
+}
+
+#[test]
+fn python_json_omits_empty_dependent_required_bodies() {
+    let temp_dir = unique_output_path("py-empty-dependent-required");
+    let output_path = generate_unformatted_python_package(
+        &temp_dir,
+        r##"nexusrpc: "1.0.0"
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  Model:
+    type: object
+    properties:
+      trigger: { type: string }
+    dependentRequired:
+      trigger: []
+"##,
+        nexgen::nexgen_config::NexgenConfig::default(),
+    );
+
+    let models = fs::read_to_string(output_path.join("models.py")).unwrap();
+    assert_eq!(
+        models.matches("if \"trigger\" in raw:").count(),
+        1,
+        "{models}"
+    );
+    assert!(!models.contains("if \"trigger\" in out:"), "{models}");
+    fs::remove_dir_all(temp_dir).unwrap();
 }
 
 /// A docstring body that *ends* in a double quote runs straight into the closing
@@ -2385,7 +2823,7 @@ assert services.QuoteService.__doc__ == 'Service ends with a quote "', (
 /// and `nexusrpc`'s `@service` resolves that annotation with `eval_str=True`, so
 /// `typing` has to be bound at runtime. The native-API client body imports it
 /// incidentally; a definitions-only package does not, which is why this probe
-/// runs with `generate_native_api: false` and *imports* the result.
+/// runs in definitions-only mode and *imports* the result.
 /// See `specs/json-schema/features/deprecated.md`.
 #[test]
 fn python_json_definitions_only_deprecated_operation_imports_typing() {

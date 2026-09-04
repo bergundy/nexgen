@@ -66,6 +66,9 @@ public final class ShowcaseLedgerValue {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<ShowcaseLedgerValue> {
         @Override
         public void serialize(ShowcaseLedgerValue value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
             {
                 if (value.amount < -SpecNumbers.INTEGER_CAP || value.amount > SpecNumbers.INTEGER_CAP) {
@@ -80,7 +83,7 @@ public final class ShowcaseLedgerValue {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -98,6 +101,7 @@ public final class ShowcaseLedgerValue {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -115,6 +119,7 @@ public final class ShowcaseLedgerValue {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "amount":
                         break;

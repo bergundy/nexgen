@@ -11,6 +11,7 @@ import temporalio.exceptions
 from ..._definitions import (
     Violation,
     _collect,
+    _member_path,
     _transfer_type_convertible,
 )
 
@@ -83,7 +84,9 @@ class _CategoryTransferTypeConverter(
 
         for key in raw:
             if key != "id" and key != "name" and key != "children":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return Category(
@@ -94,22 +97,45 @@ class _CategoryTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Category") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Category):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["id"] = value.id
-        out["name"] = value.name
-        if value.children is not None:
-            children_out: list[typing.Any] = []
-            for children_index, children_element in enumerate(value.children):
-                try:
-                    children_out.append(
-                        _CategoryTransferTypeConverter().to_transfer_type(
-                            children_element
+        id_value: typing.Any = runtime_value.id
+        if id_value is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            if not (isinstance(id_value, str)):
+                violations.append(Violation(path="id", reason="expected string"))
+            out["id"] = id_value
+        name_value: typing.Any = runtime_value.name
+        if name_value is None:
+            violations.append(Violation(path="name", reason="required"))
+        else:
+            if not (isinstance(name_value, str)):
+                violations.append(Violation(path="name", reason="expected string"))
+            out["name"] = name_value
+        children_value: typing.Any = runtime_value.children
+        if children_value is not None:
+            children_violation_count = len(violations)
+            if not (isinstance(children_value, list)):
+                violations.append(Violation(path="children", reason="expected array"))
+            if len(violations) == children_violation_count:
+                children_checked = typing.cast("list[typing.Any]", children_value)
+                children_out: list[typing.Any] = []
+                for children_index, children_element in enumerate(children_checked):
+                    try:
+                        children_out.append(
+                            _CategoryTransferTypeConverter().to_transfer_type(
+                                children_element
+                            )
                         )
-                    )
-                except temporalio.exceptions.ApplicationError as error:
-                    _collect(violations, f"children[{children_index}]", error)
-            out["children"] = children_out
+                    except temporalio.exceptions.ApplicationError as error:
+                        _collect(violations, f"children[{children_index}]", error)
+                out["children"] = children_out
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -175,7 +201,9 @@ class _PaletteTransferTypeConverter(
 
         for key in raw:
             if key != "swatches":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return Palette(
@@ -184,8 +212,33 @@ class _PaletteTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Palette") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Palette):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["swatches"] = value.swatches
+        swatches_value: typing.Any = runtime_value.swatches
+        if swatches_value is None:
+            violations.append(Violation(path="swatches", reason="required"))
+        else:
+            if not (isinstance(swatches_value, list)):
+                violations.append(Violation(path="swatches", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", swatches_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"swatches[{item_index_8}]",
+                                reason="expected string",
+                            )
+                        )
+            swatches_checked = typing.cast("list[typing.Any]", swatches_value)
+            out["swatches"] = swatches_checked
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
         return out
 
 

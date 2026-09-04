@@ -60,11 +60,30 @@ public final class BlobIndex {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<BlobIndex> {
         @Override
         public void serialize(BlobIndex value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
+            List<Violation> violations = new ArrayList<>();
+            if (value.additionalProperties == null) {
+                violations.add(new Violation("", "expected object"));
+            } else {
+                for (Map.Entry<String, byte[]> entry : value.additionalProperties.entrySet()) {
+                    if (entry.getValue() == null) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "explicit null not allowed"));
+                        continue;
+                    }
+                }
+            }
+            if (!violations.isEmpty()) {
+                // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
+                throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+            }
             gen.writeStartObject();
             for (Map.Entry<String, byte[]> entry : value.additionalProperties.entrySet()) {
                 gen.writeStringField(entry.getKey(), Base64Support.formatBase64(entry.getValue()));
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -82,15 +101,16 @@ public final class BlobIndex {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 JsonNode element = node.get(key);
                 if (element.isNull()) {
-                    violations.add(new Violation(key, "explicit null not allowed"));
+                    violations.add(new Violation(path, "explicit null not allowed"));
                     continue;
                 }
                 if (!element.isTextual()) {
-                    violations.add(new Violation(key, "expected string value"));
+                    violations.add(new Violation(path, "expected string value"));
                 } else {
-                    byte[] parsed = Base64Support.parseBase64(element.textValue(), key, violations);
+                    byte[] parsed = Base64Support.parseBase64(element.textValue(), path, violations);
                     if (parsed != null) {
                         additionalProperties.put(key, parsed);
                     }

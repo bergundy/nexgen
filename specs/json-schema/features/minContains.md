@@ -39,7 +39,10 @@ Distilled:
   `matchCount` is the number of elements validating against the
   [[contains]] matcher (the same tally [[maxContains]] documents).
 - **Omitting ≡ `1`** — this is exactly [[contains]]' default ≥ 1
-  existential.
+  existential. The default is part of the schema's **meaning**, not of its
+  spelling: a node carrying [[contains]] and no `minContains` *has* a floor of
+  `1`, and any transformation that rewrites or combines nodes carries that
+  floor with it (see Interactions → [[allOf]]).
 - **`minContains:0`** turns the existential off: [[contains]] then "always
   passes" and the only remaining teeth come from a paired [[maxContains]]
   (the `0..max` range). Meaningless on its own — see Loader behavior.
@@ -54,13 +57,16 @@ Distilled:
 with `≥`, on the same scalar-only envelope [[contains]] draws (scalar
 matcher over a scalar [[items]] element type; composite matchers / elements
 deferred there and therefore here too). Same grounding: **P10** (enforced),
-**P11** (aggregated), **P12** (shared `Validate` predicate, identical both
-directions). No effect on emitted types.
+**P11** (aggregated), **P12** — one comparison over one kind of operand, the
+match tally over the array's complete element sequence, applied at both
+boundaries with the same reason. No effect on emitted types.
 
 Loader behavior (mirror of [[maxContains]] with `≥`, plus the `0` case):
 - Value not a non-negative integer → reject: non-number
   (`minContains:"1"`, `minContains:true`), **negative** (`minContains:-1`),
   or **fractional** (`minContains:1.5`). `minContains:2.0` accepted (≡ `2`).
+- The portable count ceiling from [[maxItems]], and the emitted-literal
+  obligation that comes with a bound above 2^31−1, apply here unchanged.
 - **`minContains` without [[contains]]** on the same node → **reject**
   (**P7.1**, statically meaningless — the spec's "no effect" tightened to a
   loud error). Diagnostic: add a `contains` matcher or remove `minContains`.
@@ -93,17 +99,16 @@ None. Constraint lives only in the validator.
 ## Validator mapping
 
 Per **P10**/**P11**. A single `≥` comparison of the **match count** against
-the fixed bound, identical in both directions (shared `Validate`, **P12**).
-Same per-language tally as [[maxContains]] with `< min` as the failing
-comparison; a `minContains ≥ 2` (like any [[maxContains]]) **cancels the
-[[contains]] short-circuit**, since the exact count is what the bound needs.
+the fixed bound. Deserialize tallies the original wire elements and serialize
+tallies the decoded collection, using the same matcher, comparison, and reason
+in both directions (**P12**).
 
 | Language | Strategy |
 |---|---|
-| Go | `n := 0; for _, e := range v { if matchesContains(e) { n++ } }; if n < min { push(Violation{Path, Reason: fmt.Sprintf("too few matching items: at least %d, got %d", min, n)}) }` — a predicate in the shared `Validate`, called by `UnmarshalJSON` after decoding, collected into one `PayloadValidationError` application failure. |
-| TypeScript | After the `Array.isArray` guard ([[items]]), ``const n = v.filter(matchesContains).length; if (n < min) push(Violation{path, reason: `too few matching items: at least ${min}, got ${n}`})``, throw one `PayloadValidationError` application failure. |
-| Python | `_check_contains` in the transfer type converter tallies `n = sum(1 for e in v if _matches_contains(e))` and on `n < min` appends `Violation(path=…, reason=f"too few matching items: at least {min}, got {n}")` into the single generated `PayloadValidationError` application failure. |
-| Java | The per-POJO collecting deserializer (PRINCIPLES Java §5) tallies matches over the `List<T>` and on `n < min` pushes a `Violation{path, "too few matching items: at least " + min + ", got " + n}` into the single `PayloadValidationError` application failure. Not bean-validation. |
+| Go | `UnmarshalJSON` tallies the original `json.RawMessage` elements; shared `Validate` tallies the typed slice before serialize. Both push the same bound/count violation. |
+| TypeScript | The transfer converters tally the raw array inbound and the typed array outbound after the `Array.isArray` guard. |
+| Python | `_check_contains` receives the raw list inbound and the typed list outbound, appending the same bound/count violation. |
+| Java | The collecting deserializer tallies the original Jackson array node; serialize tallies the typed `List<T>`. Not bean-validation. |
 
 Reason strings name the concrete bound and offending match count
 (`too few matching items: at least 2, got 1`), per the [[maxContains]]
@@ -118,9 +123,10 @@ message.
 Identical to [[maxContains]]: the predicate re-runs before emit over the
 decoded value; an in-memory value with too few matches fails serialize
 rather than being written. Real teeth in the statically-typed targets
-(Go/TS/Java), where in-memory construction is unchecked. The tally is the
-same in memory as on the wire, so the check is the identical `≥` comparison
-in both directions.
+(Go/TS/Java), where in-memory construction is unchecked. Both directions tally
+over the array's complete element sequence — the wire array inbound, the decoded
+collection outbound — so the check is the identical `≥` comparison in both
+directions.
 
 ## Property-testing matrix
 
@@ -141,6 +147,7 @@ in both directions.
 | Value not a number | `minContains:"1"`, `minContains:true` |
 | Negative value | `minContains:-1` |
 | Fractional value | `minContains:1.5` |
+| Above the portable count ceiling | `minContains:9007199254740992` |
 | No sibling `contains` (P7.1) | `{type:"array", items:{type:string}, minContains:2}` |
 | `minContains:0` with no `maxContains` (vacuous) | `{type:"array", items:{type:string}, contains:{const:"x"}, minContains:0}` |
 | Unsatisfiable range | `{type:"array", items:{type:string}, contains:{const:"x"}, minContains:3, maxContains:1}` |
@@ -171,6 +178,15 @@ in both directions.
   match-counting machinery and all combined satisfiability
   (`minContains > maxContains` reject; `minContains == maxContains` exact
   pin; the `maxContains:0` ⇒ `minContains:0` requirement).
+- **[[allOf]] — the omitted default survives the merge.** Branches combine by
+  their **effective** bounds: a branch carrying [[contains]] and no
+  `minContains` contributes a floor of `1`, not "no opinion". The merged floor
+  is the **greatest** of the branches' effective floors, the merged ceiling the
+  **least** of their effective ceilings, and a merged floor above the merged
+  ceiling rejects as unsatisfiable ([[maxContains]]). So a `minContains:0` in
+  one branch cannot relax a sibling branch that omits the keyword: the merged
+  schema is never weaker than a branch it merges. [[allOf]] owns the general
+  rule this instantiates.
 - **[[minItems]] / [[maxItems]]**: bound the **total** element count;
   `minContains` bounds the **matching** subset. Independent — all apply and
   aggregate. A `minContains:2` does not imply `minItems:2` (the two matches
@@ -208,4 +224,3 @@ in both directions.
 - [[items]] — supplies the emitted collection type and the scalar element
   type the matches are drawn from.
 - [[type]] — gates applicability to `type:"array"`.
-</content>

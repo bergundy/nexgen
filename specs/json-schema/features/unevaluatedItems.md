@@ -60,18 +60,24 @@ Distilled:
   annotation-collection pass over every array applicator before this
   schema can be applied to the remaining indices — a schema-interpreter
   runtime, not the flat (de)serializers the subset emits (**P1**/**P2**).
-- **Degenerate in this subset.** The keywords that would give it a
-  non-trivial "unevaluated" tail — [[prefixItems]] (rejected) and in-place
-  applicators (rejected) — are absent. [[items]] already applies to
-  **all** elements of a homogeneous list, and [[contains]] is a pure
-  existential that constrains no positional tail. So no element is ever
-  "unevaluated" in a way [[items]] does not already cover;
+- **Degenerate in this subset.** [[prefixItems]], `anyOf`, `not`, and
+  `if`/`then`/`else` are rejected. The admitted applicators leave no residual
+  evaluated-index set to track: [[allOf]] is flattened at load, [[oneOf]] is a
+  closed sum type, and a [[ref]] either names a model or folds its siblings into
+  that same `allOf` merge. [[items]] already applies to **all** elements of a
+  homogeneous list, and [[contains]] is a pure existential that constrains no
+  positional tail. So no element is ever "unevaluated" in a way [[items]] does
+  not already cover;
   `unevaluatedItems` would be either redundant with [[items]] or reach for
   the rejected [[prefixItems]] tuple tail. Rejecting it is the honest,
   unambiguous outcome (**P7**/**P7.1**).
 
 Loader behavior:
-- Any `unevaluatedItems` present → reject with a located diagnostic.
+- Any `unevaluatedItems` present → reject with a located diagnostic. This holds
+  on a raw [[allOf]] branch, and on the implicit conjunct of a
+  `$ref`-with-siblings: the location carries the branch index and the diagnostic
+  is this one, never a merge conflict over two branches' differing values — a
+  message that would imply the keyword is supported.
 - The diagnostic points to [[items]] as the supported array element
   schema (`{type:array, items:{type:T}}` — a homogeneous list).
 

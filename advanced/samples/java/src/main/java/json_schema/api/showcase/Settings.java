@@ -69,6 +69,9 @@ public final class Settings {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Settings> {
         @Override
         public void serialize(Settings value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
             if (value.fontSize != null) {
                 if (value.fontSize < -SpecNumbers.INTEGER_CAP || value.fontSize > SpecNumbers.INTEGER_CAP) {
@@ -87,6 +90,7 @@ public final class Settings {
                 gen.writeNumberField("fontSize", value.fontSize);
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -103,12 +107,13 @@ public final class Settings {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "fontSize":
                     case "theme":
                         break;
                     default:
-                        violations.add(new Violation(key, "unknown field"));
+                        violations.add(new Violation(path, "unknown field"));
                 }
             }
             String theme = null;

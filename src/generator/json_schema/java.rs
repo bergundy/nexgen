@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::generator::ExternalModelBackend;
 use crate::generator::java::render_java_doc_comment;
+use crate::generator::json_schema::{bare_ref_target, violation_member_segment};
 use crate::language::Language;
 use crate::parser::{ManifestModel, NameManifest, build_name_manifest};
 use crate::planning::{PlannedFamily, PlannedJsonType, PlannedSpec};
@@ -226,6 +227,17 @@ fn java_bound_literal(number: &serde_json::Number, is_integer: bool) -> String {
     }
 }
 
+/// Renders an authored JSON Schema count for use in Java source. Counts above
+/// `Integer.MAX_VALUE` need the `L` suffix even when compared with an `int`-
+/// valued collection size; the loader permits the full portable 2^53-1 range.
+fn java_count_literal(count: u64) -> String {
+    if count > i32::MAX as u64 {
+        format!("{count}L")
+    } else {
+        count.to_string()
+    }
+}
+
 /// Emits the numeric-constraint predicates over `value_expr` (a validated
 /// `long`/`double` in scope) into the collecting deserializer, appending
 /// `Violation`s. `is_integer` selects `long`/`double` divisibility.
@@ -378,7 +390,7 @@ fn schema_has_recursive_value_checks(schema: &Schema) -> bool {
         || !NumericConstraints::from_schema(schema).is_empty()
         || !StringLengthConstraints::from_schema(schema).is_empty()
         || !ArrayConstraints::from_schema(schema).is_empty()
-        || element_shape(schema).is_some_and(schema_has_recursive_value_checks)
+        || element_shape(schema).is_some()
 }
 
 fn render_java_recursive_value_checks(
@@ -426,27 +438,23 @@ fn render_java_recursive_value_checks(
         }
         JavaType::List(element_ty) => {
             let constraints = ArrayConstraints::from_schema(schema);
-            if !constraints.is_empty() {
-                render_java_array_checks(
-                    output,
-                    value_expr,
-                    path_expr,
-                    element_ty,
-                    &constraints,
-                    None,
-                    indent,
-                );
-            }
-            if let Some(item_schema) = element_shape(schema)
-                && schema_has_recursive_value_checks(item_schema)
-            {
+            if let Some(item_schema) = element_shape(schema) {
+                let item_nullable = schema.items.as_deref().is_some_and(allows_null);
                 let index = format!("validationIndex{depth}");
                 let item = format!("validationValue{depth}");
                 let item_path = format!("{path_expr} + \"[\" + {index} + \"]\"");
                 output.push_str(&format!(
-                    "{indent}for (int {index} = 0; {index} < {value_expr}.size(); {index}++) {{\n{indent}    {} {item} = {value_expr}.get({index});\n{indent}    if ({item} != null) {{\n",
+                    "{indent}for (int {index} = 0; {index} < {value_expr}.size(); {index}++) {{\n{indent}    {} {item} = {value_expr}.get({index});\n{indent}    if ({item} == null) {{\n",
                     element_ty.boxed_name()
                 ));
+                if item_nullable {
+                    output.push_str(&format!("{indent}        continue;\n"));
+                } else {
+                    output.push_str(&format!(
+                        "{indent}        violations.add(new Violation({item_path}, \"explicit null not allowed\"));\n"
+                    ));
+                }
+                output.push_str(&format!("{indent}    }} else {{\n"));
                 render_java_recursive_value_checks(
                     output,
                     &item,
@@ -457,6 +465,17 @@ fn render_java_recursive_value_checks(
                     depth + 1,
                 );
                 output.push_str(&format!("{indent}    }}\n{indent}}}\n"));
+            }
+            if !constraints.is_empty() {
+                render_java_array_checks(
+                    output,
+                    value_expr,
+                    path_expr,
+                    element_ty,
+                    &constraints,
+                    None,
+                    indent,
+                );
             }
         }
         JavaType::Ref { .. } | JavaType::Union { .. } | JavaType::ClosedValue { .. } => {}
@@ -569,13 +588,15 @@ fn render_java_string_checks(
             "{indent}int length = {value_expr}.codePointCount(0, {value_expr}.length());\n"
         ));
         if let Some(min) = constraints.min_length {
+            let min_literal = java_count_literal(min);
             output.push_str(&format!(
-                "{indent}if (length < {min}) {{\n{indent}    violations.add(new Violation({json}, \"must have length >= {min}, got \" + length));\n{indent}}}\n"
+                "{indent}if (length < {min_literal}) {{\n{indent}    violations.add(new Violation({json}, \"must have length >= {min}, got \" + length));\n{indent}}}\n"
             ));
         }
         if let Some(max) = constraints.max_length {
+            let max_literal = java_count_literal(max);
             output.push_str(&format!(
-                "{indent}if (length > {max}) {{\n{indent}    violations.add(new Violation({json}, \"must have length <= {max}, got \" + length));\n{indent}}}\n"
+                "{indent}if (length > {max_literal}) {{\n{indent}    violations.add(new Violation({json}, \"must have length <= {max}, got \" + length));\n{indent}}}\n"
             ));
         }
     }
@@ -625,13 +646,15 @@ fn render_java_inline_string_checks(
             "{indent}int nestedLength = {value_expr}.codePointCount(0, {value_expr}.length());\n"
         ));
         if let Some(min) = constraints.min_length {
+            let min_literal = java_count_literal(min);
             output.push_str(&format!(
-                "{indent}if (nestedLength < {min}) {{\n{indent}    violations.add(new Violation({path_expr}, \"must have length >= {min}, got \" + nestedLength));\n{indent}}}\n"
+                "{indent}if (nestedLength < {min_literal}) {{\n{indent}    violations.add(new Violation({path_expr}, \"must have length >= {min}, got \" + nestedLength));\n{indent}}}\n"
             ));
         }
         if let Some(max) = constraints.max_length {
+            let max_literal = java_count_literal(max);
             output.push_str(&format!(
-                "{indent}if (nestedLength > {max}) {{\n{indent}    violations.add(new Violation({path_expr}, \"must have length <= {max}, got \" + nestedLength));\n{indent}}}\n"
+                "{indent}if (nestedLength > {max_literal}) {{\n{indent}    violations.add(new Violation({path_expr}, \"must have length <= {max}, got \" + nestedLength));\n{indent}}}\n"
             ));
         }
     }
@@ -663,13 +686,13 @@ fn render_java_inline_string_checks(
 
 /// The static `Pattern` field name for a `pattern` on the Java field
 /// `java_name` — unique per class, compiled once at class init.
-fn java_pattern_field_name(java_name: &str) -> String {
+pub(crate) fn java_pattern_field_name(java_name: &str) -> String {
     use heck::ToShoutySnakeCase;
     format!("{}_PATTERN", java_name.to_shouty_snake_case())
 }
 
 /// The static `Pattern` field name for a `format` on the Java field `java_name`.
-fn java_format_field_name(java_name: &str) -> String {
+pub(crate) fn java_format_field_name(java_name: &str) -> String {
     use heck::ToShoutySnakeCase;
     format!("{}_FORMAT", java_name.to_shouty_snake_case())
 }
@@ -687,13 +710,13 @@ fn java_pinned_pattern(pattern: &str) -> String {
 
 /// The static `Pattern` field name for a `contains` matcher's `pattern` at the
 /// scope `java_name` (a field, a map member, or a union wrapper).
-fn java_contains_pattern_field_name(java_name: &str) -> String {
+pub(crate) fn java_contains_pattern_field_name(java_name: &str) -> String {
     use heck::ToShoutySnakeCase;
     format!("{}_CONTAINS_PATTERN", java_name.to_shouty_snake_case())
 }
 
 /// The static `Pattern` field name for a `contains` matcher's `format`.
-fn java_contains_format_field_name(java_name: &str) -> String {
+pub(crate) fn java_contains_format_field_name(java_name: &str) -> String {
     use heck::ToShoutySnakeCase;
     format!("{}_CONTAINS_FORMAT", java_name.to_shouty_snake_case())
 }
@@ -746,13 +769,15 @@ fn render_java_property_count_checks(
     indent: &str,
 ) {
     if let Some(min) = schema.min_properties {
+        let min_literal = java_count_literal(min as u64);
         output.push_str(&format!(
-            "{indent}if ({size_expr} < {min}) {{\n{indent}    violations.add(new Violation(\"\", \"must have at least {min} properties, got \" + {size_expr}));\n{indent}}}\n"
+            "{indent}if ({size_expr} < {min_literal}) {{\n{indent}    violations.add(new Violation(\"\", \"must have at least {min} properties, got \" + {size_expr}));\n{indent}}}\n"
         ));
     }
     if let Some(max) = schema.max_properties {
+        let max_literal = java_count_literal(max as u64);
         output.push_str(&format!(
-            "{indent}if ({size_expr} > {max}) {{\n{indent}    violations.add(new Violation(\"\", \"must have at most {max} properties, got \" + {size_expr}));\n{indent}}}\n"
+            "{indent}if ({size_expr} > {max_literal}) {{\n{indent}    violations.add(new Violation(\"\", \"must have at most {max} properties, got \" + {size_expr}));\n{indent}}}\n"
         ));
     }
 }
@@ -783,13 +808,15 @@ fn render_java_property_name_checks(
             "{indent}    int pnLength = pnKey.codePointCount(0, pnKey.length());\n"
         ));
         if let Some(min) = constraints.min_length {
+            let min_literal = java_count_literal(min);
             output.push_str(&format!(
-                "{indent}    if (pnLength < {min}) {{\n{indent}        violations.add(new Violation(pnKey, \"invalid property name \\\"\" + pnKey + \"\\\": must have length >= {min}, got \" + pnLength));\n{indent}    }}\n"
+                "{indent}    if (pnLength < {min_literal}) {{\n{indent}        violations.add(new Violation(Violation.memberPath(pnKey), \"invalid property name \\\"\" + pnKey + \"\\\": must have length >= {min}, got \" + pnLength));\n{indent}    }}\n"
             ));
         }
         if let Some(max) = constraints.max_length {
+            let max_literal = java_count_literal(max);
             output.push_str(&format!(
-                "{indent}    if (pnLength > {max}) {{\n{indent}        violations.add(new Violation(pnKey, \"invalid property name \\\"\" + pnKey + \"\\\": must have length <= {max}, got \" + pnLength));\n{indent}    }}\n"
+                "{indent}    if (pnLength > {max_literal}) {{\n{indent}        violations.add(new Violation(Violation.memberPath(pnKey), \"invalid property name \\\"\" + pnKey + \"\\\": must have length <= {max}, got \" + pnLength));\n{indent}    }}\n"
             ));
         }
     }
@@ -799,7 +826,7 @@ fn render_java_property_name_checks(
     render_java_string_checks(
         output,
         "pnKey",
-        "pnKey",
+        "Violation.memberPath(pnKey)",
         PROPERTY_NAME_POSITION,
         &non_length,
         &format!("{indent}    "),
@@ -807,7 +834,7 @@ fn render_java_property_name_checks(
     render_java_closed_string_checks(
         output,
         "pnKey",
-        "pnKey",
+        "Violation.memberPath(pnKey)",
         subschema,
         &format!("{indent}    "),
     );
@@ -841,7 +868,7 @@ fn render_java_dependent_required(
             output.push_str(&format!(
                 "{indent}    if (!{node_expr}.has({})) {{\n{indent}        violations.add(new Violation({}, {}));\n{indent}    }}\n",
                 java_string_literal(dep),
-                java_string_literal(dep),
+                java_violation_path_literal(dep),
                 java_string_literal(&reason)
             ));
         }
@@ -913,13 +940,15 @@ fn java_matcher_condition(
         ));
     }
     if let Some(min) = matcher.min_length {
+        let min_literal = java_count_literal(min);
         parts.push(format!(
-            "{elem}.codePointCount(0, {elem}.length()) >= {min}"
+            "{elem}.codePointCount(0, {elem}.length()) >= {min_literal}"
         ));
     }
     if let Some(max) = matcher.max_length {
+        let max_literal = java_count_literal(max);
         parts.push(format!(
-            "{elem}.codePointCount(0, {elem}.length()) <= {max}"
+            "{elem}.codePointCount(0, {elem}.length()) <= {max_literal}"
         ));
     }
     if let Some(pattern) = &matcher.pattern {
@@ -1051,13 +1080,15 @@ fn render_java_array_checks(
     indent: &str,
 ) {
     if let Some(min) = constraints.min_items {
+        let min_literal = java_count_literal(min);
         output.push_str(&format!(
-            "{indent}if ({list}.size() < {min}) {{\n{indent}    violations.add(new Violation({json}, \"must have at least {min} items, got \" + {list}.size()));\n{indent}}}\n"
+            "{indent}if ({list}.size() < {min_literal}) {{\n{indent}    violations.add(new Violation({json}, \"must have at least {min} items, got \" + {list}.size()));\n{indent}}}\n"
         ));
     }
     if let Some(max) = constraints.max_items {
+        let max_literal = java_count_literal(max);
         output.push_str(&format!(
-            "{indent}if ({list}.size() > {max}) {{\n{indent}    violations.add(new Violation({json}, \"must have at most {max} items, got \" + {list}.size()));\n{indent}}}\n"
+            "{indent}if ({list}.size() > {max_literal}) {{\n{indent}    violations.add(new Violation({json}, \"must have at most {max} items, got \" + {list}.size()));\n{indent}}}\n"
         ));
     }
     if constraints.unique_items {
@@ -1085,17 +1116,31 @@ fn render_java_array_checks(
     }
     if let Some(matcher) = &constraints.contains {
         let boxed = element_ty.boxed_name();
-        let condition = java_matcher_condition(matcher, "element", element_ty, scope);
-        let guard = java_typed_matcher_guard(matcher, "element", element_ty);
+        let (matcher_value, matcher_ty) =
+            if matches!(element_ty, JavaType::Temporal(_) | JavaType::Bytes(_)) {
+                (
+                    java_unique_key_expr(element_ty, "element", 0),
+                    JavaType::String,
+                )
+            } else {
+                ("element".to_string(), element_ty.clone())
+            };
+        let condition = java_matcher_condition(matcher, &matcher_value, &matcher_ty, scope);
+        let guard = java_typed_matcher_guard(matcher, &matcher_value, &matcher_ty);
         let effective_min = constraints.min_contains.unwrap_or(1);
+        let effective_min_literal = java_count_literal(effective_min);
         output.push_str(&format!("{indent}int matchCount = 0;\n"));
         output.push_str(&format!("{indent}for ({boxed} element : {list}) {{\n"));
-        output.push_str(&format!("{indent}    if ({guard} && ({condition})) {{\n"));
+        output.push_str(&format!(
+            "{indent}    if (element != null && ({guard}) && ({condition})) {{\n"
+        ));
         output.push_str(&format!("{indent}        matchCount++;\n"));
         output.push_str(&format!("{indent}    }}\n"));
         output.push_str(&format!("{indent}}}\n"));
         if effective_min > 0 {
-            output.push_str(&format!("{indent}if (matchCount < {effective_min}) {{\n"));
+            output.push_str(&format!(
+                "{indent}if (matchCount < {effective_min_literal}) {{\n"
+            ));
             if constraints.min_contains.is_some() {
                 output.push_str(&format!(
                     "{indent}    violations.add(new Violation({json}, \"too few matching items: at least {effective_min}, got \" + matchCount));\n"
@@ -1108,7 +1153,8 @@ fn render_java_array_checks(
             output.push_str(&format!("{indent}}}\n"));
         }
         if let Some(max) = constraints.max_contains {
-            output.push_str(&format!("{indent}if (matchCount > {max}) {{\n"));
+            let max_literal = java_count_literal(max);
+            output.push_str(&format!("{indent}if (matchCount > {max_literal}) {{\n"));
             output.push_str(&format!(
                 "{indent}    violations.add(new Violation({json}, \"too many matching items: at most {max}, got \" + matchCount));\n"
             ));
@@ -1131,13 +1177,15 @@ fn render_java_raw_array_checks(
     indent: &str,
 ) {
     if let Some(min) = constraints.min_items {
+        let min_literal = java_count_literal(min);
         output.push_str(&format!(
-            "{indent}if ({node}.size() < {min}) {{\n{indent}    violations.add(new Violation({json}, \"must have at least {min} items, got \" + {node}.size()));\n{indent}}}\n"
+            "{indent}if ({node}.size() < {min_literal}) {{\n{indent}    violations.add(new Violation({json}, \"must have at least {min} items, got \" + {node}.size()));\n{indent}}}\n"
         ));
     }
     if let Some(max) = constraints.max_items {
+        let max_literal = java_count_literal(max);
         output.push_str(&format!(
-            "{indent}if ({node}.size() > {max}) {{\n{indent}    violations.add(new Violation({json}, \"must have at most {max} items, got \" + {node}.size()));\n{indent}}}\n"
+            "{indent}if ({node}.size() > {max_literal}) {{\n{indent}    violations.add(new Violation({json}, \"must have at most {max} items, got \" + {node}.size()));\n{indent}}}\n"
         ));
     }
     if constraints.unique_items {
@@ -1172,12 +1220,13 @@ fn render_java_raw_array_checks(
         };
         let condition = java_matcher_condition(matcher, value, &evaluation_ty, scope);
         let effective_min = constraints.min_contains.unwrap_or(1);
+        let effective_min_literal = java_count_literal(effective_min);
         output.push_str(&format!(
             "{indent}int rawMatchCount = 0;\n{indent}for (JsonNode rawElement : {node}) {{\n{indent}    if ({guard} && ({condition})) {{\n{indent}        rawMatchCount++;\n{indent}    }}\n{indent}}}\n"
         ));
         if effective_min > 0 {
             output.push_str(&format!(
-                "{indent}if (rawMatchCount < {effective_min}) {{\n"
+                "{indent}if (rawMatchCount < {effective_min_literal}) {{\n"
             ));
             if constraints.min_contains.is_some() {
                 output.push_str(&format!(
@@ -1191,8 +1240,9 @@ fn render_java_raw_array_checks(
             output.push_str(&format!("{indent}}}\n"));
         }
         if let Some(max) = constraints.max_contains {
+            let max_literal = java_count_literal(max);
             output.push_str(&format!(
-                "{indent}if (rawMatchCount > {max}) {{\n{indent}    violations.add(new Violation({json}, \"too many matching items: at most {max}, got \" + rawMatchCount));\n{indent}}}\n"
+                "{indent}if (rawMatchCount > {max_literal}) {{\n{indent}    violations.add(new Violation({json}, \"too many matching items: at most {max}, got \" + rawMatchCount));\n{indent}}}\n"
             ));
         }
     }
@@ -1421,6 +1471,16 @@ impl JavaType {
         }
     }
 
+    /// Writes a nullable TYPE_USE annotation on this carrier. Collections
+    /// deliberately do not recurse here: collection presence and element
+    /// nullability are independent schema axes.
+    fn nullable_declaration(&self, declaration: String) -> String {
+        match self {
+            JavaType::Bytes(_) => "byte @Nullable []".to_string(),
+            _ => format!("@Nullable {declaration}"),
+        }
+    }
+
     fn collect_refs(&self, refs: &mut BTreeSet<(String, String)>) {
         match self {
             JavaType::Ref { package, class, .. } => {
@@ -1433,9 +1493,11 @@ impl JavaType {
     }
 }
 
-/// The (fully-qualified) Java type a materialized temporal `format` maps to.
-/// `time` stays a `String` because no single `java.time` type holds both an
-/// offset-bearing and an offset-less time-of-day.
+/// The Java type a materialized temporal `format` maps to. `date-time` uses the
+/// idiomatic `OffsetDateTime`; the shared materialized offset domain is exactly
+/// the range its `ZoneOffset` can carry. `time` stays a `String` because no
+/// single `java.time` type holds both offset-bearing and offset-less time-of-day
+/// values.
 fn java_temporal_type(kind: crate::json_schema::format::TemporalKind) -> &'static str {
     match kind {
         crate::json_schema::format::TemporalKind::DateTime => "OffsetDateTime",
@@ -1443,6 +1505,46 @@ fn java_temporal_type(kind: crate::json_schema::format::TemporalKind) -> &'stati
         crate::json_schema::format::TemporalKind::Time => "String",
         crate::json_schema::format::TemporalKind::Duration => "Duration",
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct JavaFileFeatures {
+    temporal: bool,
+    content_encoding: bool,
+    date_time: bool,
+    date: bool,
+    duration: bool,
+}
+
+impl JavaFileFeatures {
+    fn from_schema(schema: &Schema) -> Self {
+        use crate::json_schema::format::TemporalKind;
+        Self {
+            temporal: schema_uses_feature(schema, |candidate| {
+                temporal_kind_direct(candidate).is_some()
+            }),
+            content_encoding: schema_uses_feature(schema, |candidate| {
+                content_encoding_direct(candidate).is_some()
+            }),
+            date_time: schema_uses_feature(schema, |candidate| {
+                temporal_kind_direct(candidate) == Some(TemporalKind::DateTime)
+            }),
+            date: schema_uses_feature(schema, |candidate| {
+                temporal_kind_direct(candidate) == Some(TemporalKind::Date)
+            }),
+            duration: schema_uses_feature(schema, |candidate| {
+                temporal_kind_direct(candidate) == Some(TemporalKind::Duration)
+            }),
+        }
+    }
+}
+
+/// Whether rendering `schema` as a Java model file binds `OffsetDateTime` by
+/// bare import. The emitted-name pass uses this exact backend predicate so its
+/// schema-dependent P15 reservation cannot drift from [`assemble_file`].
+pub(crate) fn schema_imports_offset_date_time(schema: &Value) -> bool {
+    serde_json::from_value::<Schema>(schema.clone())
+        .is_ok_and(|schema| JavaFileFeatures::from_schema(&schema).date_time)
 }
 
 /// The `TemporalSupport` static method name that parses this kind from the wire.
@@ -1455,13 +1557,12 @@ fn java_temporal_parse_fn(kind: crate::json_schema::format::TemporalKind) -> &'s
     }
 }
 
-/// The `TemporalSupport` static method that serializes this kind (`None` for
-/// `time`, which is already a canonical `String` written directly).
+/// The `TemporalSupport` static method that serializes this kind.
 fn java_temporal_format_fn(kind: crate::json_schema::format::TemporalKind) -> Option<&'static str> {
     match kind {
         crate::json_schema::format::TemporalKind::DateTime => Some("formatDateTime"),
         crate::json_schema::format::TemporalKind::Date => Some("formatDate"),
-        crate::json_schema::format::TemporalKind::Time => None,
+        crate::json_schema::format::TemporalKind::Time => Some("formatTime"),
         crate::json_schema::format::TemporalKind::Duration => Some("formatDuration"),
     }
 }
@@ -1832,7 +1933,8 @@ impl ClosedNameOverrides {
     }
 }
 
-/// The `x-java-enum-names` map key for one closed value: its JSON wire spelling.
+/// The `x-java-enum-names` map key for one closed value: its canonical JSON
+/// spelling.
 ///
 /// Mirrors the loader's `enum_names_lookup_key` (`src/parser/json_schema.rs`),
 /// which validates the same map, and `enum_names_lookup_key` in
@@ -1844,7 +1946,7 @@ fn enum_names_lookup_key(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.clone()),
         Value::Bool(flag) => Some(flag.to_string()),
-        Value::Number(number) => Some(number.to_string()),
+        Value::Number(number) => Some(crate::json_schema::scalar::value_token_decimal(number)),
         _ => None,
     }
 }
@@ -1917,13 +2019,7 @@ impl FieldPlan {
 
     fn declared_type(&self) -> String {
         if self.nullable_annotation() && !self.is_primitive() {
-            // A `byte[]` takes the array-level TYPE_USE annotation (`byte
-            // @Nullable []`); `@Nullable byte[]` would (wrongly) annotate the
-            // primitive element type.
-            if matches!(self.ty, JavaType::Bytes(_)) {
-                return "byte @Nullable []".to_string();
-            }
-            format!("@Nullable {}", self.field_type())
+            self.ty.nullable_declaration(self.field_type())
         } else {
             self.field_type()
         }
@@ -1994,6 +2090,27 @@ fn decode_schema(model: &PlannedJsonType) -> Result<Schema> {
             model.full_name
         ),
     })
+}
+
+/// Resolves an exact bare-ref model alias to the declaration that owns the
+/// Java class. Java intentionally emits no alias class, so both member and
+/// operation references use this final target directly.
+pub(in crate::generator) fn resolve_bare_ref_alias<'a>(
+    model: &'a PlannedJsonType,
+    all_models: &'a BTreeMap<String, PlannedJsonType>,
+) -> &'a PlannedJsonType {
+    let mut current = model;
+    for _ in 0..=all_models.len() {
+        let Some(reference) = bare_ref_target(current) else {
+            break;
+        };
+        let key = reference.strip_prefix("#/$defs/").unwrap_or(reference);
+        let Some(target) = all_models.get(key) else {
+            break;
+        };
+        current = target;
+    }
+    current
 }
 
 fn schema_type_includes(schema: &Schema, ty: &str) -> bool {
@@ -2163,7 +2280,7 @@ fn resolve_model_kind(
             // A union-typed field: an inline `oneOf` (nested interface +
             // wrappers) or a `$ref` to a named union def.
             let (ty, union) = if property.one_of.is_some() && is_java_union_schema(property) {
-                let interface = json_name.to_upper_camel_case();
+                let interface = upper_first(&java_name);
                 let union = classify_java_union(&interface, true, property, all_models, context);
                 (
                     JavaType::Union {
@@ -2237,6 +2354,7 @@ pub(in crate::generator) fn render_model_file(
     all_models: &BTreeMap<String, PlannedJsonType>,
 ) -> Result<String> {
     let schema = decode_schema(model)?;
+    let features = JavaFileFeatures::from_schema(&schema);
     // Resolve every emitted type name (with any `x-java-name` override applied)
     // through the shared manifest. The parent generator builds `registry` from
     // the pre-override `model_name`, so patch each entry's class through the
@@ -2246,8 +2364,12 @@ pub(in crate::generator) fn render_model_file(
     let resolved_registry: BTreeMap<String, (String, String)> = registry
         .iter()
         .map(|(key, (package, class))| {
+            let manifest_key = all_models
+                .get(key)
+                .map(|model| resolve_bare_ref_alias(model, all_models).full_name.as_str())
+                .unwrap_or(key);
             let class = manifest
-                .type_name(key)
+                .type_name(manifest_key)
                 .map(str::to_string)
                 .unwrap_or_else(|| class.clone());
             (key.clone(), (package.clone(), class))
@@ -2274,7 +2396,14 @@ pub(in crate::generator) fn render_model_file(
         let mut body = String::new();
         let mut refs = BTreeSet::new();
         render_union_interface(&mut body, &schema, &union, &mut refs);
-        return Ok(assemble_file(&package, root_package, &refs, false, &body));
+        return Ok(assemble_file(
+            &package,
+            root_package,
+            &refs,
+            false,
+            features,
+            &body,
+        ));
     }
 
     let kind = resolve_model_kind(&schema, &context, all_models)?;
@@ -2321,7 +2450,11 @@ pub(in crate::generator) fn render_model_file(
             if property.one_of.is_none() || !is_java_union_schema(property) {
                 continue;
             }
-            let interface = json_name.to_upper_camel_case();
+            let java_name = property
+                .x_java_name
+                .clone()
+                .unwrap_or_else(|| json_name.to_lower_camel_case());
+            let interface = upper_first(&java_name);
             if let Some(union) =
                 classify_java_union(&interface, true, property, all_models, &other_context)
                 && holds_this_model(&union)
@@ -2372,7 +2505,14 @@ pub(in crate::generator) fn render_model_file(
         }
     }
 
-    Ok(assemble_file(&package, root_package, &refs, false, &body))
+    Ok(assemble_file(
+        &package,
+        root_package,
+        &refs,
+        false,
+        features,
+        &body,
+    ))
 }
 
 /// Renders a named `oneOf` union def as a sealed-by-convention interface with a
@@ -2919,6 +3059,7 @@ fn assemble_file(
     root_package: &str,
     model_refs: &BTreeSet<(String, String)>,
     service_imports: bool,
+    features: JavaFileFeatures,
     body: &str,
 ) -> String {
     let mut output = String::new();
@@ -2954,10 +3095,10 @@ fn assemble_file(
         if package != root_package {
             imports.insert(format!("{root_package}.SpecNumbers"));
             imports.insert(format!("{root_package}.Violation"));
-            if body.contains("TemporalSupport.") {
+            if features.temporal {
                 imports.insert(format!("{root_package}.TemporalSupport"));
             }
-            if body.contains("Base64Support.") {
+            if features.content_encoding {
                 imports.insert(format!("{root_package}.Base64Support"));
             }
         }
@@ -2970,14 +3111,14 @@ fn assemble_file(
     }
     // Materialized-temporal `java.time` field types (imported so the `@Nullable`
     // type-use annotation binds to the simple name, not a package qualifier).
-    for (needle, import) in [
-        ("OffsetDateTime", "java.time.OffsetDateTime"),
-        ("LocalDate", "java.time.LocalDate"),
-        ("Duration", "java.time.Duration"),
-    ] {
-        if body.contains(needle) {
-            imports.insert(import.to_string());
-        }
+    if features.date_time {
+        imports.insert("java.time.OffsetDateTime".to_string());
+    }
+    if features.date {
+        imports.insert("java.time.LocalDate".to_string());
+    }
+    if features.duration {
+        imports.insert("java.time.Duration".to_string());
     }
     // Closed value-set (`const`/`enum`) value classes carry Jackson
     // `@JsonCreator`/`@JsonValue` for the standalone/interop wire mapping.
@@ -3056,14 +3197,26 @@ fn java_string_literal(value: &str) -> String {
         match character {
             '"' => output.push_str("\\\""),
             '\\' => output.push_str("\\\\"),
+            '\u{0008}' => output.push_str("\\b"),
             '\n' => output.push_str("\\n"),
             '\r' => output.push_str("\\r"),
             '\t' => output.push_str("\\t"),
+            '\u{000c}' => output.push_str("\\f"),
+            other if other <= '\u{001f}' || ('\u{007f}'..='\u{009f}').contains(&other) => {
+                use std::fmt::Write as _;
+                write!(output, "\\u{:04x}", u32::from(other)).unwrap();
+            }
+            '\u{2028}' => output.push_str("\\u2028"),
+            '\u{2029}' => output.push_str("\\u2029"),
             other => output.push(other),
         }
     }
     output.push('"');
     output
+}
+
+fn java_violation_path_literal(key: &str) -> String {
+    java_string_literal(&violation_member_segment(key))
 }
 
 fn render_object_class(
@@ -3422,6 +3575,12 @@ fn render_equals_hashcode_tostring(
 /// `render_java_serialize_field_check`. A closed value (`const`/`enum`) needs no
 /// serialize check: its value class can only hold a known constant.
 fn field_has_serialize_check(field: &FieldPlan) -> bool {
+    // Java reference types can be constructed with null despite @NullMarked.
+    // A required, non-nullable reference therefore needs an explicit outbound
+    // presence check even when it carries no other schema constraint.
+    if field.required && !field.nullable && !field.is_primitive() {
+        return true;
+    }
     // A union member (on its own, or as a collection's element) is re-checked
     // against the branch it holds, when any branch declares a constraint.
     if let Some(union) = field.union.as_ref().or(field.element_union.as_ref())
@@ -3444,9 +3603,7 @@ fn field_has_serialize_check(field: &FieldPlan) -> bool {
     {
         return true;
     }
-    if matches!(field.ty, JavaType::List(_))
-        && element_shape(&field.schema).is_some_and(schema_has_recursive_value_checks)
-    {
+    if matches!(field.ty, JavaType::List(_)) && element_shape(&field.schema).is_some() {
         return true;
     }
     match &field.ty {
@@ -3477,7 +3634,7 @@ fn object_needs_serialize_validation(schema: &Schema, fields: &[FieldPlan], open
 /// guarded non-null; the check locals live in their own block so the reused
 /// emitters' locals (`length`, `matchCount`, …) never collide across fields.
 fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, indent: &str) {
-    let json = java_string_literal(&field.json_name);
+    let json = java_violation_path_literal(&field.json_name);
     let accessor = format!("value.{}", field.java_name);
     let inner = format!("{indent}    ");
     let mut body = String::new();
@@ -3511,27 +3668,23 @@ fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, ind
                 &inner,
             ),
             JavaType::List(element_ty) => {
-                if !field.array.is_empty() {
-                    render_java_array_checks(
-                        &mut body,
-                        &accessor,
-                        &json,
-                        element_ty,
-                        &field.array,
-                        Some(&field.java_name),
-                        &inner,
-                    );
-                }
-                if let Some(item_schema) = element_shape(&field.schema)
-                    && schema_has_recursive_value_checks(item_schema)
-                {
+                if let Some(item_schema) = element_shape(&field.schema) {
+                    let item_nullable = field.schema.items.as_deref().is_some_and(allows_null);
                     let index = "validationIndex0";
                     let item = "validationValue0";
                     let item_path = format!("{json} + \"[\" + {index} + \"]\"");
                     body.push_str(&format!(
-                        "{inner}for (int {index} = 0; {index} < {accessor}.size(); {index}++) {{\n{inner}    {} {item} = {accessor}.get({index});\n{inner}    if ({item} != null) {{\n",
+                        "{inner}for (int {index} = 0; {index} < {accessor}.size(); {index}++) {{\n{inner}    {} {item} = {accessor}.get({index});\n{inner}    if ({item} == null) {{\n",
                         element_ty.boxed_name()
                     ));
+                    if item_nullable {
+                        body.push_str(&format!("{inner}        continue;\n"));
+                    } else {
+                        body.push_str(&format!(
+                            "{inner}        violations.add(new Violation({item_path}, \"explicit null not allowed\"));\n"
+                        ));
+                    }
+                    body.push_str(&format!("{inner}    }} else {{\n"));
                     render_java_recursive_value_checks(
                         &mut body,
                         item,
@@ -3542,6 +3695,17 @@ fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, ind
                         1,
                     );
                     body.push_str(&format!("{inner}    }}\n{inner}}}\n"));
+                }
+                if !field.array.is_empty() {
+                    render_java_array_checks(
+                        &mut body,
+                        &accessor,
+                        &json,
+                        element_ty,
+                        &field.array,
+                        Some(&field.java_name),
+                        &inner,
+                    );
                 }
             }
             JavaType::Temporal(kind)
@@ -3603,12 +3767,22 @@ fn render_java_serialize_field_check(output: &mut String, field: &FieldPlan, ind
             ));
         }
     }
-    if body.is_empty() {
+    let requires_non_null = field.required && !field.nullable && !field.is_primitive();
+    if body.is_empty() && !requires_non_null {
         return;
     }
     if field.is_primitive() {
         // A stored primitive is always present; a bare block scopes the locals.
         output.push_str(&format!("{indent}{{\n{body}{indent}}}\n"));
+    } else if requires_non_null {
+        output.push_str(&format!(
+            "{indent}if ({accessor} == null) {{\n{indent}    violations.add(new Violation({json}, \"required\"));\n{indent}}}"
+        ));
+        if !body.is_empty() {
+            output.push_str(&format!(" else {{\n{body}{indent}}}\n"));
+        } else {
+            output.push('\n');
+        }
     } else {
         output.push_str(&format!(
             "{indent}if ({accessor} != null) {{\n{body}{indent}}}\n"
@@ -3682,10 +3856,21 @@ fn render_java_serialize_dependent_required(
         return;
     };
     for (trigger, deps) in dependent_required {
-        let trigger_present = java_field_present_expr(fields, trigger, open);
+        if deps.is_empty() {
+            continue;
+        }
+        let trigger_present = if open {
+            format!("wireKeys.contains({})", java_string_literal(trigger))
+        } else {
+            java_field_present_expr(fields, trigger, false)
+        };
         output.push_str(&format!("{indent}if ({trigger_present}) {{\n"));
         for dep in deps {
-            let dep_present = java_field_present_expr(fields, dep, open);
+            let dep_present = if open {
+                format!("wireKeys.contains({})", java_string_literal(dep))
+            } else {
+                java_field_present_expr(fields, dep, false)
+            };
             let reason = format!(
                 "property {} is required when {} is present",
                 quote_for_message(dep),
@@ -3693,7 +3878,7 @@ fn render_java_serialize_dependent_required(
             );
             output.push_str(&format!(
                 "{indent}    if (!({dep_present})) {{\n{indent}        violations.add(new Violation({}, {}));\n{indent}    }}\n",
-                java_string_literal(dep),
+                java_violation_path_literal(dep),
                 java_string_literal(&reason)
             ));
         }
@@ -3721,13 +3906,15 @@ fn render_java_serialize_property_name_checks(
             "{indent}    int pnLength = pnKey.codePointCount(0, pnKey.length());\n"
         ));
         if let Some(min) = constraints.min_length {
+            let min_literal = java_count_literal(min);
             output.push_str(&format!(
-                "{indent}    if (pnLength < {min}) {{\n{indent}        violations.add(new Violation(pnKey, \"invalid property name \\\"\" + pnKey + \"\\\": must have length >= {min}, got \" + pnLength));\n{indent}    }}\n"
+                "{indent}    if (pnLength < {min_literal}) {{\n{indent}        violations.add(new Violation(Violation.memberPath(pnKey), \"invalid property name \\\"\" + pnKey + \"\\\": must have length >= {min}, got \" + pnLength));\n{indent}    }}\n"
             ));
         }
         if let Some(max) = constraints.max_length {
+            let max_literal = java_count_literal(max);
             output.push_str(&format!(
-                "{indent}    if (pnLength > {max}) {{\n{indent}        violations.add(new Violation(pnKey, \"invalid property name \\\"\" + pnKey + \"\\\": must have length <= {max}, got \" + pnLength));\n{indent}    }}\n"
+                "{indent}    if (pnLength > {max_literal}) {{\n{indent}        violations.add(new Violation(Violation.memberPath(pnKey), \"invalid property name \\\"\" + pnKey + \"\\\": must have length <= {max}, got \" + pnLength));\n{indent}    }}\n"
             ));
         }
     }
@@ -3737,7 +3924,7 @@ fn render_java_serialize_property_name_checks(
     render_java_string_checks(
         output,
         "pnKey",
-        "pnKey",
+        "Violation.memberPath(pnKey)",
         PROPERTY_NAME_POSITION,
         &non_length,
         &format!("{indent}    "),
@@ -3745,7 +3932,7 @@ fn render_java_serialize_property_name_checks(
     render_java_closed_string_checks(
         output,
         "pnKey",
-        "pnKey",
+        "Violation.memberPath(pnKey)",
         subschema,
         &format!("{indent}    "),
     );
@@ -3821,6 +4008,13 @@ fn render_object_serializer(
     output.push_str(&format!(
         "        @Override\n        public void serialize({class} value, JsonGenerator gen, SerializerProvider serializers) throws IOException {{\n"
     ));
+    // Buffer the complete object. Nested validating serializers can fail after
+    // they have started writing; buffering keeps the caller's generator
+    // untouched until every sibling has been checked and the aggregate is
+    // known to be empty (P11/P12).
+    output.push_str("            JsonGenerator target = gen;\n");
+    output.push_str("            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);\n");
+    output.push_str("            gen = pending;\n");
 
     // A member whose value is itself a validating model reports its failures
     // through its own payload-validation failure; those have to be re-pathed under
@@ -3864,7 +4058,7 @@ fn render_object_serializer(
                 "                for (String key : value.additionalProperties.keySet()) {\n",
             );
             output.push_str("                    if (!wireKeys.add(key)) {\n");
-            output.push_str("                        violations.add(new Violation(key, \"declared property key collision\"));\n");
+            output.push_str("                        violations.add(new Violation(Violation.memberPath(key), \"declared property key collision\"));\n");
             output.push_str("                    }\n                }\n            }\n");
             render_java_property_count_checks(output, "wireKeys.size()", schema, "            ");
             if let Some(subschema) = &schema.property_names {
@@ -3882,11 +4076,13 @@ fn render_object_serializer(
                 ));
                 if additional.nullable {
                     output.push_str("                    if (entry.getValue() == null) {\n                        continue;\n                    }\n");
+                } else {
+                    output.push_str("                    if (entry.getValue() == null) {\n                        violations.add(new Violation(Violation.memberPath(entry.getKey()), \"explicit null not allowed\"));\n                        continue;\n                    }\n");
                 }
                 render_java_member_checks(
                     output,
                     "entry.getValue()",
-                    "entry.getKey()",
+                    "Violation.memberPath(entry.getKey())",
                     &additional.schema,
                     &additional.ty,
                     ADDITIONAL_PROPERTIES_POSITION,
@@ -3895,7 +4091,7 @@ fn render_object_serializer(
                 render_java_materialized_wire_checks(
                     output,
                     "entry.getValue()",
-                    "entry.getKey()",
+                    "Violation.memberPath(entry.getKey())",
                     &additional.schema,
                     &additional.ty,
                     ADDITIONAL_PROPERTIES_POSITION,
@@ -3906,7 +4102,7 @@ fn render_object_serializer(
                     && java_union_has_checks(union)
                 {
                     output.push_str(&format!(
-                        "                    {interface}.validate(entry.getValue(), entry.getKey(), violations);\n"
+                        "                    {interface}.validate(entry.getValue(), Violation.memberPath(entry.getKey()), violations);\n"
                     ));
                 }
                 output.push_str("                }\n            }\n");
@@ -3952,6 +4148,7 @@ fn render_object_serializer(
         render_payload_validation_failure(output, "                ");
         output.push_str("            }\n");
     }
+    output.push_str("            pending.serialize(target);\n");
     output.push_str("        }\n    }\n\n");
 }
 
@@ -4006,9 +4203,13 @@ fn render_capturing_value_write(
             output.push_str(&format!("{indent}gen.writeEndArray();\n"));
         }
         _ => {
+            let buffer = format!("nestedBuffer{depth}");
+            output.push_str(&format!(
+                "{indent}com.fasterxml.jackson.databind.util.TokenBuffer {buffer} = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);\n"
+            ));
             output.push_str(&format!("{indent}try {{\n"));
             output.push_str(&format!(
-                "{indent}    serializers.defaultSerializeValue({accessor}, gen);\n"
+                "{indent}    serializers.defaultSerializeValue({accessor}, {buffer});\n{indent}    {buffer}.serialize(gen);\n"
             ));
             output.push_str(&format!(
                 "{indent}}} catch (ApplicationFailure nested{depth}) {{\n"
@@ -4022,10 +4223,11 @@ fn render_capturing_value_write(
             output.push_str(&format!(
                 "{indent}    for (Violation nestedViolation{depth} : nestedViolations{depth}) {{\n{indent}        violations.add(nestedViolation{depth}.withPathPrefix({path_expr}));\n{indent}    }}\n"
             ));
-            // The nested serializer aborted mid-value, so the generator is
-            // expecting one; nothing more can be written. Throw here with the
-            // parent's own violations already merged in (P11).
-            render_payload_validation_failure(output, &format!("{indent}    "));
+            // Keep the buffered parent structurally writable so validation can
+            // continue through every sibling. The parent buffer is discarded
+            // when the final aggregate is thrown, so this placeholder is never
+            // observable on the wire.
+            output.push_str(&format!("{indent}    gen.writeNull();\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
     }
@@ -4033,13 +4235,14 @@ fn render_capturing_value_write(
 
 fn render_field_serialize(output: &mut String, field: &FieldPlan, capture_nested: bool) {
     let json = java_string_literal(&field.json_name);
+    let path = java_violation_path_literal(&field.json_name);
     let accessor = format!("value.{}", field.java_name);
 
     if capture_nested && field_serialize_may_nest(&field.ty) {
         // A nesting member is never a stored primitive.
         output.push_str(&format!("            if ({accessor} != null) {{\n"));
         output.push_str(&format!("                gen.writeFieldName({json});\n"));
-        render_capturing_value_write(output, &field.ty, &json, &accessor, "                ", 0);
+        render_capturing_value_write(output, &field.ty, &path, &accessor, "                ", 0);
         if field.required && field.nullable {
             output.push_str(&format!(
                 "            }} else {{\n                gen.writeNullField({json});\n            }}\n"
@@ -4228,6 +4431,7 @@ fn render_object_deserializer(
         output.push_str("            Iterator<String> fieldNames = node.fieldNames();\n");
         output.push_str("            while (fieldNames.hasNext()) {\n");
         output.push_str("                String key = fieldNames.next();\n");
+        output.push_str("                String path = Violation.memberPath(key);\n");
         output.push_str("                switch (key) {\n");
         for name in &known {
             output.push_str(&format!(
@@ -4245,7 +4449,7 @@ fn render_object_deserializer(
             if additional.nullable {
                 output.push_str("                            additionalProperties.put(key, null);\n                            break;\n");
             } else {
-                output.push_str("                            violations.add(new Violation(key, \"explicit null not allowed\"));\n                            break;\n");
+                output.push_str("                            violations.add(new Violation(path, \"explicit null not allowed\"));\n                            break;\n");
             }
             output.push_str("                        }\n");
             render_parse_map_value(
@@ -4254,6 +4458,7 @@ fn render_object_deserializer(
                 "additionalProperties",
                 "element",
                 "key",
+                "path",
                 Some(&additional.schema),
                 ADDITIONAL_PROPERTIES_POSITION,
                 "                        ",
@@ -4269,6 +4474,7 @@ fn render_object_deserializer(
         output.push_str("            Iterator<String> fieldNames = node.fieldNames();\n");
         output.push_str("            while (fieldNames.hasNext()) {\n");
         output.push_str("                String key = fieldNames.next();\n");
+        output.push_str("                String path = Violation.memberPath(key);\n");
         output.push_str("                switch (key) {\n");
         for name in &known {
             output.push_str(&format!(
@@ -4281,7 +4487,7 @@ fn render_object_deserializer(
         }
         output.push_str("                    default:\n");
         output.push_str(
-            "                        violations.add(new Violation(key, \"unknown field\"));\n",
+            "                        violations.add(new Violation(path, \"unknown field\"));\n",
         );
         output.push_str("                }\n");
         output.push_str("            }\n");
@@ -4313,6 +4519,7 @@ fn render_object_deserializer(
 
 fn render_field_deserialize(output: &mut String, field: &FieldPlan) {
     let json = java_string_literal(&field.json_name);
+    let path = java_violation_path_literal(&field.json_name);
     let name = &field.java_name;
     let indent = "            ";
 
@@ -4337,24 +4544,24 @@ fn render_field_deserialize(output: &mut String, field: &FieldPlan) {
     output.push_str(&format!("{indent}    if (field == null) {{\n"));
     if field.required {
         output.push_str(&format!(
-            "{indent}        violations.add(new Violation({json}, \"required\"));\n"
+            "{indent}        violations.add(new Violation({path}, \"required\"));\n"
         ));
     }
     output.push_str(&format!("{indent}    }} else if (field.isNull()) {{\n"));
     if !field.nullable {
         output.push_str(&format!(
-            "{indent}        violations.add(new Violation({json}, \"explicit null not allowed\"));\n"
+            "{indent}        violations.add(new Violation({path}, \"explicit null not allowed\"));\n"
         ));
     }
     output.push_str(&format!("{indent}    }} else {{\n"));
     if let Some(union) = &field.union {
-        render_union_field_parse(output, union, name, &json, &format!("{indent}        "));
+        render_union_field_parse(output, union, name, &path, &format!("{indent}        "));
     } else {
         render_parse_value(
             output,
             &field.ty,
             name,
-            &json,
+            &path,
             &field.java_name,
             &field.closed_values,
             &field.closed_overrides,
@@ -4631,13 +4838,7 @@ fn element_declaration(ty: &JavaType, nullable: bool) -> String {
     if !nullable {
         return ty.boxed_name();
     }
-    // A `byte[]` takes the array-level annotation (`byte @Nullable []`);
-    // `@Nullable byte[]` would (wrongly) annotate the primitive component type,
-    // as for a field of that type (see `FieldPlan::declared_type`).
-    if matches!(ty, JavaType::Bytes(_)) {
-        return "byte @Nullable []".to_string();
-    }
-    format!("@Nullable {}", ty.boxed_name())
+    ty.nullable_declaration(ty.boxed_name())
 }
 
 fn render_parse_element(
@@ -4914,7 +5115,8 @@ fn render_parse_map_value(
     ty: &JavaType,
     map: &str,
     element: &str,
-    key_var: &str,
+    map_key_var: &str,
+    path_var: &str,
     member: Option<&Schema>,
     position: &str,
     indent: &str,
@@ -4922,7 +5124,7 @@ fn render_parse_map_value(
     // The member's own constraints run over the decoded value, keyed by its key.
     let checks = |output: &mut String, value_expr: &str, indent: &str| {
         if let Some(member) = member {
-            render_java_member_checks(output, value_expr, key_var, member, ty, position, indent);
+            render_java_member_checks(output, value_expr, path_var, member, ty, position, indent);
         }
     };
     // A member with nothing to check needs no local for the decoded value.
@@ -4935,7 +5137,7 @@ fn render_parse_map_value(
         JavaType::String => {
             output.push_str(&format!("{indent}if (!{element}.isTextual()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, \"expected string value\"));\n"
+                "{indent}    violations.add(new Violation({path_var}, \"expected string value\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
             if has_checks {
@@ -4943,42 +5145,42 @@ fn render_parse_map_value(
                     "{indent}    String value = {element}.textValue();\n"
                 ));
                 checks(output, "value", &format!("{indent}    "));
-                output.push_str(&format!("{indent}    {map}.put({key_var}, value);\n"));
+                output.push_str(&format!("{indent}    {map}.put({map_key_var}, value);\n"));
             } else {
                 output.push_str(&format!(
-                    "{indent}    {map}.put({key_var}, {element}.textValue());\n"
+                    "{indent}    {map}.put({map_key_var}, {element}.textValue());\n"
                 ));
             }
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Long => {
             output.push_str(&format!(
-                "{indent}Long parsed = SpecNumbers.specLong({element}, {key_var}, violations);\n"
+                "{indent}Long parsed = SpecNumbers.specLong({element}, {path_var}, violations);\n"
             ));
             output.push_str(&format!("{indent}if (parsed != null) {{\n"));
             checks(output, "parsed", &format!("{indent}    "));
-            output.push_str(&format!("{indent}    {map}.put({key_var}, parsed);\n"));
+            output.push_str(&format!("{indent}    {map}.put({map_key_var}, parsed);\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Double => {
             output.push_str(&format!(
-                "{indent}Double value = SpecNumbers.specDouble({element}, {key_var}, violations);\n"
+                "{indent}Double value = SpecNumbers.specDouble({element}, {path_var}, violations);\n"
             ));
             output.push_str(&format!("{indent}if (value != null) {{\n"));
             if has_checks {
                 checks(output, "value", &format!("{indent}    "));
             }
-            output.push_str(&format!("{indent}    {map}.put({key_var}, value);\n"));
+            output.push_str(&format!("{indent}    {map}.put({map_key_var}, value);\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Boolean => {
             output.push_str(&format!("{indent}if (!{element}.isBoolean()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, \"expected boolean value\"));\n"
+                "{indent}    violations.add(new Violation({path_var}, \"expected boolean value\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
             output.push_str(&format!(
-                "{indent}    {map}.put({key_var}, {element}.booleanValue());\n"
+                "{indent}    {map}.put({map_key_var}, {element}.booleanValue());\n"
             ));
             output.push_str(&format!("{indent}}}\n"));
         }
@@ -4989,16 +5191,18 @@ fn render_parse_map_value(
         } => {
             let parsed = format!("parsed{}", upper_first(map));
             output.push_str(&format!(
-                "{indent}{class} {parsed} = {class}.fromNode({element}, {key_var}, violations, context);\n"
+                "{indent}{class} {parsed} = {class}.fromNode({element}, {path_var}, violations, context);\n"
             ));
             output.push_str(&format!("{indent}if ({parsed} != null) {{\n"));
-            output.push_str(&format!("{indent}    {map}.put({key_var}, {parsed});\n"));
+            output.push_str(&format!(
+                "{indent}    {map}.put({map_key_var}, {parsed});\n"
+            ));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Ref { class, .. } => {
             output.push_str(&format!("{indent}try {{\n"));
             output.push_str(&format!(
-                "{indent}    {map}.put({key_var}, context.readTreeAsValue({element}, {class}.class));\n"
+                "{indent}    {map}.put({map_key_var}, context.readTreeAsValue({element}, {class}.class));\n"
             ));
             output.push_str(&format!(
                 "{indent}}} catch (ApplicationFailure nested) {{\n"
@@ -5013,12 +5217,12 @@ fn render_parse_map_value(
                 "{indent}    for (Violation violation : nestedViolations) {{\n"
             ));
             output.push_str(&format!(
-                "{indent}        violations.add(violation.withPathPrefix({key_var}));\n"
+                "{indent}        violations.add(violation.withPathPrefix({path_var}));\n"
             ));
             output.push_str(&format!("{indent}    }}\n"));
             output.push_str(&format!("{indent}}} catch (IOException nested) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, nested.getMessage()));\n"
+                "{indent}    violations.add(new Violation({path_var}, nested.getMessage()));\n"
             ));
             output.push_str(&format!("{indent}}}\n"));
         }
@@ -5028,7 +5232,7 @@ fn render_parse_map_value(
         JavaType::List(inner) => {
             output.push_str(&format!("{indent}if (!{element}.isArray()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, \"expected array value\"));\n"
+                "{indent}    violations.add(new Violation({path_var}, \"expected array value\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
             output.push_str(&format!(
@@ -5042,7 +5246,7 @@ fn render_parse_map_value(
                 "{indent}        JsonNode item = {element}.get(index);\n"
             ));
             output.push_str(&format!(
-                "{indent}        String itemPath = {key_var} + \"[\" + index + \"]\";\n"
+                "{indent}        String itemPath = {path_var} + \"[\" + index + \"]\";\n"
             ));
             render_parse_element(
                 output,
@@ -5062,7 +5266,7 @@ fn render_parse_map_value(
                     render_java_raw_array_checks(
                         output,
                         element,
-                        key_var,
+                        path_var,
                         inner,
                         &constraints,
                         Some(position),
@@ -5070,12 +5274,12 @@ fn render_parse_map_value(
                     );
                 }
             }
-            output.push_str(&format!("{indent}    {map}.put({key_var}, items);\n"));
+            output.push_str(&format!("{indent}    {map}.put({map_key_var}, items);\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Union { .. } => {
             output.push_str(&format!(
-                "{indent}violations.add(new Violation({key_var}, \"unsupported union value\"));\n"
+                "{indent}violations.add(new Violation({path_var}, \"unsupported union value\"));\n"
             ));
         }
         JavaType::Temporal(kind) => {
@@ -5083,7 +5287,7 @@ fn render_parse_map_value(
             let parsed_type = java_temporal_type(*kind);
             output.push_str(&format!("{indent}if (!{element}.isTextual()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, \"expected string value\"));\n"
+                "{indent}    violations.add(new Violation({path_var}, \"expected string value\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
             if let Some(member) = member {
@@ -5092,7 +5296,7 @@ fn render_parse_map_value(
                     render_java_string_checks(
                         output,
                         &format!("{element}.textValue()"),
-                        key_var,
+                        path_var,
                         position,
                         &constraints,
                         &format!("{indent}    "),
@@ -5100,16 +5304,16 @@ fn render_parse_map_value(
                 }
             }
             output.push_str(&format!(
-                "{indent}    {parsed_type} parsed = TemporalSupport.{parse_fn}({element}.textValue(), {key_var}, violations);\n"
+                "{indent}    {parsed_type} parsed = TemporalSupport.{parse_fn}({element}.textValue(), {path_var}, violations);\n"
             ));
-            output.push_str(&format!("{indent}    if (parsed != null) {{\n{indent}        {map}.put({key_var}, parsed);\n{indent}    }}\n"));
+            output.push_str(&format!("{indent}    if (parsed != null) {{\n{indent}        {map}.put({map_key_var}, parsed);\n{indent}    }}\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         JavaType::Bytes(encoding) => {
             let parse_fn = java_content_encoding_parse_fn(*encoding);
             output.push_str(&format!("{indent}if (!{element}.isTextual()) {{\n"));
             output.push_str(&format!(
-                "{indent}    violations.add(new Violation({key_var}, \"expected string value\"));\n"
+                "{indent}    violations.add(new Violation({path_var}, \"expected string value\"));\n"
             ));
             output.push_str(&format!("{indent}}} else {{\n"));
             if let Some(member) = member {
@@ -5118,7 +5322,7 @@ fn render_parse_map_value(
                     render_java_string_checks(
                         output,
                         &format!("{element}.textValue()"),
-                        key_var,
+                        path_var,
                         position,
                         &constraints,
                         &format!("{indent}    "),
@@ -5126,9 +5330,9 @@ fn render_parse_map_value(
                 }
             }
             output.push_str(&format!(
-                "{indent}    byte[] parsed = Base64Support.{parse_fn}({element}.textValue(), {key_var}, violations);\n"
+                "{indent}    byte[] parsed = Base64Support.{parse_fn}({element}.textValue(), {path_var}, violations);\n"
             ));
-            output.push_str(&format!("{indent}    if (parsed != null) {{\n{indent}        {map}.put({key_var}, parsed);\n{indent}    }}\n"));
+            output.push_str(&format!("{indent}    if (parsed != null) {{\n{indent}        {map}.put({map_key_var}, parsed);\n{indent}    }}\n"));
             output.push_str(&format!("{indent}}}\n"));
         }
         // Typed-map values are never a closed value (const/enum lives at the
@@ -5195,17 +5399,6 @@ fn render_java_member_checks(
         Some("array") => {
             let constraints = ArrayConstraints::from_schema(member);
             if let JavaType::List(element) = ty {
-                if !constraints.is_empty() {
-                    render_java_array_checks(
-                        output,
-                        value_expr,
-                        key_expr,
-                        element,
-                        &constraints,
-                        Some(position),
-                        indent,
-                    );
-                }
                 if let Some(item_schema) = element_shape(member)
                     && schema_has_recursive_value_checks(item_schema)
                 {
@@ -5226,6 +5419,17 @@ fn render_java_member_checks(
                         1,
                     );
                     output.push_str(&format!("{indent}    }}\n{indent}}}\n"));
+                }
+                if !constraints.is_empty() {
+                    render_java_array_checks(
+                        output,
+                        value_expr,
+                        key_expr,
+                        element,
+                        &constraints,
+                        Some(position),
+                        indent,
+                    );
                 }
             }
         }
@@ -5419,6 +5623,11 @@ fn render_typed_map_class(
     output.push_str(&format!(
         "        @Override\n        public void serialize({class} value, JsonGenerator gen, SerializerProvider serializers) throws IOException {{\n"
     ));
+    // Buffer the complete map for the same reason as struct-shaped objects:
+    // a nested validating serializer can fail after it has started writing.
+    output.push_str("            JsonGenerator target = gen;\n");
+    output.push_str("            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);\n");
+    output.push_str("            gen = pending;\n");
 
     // Serialize-side (P12): member-count and key-shape constraints over the
     // in-memory map, plus each member re-checked against `T`, thrown as an
@@ -5429,20 +5638,20 @@ fn render_typed_map_class(
         render_java_member_checks(
             &mut member_checks,
             "entry.getValue()",
-            "entry.getKey()",
+            "Violation.memberPath(entry.getKey())",
             member,
             value,
             MAP_MEMBER_POSITION,
-            "                ",
+            "                    ",
         );
         render_java_materialized_wire_checks(
             &mut member_checks,
             "entry.getValue()",
-            "entry.getKey()",
+            "Violation.memberPath(entry.getKey())",
             member,
             value,
             MAP_MEMBER_POSITION,
-            "                ",
+            "                    ",
         );
         // A union-typed member is re-checked against the branch it holds, through
         // the union's own dispatcher (the parse side runs the same checks inside
@@ -5452,53 +5661,50 @@ fn render_typed_map_class(
             && java_union_has_checks(union)
         {
             member_checks.push_str(&format!(
-                "                {interface}.validate(entry.getValue(), entry.getKey(), violations);\n"
+                "                    {interface}.validate(entry.getValue(), Violation.memberPath(entry.getKey()), violations);\n"
             ));
         }
     }
-    let map_needs_validation = schema.min_properties.is_some()
-        || schema.max_properties.is_some()
-        || schema.property_names.is_some()
-        || !member_checks.is_empty();
     // A model-valued member reports through its own payload-validation failure;
     // re-path and merge it here rather than letting it escape unrooted (P11).
     let captures_nested = field_serialize_may_nest(value);
-    if !map_needs_validation && captures_nested {
-        output.push_str("            List<Violation> violations = new ArrayList<>();\n");
-    }
-    if map_needs_validation {
-        output.push_str("            List<Violation> violations = new ArrayList<>();\n");
-        render_java_property_count_checks(
+    output.push_str("            List<Violation> violations = new ArrayList<>();\n");
+    output.push_str("            if (value.additionalProperties == null) {\n");
+    output.push_str("                violations.add(new Violation(\"\", \"expected object\"));\n");
+    output.push_str("            } else {\n");
+    render_java_property_count_checks(
+        output,
+        "value.additionalProperties.size()",
+        schema,
+        "                ",
+    );
+    if let Some(subschema) = &schema.property_names {
+        render_java_serialize_property_name_checks(
             output,
-            "value.additionalProperties.size()",
-            schema,
-            "            ",
+            "value.additionalProperties.keySet()",
+            subschema,
+            "                ",
         );
-        if let Some(subschema) = &schema.property_names {
-            render_java_serialize_property_name_checks(
-                output,
-                "value.additionalProperties.keySet()",
-                subschema,
-                "            ",
-            );
-        }
-        if !member_checks.is_empty() {
-            output.push_str(&format!(
-                "            for (Map.Entry<String, {value_type}> entry : value.additionalProperties.entrySet()) {{\n"
-            ));
-            if nullable_members {
-                output.push_str("                if (entry.getValue() == null) {\n");
-                output.push_str("                    continue;\n                }\n");
-            }
-            output.push_str(&member_checks);
-            output.push_str("            }\n");
-        }
-        if !captures_nested {
-            output.push_str("            if (!violations.isEmpty()) {\n");
-            render_payload_validation_failure(output, "                ");
-            output.push_str("            }\n");
-        }
     }
+    if member.is_some() {
+        output.push_str(&format!(
+            "                for (Map.Entry<String, {value_type}> entry : value.additionalProperties.entrySet()) {{\n"
+        ));
+        if nullable_members {
+            output.push_str("                    if (entry.getValue() == null) {\n");
+            output.push_str("                        continue;\n                    }\n");
+        } else {
+            output.push_str("                    if (entry.getValue() == null) {\n");
+            output.push_str("                        violations.add(new Violation(Violation.memberPath(entry.getKey()), \"explicit null not allowed\"));\n");
+            output.push_str("                        continue;\n                    }\n");
+        }
+        output.push_str(&member_checks);
+        output.push_str("                }\n");
+    }
+    output.push_str("            }\n");
+    output.push_str("            if (!violations.isEmpty()) {\n");
+    render_payload_validation_failure(output, "                ");
+    output.push_str("            }\n");
 
     output.push_str("            gen.writeStartObject();\n");
     output.push_str(&format!(
@@ -5517,6 +5723,7 @@ fn render_typed_map_class(
         render_payload_validation_failure(output, "                ");
         output.push_str("            }\n");
     }
+    output.push_str("            pending.serialize(target);\n");
     output.push_str("        }\n    }\n\n");
 
     // Deserializer
@@ -5538,6 +5745,7 @@ fn render_typed_map_class(
     output.push_str("            Iterator<String> fieldNames = node.fieldNames();\n");
     output.push_str("            while (fieldNames.hasNext()) {\n");
     output.push_str("                String key = fieldNames.next();\n");
+    output.push_str("                String path = Violation.memberPath(key);\n");
     output.push_str("                JsonNode element = node.get(key);\n");
     output.push_str("                if (element.isNull()) {\n");
     if nullable_members {
@@ -5548,7 +5756,7 @@ fn render_typed_map_class(
         );
     } else {
         output.push_str(
-            "                    violations.add(new Violation(key, \"explicit null not allowed\"));\n                    continue;\n                }\n",
+            "                    violations.add(new Violation(path, \"explicit null not allowed\"));\n                    continue;\n                }\n",
         );
     }
     render_parse_map_value(
@@ -5557,6 +5765,7 @@ fn render_typed_map_class(
         "additionalProperties",
         "element",
         "key",
+        "path",
         member.as_ref(),
         MAP_MEMBER_POSITION,
         "                ",
@@ -5584,7 +5793,7 @@ fn write_map_value(value: &JavaType, capture_nested: bool) -> String {
         render_capturing_value_write(
             &mut output,
             value,
-            "entry.getKey()",
+            "Violation.memberPath(entry.getKey())",
             "entry.getValue()",
             "                ",
             0,
@@ -5789,14 +5998,14 @@ fn default_expr(field: &FieldPlan, value: &Value) -> Option<String> {
         )),
         (JavaType::Temporal(kind), Value::String(text)) => {
             // `java.time`'s `parse` is case-sensitive on the `T`/`Z`/`PT`
-            // designators while the pinned wire grammar accepts either case
-            // (`format.md`), so `OffsetDateTime.parse("2021-06-15t12:30:45z")`
-            // would throw `DateTimeParseException` the first time the default is
-            // read. Uppercase the literal, as Go's `mustParseDateTime` does.
+            // designators while the pinned wire grammar accepts either case.
+            // Date-time also accepts fractions wider than OffsetDateTime's
+            // nanosecond capacity, so its generator-owned literal parser applies
+            // the same normalization and truncation as wire deserialization.
             let literal = java_string_literal(&text.to_ascii_uppercase());
             Some(match kind {
                 crate::json_schema::format::TemporalKind::DateTime => {
-                    format!("OffsetDateTime.parse({literal})")
+                    format!("TemporalSupport.parseDateTimeLiteral({literal})")
                 }
                 crate::json_schema::format::TemporalKind::Date => {
                     format!("LocalDate.parse({literal})")
@@ -6040,9 +6249,12 @@ pub(in crate::generator) fn render_violation_file(package: &str) -> String {
     output.push_str("    public Violation(String path, String reason) {\n        this.path = path;\n        this.reason = reason;\n    }\n\n");
     output.push_str("    public String getPath() {\n        return path;\n    }\n\n");
     output.push_str("    public String getReason() {\n        return reason;\n    }\n\n");
+    output.push_str("    public static String memberPath(String key) {\n");
+    output.push_str("        if (key.matches(\"[A-Za-z_][A-Za-z0-9_]*\")) {\n            return key;\n        }\n");
+    output.push_str("        return \"[\\\"\" + key.replace(\"\\\\\", \"\\\\\\\\\").replace(\"\\\"\", \"\\\\\\\"\") + \"\\\"]\";\n    }\n\n");
     output.push_str("    public Violation withPathPrefix(String prefix) {\n");
     output.push_str("        if (path == null || path.isEmpty()) {\n            return new Violation(prefix, reason);\n        }\n");
-    output.push_str("        return new Violation(prefix + \".\" + path, reason);\n    }\n\n");
+    output.push_str("        return new Violation(path.startsWith(\"[\") ? prefix + path : prefix + \".\" + path, reason);\n    }\n\n");
     output.push_str("    @Override\n    public String toString() {\n");
     output.push_str(
         "        if (path == null || path.isEmpty()) {\n            return reason;\n        }\n",
@@ -6399,9 +6611,7 @@ pub(in crate::generator) fn render_temporal_support_file(package: &str) -> Strin
     output.push_str(&format!("package {package};\n\n"));
     output.push_str("import java.time.Duration;\n");
     output.push_str("import java.time.LocalDate;\n");
-    output.push_str("import java.time.LocalTime;\n");
     output.push_str("import java.time.OffsetDateTime;\n");
-    output.push_str("import java.time.OffsetTime;\n");
     output.push_str("import java.time.ZoneOffset;\n");
     output.push_str("import java.time.format.DateTimeParseException;\n");
     output.push_str("import java.util.List;\n");
@@ -6518,13 +6728,17 @@ const TEMPORAL_SUPPORT_BODY: &str = r####"    private static int daysInMonth(int
         return value.substring(0, dot + 10) + value.substring(end);
     }
 
+    public static OffsetDateTime parseDateTimeLiteral(String value) {
+        return OffsetDateTime.parse(truncateFraction(value).toUpperCase());
+    }
+
     public static @Nullable OffsetDateTime parseDateTime(String value, String path, List<Violation> violations) {
         if (!DATE_TIME.matcher(value).matches() || !validCalendar(value)) {
             violations.add(new Violation(path, "must be a valid date-time, got \"" + value + "\""));
             return null;
         }
         try {
-            return OffsetDateTime.parse(truncateFraction(value).toUpperCase());
+            return parseDateTimeLiteral(value);
         } catch (DateTimeParseException e) {
             violations.add(new Violation(path, "must be a valid date-time, got \"" + value + "\""));
             return null;
@@ -6554,6 +6768,27 @@ const TEMPORAL_SUPPORT_BODY: &str = r####"    private static int daysInMonth(int
         return String.format("%04d-%02d-%02d", value.getYear(), value.getMonthValue(), value.getDayOfMonth());
     }
 
+    private static String canonicalTime(String value) {
+        String upper = value.toUpperCase();
+        int dot = upper.indexOf('.');
+        if (dot >= 0) {
+            int fractionEnd = dot + 1;
+            while (fractionEnd < upper.length() && Character.isDigit(upper.charAt(fractionEnd))) {
+                fractionEnd++;
+            }
+            int trimmedEnd = fractionEnd;
+            while (trimmedEnd > dot + 1 && upper.charAt(trimmedEnd - 1) == '0') {
+                trimmedEnd--;
+            }
+            String fraction = trimmedEnd == dot + 1 ? "" : upper.substring(dot, trimmedEnd);
+            upper = upper.substring(0, dot) + fraction + upper.substring(fractionEnd);
+        }
+        if (upper.endsWith("+00:00") || upper.endsWith("-00:00")) {
+            upper = upper.substring(0, upper.length() - 6) + "Z";
+        }
+        return upper;
+    }
+
     // time -> validated, canonicalized String (no single java.time type holds
     // both an offset-bearing and an offset-less time-of-day).
     public static @Nullable String parseTime(String value, String path, List<Violation> violations) {
@@ -6561,16 +6796,11 @@ const TEMPORAL_SUPPORT_BODY: &str = r####"    private static int daysInMonth(int
             violations.add(new Violation(path, "must be a valid time, got \"" + value + "\""));
             return null;
         }
-        String upper = truncateFraction(value).toUpperCase();
-        try {
-            OffsetTime t = OffsetTime.parse(upper);
-            return String.format("%02d:%02d:%02d", t.getHour(), t.getMinute(), t.getSecond())
-                    + frac(t.getNano()) + offset(t.getOffset().getTotalSeconds());
-        } catch (DateTimeParseException e) {
-            LocalTime t = LocalTime.parse(upper);
-            return String.format("%02d:%02d:%02d", t.getHour(), t.getMinute(), t.getSecond())
-                    + frac(t.getNano());
-        }
+        return canonicalTime(value);
+    }
+
+    public static String formatTime(String value) {
+        return canonicalTime(value);
     }
 
     public static @Nullable Duration parseDuration(String value, String path, List<Violation> violations) {
@@ -6609,9 +6839,13 @@ const TEMPORAL_SUPPORT_BODY: &str = r####"    private static int daysInMonth(int
     // is a string this module's own parser rejects.
 
     private static void checkOffset(String name, Object value, ZoneOffset offset, String path, List<Violation> violations) {
-        if (offset.getTotalSeconds() % 60 != 0) {
+        int offsetSeconds = offset.getTotalSeconds();
+        if (offsetSeconds % 60 != 0) {
             violations.add(new Violation(path, "must be a valid " + name + ", got " + value
                     + ": the UTC offset " + offset + " is not a whole number of minutes"));
+        } else if (offsetSeconds < -18 * 60 * 60 || offsetSeconds > 18 * 60 * 60) {
+            violations.add(new Violation(path, "must be a valid " + name + ", got " + value
+                    + ": the UTC offset is outside -18:00 through +18:00"));
         }
     }
 
@@ -6638,11 +6872,6 @@ const TEMPORAL_SUPPORT_BODY: &str = r####"    private static int daysInMonth(int
         if (!TIME.matcher(value).matches()) {
             violations.add(new Violation(path, "must be a valid time, got \"" + value + "\""));
             return;
-        }
-        try {
-            checkOffset("time", value, OffsetTime.parse(value.toUpperCase()).getOffset(), path, violations);
-        } catch (DateTimeParseException e) {
-            // Offset-less; the grammar allows it and there is no offset to hold.
         }
     }
 

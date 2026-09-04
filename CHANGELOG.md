@@ -9,13 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- .NET System Nexus bindings now generate operation-specific workflow outbound
+  interceptor points when invoked with `--system-nexus --native-api`.
+- JSON Schema file roots and `$defs` entries that consist solely of a `$ref`
+  now generate aliases for the referenced model in Go, TypeScript, and Python;
+  Java resolves every alias use directly to the target class. Aliases work
+  across files and in operation input/output positions without emitting an
+  empty placeholder model.
+
 ### Changed
+
+- JSON and YAML schema loading no longer performs a separate lossless numeric
+  lexeme preflight. Fractional `const`, `default`, or `enum` literals that round
+  to integral binary64 values may therefore be accepted in `integer` positions;
+  the JSON Schema `type` specification documents this load-time limitation.
+- JSON Schema load errors now retain schema-position breadcrumbs and actionable
+  remedies for malformed or unresolved `$ref` pointers, unsupported boolean
+  subschemas, empty member names, and duplicate scalar `oneOf` branches.
+- JSON Schema reference discovery now ignores `$ref`-shaped annotation data,
+  rejects `$defs` outside model positions and references outside the invocation
+  root, and keeps `$comment`, `examples`, and `deprecated` siblings as inert
+  member annotations instead of materializing a new type.
+- JSON Schema object-count satisfiability checks now reject a
+  `minProperties` floor above a finite `propertyNames` key space and a
+  `maxProperties` cap below the union of always-required keys and a
+  `dependentRequired` closure. Generated Java count comparisons also suffix
+  bounds above the 32-bit literal range with `L`.
 
 ### Deprecated
 
 ### Breaking Changes
 
+- Materialized JSON Schema `time` and `date-time` offsets are now limited
+  uniformly to `-18:00` through `+18:00`; at hour 18, only minute 00 is valid.
+  Java `date-time` fields use the idiomatic `OffsetDateTime` type.
+  Deserialization and serialization enforce the same offset domain in every
+  target.
+- JSON Schema TypeScript generation now rejects two default-bearing members
+  that would both export the same stable `DEFAULT_<FIELD>` constant, including
+  declarations in different input files. The generator no longer changes an
+  existing constant to `DEFAULT_<MODEL>_<FIELD>` when another model is added;
+  use `x-ts-name` on one declaring member to disambiguate without changing its
+  JSON wire key.
+
 ### Fixed
+
+- JSON Schema emitted-name planning now covers Go and Java compiled-regex
+  identifiers and Java inline-union nested types. Member overrides move these
+  derived names, and collisions reject before generation. TypeScript, Python,
+  and Java generated-file path conflicts now report both claimants and a
+  working rename remedy; Go reports the same detail when a single-input
+  output's derived package identifier would overwrite `definitions.go`.
+  TypeScript serializer object guards preserve the model's member types during
+  narrowing.
+- JSON Schema descriptions now reject source-breaking control characters,
+  neutralize Go build/tool directives in generated comments, and escape Java
+  backslashes from Unicode-escape preprocessing.
+- Python JSON Schema packages now derive imports of models moved into
+  `_recursive.py` from planned reference edges. Generated imports no longer
+  depend on a type name appearing in rendered source text or documentation.
+- JSON Schema service-file SDK import collisions now consider only services and
+  operation I/O types that actually enter that file. Unrelated models named
+  `Operation` or `Service` remain valid, while using them as Python or Java
+  operation I/O reports a load-time collision.
 
 ### Security
 

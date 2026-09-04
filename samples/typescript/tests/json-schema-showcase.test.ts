@@ -11,6 +11,7 @@ import {
   DEFAULT_RETRIES,
   extrasTransferTypeConverter,
   labelsTransferTypeConverter,
+  itemRulesTransferTypeConverter,
   nicknamesTransferTypeConverter,
   quotasTransferTypeConverter,
   settingsTransferTypeConverter,
@@ -36,6 +37,7 @@ exposeValidationDetails(
   contactTsTransferTypeConverter,
   extrasTransferTypeConverter,
   labelsTransferTypeConverter,
+  itemRulesTransferTypeConverter,
   nicknamesTransferTypeConverter,
   quotasTransferTypeConverter,
   settingsTransferTypeConverter,
@@ -83,7 +85,47 @@ function parseViolations(raw: unknown): { path: string; reason: string }[] {
   throw new Error("expected the payload to be rejected");
 }
 
+function itemRuleViolations(run: () => unknown): { path: string; reason: string }[] {
+  try {
+    run();
+  } catch (error) {
+    if (
+      error instanceof ApplicationFailure &&
+      error.type === "PayloadValidationError" &&
+      Array.isArray(error.details?.[0])
+    ) {
+      return error.details[0] as { path: string; reason: string }[];
+    }
+    throw error;
+  }
+  throw new Error("expected ItemRules to be rejected");
+}
+
 describe("json-schema showcase generated definitions", () => {
+  test("closed items precede array-level violations", () => {
+    const expected = [
+      { path: "values[0]", reason: 'must equal "fixed"' },
+      { path: "values[1]", reason: 'must equal "fixed"' },
+      { path: "values", reason: "must have at least 3 items, got 2" },
+      {
+        path: "values",
+        reason: "duplicate items: element at index 1 equals index 0",
+      },
+    ];
+    expect(
+      itemRuleViolations(() =>
+        itemRulesTransferTypeConverter.fromTransferType({ values: ["bad", "bad"] }),
+      ),
+    ).toEqual(expected);
+    expect(
+      itemRuleViolations(() =>
+        itemRulesTransferTypeConverter.toTransferType({
+          values: ["bad" as "fixed", "bad" as "fixed"],
+        }),
+      ),
+    ).toEqual(expected);
+  });
+
   test("roundtrips canonical wire fixtures through the Temporal converter", () => {
     const minimal = expectRoundTrip(
       "showcase-minimal.json",
@@ -1053,6 +1095,36 @@ describe("json-schema showcase generated definitions", () => {
         revision: 2 as (typeof full)["revision"],
       }),
     ).toThrow(/must equal 1/);
+
+    for (const [replacement, reason] of [
+      [{ count: true }, /count: expected integer/],
+      [{ count: 1.5 }, /count: expected integer/],
+      [{ active: 1 }, /active: expected boolean/],
+      [{ nickname: [] }, /nickname: expected string/],
+      [{ tags: "ab" }, /tags: expected array/],
+      [{ shapes: 7 }, /shapes: expected array/],
+      [{ name: null }, /name: required/],
+    ] as const) {
+      expect(() =>
+        showcaseTransferTypeConverter.toTransferType({
+          ...full,
+          ...replacement,
+        } as unknown as Showcase),
+      ).toThrow(reason);
+    }
+    expect(() => addressTransferTypeConverter.toTransferType(7 as never)).toThrow(
+      /expected object/,
+    );
+    expect(() =>
+      attributesTransferTypeConverter.toTransferType({
+        additionalProperties: { host: [] },
+      } as never),
+    ).toThrow(/host: expected string/);
+    expect(() =>
+      attributesTransferTypeConverter.toTransferType({
+        additionalProperties: null,
+      } as never),
+    ).toThrow(/expected object/);
 
     // allOf-merged bound: an in-memory `size` past the tightened maximum fails.
     const widget = widgetTransferTypeConverter.fromTransferType(

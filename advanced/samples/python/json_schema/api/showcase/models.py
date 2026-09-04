@@ -21,6 +21,7 @@ from ._definitions import (
     _format_base64url,
     _format_date,
     _json_values_equal,
+    _member_path,
     _parse_base64,
     _parse_base64url,
     _parse_date,
@@ -166,22 +167,55 @@ class _AddressTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Address") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Address):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["street"] = value.street
-        if value.city is not None:
-            out["city"] = value.city
-        if value.zip is not None:
-            if abs(value.zip) > 9007199254740991:
-                violations.append(
-                    Violation(path="zip", reason="exceeds ±(2^53-1) integer cap")
+        street_value: typing.Any = runtime_value.street
+        if street_value is None:
+            violations.append(Violation(path="street", reason="required"))
+        else:
+            if not (isinstance(street_value, str)):
+                violations.append(Violation(path="street", reason="expected string"))
+            out["street"] = street_value
+        city_value: typing.Any = runtime_value.city
+        if city_value is not None:
+            if not (isinstance(city_value, str)):
+                violations.append(Violation(path="city", reason="expected string"))
+            out["city"] = city_value
+        zip_value: typing.Any = runtime_value.zip
+        if zip_value is not None:
+            if not (
+                not isinstance(zip_value, bool)
+                and (
+                    isinstance(zip_value, int)
+                    or (isinstance(zip_value, float) and zip_value.is_integer())
                 )
-            out["zip"] = value.zip
-        for key, entry in value.additional_properties.items():
+            ):
+                violations.append(Violation(path="zip", reason="expected integer"))
+            else:
+                if abs(zip_value) > 9007199254740991:
+                    violations.append(
+                        Violation(path="zip", reason="exceeds ±(2^53-1) integer cap")
+                    )
+            out["zip"] = zip_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _ADDRESS_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -223,6 +257,7 @@ class _AddressBookTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, Address] = {}
         for key in raw:
+            path = _member_path(key)
             member: Address = typing.cast("typing.Any", None)
             member_raw = raw[key]
             try:
@@ -230,7 +265,7 @@ class _AddressBookTransferTypeConverter(
                     member_raw, Address
                 )
             except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, key, error)
+                _collect(violations, path, error)
             additional_properties[key] = member
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
@@ -238,13 +273,29 @@ class _AddressBookTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "AddressBook") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, AddressBook):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            try:
-                out[key] = _AddressTransferTypeConverter().to_transfer_type(entry)
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, key, error)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            member_violation_count = len(violations)
+            path = _member_path(key)
+            if len(violations) == member_violation_count:
+                try:
+                    out[key] = _AddressTransferTypeConverter().to_transfer_type(entry)
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, path, error)
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -287,16 +338,17 @@ class _AttributesTransferTypeConverter(
             if len(key) > 8:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=_member_path(key),
                         reason=f"invalid property name {_quote(key)}: must have length <= 8, got {len(key)}",
                     )
                 )
         additional_properties: dict[str, str] = {}
         for key in raw:
+            path = _member_path(key)
             member: str = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not isinstance(member_raw, str):
-                violations.append(Violation(path=key, reason="expected string"))
+                violations.append(Violation(path=path, reason="expected string"))
             else:
                 member = member_raw
             additional_properties[key] = member
@@ -306,9 +358,25 @@ class _AttributesTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Attributes") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Attributes):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
+            if not (isinstance(entry, str)):
+                violations.append(Violation(path=path, reason="expected string"))
             out[key] = entry
         if len(out) < 1:
             violations.append(
@@ -326,7 +394,7 @@ class _AttributesTransferTypeConverter(
             if len(key) > 8:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=_member_path(key),
                         reason=f"invalid property name {_quote(key)}: must have length <= 8, got {len(key)}",
                     )
                 )
@@ -361,12 +429,13 @@ class _BlobIndexTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, bytes] = {}
         for key in raw:
+            path = _member_path(key)
             member: bytes = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not isinstance(member_raw, str):
-                violations.append(Violation(path=key, reason="expected string"))
+                violations.append(Violation(path=path, reason="expected string"))
             else:
-                member_parsed = _parse_base64(member_raw, key, violations)
+                member_parsed = _parse_base64(member_raw, path, violations)
                 if member_parsed is not None:
                     member = member_parsed
             additional_properties[key] = member
@@ -376,9 +445,30 @@ class _BlobIndexTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "BlobIndex") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, BlobIndex):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            out[key] = _format_base64(entry)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            member_violation_count = len(violations)
+            path = _member_path(key)
+            if not (isinstance(entry, bytes)):
+                violations.append(Violation(path=path, reason="expected bytes"))
+            if len(violations) == member_violation_count:
+                out[key] = _format_base64(entry)
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
         return out
 
 
@@ -405,10 +495,11 @@ class _ChoicesTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, ChoicesValue] = {}
         for key in raw:
+            path = _member_path(key)
             member: ChoicesValue = typing.cast("typing.Any", None)
             member_raw = raw[key]
             member_parsed = _choices_value_from_transfer_type(
-                member_raw, key, violations
+                member_raw, path, violations
             )
             if member_parsed is not None:
                 member = member_parsed
@@ -419,13 +510,29 @@ class _ChoicesTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Choices") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Choices):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            try:
-                out[key] = _choices_value_to_transfer_type(entry)
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, key, error)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            member_violation_count = len(violations)
+            path = _member_path(key)
+            if len(violations) == member_violation_count:
+                try:
+                    out[key] = _choices_value_to_transfer_type(entry)
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, path, error)
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -509,23 +616,61 @@ class _CircleTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Circle") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Circle):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if typing.cast("object", value.kind) not in ("circle",):
-            violations.append(Violation(path="kind", reason='must equal "circle"'))
-        out["kind"] = value.kind
-        if not (-1.7976931348623157e308 <= value.radius <= 1.7976931348623157e308):
-            violations.append(
-                Violation(
-                    path="radius", reason=f"must be a finite number, got {value.radius}"
-                )
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            else:
+                if typing.cast("object", kind_value) not in ("circle",):
+                    violations.append(
+                        Violation(path="kind", reason='must equal "circle"')
+                    )
+            out["kind"] = kind_value
+        radius_value: typing.Any = runtime_value.radius
+        if radius_value is None:
+            violations.append(Violation(path="radius", reason="required"))
+        else:
+            radius_violation_count = len(violations)
+            if not (
+                not isinstance(radius_value, bool)
+                and isinstance(radius_value, (int, float))
+            ):
+                violations.append(Violation(path="radius", reason="expected number"))
+            else:
+                if not (
+                    -1.7976931348623157e308 <= radius_value <= 1.7976931348623157e308
+                ):
+                    violations.append(
+                        Violation(
+                            path="radius",
+                            reason=f"must be a finite number, got {radius_value}",
+                        )
+                    )
+            if len(violations) == radius_violation_count:
+                out["radius"] = _binary64(radius_value)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["radius"] = _binary64(value.radius)
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _CIRCLE_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -642,19 +787,46 @@ class _ContactPyTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ContactPy") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ContactPy):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if value.email is not None:
-            out["email"] = value.email
-        if value.shipping_street is not None:
-            out["shippingStreet"] = value.shipping_street
-        if value.shipping_zip is not None:
-            out["shippingZip"] = value.shipping_zip
-        for key, entry in value.additional_properties.items():
+        email_value: typing.Any = runtime_value.email
+        if email_value is not None:
+            if not (isinstance(email_value, str)):
+                violations.append(Violation(path="email", reason="expected string"))
+            out["email"] = email_value
+        shipping_street_value: typing.Any = runtime_value.shipping_street
+        if shipping_street_value is not None:
+            if not (isinstance(shipping_street_value, str)):
+                violations.append(
+                    Violation(path="shippingStreet", reason="expected string")
+                )
+            out["shippingStreet"] = shipping_street_value
+        shipping_zip_value: typing.Any = runtime_value.shipping_zip
+        if shipping_zip_value is not None:
+            if not (isinstance(shipping_zip_value, str)):
+                violations.append(
+                    Violation(path="shippingZip", reason="expected string")
+                )
+            out["shippingZip"] = shipping_zip_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _CONTACT_PY_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -723,12 +895,13 @@ class _DateIndexTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, datetime.date] = {}
         for key in raw:
+            path = _member_path(key)
             member: datetime.date = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not isinstance(member_raw, str):
-                violations.append(Violation(path=key, reason="expected string"))
+                violations.append(Violation(path=path, reason="expected string"))
             else:
-                member_parsed = _parse_date(member_raw, key, violations)
+                member_parsed = _parse_date(member_raw, path, violations)
                 if member_parsed is not None:
                     member = member_parsed
             additional_properties[key] = member
@@ -738,10 +911,31 @@ class _DateIndexTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "DateIndex") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, DateIndex):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            out[key] = _format_date(entry)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            member_violation_count = len(violations)
+            path = _member_path(key)
+            if not (
+                isinstance(entry, datetime.date)
+                and not isinstance(entry, datetime.datetime)
+            ):
+                violations.append(Violation(path=path, reason="expected date"))
+            if len(violations) == member_violation_count:
+                out[key] = _format_date(entry)
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -785,9 +979,22 @@ class _ExtrasTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Extras") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Extras):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
             out[key] = entry
         if len(out) > 4:
             violations.append(
@@ -813,6 +1020,135 @@ class Extras:
     )
 
 
+class _ItemRulesTransferTypeConverter(
+    temporalio.converter.TransferTypeConverter["ItemRules", typing.Any]
+):
+    @typing_extensions.override
+    def from_transfer_type(
+        self, value: typing.Any, type_hint: type["ItemRules"]
+    ) -> "ItemRules":
+        violations: list[Violation] = []
+        if not isinstance(value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        raw = typing.cast("dict[str, typing.Any]", value)
+
+        values_value: list[typing.Literal["fixed"]] = typing.cast("typing.Any", None)
+        if "values" not in raw or raw["values"] is None:
+            violations.append(Violation(path="values", reason="required"))
+        else:
+            values_value_raw = raw["values"]
+            if not isinstance(values_value_raw, list):
+                violations.append(Violation(path="values", reason="expected array"))
+            else:
+                values_value_list: list[typing.Literal["fixed"]] = []
+                for values_value_index, values_value_element in enumerate(
+                    typing.cast("list[typing.Any]", values_value_raw)
+                ):
+                    values_value_item_path = f"values[{values_value_index}]"
+                    values_value_item_violation_count = len(violations)
+                    values_value_item: typing.Literal["fixed"] = typing.cast(
+                        "typing.Any", None
+                    )
+                    if not isinstance(values_value_element, str):
+                        violations.append(
+                            Violation(
+                                path=values_value_item_path, reason="expected string"
+                            )
+                        )
+                    elif values_value_element not in ("fixed",):
+                        violations.append(
+                            Violation(
+                                path=values_value_item_path, reason='must equal "fixed"'
+                            )
+                        )
+                    else:
+                        values_value_item = values_value_element
+                    if len(violations) == values_value_item_violation_count:
+                        values_value_list.append(values_value_item)
+                if len(typing.cast("list[typing.Any]", values_value_raw)) < 3:
+                    violations.append(
+                        Violation(
+                            path="values",
+                            reason=f"must have at least 3 items, got {len(typing.cast('list[typing.Any]', values_value_raw))}",
+                        )
+                    )
+                _check_unique_items(
+                    typing.cast("list[typing.Any]", values_value_raw),
+                    "values",
+                    violations,
+                )
+                values_value = values_value_list
+
+        for key in raw:
+            if key != "values":
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
+        return ItemRules(
+            values=values_value,
+        )
+
+    @typing_extensions.override
+    def to_transfer_type(self, value: "ItemRules") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ItemRules):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        violations: list[Violation] = []
+        out: dict[str, typing.Any] = {}
+        values_value: typing.Any = runtime_value.values
+        if values_value is None:
+            violations.append(Violation(path="values", reason="required"))
+        else:
+            if not (isinstance(values_value, list)):
+                violations.append(Violation(path="values", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", values_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"values[{item_index_8}]", reason="expected string"
+                            )
+                        )
+                    else:
+                        if typing.cast("object", item_element_8) not in ("fixed",):
+                            violations.append(
+                                Violation(
+                                    path=f"values[{item_index_8}]",
+                                    reason='must equal "fixed"',
+                                )
+                            )
+                if len(checked_array_8) < 3:
+                    violations.append(
+                        Violation(
+                            path="values",
+                            reason=f"must have at least 3 items, got {len(checked_array_8)}",
+                        )
+                    )
+                _check_unique_items(checked_array_8, "values", violations)
+            values_checked = typing.cast("list[typing.Any]", values_value)
+            out["values"] = values_checked
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
+        return out
+
+
+@_transfer_type_convertible(_ItemRulesTransferTypeConverter)
+@dataclasses.dataclass(slots=True, kw_only=True)
+class ItemRules:
+    """Closed array elements are enforced before the array-level predicates, so indexed
+    violations precede minItems and uniqueItems deterministically.
+    """
+
+    values: list[typing.Literal["fixed"]]
+
+
 class _LabelsTransferTypeConverter(
     temporalio.converter.TransferTypeConverter["Labels", typing.Any]
 ):
@@ -834,10 +1170,11 @@ class _LabelsTransferTypeConverter(
             )
         additional_properties: dict[str, str] = {}
         for key in raw:
+            path = _member_path(key)
             member: str = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not isinstance(member_raw, str):
-                violations.append(Violation(path=key, reason="expected string"))
+                violations.append(Violation(path=path, reason="expected string"))
             else:
                 member = member_raw
             additional_properties[key] = member
@@ -847,9 +1184,25 @@ class _LabelsTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Labels") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Labels):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
+            if not (isinstance(entry, str)):
+                violations.append(Violation(path=path, reason="expected string"))
             out[key] = entry
         if len(out) > 50:
             violations.append(
@@ -927,23 +1280,54 @@ class _LinkNoteTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "LinkNote") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, LinkNote):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if typing.cast("object", value.kind) not in ("link",):
-            violations.append(Violation(path="kind", reason='must equal "link"'))
-        out["kind"] = value.kind
-        if len(value.href) < 1:
-            violations.append(
-                Violation(
-                    path="href", reason=f"must have length >= 1, got {len(value.href)}"
-                )
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            else:
+                if typing.cast("object", kind_value) not in ("link",):
+                    violations.append(
+                        Violation(path="kind", reason='must equal "link"')
+                    )
+            out["kind"] = kind_value
+        href_value: typing.Any = runtime_value.href
+        if href_value is None:
+            violations.append(Violation(path="href", reason="required"))
+        else:
+            if not (isinstance(href_value, str)):
+                violations.append(Violation(path="href", reason="expected string"))
+            else:
+                if len(href_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="href",
+                            reason=f"must have length >= 1, got {len(href_value)}",
+                        )
+                    )
+            out["href"] = href_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["href"] = value.href
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _LINK_NOTE_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -983,13 +1367,14 @@ class _MetricsTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, float] = {}
         for key in raw:
+            path = _member_path(key)
             member: float = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not (
                 not isinstance(member_raw, bool)
                 and isinstance(member_raw, (int, float))
             ):
-                violations.append(Violation(path=key, reason="expected number"))
+                violations.append(Violation(path=path, reason="expected number"))
             else:
                 member = _binary64(member_raw)
                 if not (
@@ -997,7 +1382,7 @@ class _MetricsTransferTypeConverter(
                 ):
                     violations.append(
                         Violation(
-                            path=key,
+                            path=path,
                             reason=f"must be a finite number, got {member_raw}",
                         )
                     )
@@ -1008,14 +1393,35 @@ class _MetricsTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Metrics") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Metrics):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            if not (-1.7976931348623157e308 <= entry <= 1.7976931348623157e308):
-                violations.append(
-                    Violation(path=key, reason=f"must be a finite number, got {entry}")
-                )
-            out[key] = _binary64(entry)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            member_violation_count = len(violations)
+            path = _member_path(key)
+            if not (not isinstance(entry, bool) and isinstance(entry, (int, float))):
+                violations.append(Violation(path=path, reason="expected number"))
+            else:
+                if not (-1.7976931348623157e308 <= entry <= 1.7976931348623157e308):
+                    violations.append(
+                        Violation(
+                            path=path, reason=f"must be a finite number, got {entry}"
+                        )
+                    )
+            if len(violations) == member_violation_count:
+                out[key] = _binary64(entry)
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -1044,19 +1450,20 @@ class _NicknamesTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, str | None] = {}
         for key in raw:
+            path = _member_path(key)
             member: str | None = None
             member_raw = raw[key]
             if member_raw is None:
                 member = None
             else:
                 if not isinstance(member_raw, str):
-                    violations.append(Violation(path=key, reason="expected string"))
+                    violations.append(Violation(path=path, reason="expected string"))
                 else:
                     member = member_raw
                     if len(member_raw) < 2:
                         violations.append(
                             Violation(
-                                path=key,
+                                path=path,
                                 reason=f"must have length >= 2, got {len(member_raw)}",
                             )
                         )
@@ -1067,17 +1474,38 @@ class _NicknamesTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Nicknames") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Nicknames):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if entry is not None:
-                if len(entry) < 2:
-                    violations.append(
-                        Violation(
-                            path=key, reason=f"must have length >= 2, got {len(entry)}"
+                if not (isinstance(entry, str)):
+                    violations.append(Violation(path=path, reason="expected string"))
+                else:
+                    if len(entry) < 2:
+                        violations.append(
+                            Violation(
+                                path=path,
+                                reason=f"must have length >= 2, got {len(entry)}",
+                            )
                         )
-                    )
-            out[key] = entry
+            if entry is None:
+                out[key] = None
+            else:
+                out[key] = entry
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -1111,23 +1539,24 @@ class _QuotasTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, int] = {}
         for key in raw:
+            path = _member_path(key)
             member: int = typing.cast("typing.Any", None)
             member_raw = raw[key]
-            member_parsed = _parse_spec_integer(member_raw, key, violations)
+            member_parsed = _parse_spec_integer(member_raw, path, violations)
             if member_parsed is not None:
                 member = member_parsed
                 if member < 0:
                     violations.append(
-                        Violation(path=key, reason=f"must be >= 0, got {member}")
+                        Violation(path=path, reason=f"must be >= 0, got {member}")
                     )
                 if member > 100:
                     violations.append(
-                        Violation(path=key, reason=f"must be <= 100, got {member}")
+                        Violation(path=path, reason=f"must be <= 100, got {member}")
                     )
                 if member % 5 != 0:
                     violations.append(
                         Violation(
-                            path=key, reason=f"must be a multiple of 5, got {member}"
+                            path=path, reason=f"must be a multiple of 5, got {member}"
                         )
                     )
             additional_properties[key] = member
@@ -1137,25 +1566,50 @@ class _QuotasTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Quotas") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Quotas):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            if abs(entry) > 9007199254740991:
-                violations.append(
-                    Violation(path=key, reason="exceeds ±(2^53-1) integer cap")
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
+            if not (
+                not isinstance(entry, bool)
+                and (
+                    isinstance(entry, int)
+                    or (isinstance(entry, float) and entry.is_integer())
                 )
-            if entry < 0:
-                violations.append(
-                    Violation(path=key, reason=f"must be >= 0, got {entry}")
-                )
-            if entry > 100:
-                violations.append(
-                    Violation(path=key, reason=f"must be <= 100, got {entry}")
-                )
-            if entry % 5 != 0:
-                violations.append(
-                    Violation(path=key, reason=f"must be a multiple of 5, got {entry}")
-                )
+            ):
+                violations.append(Violation(path=path, reason="expected integer"))
+            else:
+                if abs(entry) > 9007199254740991:
+                    violations.append(
+                        Violation(path=path, reason="exceeds ±(2^53-1) integer cap")
+                    )
+                if entry < 0:
+                    violations.append(
+                        Violation(path=path, reason=f"must be >= 0, got {entry}")
+                    )
+                if entry > 100:
+                    violations.append(
+                        Violation(path=path, reason=f"must be <= 100, got {entry}")
+                    )
+                if entry % 5 != 0:
+                    violations.append(
+                        Violation(
+                            path=path, reason=f"must be a multiple of 5, got {entry}"
+                        )
+                    )
             out[key] = entry
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
@@ -1217,7 +1671,9 @@ class _SettingsTransferTypeConverter(
 
         for key in raw:
             if key != "theme" and key != "fontSize":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return Settings(
@@ -1227,16 +1683,39 @@ class _SettingsTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Settings") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Settings):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if value.theme is not None:
-            out["theme"] = value.theme
-        if value.font_size is not None:
-            if abs(value.font_size) > 9007199254740991:
-                violations.append(
-                    Violation(path="fontSize", reason="exceeds ±(2^53-1) integer cap")
+        theme_value: typing.Any = runtime_value.theme
+        if theme_value is not None:
+            if not (isinstance(theme_value, str)):
+                violations.append(Violation(path="theme", reason="expected string"))
+            out["theme"] = theme_value
+        font_size_value: typing.Any = runtime_value.font_size
+        if font_size_value is not None:
+            if not (
+                not isinstance(font_size_value, bool)
+                and (
+                    isinstance(font_size_value, int)
+                    or (
+                        isinstance(font_size_value, float)
+                        and font_size_value.is_integer()
+                    )
                 )
-            out["fontSize"] = value.font_size
+            ):
+                violations.append(Violation(path="fontSize", reason="expected integer"))
+            else:
+                if abs(font_size_value) > 9007199254740991:
+                    violations.append(
+                        Violation(
+                            path="fontSize", reason="exceeds ±(2^53-1) integer cap"
+                        )
+                    )
+            out["fontSize"] = font_size_value
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -3261,7 +3740,9 @@ class _ShowcaseTransferTypeConverter(
                 and key != "wildcard"
                 and key != "quoted"
             ):
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return Showcase(
@@ -3351,822 +3832,1466 @@ class _ShowcaseTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Showcase") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Showcase):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if typing.cast("object", value.kind) not in ("showcase",):
-            violations.append(Violation(path="kind", reason='must equal "showcase"'))
-        out["kind"] = value.kind
-        if typing.cast("object", value.revision) not in (1,):
-            violations.append(Violation(path="revision", reason="must equal 1"))
-        out["revision"] = value.revision
-        if typing.cast("object", value.enabled) not in (True,):
-            violations.append(Violation(path="enabled", reason="must equal true"))
-        out["enabled"] = value.enabled
-        if typing.cast("object", value.status) not in ("active", "inactive", "pending"):
-            violations.append(
-                Violation(
-                    path="status",
-                    reason=f'must be one of ["active", "inactive", "pending"], got {_quote(value.status)}',
-                )
-            )
-        out["status"] = value.status
-        if typing.cast("object", value.tier) not in (1, 2, 3):
-            violations.append(
-                Violation(
-                    path="tier",
-                    reason=f"must be one of [1, 2, 3], got {_quote(value.tier)}",
-                )
-            )
-        out["tier"] = value.tier
-        if typing.cast("object", value.scale) not in (1.5, 2.5):
-            violations.append(
-                Violation(
-                    path="scale",
-                    reason=f"must be one of [1.5, 2.5], got {_quote(value.scale)}",
-                )
-            )
-        out["scale"] = _binary64(value.scale)
-        if len(value.name) < 1:
-            violations.append(
-                Violation(
-                    path="name", reason=f"must have length >= 1, got {len(value.name)}"
-                )
-            )
-        if len(value.name) > 64:
-            violations.append(
-                Violation(
-                    path="name", reason=f"must have length <= 64, got {len(value.name)}"
-                )
-            )
-        out["name"] = value.name
-        if abs(value.count) > 9007199254740991:
-            violations.append(
-                Violation(path="count", reason="exceeds ±(2^53-1) integer cap")
-            )
-        out["count"] = value.count
-        out["active"] = value.active
-        if value.nickname is not None:
-            if len(value.nickname) > 12:
-                violations.append(
-                    Violation(
-                        path="nickname",
-                        reason=f"must have length <= 12, got {len(value.nickname)}",
-                    )
-                )
-            out["nickname"] = value.nickname
-        if value.code is not None:
-            if len(value.code) < 2:
-                violations.append(
-                    Violation(
-                        path="code",
-                        reason=f"must have length >= 2, got {len(value.code)}",
-                    )
-                )
-            if len(value.code) > 5:
-                violations.append(
-                    Violation(
-                        path="code",
-                        reason=f"must have length <= 5, got {len(value.code)}",
-                    )
-                )
-            out["code"] = value.code
-        if value.sku is not None:
-            if _PATTERN_CD24623C0C29CA35.search(value.sku) is None:
-                violations.append(
-                    Violation(
-                        path="sku",
-                        reason=f"must match pattern {_PATTERN_CD24623C0C29CA35.pattern}, got {_quote(value.sku)}",
-                    )
-                )
-            out["sku"] = value.sku
-        if value.phrase is not None:
-            if _PATTERN_B4BA2CA20EB1B963.search(value.phrase) is None:
-                violations.append(
-                    Violation(
-                        path="phrase",
-                        reason=f"must match pattern {_PATTERN_B4BA2CA20EB1B963.pattern}, got {_quote(value.phrase)}",
-                    )
-                )
-            out["phrase"] = value.phrase
-        if value.request_id is not None:
-            if _PATTERN_EAAFA3F3BF5456C8.search(value.request_id) is None:
-                violations.append(
-                    Violation(
-                        path="requestId",
-                        reason=f"must be a valid uuid, got {_quote(value.request_id)}",
-                    )
-                )
-            out["requestId"] = value.request_id
-        if value.contact_email is not None:
-            if (
-                len(value.contact_email) > 254
-                or _PATTERN_67B8088E6C41E9D2.search(value.contact_email) is None
-            ):
-                violations.append(
-                    Violation(
-                        path="contactEmail",
-                        reason=f"must be a valid email, got {_quote(value.contact_email)}",
-                    )
-                )
-            out["contactEmail"] = value.contact_email
-        if value.host is not None:
-            if (
-                len(value.host) > 253
-                or _PATTERN_C3551EE088DD1057.search(value.host) is None
-            ):
-                violations.append(
-                    Violation(
-                        path="host",
-                        reason=f"must be a valid hostname, got {_quote(value.host)}",
-                    )
-                )
-            out["host"] = value.host
-        if value.homepage is not None:
-            if _PATTERN_BECE32B4DA20247D.search(value.homepage) is None:
-                violations.append(
-                    Violation(
-                        path="homepage",
-                        reason=f"must be a valid uri, got {_quote(value.homepage)}",
-                    )
-                )
-            out["homepage"] = value.homepage
-        if value.gateway is not None:
-            if _PATTERN_4A45C0D214B9083D.search(value.gateway) is None:
-                violations.append(
-                    Violation(
-                        path="gateway",
-                        reason=f"must be a valid ipv4, got {_quote(value.gateway)}",
-                    )
-                )
-            out["gateway"] = value.gateway
-        if value.blob is not None:
-            out["blob"] = _format_base64(value.blob)
-        if value.url_blob is not None:
-            out["urlBlob"] = _format_base64url(value.url_blob)
-        if value._retries is not None:
-            if abs(value.retries) > 9007199254740991:
-                violations.append(
-                    Violation(path="retries", reason="exceeds ±(2^53-1) integer cap")
-                )
-            out["retries"] = value._retries
-        if value.verbose is not None:
-            out["verbose"] = value.verbose
-        if value._greeting is not None:
-            out["greeting"] = value._greeting
-        if value._debug is not None:
-            out["debug"] = value._debug
-        if value.legacy_id_py is not None:
-            out["legacyId"] = value.legacy_id_py
-        if value.middle_name is not None:
-            out["middleName"] = value.middle_name
-        out["category"] = value.category
-        if value.priority is not None:
-            if abs(value.priority) > 9007199254740991:
-                violations.append(
-                    Violation(path="priority", reason="exceeds ±(2^53-1) integer cap")
-                )
-            if value.priority < 1:
-                violations.append(
-                    Violation(
-                        path="priority", reason=f"must be >= 1, got {value.priority}"
-                    )
-                )
-            if value.priority > 10:
-                violations.append(
-                    Violation(
-                        path="priority", reason=f"must be <= 10, got {value.priority}"
-                    )
-                )
-            out["priority"] = value.priority
-        if value.level is not None:
-            if abs(value.level) > 9007199254740991:
-                violations.append(
-                    Violation(path="level", reason="exceeds ±(2^53-1) integer cap")
-                )
-            if value.level <= 0:
-                violations.append(
-                    Violation(path="level", reason=f"must be > 0, got {value.level}")
-                )
-            out["level"] = value.level
-        if value.ratio is not None:
-            if not (-1.7976931348623157e308 <= value.ratio <= 1.7976931348623157e308):
-                violations.append(
-                    Violation(
-                        path="ratio",
-                        reason=f"must be a finite number, got {value.ratio}",
-                    )
-                )
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
             else:
-                if float(value.ratio) < 5.0:
+                if typing.cast("object", kind_value) not in ("showcase",):
+                    violations.append(
+                        Violation(path="kind", reason='must equal "showcase"')
+                    )
+            out["kind"] = kind_value
+        revision_value: typing.Any = runtime_value.revision
+        if revision_value is None:
+            violations.append(Violation(path="revision", reason="required"))
+        else:
+            if not (
+                not isinstance(revision_value, bool)
+                and (
+                    isinstance(revision_value, int)
+                    or (
+                        isinstance(revision_value, float)
+                        and revision_value.is_integer()
+                    )
+                )
+            ):
+                violations.append(Violation(path="revision", reason="expected integer"))
+            else:
+                if typing.cast("object", revision_value) not in (1,):
+                    violations.append(Violation(path="revision", reason="must equal 1"))
+            out["revision"] = revision_value
+        enabled_value: typing.Any = runtime_value.enabled
+        if enabled_value is None:
+            violations.append(Violation(path="enabled", reason="required"))
+        else:
+            if not (isinstance(enabled_value, bool)):
+                violations.append(Violation(path="enabled", reason="expected boolean"))
+            else:
+                if typing.cast("object", enabled_value) not in (True,):
+                    violations.append(
+                        Violation(path="enabled", reason="must equal true")
+                    )
+            out["enabled"] = enabled_value
+        status_value: typing.Any = runtime_value.status
+        if status_value is None:
+            violations.append(Violation(path="status", reason="required"))
+        else:
+            if not (isinstance(status_value, str)):
+                violations.append(Violation(path="status", reason="expected string"))
+            else:
+                if typing.cast("object", status_value) not in (
+                    "active",
+                    "inactive",
+                    "pending",
+                ):
                     violations.append(
                         Violation(
-                            path="ratio", reason=f"must be >= 5, got {value.ratio}"
+                            path="status",
+                            reason=f'must be one of ["active", "inactive", "pending"], got {_quote(status_value)}',
                         )
                     )
-                if math.fmod(float(value.ratio), 5.0) != 0:
+            out["status"] = status_value
+        tier_value: typing.Any = runtime_value.tier
+        if tier_value is None:
+            violations.append(Violation(path="tier", reason="required"))
+        else:
+            if not (
+                not isinstance(tier_value, bool)
+                and (
+                    isinstance(tier_value, int)
+                    or (isinstance(tier_value, float) and tier_value.is_integer())
+                )
+            ):
+                violations.append(Violation(path="tier", reason="expected integer"))
+            else:
+                if typing.cast("object", tier_value) not in (1, 2, 3):
+                    violations.append(
+                        Violation(
+                            path="tier",
+                            reason=f"must be one of [1, 2, 3], got {_quote(tier_value)}",
+                        )
+                    )
+            out["tier"] = tier_value
+        scale_value: typing.Any = runtime_value.scale
+        if scale_value is None:
+            violations.append(Violation(path="scale", reason="required"))
+        else:
+            scale_violation_count = len(violations)
+            if not (
+                not isinstance(scale_value, bool)
+                and isinstance(scale_value, (int, float))
+            ):
+                violations.append(Violation(path="scale", reason="expected number"))
+            else:
+                if typing.cast("object", scale_value) not in (1.5, 2.5):
+                    violations.append(
+                        Violation(
+                            path="scale",
+                            reason=f"must be one of [1.5, 2.5], got {_quote(scale_value)}",
+                        )
+                    )
+            if len(violations) == scale_violation_count:
+                out["scale"] = _binary64(scale_value)
+        name_value: typing.Any = runtime_value.name
+        if name_value is None:
+            violations.append(Violation(path="name", reason="required"))
+        else:
+            if not (isinstance(name_value, str)):
+                violations.append(Violation(path="name", reason="expected string"))
+            else:
+                if len(name_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="name",
+                            reason=f"must have length >= 1, got {len(name_value)}",
+                        )
+                    )
+                if len(name_value) > 64:
+                    violations.append(
+                        Violation(
+                            path="name",
+                            reason=f"must have length <= 64, got {len(name_value)}",
+                        )
+                    )
+            out["name"] = name_value
+        count_value: typing.Any = runtime_value.count
+        if count_value is None:
+            violations.append(Violation(path="count", reason="required"))
+        else:
+            if not (
+                not isinstance(count_value, bool)
+                and (
+                    isinstance(count_value, int)
+                    or (isinstance(count_value, float) and count_value.is_integer())
+                )
+            ):
+                violations.append(Violation(path="count", reason="expected integer"))
+            else:
+                if abs(count_value) > 9007199254740991:
+                    violations.append(
+                        Violation(path="count", reason="exceeds ±(2^53-1) integer cap")
+                    )
+            out["count"] = count_value
+        active_value: typing.Any = runtime_value.active
+        if active_value is None:
+            violations.append(Violation(path="active", reason="required"))
+        else:
+            if not (isinstance(active_value, bool)):
+                violations.append(Violation(path="active", reason="expected boolean"))
+            out["active"] = active_value
+        nickname_value: typing.Any = runtime_value.nickname
+        if nickname_value is not None:
+            if not (isinstance(nickname_value, str)):
+                violations.append(Violation(path="nickname", reason="expected string"))
+            else:
+                if len(nickname_value) > 12:
+                    violations.append(
+                        Violation(
+                            path="nickname",
+                            reason=f"must have length <= 12, got {len(nickname_value)}",
+                        )
+                    )
+            out["nickname"] = nickname_value
+        code_value: typing.Any = runtime_value.code
+        if code_value is not None:
+            if not (isinstance(code_value, str)):
+                violations.append(Violation(path="code", reason="expected string"))
+            else:
+                if len(code_value) < 2:
+                    violations.append(
+                        Violation(
+                            path="code",
+                            reason=f"must have length >= 2, got {len(code_value)}",
+                        )
+                    )
+                if len(code_value) > 5:
+                    violations.append(
+                        Violation(
+                            path="code",
+                            reason=f"must have length <= 5, got {len(code_value)}",
+                        )
+                    )
+            out["code"] = code_value
+        sku_value: typing.Any = runtime_value.sku
+        if sku_value is not None:
+            if not (isinstance(sku_value, str)):
+                violations.append(Violation(path="sku", reason="expected string"))
+            else:
+                if _PATTERN_CD24623C0C29CA35.search(sku_value) is None:
+                    violations.append(
+                        Violation(
+                            path="sku",
+                            reason=f"must match pattern {_PATTERN_CD24623C0C29CA35.pattern}, got {_quote(sku_value)}",
+                        )
+                    )
+            out["sku"] = sku_value
+        phrase_value: typing.Any = runtime_value.phrase
+        if phrase_value is not None:
+            if not (isinstance(phrase_value, str)):
+                violations.append(Violation(path="phrase", reason="expected string"))
+            else:
+                if _PATTERN_B4BA2CA20EB1B963.search(phrase_value) is None:
+                    violations.append(
+                        Violation(
+                            path="phrase",
+                            reason=f"must match pattern {_PATTERN_B4BA2CA20EB1B963.pattern}, got {_quote(phrase_value)}",
+                        )
+                    )
+            out["phrase"] = phrase_value
+        request_id_value: typing.Any = runtime_value.request_id
+        if request_id_value is not None:
+            if not (isinstance(request_id_value, str)):
+                violations.append(Violation(path="requestId", reason="expected string"))
+            else:
+                if _PATTERN_EAAFA3F3BF5456C8.search(request_id_value) is None:
+                    violations.append(
+                        Violation(
+                            path="requestId",
+                            reason=f"must be a valid uuid, got {_quote(request_id_value)}",
+                        )
+                    )
+            out["requestId"] = request_id_value
+        contact_email_value: typing.Any = runtime_value.contact_email
+        if contact_email_value is not None:
+            if not (isinstance(contact_email_value, str)):
+                violations.append(
+                    Violation(path="contactEmail", reason="expected string")
+                )
+            else:
+                if (
+                    len(contact_email_value) > 254
+                    or _PATTERN_67B8088E6C41E9D2.search(contact_email_value) is None
+                ):
+                    violations.append(
+                        Violation(
+                            path="contactEmail",
+                            reason=f"must be a valid email, got {_quote(contact_email_value)}",
+                        )
+                    )
+            out["contactEmail"] = contact_email_value
+        host_value: typing.Any = runtime_value.host
+        if host_value is not None:
+            if not (isinstance(host_value, str)):
+                violations.append(Violation(path="host", reason="expected string"))
+            else:
+                if (
+                    len(host_value) > 253
+                    or _PATTERN_C3551EE088DD1057.search(host_value) is None
+                ):
+                    violations.append(
+                        Violation(
+                            path="host",
+                            reason=f"must be a valid hostname, got {_quote(host_value)}",
+                        )
+                    )
+            out["host"] = host_value
+        homepage_value: typing.Any = runtime_value.homepage
+        if homepage_value is not None:
+            if not (isinstance(homepage_value, str)):
+                violations.append(Violation(path="homepage", reason="expected string"))
+            else:
+                if _PATTERN_BECE32B4DA20247D.search(homepage_value) is None:
+                    violations.append(
+                        Violation(
+                            path="homepage",
+                            reason=f"must be a valid uri, got {_quote(homepage_value)}",
+                        )
+                    )
+            out["homepage"] = homepage_value
+        gateway_value: typing.Any = runtime_value.gateway
+        if gateway_value is not None:
+            if not (isinstance(gateway_value, str)):
+                violations.append(Violation(path="gateway", reason="expected string"))
+            else:
+                if _PATTERN_4A45C0D214B9083D.search(gateway_value) is None:
+                    violations.append(
+                        Violation(
+                            path="gateway",
+                            reason=f"must be a valid ipv4, got {_quote(gateway_value)}",
+                        )
+                    )
+            out["gateway"] = gateway_value
+        blob_value: typing.Any = runtime_value.blob
+        if blob_value is not None:
+            blob_violation_count = len(violations)
+            if not (isinstance(blob_value, bytes)):
+                violations.append(Violation(path="blob", reason="expected bytes"))
+            if len(violations) == blob_violation_count:
+                out["blob"] = _format_base64(blob_value)
+        url_blob_value: typing.Any = runtime_value.url_blob
+        if url_blob_value is not None:
+            url_blob_violation_count = len(violations)
+            if not (isinstance(url_blob_value, bytes)):
+                violations.append(Violation(path="urlBlob", reason="expected bytes"))
+            if len(violations) == url_blob_violation_count:
+                out["urlBlob"] = _format_base64url(url_blob_value)
+        retries_value: typing.Any = runtime_value._retries
+        if retries_value is not None:
+            if not (
+                not isinstance(retries_value, bool)
+                and (
+                    isinstance(retries_value, int)
+                    or (isinstance(retries_value, float) and retries_value.is_integer())
+                )
+            ):
+                violations.append(Violation(path="retries", reason="expected integer"))
+            else:
+                if abs(retries_value) > 9007199254740991:
+                    violations.append(
+                        Violation(
+                            path="retries", reason="exceeds ±(2^53-1) integer cap"
+                        )
+                    )
+            out["retries"] = retries_value
+        verbose_value: typing.Any = runtime_value.verbose
+        if verbose_value is not None:
+            if not (isinstance(verbose_value, bool)):
+                violations.append(Violation(path="verbose", reason="expected boolean"))
+            out["verbose"] = verbose_value
+        greeting_value: typing.Any = runtime_value._greeting
+        if greeting_value is not None:
+            if not (isinstance(greeting_value, str)):
+                violations.append(Violation(path="greeting", reason="expected string"))
+            out["greeting"] = greeting_value
+        debug_value: typing.Any = runtime_value._debug
+        if debug_value is not None:
+            if not (isinstance(debug_value, bool)):
+                violations.append(Violation(path="debug", reason="expected boolean"))
+            out["debug"] = debug_value
+        legacy_id_py_value: typing.Any = runtime_value.legacy_id_py
+        if legacy_id_py_value is not None:
+            if not (isinstance(legacy_id_py_value, str)):
+                violations.append(Violation(path="legacyId", reason="expected string"))
+            out["legacyId"] = legacy_id_py_value
+        middle_name_value: typing.Any = runtime_value.middle_name
+        if middle_name_value is not None:
+            if not (isinstance(middle_name_value, str)):
+                violations.append(
+                    Violation(path="middleName", reason="expected string")
+                )
+            out["middleName"] = middle_name_value
+        category_value: typing.Any = runtime_value.category
+        if category_value is not None:
+            if not (isinstance(category_value, str)):
+                violations.append(Violation(path="category", reason="expected string"))
+        if category_value is None:
+            out["category"] = None
+        else:
+            out["category"] = category_value
+        priority_value: typing.Any = runtime_value.priority
+        if priority_value is not None:
+            if not (
+                not isinstance(priority_value, bool)
+                and (
+                    isinstance(priority_value, int)
+                    or (
+                        isinstance(priority_value, float)
+                        and priority_value.is_integer()
+                    )
+                )
+            ):
+                violations.append(Violation(path="priority", reason="expected integer"))
+            else:
+                if abs(priority_value) > 9007199254740991:
+                    violations.append(
+                        Violation(
+                            path="priority", reason="exceeds ±(2^53-1) integer cap"
+                        )
+                    )
+                if priority_value < 1:
+                    violations.append(
+                        Violation(
+                            path="priority",
+                            reason=f"must be >= 1, got {priority_value}",
+                        )
+                    )
+                if priority_value > 10:
+                    violations.append(
+                        Violation(
+                            path="priority",
+                            reason=f"must be <= 10, got {priority_value}",
+                        )
+                    )
+            out["priority"] = priority_value
+        level_value: typing.Any = runtime_value.level
+        if level_value is not None:
+            if not (
+                not isinstance(level_value, bool)
+                and (
+                    isinstance(level_value, int)
+                    or (isinstance(level_value, float) and level_value.is_integer())
+                )
+            ):
+                violations.append(Violation(path="level", reason="expected integer"))
+            else:
+                if abs(level_value) > 9007199254740991:
+                    violations.append(
+                        Violation(path="level", reason="exceeds ±(2^53-1) integer cap")
+                    )
+                if level_value <= 0:
+                    violations.append(
+                        Violation(
+                            path="level", reason=f"must be > 0, got {level_value}"
+                        )
+                    )
+            out["level"] = level_value
+        ratio_value: typing.Any = runtime_value.ratio
+        if ratio_value is not None:
+            ratio_violation_count = len(violations)
+            if not (
+                not isinstance(ratio_value, bool)
+                and isinstance(ratio_value, (int, float))
+            ):
+                violations.append(Violation(path="ratio", reason="expected number"))
+            else:
+                if not (
+                    -1.7976931348623157e308 <= ratio_value <= 1.7976931348623157e308
+                ):
                     violations.append(
                         Violation(
                             path="ratio",
-                            reason=f"must be a multiple of 5, got {value.ratio}",
+                            reason=f"must be a finite number, got {ratio_value}",
                         )
                     )
-            out["ratio"] = _binary64(value.ratio)
-        if value.score is not None:
-            if not (-1.7976931348623157e308 <= value.score <= 1.7976931348623157e308):
-                violations.append(
-                    Violation(
-                        path="score",
-                        reason=f"must be a finite number, got {value.score}",
+                else:
+                    if float(ratio_value) < 5.0:
+                        violations.append(
+                            Violation(
+                                path="ratio", reason=f"must be >= 5, got {ratio_value}"
+                            )
+                        )
+                    if math.fmod(float(ratio_value), 5.0) != 0:
+                        violations.append(
+                            Violation(
+                                path="ratio",
+                                reason=f"must be a multiple of 5, got {ratio_value}",
+                            )
+                        )
+            if len(violations) == ratio_violation_count:
+                out["ratio"] = _binary64(ratio_value)
+        score_value: typing.Any = runtime_value.score
+        if score_value is not None:
+            score_violation_count = len(violations)
+            if not (
+                not isinstance(score_value, bool)
+                and isinstance(score_value, (int, float))
+            ):
+                violations.append(Violation(path="score", reason="expected number"))
+            else:
+                if not (
+                    -1.7976931348623157e308 <= score_value <= 1.7976931348623157e308
+                ):
+                    violations.append(
+                        Violation(
+                            path="score",
+                            reason=f"must be a finite number, got {score_value}",
+                        )
                     )
+            if len(violations) == score_violation_count:
+                out["score"] = _binary64(score_value)
+        step_value: typing.Any = runtime_value.step
+        if step_value is not None:
+            if not (
+                not isinstance(step_value, bool)
+                and (
+                    isinstance(step_value, int)
+                    or (isinstance(step_value, float) and step_value.is_integer())
                 )
-            out["score"] = _binary64(value.score)
-        if value.step is not None:
-            if abs(value.step) > 9007199254740991:
-                violations.append(
-                    Violation(path="step", reason="exceeds ±(2^53-1) integer cap")
-                )
-            if value.step % 3 != 0:
-                violations.append(
-                    Violation(
-                        path="step", reason=f"must be a multiple of 3, got {value.step}"
+            ):
+                violations.append(Violation(path="step", reason="expected integer"))
+            else:
+                if abs(step_value) > 9007199254740991:
+                    violations.append(
+                        Violation(path="step", reason="exceeds ±(2^53-1) integer cap")
                     )
-                )
-            out["step"] = value.step
-        if value.tags is not None:
-            if len(value.tags) < 1:
-                violations.append(
-                    Violation(
-                        path="tags",
-                        reason=f"must have at least 1 items, got {len(value.tags)}",
+                if step_value % 3 != 0:
+                    violations.append(
+                        Violation(
+                            path="step",
+                            reason=f"must be a multiple of 3, got {step_value}",
+                        )
                     )
-                )
-            if len(value.tags) > 5:
-                violations.append(
-                    Violation(
-                        path="tags",
-                        reason=f"must have at most 5 items, got {len(value.tags)}",
+            out["step"] = step_value
+        tags_value: typing.Any = runtime_value.tags
+        if tags_value is not None:
+            if not (isinstance(tags_value, list)):
+                violations.append(Violation(path="tags", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", tags_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"tags[{item_index_8}]", reason="expected string"
+                            )
+                        )
+                if len(checked_array_8) < 1:
+                    violations.append(
+                        Violation(
+                            path="tags",
+                            reason=f"must have at least 1 items, got {len(checked_array_8)}",
+                        )
                     )
+                if len(checked_array_8) > 5:
+                    violations.append(
+                        Violation(
+                            path="tags",
+                            reason=f"must have at most 5 items, got {len(checked_array_8)}",
+                        )
+                    )
+            tags_checked = typing.cast("list[typing.Any]", tags_value)
+            out["tags"] = tags_checked
+        aliases_value: typing.Any = runtime_value.aliases
+        if aliases_value is not None:
+            if not (isinstance(aliases_value, list)):
+                violations.append(Violation(path="aliases", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", aliases_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"aliases[{item_index_8}]",
+                                reason="expected string",
+                            )
+                        )
+                _check_unique_items(checked_array_8, "aliases", violations)
+            aliases_checked = typing.cast("list[typing.Any]", aliases_value)
+            out["aliases"] = aliases_checked
+        roles_value: typing.Any = runtime_value.roles
+        if roles_value is not None:
+            if not (isinstance(roles_value, list)):
+                violations.append(Violation(path="roles", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", roles_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"roles[{item_index_8}]", reason="expected string"
+                            )
+                        )
+                _check_contains(
+                    checked_array_8,
+                    lambda element: (
+                        isinstance(element, str)
+                        and _json_values_equal(element, "admin")
+                    ),
+                    1,
+                    2,
+                    True,
+                    "roles",
+                    violations,
                 )
-            out["tags"] = value.tags
-        if value.aliases is not None:
-            _check_unique_items(value.aliases, "aliases", violations)
-            out["aliases"] = value.aliases
-        if value.roles is not None:
-            _check_contains(
-                value.roles,
-                lambda element: (
-                    isinstance(element, str) and _json_values_equal(element, "admin")
-                ),
-                1,
-                2,
-                True,
-                "roles",
-                violations,
-            )
-            out["roles"] = value.roles
-        if value.id_or_name is not None:
-            if isinstance(value.id_or_name, str):
-                if len(value.id_or_name) < 3:
+            roles_checked = typing.cast("list[typing.Any]", roles_value)
+            out["roles"] = roles_checked
+        id_or_name_value: typing.Any = runtime_value.id_or_name
+        if id_or_name_value is not None:
+            if isinstance(id_or_name_value, str):
+                if len(id_or_name_value) < 3:
                     violations.append(
                         Violation(
                             path="idOrName",
-                            reason=f"must have length >= 3, got {len(value.id_or_name)}",
+                            reason=f"must have length >= 3, got {len(id_or_name_value)}",
                         )
                     )
-            if not isinstance(value.id_or_name, bool) and isinstance(
-                value.id_or_name, int
+            if not isinstance(id_or_name_value, bool) and isinstance(
+                id_or_name_value, int
             ):
-                if abs(value.id_or_name) > 9007199254740991:
+                if abs(id_or_name_value) > 9007199254740991:
                     violations.append(
                         Violation(
                             path="idOrName", reason="exceeds ±(2^53-1) integer cap"
                         )
                     )
-                if value.id_or_name < 1:
+                if id_or_name_value < 1:
                     violations.append(
                         Violation(
                             path="idOrName",
-                            reason=f"must be >= 1, got {value.id_or_name}",
+                            reason=f"must be >= 1, got {id_or_name_value}",
                         )
                     )
-            candidate = typing.cast("object", value.id_or_name)
             if not (
-                isinstance(candidate, str)
-                or (not isinstance(candidate, bool) and isinstance(candidate, int))
+                isinstance(id_or_name_value, str)
+                or (
+                    not isinstance(id_or_name_value, bool)
+                    and isinstance(id_or_name_value, int)
+                )
             ):
                 violations.append(
                     Violation(
                         path="idOrName", reason="expected one of: string, integer"
                     )
                 )
-            out["idOrName"] = value.id_or_name
-        if value.mode is not None:
-            if isinstance(value.mode, str):
-                if typing.cast("object", value.mode) not in ("auto", "manual"):
+            out["idOrName"] = id_or_name_value
+        mode_value: typing.Any = runtime_value.mode
+        if mode_value is not None:
+            if isinstance(mode_value, str):
+                if typing.cast("object", mode_value) not in ("auto", "manual"):
                     violations.append(
                         Violation(
                             path="mode",
-                            reason=f'must be one of ["auto", "manual"], got {_quote(value.mode)}',
+                            reason=f'must be one of ["auto", "manual"], got {_quote(mode_value)}',
                         )
                     )
-            if not isinstance(value.mode, bool) and isinstance(value.mode, int):
-                if abs(value.mode) > 9007199254740991:
+            if not isinstance(mode_value, bool) and isinstance(mode_value, int):
+                if abs(mode_value) > 9007199254740991:
                     violations.append(
                         Violation(path="mode", reason="exceeds ±(2^53-1) integer cap")
                     )
-                if value.mode < 0:
+                if mode_value < 0:
                     violations.append(
-                        Violation(path="mode", reason=f"must be >= 0, got {value.mode}")
+                        Violation(path="mode", reason=f"must be >= 0, got {mode_value}")
                     )
-            candidate = typing.cast("object", value.mode)
             if not (
-                isinstance(candidate, str)
-                or (not isinstance(candidate, bool) and isinstance(candidate, int))
+                isinstance(mode_value, str)
+                or (not isinstance(mode_value, bool) and isinstance(mode_value, int))
             ):
                 violations.append(
                     Violation(path="mode", reason="expected one of: string, integer")
                 )
-            out["mode"] = value.mode
-        if value.payload is not None:
-            candidate = typing.cast("object", value.payload)
-            if not (isinstance(candidate, dict) or isinstance(candidate, str)):
+            out["mode"] = mode_value
+        payload_value: typing.Any = runtime_value.payload
+        if payload_value is not None:
+            if not (isinstance(payload_value, dict) or isinstance(payload_value, str)):
                 violations.append(
                     Violation(path="payload", reason="expected one of: object, string")
                 )
-            out["payload"] = value.payload
-        if value.detail is not None:
-            try:
-                out["detail"] = _showcase_detail_to_transfer_type(value.detail)
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "detail", error)
-        if value.shape_or_name is not None:
-            try:
-                out["shapeOrName"] = _showcase_shape_or_name_to_transfer_type(
-                    value.shape_or_name
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "shapeOrName", error)
-        if value.measurements is not None:
-            if isinstance(value.measurements, list):
-                if len(value.measurements) < 1:
-                    violations.append(
-                        Violation(
-                            path="measurements",
-                            reason=f"must have at least 1 items, got {len(value.measurements)}",
-                        )
+            out["payload"] = payload_value
+        detail_value: typing.Any = runtime_value.detail
+        if detail_value is not None:
+            detail_violation_count = len(violations)
+            if len(violations) == detail_violation_count:
+                try:
+                    out["detail"] = _showcase_detail_to_transfer_type(detail_value)
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "detail", error)
+        shape_or_name_value: typing.Any = runtime_value.shape_or_name
+        if shape_or_name_value is not None:
+            shape_or_name_violation_count = len(violations)
+            if len(violations) == shape_or_name_violation_count:
+                try:
+                    out["shapeOrName"] = _showcase_shape_or_name_to_transfer_type(
+                        shape_or_name_value
                     )
-                _check_unique_items(value.measurements, "measurements", violations)
-                for item_index_8, item_element_8 in enumerate(value.measurements):
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "shapeOrName", error)
+        measurements_value: typing.Any = runtime_value.measurements
+        if measurements_value is not None:
+            if isinstance(measurements_value, list):
+                checked_array_8 = typing.cast("list[typing.Any]", measurements_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
                     if not (
-                        -1.7976931348623157e308
-                        <= item_element_8
-                        <= 1.7976931348623157e308
+                        not isinstance(item_element_8, bool)
+                        and isinstance(item_element_8, (int, float))
                     ):
                         violations.append(
                             Violation(
                                 path=f"measurements[{item_index_8}]",
-                                reason=f"must be a finite number, got {item_element_8}",
+                                reason="expected number",
                             )
                         )
-            if isinstance(value.measurements, str):
-                if _PATTERN_F242E3A159C2422C.search(value.measurements) is None:
+                    else:
+                        if not (
+                            -1.7976931348623157e308
+                            <= item_element_8
+                            <= 1.7976931348623157e308
+                        ):
+                            violations.append(
+                                Violation(
+                                    path=f"measurements[{item_index_8}]",
+                                    reason=f"must be a finite number, got {item_element_8}",
+                                )
+                            )
+                if len(checked_array_8) < 1:
                     violations.append(
                         Violation(
                             path="measurements",
-                            reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(value.measurements)}",
+                            reason=f"must have at least 1 items, got {len(checked_array_8)}",
                         )
                     )
-            candidate = typing.cast("object", value.measurements)
-            if not (isinstance(candidate, list) or isinstance(candidate, str)):
+                _check_unique_items(checked_array_8, "measurements", violations)
+            if isinstance(measurements_value, str):
+                if _PATTERN_F242E3A159C2422C.search(measurements_value) is None:
+                    violations.append(
+                        Violation(
+                            path="measurements",
+                            reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(measurements_value)}",
+                        )
+                    )
+            if not (
+                isinstance(measurements_value, list)
+                or isinstance(measurements_value, str)
+            ):
                 violations.append(
                     Violation(
                         path="measurements",
                         reason="expected one of: list[float], string",
                     )
                 )
-            out["measurements"] = value.measurements
-        if value.shapes is not None:
-            shapes_out: list[typing.Any] = []
-            for shapes_index, shapes_element in enumerate(value.shapes):
+            out["measurements"] = measurements_value
+        shapes_value: typing.Any = runtime_value.shapes
+        if shapes_value is not None:
+            shapes_violation_count = len(violations)
+            if not (isinstance(shapes_value, list)):
+                violations.append(Violation(path="shapes", reason="expected array"))
+            if len(violations) == shapes_violation_count:
+                shapes_checked = typing.cast("list[typing.Any]", shapes_value)
+                shapes_out: list[typing.Any] = []
+                for shapes_index, shapes_element in enumerate(shapes_checked):
+                    try:
+                        shapes_out.append(_shape_to_transfer_type(shapes_element))
+                    except temporalio.exceptions.ApplicationError as error:
+                        _collect(violations, f"shapes[{shapes_index}]", error)
+                out["shapes"] = shapes_out
+        segments_value: typing.Any = runtime_value.segments
+        if segments_value is not None:
+            segments_violation_count = len(violations)
+            if not (isinstance(segments_value, list)):
+                violations.append(Violation(path="segments", reason="expected array"))
+            if len(violations) == segments_violation_count:
+                segments_checked = typing.cast("list[typing.Any]", segments_value)
+                segments_out: list[typing.Any] = []
+                for segments_index, segments_element in enumerate(segments_checked):
+                    try:
+                        segments_out.append(
+                            _showcase_segments_item_to_transfer_type(segments_element)
+                        )
+                    except temporalio.exceptions.ApplicationError as error:
+                        _collect(violations, f"segments[{segments_index}]", error)
+                out["segments"] = segments_out
+        slots_value: typing.Any = runtime_value.slots
+        if slots_value is not None:
+            if not (isinstance(slots_value, list)):
+                violations.append(Violation(path="slots", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", slots_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if item_element_8 is not None:
+                        if not (isinstance(item_element_8, str)):
+                            violations.append(
+                                Violation(
+                                    path=f"slots[{item_index_8}]",
+                                    reason="expected string",
+                                )
+                            )
+                        else:
+                            if len(item_element_8) < 2:
+                                violations.append(
+                                    Violation(
+                                        path=f"slots[{item_index_8}]",
+                                        reason=f"must have length >= 2, got {len(item_element_8)}",
+                                    )
+                                )
+            slots_checked = typing.cast("list[typing.Any]", slots_value)
+            out["slots"] = slots_checked
+        grid_value: typing.Any = runtime_value.grid
+        if grid_value is not None:
+            if not (isinstance(grid_value, list)):
+                violations.append(Violation(path="grid", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", grid_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, list)):
+                        violations.append(
+                            Violation(
+                                path=f"grid[{item_index_8}]", reason="expected array"
+                            )
+                        )
+                    else:
+                        checked_array_16 = typing.cast(
+                            "list[typing.Any]", item_element_8
+                        )
+                        for item_index_16, item_element_16 in enumerate(
+                            checked_array_16
+                        ):
+                            if not (
+                                not isinstance(item_element_16, bool)
+                                and (
+                                    isinstance(item_element_16, int)
+                                    or (
+                                        isinstance(item_element_16, float)
+                                        and item_element_16.is_integer()
+                                    )
+                                )
+                            ):
+                                violations.append(
+                                    Violation(
+                                        path=f"grid[{item_index_8}]"
+                                        + f"[{item_index_16}]",
+                                        reason="expected integer",
+                                    )
+                                )
+                            else:
+                                if abs(item_element_16) > 9007199254740991:
+                                    violations.append(
+                                        Violation(
+                                            path=f"grid[{item_index_8}]"
+                                            + f"[{item_index_16}]",
+                                            reason="exceeds ±(2^53-1) integer cap",
+                                        )
+                                    )
+            grid_checked = typing.cast("list[typing.Any]", grid_value)
+            out["grid"] = grid_checked
+        number_grid_value: typing.Any = runtime_value.number_grid
+        if number_grid_value is not None:
+            number_grid_violation_count = len(violations)
+            if not (isinstance(number_grid_value, list)):
+                violations.append(Violation(path="numberGrid", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", number_grid_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, list)):
+                        violations.append(
+                            Violation(
+                                path=f"numberGrid[{item_index_8}]",
+                                reason="expected array",
+                            )
+                        )
+                    else:
+                        checked_array_16 = typing.cast(
+                            "list[typing.Any]", item_element_8
+                        )
+                        for item_index_16, item_element_16 in enumerate(
+                            checked_array_16
+                        ):
+                            if not (
+                                not isinstance(item_element_16, bool)
+                                and isinstance(item_element_16, (int, float))
+                            ):
+                                violations.append(
+                                    Violation(
+                                        path=f"numberGrid[{item_index_8}]"
+                                        + f"[{item_index_16}]",
+                                        reason="expected number",
+                                    )
+                                )
+                            else:
+                                if not (
+                                    -1.7976931348623157e308
+                                    <= item_element_16
+                                    <= 1.7976931348623157e308
+                                ):
+                                    violations.append(
+                                        Violation(
+                                            path=f"numberGrid[{item_index_8}]"
+                                            + f"[{item_index_16}]",
+                                            reason=f"must be a finite number, got {item_element_16}",
+                                        )
+                                    )
+            if len(violations) == number_grid_violation_count:
+                number_grid_checked = typing.cast("list[typing.Any]", number_grid_value)
+                out["numberGrid"] = [
+                    [_binary64(element1) for element1 in element]
+                    for element in number_grid_checked
+                ]
+        links_value: typing.Any = runtime_value.links
+        if links_value is not None:
+            if not (isinstance(links_value, list)):
+                violations.append(Violation(path="links", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", links_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"links[{item_index_8}]", reason="expected string"
+                            )
+                        )
+                    else:
+                        if _PATTERN_BECE32B4DA20247D.search(item_element_8) is None:
+                            violations.append(
+                                Violation(
+                                    path=f"links[{item_index_8}]",
+                                    reason=f"must be a valid uri, got {_quote(item_element_8)}",
+                                )
+                            )
+            links_checked = typing.cast("list[typing.Any]", links_value)
+            out["links"] = links_checked
+        addresses_value: typing.Any = runtime_value.addresses
+        if addresses_value is not None:
+            addresses_violation_count = len(violations)
+            if not (isinstance(addresses_value, list)):
+                violations.append(Violation(path="addresses", reason="expected array"))
+            if len(violations) == addresses_violation_count:
+                addresses_checked = typing.cast("list[typing.Any]", addresses_value)
+                addresses_out: list[typing.Any] = []
+                for addresses_index, addresses_element in enumerate(addresses_checked):
+                    try:
+                        addresses_out.append(
+                            _AddressTransferTypeConverter().to_transfer_type(
+                                addresses_element
+                            )
+                        )
+                    except temporalio.exceptions.ApplicationError as error:
+                        _collect(violations, f"addresses[{addresses_index}]", error)
+                out["addresses"] = addresses_out
+        address_book_value: typing.Any = runtime_value.address_book
+        if address_book_value is not None:
+            address_book_violation_count = len(violations)
+            if len(violations) == address_book_violation_count:
                 try:
-                    shapes_out.append(_shape_to_transfer_type(shapes_element))
-                except temporalio.exceptions.ApplicationError as error:
-                    _collect(violations, f"shapes[{shapes_index}]", error)
-            out["shapes"] = shapes_out
-        if value.segments is not None:
-            segments_out: list[typing.Any] = []
-            for segments_index, segments_element in enumerate(value.segments):
-                try:
-                    segments_out.append(
-                        _showcase_segments_item_to_transfer_type(segments_element)
+                    out["addressBook"] = (
+                        _AddressBookTransferTypeConverter().to_transfer_type(
+                            address_book_value
+                        )
                     )
                 except temporalio.exceptions.ApplicationError as error:
-                    _collect(violations, f"segments[{segments_index}]", error)
-            out["segments"] = segments_out
-        if value.slots is not None:
-            for item_index_4, item_element_4 in enumerate(value.slots):
-                if item_element_4 is not None:
-                    if len(item_element_4) < 2:
-                        violations.append(
-                            Violation(
-                                path=f"slots[{item_index_4}]",
-                                reason=f"must have length >= 2, got {len(item_element_4)}",
-                            )
-                        )
-            out["slots"] = value.slots
-        if value.grid is not None:
-            for item_index_4, item_element_4 in enumerate(value.grid):
-                for item_index_8, item_element_8 in enumerate(item_element_4):
-                    if abs(item_element_8) > 9007199254740991:
-                        violations.append(
-                            Violation(
-                                path=f"grid[{item_index_4}]" + f"[{item_index_8}]",
-                                reason="exceeds ±(2^53-1) integer cap",
-                            )
-                        )
-            out["grid"] = value.grid
-        if value.number_grid is not None:
-            for item_index_4, item_element_4 in enumerate(value.number_grid):
-                for item_index_8, item_element_8 in enumerate(item_element_4):
+                    _collect(violations, "addressBook", error)
+        dates_value: typing.Any = runtime_value.dates
+        if dates_value is not None:
+            dates_violation_count = len(violations)
+            if not (isinstance(dates_value, list)):
+                violations.append(Violation(path="dates", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", dates_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
                     if not (
-                        -1.7976931348623157e308
-                        <= item_element_8
-                        <= 1.7976931348623157e308
+                        isinstance(item_element_8, datetime.date)
+                        and not isinstance(item_element_8, datetime.datetime)
                     ):
                         violations.append(
                             Violation(
-                                path=f"numberGrid[{item_index_4}]"
-                                + f"[{item_index_8}]",
-                                reason=f"must be a finite number, got {item_element_8}",
+                                path=f"dates[{item_index_8}]", reason="expected date"
                             )
                         )
-            out["numberGrid"] = [
-                [_binary64(element1) for element1 in element]
-                for element in value.number_grid
-            ]
-        if value.links is not None:
-            for item_index_4, item_element_4 in enumerate(value.links):
-                if _PATTERN_BECE32B4DA20247D.search(item_element_4) is None:
-                    violations.append(
-                        Violation(
-                            path=f"links[{item_index_4}]",
-                            reason=f"must be a valid uri, got {_quote(item_element_4)}",
-                        )
-                    )
-            out["links"] = value.links
-        if value.addresses is not None:
-            addresses_out: list[typing.Any] = []
-            for addresses_index, addresses_element in enumerate(value.addresses):
+            if len(violations) == dates_violation_count:
+                dates_checked = typing.cast("list[typing.Any]", dates_value)
+                out["dates"] = [_format_date(element) for element in dates_checked]
+        date_index_value: typing.Any = runtime_value.date_index
+        if date_index_value is not None:
+            date_index_violation_count = len(violations)
+            if len(violations) == date_index_violation_count:
                 try:
-                    addresses_out.append(
-                        _AddressTransferTypeConverter().to_transfer_type(
-                            addresses_element
+                    out["dateIndex"] = (
+                        _DateIndexTransferTypeConverter().to_transfer_type(
+                            date_index_value
                         )
                     )
                 except temporalio.exceptions.ApplicationError as error:
-                    _collect(violations, f"addresses[{addresses_index}]", error)
-            out["addresses"] = addresses_out
-        if value.address_book is not None:
-            try:
-                out["addressBook"] = (
-                    _AddressBookTransferTypeConverter().to_transfer_type(
-                        value.address_book
+                    _collect(violations, "dateIndex", error)
+        blobs_value: typing.Any = runtime_value.blobs
+        if blobs_value is not None:
+            blobs_violation_count = len(violations)
+            if not (isinstance(blobs_value, list)):
+                violations.append(Violation(path="blobs", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", blobs_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, bytes)):
+                        violations.append(
+                            Violation(
+                                path=f"blobs[{item_index_8}]", reason="expected bytes"
+                            )
+                        )
+            if len(violations) == blobs_violation_count:
+                blobs_checked = typing.cast("list[typing.Any]", blobs_value)
+                out["blobs"] = [_format_base64(element) for element in blobs_checked]
+        blob_index_value: typing.Any = runtime_value.blob_index
+        if blob_index_value is not None:
+            blob_index_violation_count = len(violations)
+            if len(violations) == blob_index_violation_count:
+                try:
+                    out["blobIndex"] = (
+                        _BlobIndexTransferTypeConverter().to_transfer_type(
+                            blob_index_value
+                        )
                     )
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "addressBook", error)
-        if value.dates is not None:
-            out["dates"] = [_format_date(element) for element in value.dates]
-        if value.date_index is not None:
-            try:
-                out["dateIndex"] = _DateIndexTransferTypeConverter().to_transfer_type(
-                    value.date_index
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "dateIndex", error)
-        if value.blobs is not None:
-            out["blobs"] = [_format_base64(element) for element in value.blobs]
-        if value.blob_index is not None:
-            try:
-                out["blobIndex"] = _BlobIndexTransferTypeConverter().to_transfer_type(
-                    value.blob_index
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "blobIndex", error)
-        if value.metrics is not None:
-            try:
-                out["metrics"] = _MetricsTransferTypeConverter().to_transfer_type(
-                    value.metrics
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "metrics", error)
-        if value.metric_or_label is not None:
-            if not isinstance(value.metric_or_label, bool) and isinstance(
-                value.metric_or_label, (int, float)
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "blobIndex", error)
+        metrics_value: typing.Any = runtime_value.metrics
+        if metrics_value is not None:
+            metrics_violation_count = len(violations)
+            if len(violations) == metrics_violation_count:
+                try:
+                    out["metrics"] = _MetricsTransferTypeConverter().to_transfer_type(
+                        metrics_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "metrics", error)
+        metric_or_label_value: typing.Any = runtime_value.metric_or_label
+        if metric_or_label_value is not None:
+            if not isinstance(metric_or_label_value, bool) and isinstance(
+                metric_or_label_value, (int, float)
             ):
                 if not (
                     -1.7976931348623157e308
-                    <= value.metric_or_label
+                    <= metric_or_label_value
                     <= 1.7976931348623157e308
                 ):
                     violations.append(
                         Violation(
                             path="metricOrLabel",
-                            reason=f"must be a finite number, got {value.metric_or_label}",
+                            reason=f"must be a finite number, got {metric_or_label_value}",
                         )
                     )
-            if isinstance(value.metric_or_label, str):
-                if len(value.metric_or_label) < 1:
+            if isinstance(metric_or_label_value, str):
+                if len(metric_or_label_value) < 1:
                     violations.append(
                         Violation(
                             path="metricOrLabel",
-                            reason=f"must have length >= 1, got {len(value.metric_or_label)}",
+                            reason=f"must have length >= 1, got {len(metric_or_label_value)}",
                         )
                     )
-            candidate = typing.cast("object", value.metric_or_label)
             if not (
                 (
-                    not isinstance(candidate, bool)
-                    and isinstance(candidate, (int, float))
+                    not isinstance(metric_or_label_value, bool)
+                    and isinstance(metric_or_label_value, (int, float))
                 )
-                or isinstance(candidate, str)
+                or isinstance(metric_or_label_value, str)
             ):
                 violations.append(
                     Violation(
                         path="metricOrLabel", reason="expected one of: number, string"
                     )
                 )
-            out["metricOrLabel"] = value.metric_or_label
-        if value.address_list_or_label is not None:
-            if isinstance(value.address_list_or_label, list):
-                if len(value.address_list_or_label) < 1:
+            out["metricOrLabel"] = metric_or_label_value
+        address_list_or_label_value: typing.Any = runtime_value.address_list_or_label
+        if address_list_or_label_value is not None:
+            if isinstance(address_list_or_label_value, list):
+                checked_array_8 = typing.cast(
+                    "list[typing.Any]", address_list_or_label_value
+                )
+                if len(checked_array_8) < 1:
                     violations.append(
                         Violation(
                             path="addressListOrLabel",
-                            reason=f"must have at least 1 items, got {len(value.address_list_or_label)}",
+                            reason=f"must have at least 1 items, got {len(checked_array_8)}",
                         )
                     )
-            if isinstance(value.address_list_or_label, str):
-                if len(value.address_list_or_label) < 1:
+            if isinstance(address_list_or_label_value, str):
+                if len(address_list_or_label_value) < 1:
                     violations.append(
                         Violation(
                             path="addressListOrLabel",
-                            reason=f"must have length >= 1, got {len(value.address_list_or_label)}",
+                            reason=f"must have length >= 1, got {len(address_list_or_label_value)}",
                         )
                     )
-            candidate = typing.cast("object", value.address_list_or_label)
-            if not (isinstance(candidate, list) or isinstance(candidate, str)):
+            if not (
+                isinstance(address_list_or_label_value, list)
+                or isinstance(address_list_or_label_value, str)
+            ):
                 violations.append(
                     Violation(
                         path="addressListOrLabel",
                         reason="expected one of: list[Address], string",
                     )
                 )
-            out["addressListOrLabel"] = value.address_list_or_label
-        if value.location is not None:
-            try:
-                out["location"] = (
-                    _ShowcaseLocationTransferTypeConverter().to_transfer_type(
-                        value.location
-                    )
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "location", error)
-        if value.audit is not None:
-            try:
-                out["audit"] = _ShowcaseAuditTransferTypeConverter().to_transfer_type(
-                    value.audit
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "audit", error)
-        if value.rows is not None:
-            rows_out: list[typing.Any] = []
-            for rows_index, rows_element in enumerate(value.rows):
+            out["addressListOrLabel"] = address_list_or_label_value
+        location_value: typing.Any = runtime_value.location
+        if location_value is not None:
+            location_violation_count = len(violations)
+            if len(violations) == location_violation_count:
                 try:
-                    rows_out.append(
-                        _ShowcaseRowsItemTransferTypeConverter().to_transfer_type(
-                            rows_element
+                    out["location"] = (
+                        _ShowcaseLocationTransferTypeConverter().to_transfer_type(
+                            location_value
                         )
                     )
                 except temporalio.exceptions.ApplicationError as error:
-                    _collect(violations, f"rows[{rows_index}]", error)
-            out["rows"] = rows_out
-        if value.ledger_py is not None:
-            try:
-                out["ledger"] = _ShowcaseLedgerTransferTypeConverter().to_transfer_type(
-                    value.ledger_py
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "ledger", error)
-        if value.metadata is not None:
-            try:
-                out["metadata"] = (
-                    _ShowcaseMetadataTransferTypeConverter().to_transfer_type(
-                        value.metadata
-                    )
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "metadata", error)
-        if value.quotas is not None:
-            try:
-                out["quotas"] = _QuotasTransferTypeConverter().to_transfer_type(
-                    value.quotas
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "quotas", error)
-        if value.tokens is not None:
-            try:
-                out["tokens"] = _TokensTransferTypeConverter().to_transfer_type(
-                    value.tokens
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "tokens", error)
-        if value.nicknames is not None:
-            try:
-                out["nicknames"] = _NicknamesTransferTypeConverter().to_transfer_type(
-                    value.nicknames
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "nicknames", error)
-        if value.choices is not None:
-            try:
-                out["choices"] = _ChoicesTransferTypeConverter().to_transfer_type(
-                    value.choices
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "choices", error)
-        if value.extras is not None:
-            try:
-                out["extras"] = _ExtrasTransferTypeConverter().to_transfer_type(
-                    value.extras
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "extras", error)
-        if value.shape is not None:
-            try:
-                out["shape"] = _shape_to_transfer_type(value.shape)
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "shape", error)
-        if value.note is not None:
-            try:
-                out["note"] = _note_to_transfer_type(value.note)
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "note", error)
-        if value.address is not None:
-            try:
-                out["address"] = _AddressTransferTypeConverter().to_transfer_type(
-                    value.address
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "address", error)
-        if value.labels is not None:
-            try:
-                out["labels"] = _LabelsTransferTypeConverter().to_transfer_type(
-                    value.labels
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "labels", error)
-        if value.settings is not None:
-            try:
-                out["settings"] = _SettingsTransferTypeConverter().to_transfer_type(
-                    value.settings
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "settings", error)
-        if value.attributes is not None:
-            try:
-                out["attributes"] = _AttributesTransferTypeConverter().to_transfer_type(
-                    value.attributes
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "attributes", error)
-        if value.contact is not None:
-            try:
-                out["contact"] = _ContactPyTransferTypeConverter().to_transfer_type(
-                    value.contact
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "contact", error)
-        if value.nullable_count is not None:
-            if abs(value.nullable_count) > 9007199254740991:
-                violations.append(
-                    Violation(
-                        path="nullableCount", reason="exceeds ±(2^53-1) integer cap"
-                    )
-                )
-            if value.nullable_count < 1:
-                violations.append(
-                    Violation(
-                        path="nullableCount",
-                        reason=f"must be >= 1, got {value.nullable_count}",
-                    )
-                )
-            if value.nullable_count > 10:
-                violations.append(
-                    Violation(
-                        path="nullableCount",
-                        reason=f"must be <= 10, got {value.nullable_count}",
-                    )
-                )
-            out["nullableCount"] = value.nullable_count
-        if value.nullable_ratio is not None:
-            if not (
-                -1.7976931348623157e308
-                <= value.nullable_ratio
-                <= 1.7976931348623157e308
-            ):
-                violations.append(
-                    Violation(
-                        path="nullableRatio",
-                        reason=f"must be a finite number, got {value.nullable_ratio}",
-                    )
-                )
-            else:
-                if math.fmod(float(value.nullable_ratio), 2.0) != 0:
-                    violations.append(
-                        Violation(
-                            path="nullableRatio",
-                            reason=f"must be a multiple of 2, got {value.nullable_ratio}",
+                    _collect(violations, "location", error)
+        audit_value: typing.Any = runtime_value.audit
+        if audit_value is not None:
+            audit_violation_count = len(violations)
+            if len(violations) == audit_violation_count:
+                try:
+                    out["audit"] = (
+                        _ShowcaseAuditTransferTypeConverter().to_transfer_type(
+                            audit_value
                         )
                     )
-            out["nullableRatio"] = _binary64(value.nullable_ratio)
-        if value.nullable_flag is not None:
-            out["nullableFlag"] = value.nullable_flag
-        if value.nullable_tags is not None:
-            if len(value.nullable_tags) < 1:
-                violations.append(
-                    Violation(
-                        path="nullableTags",
-                        reason=f"must have at least 1 items, got {len(value.nullable_tags)}",
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "audit", error)
+        rows_value: typing.Any = runtime_value.rows
+        if rows_value is not None:
+            rows_violation_count = len(violations)
+            if not (isinstance(rows_value, list)):
+                violations.append(Violation(path="rows", reason="expected array"))
+            if len(violations) == rows_violation_count:
+                rows_checked = typing.cast("list[typing.Any]", rows_value)
+                rows_out: list[typing.Any] = []
+                for rows_index, rows_element in enumerate(rows_checked):
+                    try:
+                        rows_out.append(
+                            _ShowcaseRowsItemTransferTypeConverter().to_transfer_type(
+                                rows_element
+                            )
+                        )
+                    except temporalio.exceptions.ApplicationError as error:
+                        _collect(violations, f"rows[{rows_index}]", error)
+                out["rows"] = rows_out
+        ledger_py_value: typing.Any = runtime_value.ledger_py
+        if ledger_py_value is not None:
+            ledger_py_violation_count = len(violations)
+            if len(violations) == ledger_py_violation_count:
+                try:
+                    out["ledger"] = (
+                        _ShowcaseLedgerTransferTypeConverter().to_transfer_type(
+                            ledger_py_value
+                        )
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "ledger", error)
+        metadata_value: typing.Any = runtime_value.metadata
+        if metadata_value is not None:
+            metadata_violation_count = len(violations)
+            if len(violations) == metadata_violation_count:
+                try:
+                    out["metadata"] = (
+                        _ShowcaseMetadataTransferTypeConverter().to_transfer_type(
+                            metadata_value
+                        )
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "metadata", error)
+        quotas_value: typing.Any = runtime_value.quotas
+        if quotas_value is not None:
+            quotas_violation_count = len(violations)
+            if len(violations) == quotas_violation_count:
+                try:
+                    out["quotas"] = _QuotasTransferTypeConverter().to_transfer_type(
+                        quotas_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "quotas", error)
+        tokens_value: typing.Any = runtime_value.tokens
+        if tokens_value is not None:
+            tokens_violation_count = len(violations)
+            if len(violations) == tokens_violation_count:
+                try:
+                    out["tokens"] = _TokensTransferTypeConverter().to_transfer_type(
+                        tokens_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "tokens", error)
+        nicknames_value: typing.Any = runtime_value.nicknames
+        if nicknames_value is not None:
+            nicknames_violation_count = len(violations)
+            if len(violations) == nicknames_violation_count:
+                try:
+                    out["nicknames"] = (
+                        _NicknamesTransferTypeConverter().to_transfer_type(
+                            nicknames_value
+                        )
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "nicknames", error)
+        choices_value: typing.Any = runtime_value.choices
+        if choices_value is not None:
+            choices_violation_count = len(violations)
+            if len(violations) == choices_violation_count:
+                try:
+                    out["choices"] = _ChoicesTransferTypeConverter().to_transfer_type(
+                        choices_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "choices", error)
+        extras_value: typing.Any = runtime_value.extras
+        if extras_value is not None:
+            extras_violation_count = len(violations)
+            if len(violations) == extras_violation_count:
+                try:
+                    out["extras"] = _ExtrasTransferTypeConverter().to_transfer_type(
+                        extras_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "extras", error)
+        shape_value: typing.Any = runtime_value.shape
+        if shape_value is not None:
+            shape_violation_count = len(violations)
+            if len(violations) == shape_violation_count:
+                try:
+                    out["shape"] = _shape_to_transfer_type(shape_value)
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "shape", error)
+        note_value: typing.Any = runtime_value.note
+        if note_value is not None:
+            note_violation_count = len(violations)
+            if len(violations) == note_violation_count:
+                try:
+                    out["note"] = _note_to_transfer_type(note_value)
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "note", error)
+        address_value: typing.Any = runtime_value.address
+        if address_value is not None:
+            address_violation_count = len(violations)
+            if len(violations) == address_violation_count:
+                try:
+                    out["address"] = _AddressTransferTypeConverter().to_transfer_type(
+                        address_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "address", error)
+        labels_value: typing.Any = runtime_value.labels
+        if labels_value is not None:
+            labels_violation_count = len(violations)
+            if len(violations) == labels_violation_count:
+                try:
+                    out["labels"] = _LabelsTransferTypeConverter().to_transfer_type(
+                        labels_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "labels", error)
+        settings_value: typing.Any = runtime_value.settings
+        if settings_value is not None:
+            settings_violation_count = len(violations)
+            if len(violations) == settings_violation_count:
+                try:
+                    out["settings"] = _SettingsTransferTypeConverter().to_transfer_type(
+                        settings_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "settings", error)
+        attributes_value: typing.Any = runtime_value.attributes
+        if attributes_value is not None:
+            attributes_violation_count = len(violations)
+            if len(violations) == attributes_violation_count:
+                try:
+                    out["attributes"] = (
+                        _AttributesTransferTypeConverter().to_transfer_type(
+                            attributes_value
+                        )
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "attributes", error)
+        contact_value: typing.Any = runtime_value.contact
+        if contact_value is not None:
+            contact_violation_count = len(violations)
+            if len(violations) == contact_violation_count:
+                try:
+                    out["contact"] = _ContactPyTransferTypeConverter().to_transfer_type(
+                        contact_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "contact", error)
+        nullable_count_value: typing.Any = runtime_value.nullable_count
+        if nullable_count_value is not None:
+            if not (
+                not isinstance(nullable_count_value, bool)
+                and (
+                    isinstance(nullable_count_value, int)
+                    or (
+                        isinstance(nullable_count_value, float)
+                        and nullable_count_value.is_integer()
                     )
                 )
-            _check_unique_items(value.nullable_tags, "nullableTags", violations)
-            out["nullableTags"] = value.nullable_tags
-        if value.nullable_mode is not None:
-            if typing.cast("object", value.nullable_mode) not in ("auto", "manual"):
+            ):
                 violations.append(
-                    Violation(
-                        path="nullableMode",
-                        reason=f'must be one of ["auto", "manual"], got {_quote(value.nullable_mode)}',
-                    )
+                    Violation(path="nullableCount", reason="expected integer")
                 )
-            out["nullableMode"] = value.nullable_mode
-        if value.integral_measurements is not None:
-            _check_contains(
-                value.integral_measurements,
-                lambda element: (
-                    not isinstance(element, bool)
-                    and isinstance(element, (int, float))
-                    and abs(element) <= 9007199254740991
-                    and float(element).is_integer()
-                ),
-                1,
-                None,
-                False,
-                "integralMeasurements",
-                violations,
-            )
-            for item_index_4, item_element_4 in enumerate(value.integral_measurements):
+            else:
+                if abs(nullable_count_value) > 9007199254740991:
+                    violations.append(
+                        Violation(
+                            path="nullableCount", reason="exceeds ±(2^53-1) integer cap"
+                        )
+                    )
+                if nullable_count_value < 1:
+                    violations.append(
+                        Violation(
+                            path="nullableCount",
+                            reason=f"must be >= 1, got {nullable_count_value}",
+                        )
+                    )
+                if nullable_count_value > 10:
+                    violations.append(
+                        Violation(
+                            path="nullableCount",
+                            reason=f"must be <= 10, got {nullable_count_value}",
+                        )
+                    )
+            out["nullableCount"] = nullable_count_value
+        nullable_ratio_value: typing.Any = runtime_value.nullable_ratio
+        if nullable_ratio_value is not None:
+            nullable_ratio_violation_count = len(violations)
+            if not (
+                not isinstance(nullable_ratio_value, bool)
+                and isinstance(nullable_ratio_value, (int, float))
+            ):
+                violations.append(
+                    Violation(path="nullableRatio", reason="expected number")
+                )
+            else:
                 if not (
-                    -1.7976931348623157e308 <= item_element_4 <= 1.7976931348623157e308
+                    -1.7976931348623157e308
+                    <= nullable_ratio_value
+                    <= 1.7976931348623157e308
                 ):
                     violations.append(
                         Violation(
-                            path=f"integralMeasurements[{item_index_4}]",
-                            reason=f"must be a finite number, got {item_element_4}",
+                            path="nullableRatio",
+                            reason=f"must be a finite number, got {nullable_ratio_value}",
                         )
                     )
-            out["integralMeasurements"] = [
-                _binary64(element) for element in value.integral_measurements
-            ]
-        if value.by_five is not None:
-            if not (-1.7976931348623157e308 <= value.by_five <= 1.7976931348623157e308):
+                else:
+                    if math.fmod(float(nullable_ratio_value), 2.0) != 0:
+                        violations.append(
+                            Violation(
+                                path="nullableRatio",
+                                reason=f"must be a multiple of 2, got {nullable_ratio_value}",
+                            )
+                        )
+            if len(violations) == nullable_ratio_violation_count:
+                out["nullableRatio"] = _binary64(nullable_ratio_value)
+        nullable_flag_value: typing.Any = runtime_value.nullable_flag
+        if nullable_flag_value is not None:
+            if not (isinstance(nullable_flag_value, bool)):
                 violations.append(
-                    Violation(
-                        path="byFive",
-                        reason=f"must be a finite number, got {value.by_five}",
-                    )
+                    Violation(path="nullableFlag", reason="expected boolean")
+                )
+            out["nullableFlag"] = nullable_flag_value
+        nullable_tags_value: typing.Any = runtime_value.nullable_tags
+        if nullable_tags_value is not None:
+            if not (isinstance(nullable_tags_value, list)):
+                violations.append(
+                    Violation(path="nullableTags", reason="expected array")
                 )
             else:
-                if math.fmod(float(value.by_five), 5.0) != 0:
+                checked_array_8 = typing.cast("list[typing.Any]", nullable_tags_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"nullableTags[{item_index_8}]",
+                                reason="expected string",
+                            )
+                        )
+                if len(checked_array_8) < 1:
+                    violations.append(
+                        Violation(
+                            path="nullableTags",
+                            reason=f"must have at least 1 items, got {len(checked_array_8)}",
+                        )
+                    )
+                _check_unique_items(checked_array_8, "nullableTags", violations)
+            nullable_tags_checked = typing.cast("list[typing.Any]", nullable_tags_value)
+            out["nullableTags"] = nullable_tags_checked
+        nullable_mode_value: typing.Any = runtime_value.nullable_mode
+        if nullable_mode_value is not None:
+            if not (isinstance(nullable_mode_value, str)):
+                violations.append(
+                    Violation(path="nullableMode", reason="expected string")
+                )
+            else:
+                if typing.cast("object", nullable_mode_value) not in ("auto", "manual"):
+                    violations.append(
+                        Violation(
+                            path="nullableMode",
+                            reason=f'must be one of ["auto", "manual"], got {_quote(nullable_mode_value)}',
+                        )
+                    )
+            out["nullableMode"] = nullable_mode_value
+        integral_measurements_value: typing.Any = runtime_value.integral_measurements
+        if integral_measurements_value is not None:
+            integral_measurements_violation_count = len(violations)
+            if not (isinstance(integral_measurements_value, list)):
+                violations.append(
+                    Violation(path="integralMeasurements", reason="expected array")
+                )
+            else:
+                checked_array_8 = typing.cast(
+                    "list[typing.Any]", integral_measurements_value
+                )
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (
+                        not isinstance(item_element_8, bool)
+                        and isinstance(item_element_8, (int, float))
+                    ):
+                        violations.append(
+                            Violation(
+                                path=f"integralMeasurements[{item_index_8}]",
+                                reason="expected number",
+                            )
+                        )
+                    else:
+                        if not (
+                            -1.7976931348623157e308
+                            <= item_element_8
+                            <= 1.7976931348623157e308
+                        ):
+                            violations.append(
+                                Violation(
+                                    path=f"integralMeasurements[{item_index_8}]",
+                                    reason=f"must be a finite number, got {item_element_8}",
+                                )
+                            )
+                _check_contains(
+                    checked_array_8,
+                    lambda element: (
+                        not isinstance(element, bool)
+                        and isinstance(element, (int, float))
+                        and abs(element) <= 9007199254740991
+                        and float(element).is_integer()
+                    ),
+                    1,
+                    None,
+                    False,
+                    "integralMeasurements",
+                    violations,
+                )
+            if len(violations) == integral_measurements_violation_count:
+                integral_measurements_checked = typing.cast(
+                    "list[typing.Any]", integral_measurements_value
+                )
+                out["integralMeasurements"] = [
+                    _binary64(element) for element in integral_measurements_checked
+                ]
+        by_five_value: typing.Any = runtime_value.by_five
+        if by_five_value is not None:
+            by_five_violation_count = len(violations)
+            if not (
+                not isinstance(by_five_value, bool)
+                and isinstance(by_five_value, (int, float))
+            ):
+                violations.append(Violation(path="byFive", reason="expected number"))
+            else:
+                if not (
+                    -1.7976931348623157e308 <= by_five_value <= 1.7976931348623157e308
+                ):
                     violations.append(
                         Violation(
                             path="byFive",
-                            reason=f"must be a multiple of 5, got {value.by_five}",
+                            reason=f"must be a finite number, got {by_five_value}",
                         )
                     )
-            out["byFive"] = _binary64(value.by_five)
-        if value.wildcard is not None:
-            if _PATTERN_F7DE686CF7F23810.search(value.wildcard) is None:
-                violations.append(
-                    Violation(
-                        path="wildcard",
-                        reason=f"must match pattern {_PATTERN_F7DE686CF7F23810.pattern}, got {_quote(value.wildcard)}",
+                else:
+                    if math.fmod(float(by_five_value), 5.0) != 0:
+                        violations.append(
+                            Violation(
+                                path="byFive",
+                                reason=f"must be a multiple of 5, got {by_five_value}",
+                            )
+                        )
+            if len(violations) == by_five_violation_count:
+                out["byFive"] = _binary64(by_five_value)
+        wildcard_value: typing.Any = runtime_value.wildcard
+        if wildcard_value is not None:
+            if not (isinstance(wildcard_value, str)):
+                violations.append(Violation(path="wildcard", reason="expected string"))
+            else:
+                if _PATTERN_F7DE686CF7F23810.search(wildcard_value) is None:
+                    violations.append(
+                        Violation(
+                            path="wildcard",
+                            reason=f"must match pattern {_PATTERN_F7DE686CF7F23810.pattern}, got {_quote(wildcard_value)}",
+                        )
                     )
-                )
-            out["wildcard"] = value.wildcard
-        if value.quoted is not None:
-            out["quoted"] = value.quoted
+            out["wildcard"] = wildcard_value
+        quoted_value: typing.Any = runtime_value.quoted
+        if quoted_value is not None:
+            if not (isinstance(quoted_value, str)):
+                violations.append(Violation(path="quoted", reason="expected string"))
+            out["quoted"] = quoted_value
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -4817,20 +5942,42 @@ class _ShowcaseAuditTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseAudit") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseAudit):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if len(value.by) < 1:
-            violations.append(
-                Violation(
-                    path="by", reason=f"must have length >= 1, got {len(value.by)}"
-                )
+        by_value: typing.Any = runtime_value.by
+        if by_value is None:
+            violations.append(Violation(path="by", reason="required"))
+        else:
+            if not (isinstance(by_value, str)):
+                violations.append(Violation(path="by", reason="expected string"))
+            else:
+                if len(by_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="by",
+                            reason=f"must have length >= 1, got {len(by_value)}",
+                        )
+                    )
+            out["by"] = by_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["by"] = value.by
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SHOWCASE_AUDIT_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -4909,22 +6056,47 @@ class _ShowcaseDetailObjectTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseDetailObject") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseDetailObject):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if len(value.code) < 1:
-            violations.append(
-                Violation(
-                    path="code", reason=f"must have length >= 1, got {len(value.code)}"
-                )
+        code_value: typing.Any = runtime_value.code
+        if code_value is None:
+            violations.append(Violation(path="code", reason="required"))
+        else:
+            if not (isinstance(code_value, str)):
+                violations.append(Violation(path="code", reason="expected string"))
+            else:
+                if len(code_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="code",
+                            reason=f"must have length >= 1, got {len(code_value)}",
+                        )
+                    )
+            out["code"] = code_value
+        hint_value: typing.Any = runtime_value.hint
+        if hint_value is not None:
+            if not (isinstance(hint_value, str)):
+                violations.append(Violation(path="hint", reason="expected string"))
+            out["hint"] = hint_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["code"] = value.code
-        if value.hint is not None:
-            out["hint"] = value.hint
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SHOWCASE_DETAIL_OBJECT_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -4962,6 +6134,7 @@ class _ShowcaseLedgerTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, ShowcaseLedgerValue] = {}
         for key in raw:
+            path = _member_path(key)
             member: ShowcaseLedgerValue = typing.cast("typing.Any", None)
             member_raw = raw[key]
             try:
@@ -4969,7 +6142,7 @@ class _ShowcaseLedgerTransferTypeConverter(
                     member_raw, ShowcaseLedgerValue
                 )
             except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, key, error)
+                _collect(violations, path, error)
             additional_properties[key] = member
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
@@ -4977,15 +6150,33 @@ class _ShowcaseLedgerTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseLedger") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseLedger):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            try:
-                out[key] = _ShowcaseLedgerValueTransferTypeConverter().to_transfer_type(
-                    entry
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, key, error)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            member_violation_count = len(violations)
+            path = _member_path(key)
+            if len(violations) == member_violation_count:
+                try:
+                    out[key] = (
+                        _ShowcaseLedgerValueTransferTypeConverter().to_transfer_type(
+                            entry
+                        )
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, path, error)
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -5051,22 +6242,51 @@ class _ShowcaseLedgerValueTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseLedgerValue") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseLedgerValue):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if abs(value.amount) > 9007199254740991:
-            violations.append(
-                Violation(path="amount", reason="exceeds ±(2^53-1) integer cap")
+        amount_value: typing.Any = runtime_value.amount
+        if amount_value is None:
+            violations.append(Violation(path="amount", reason="required"))
+        else:
+            if not (
+                not isinstance(amount_value, bool)
+                and (
+                    isinstance(amount_value, int)
+                    or (isinstance(amount_value, float) and amount_value.is_integer())
+                )
+            ):
+                violations.append(Violation(path="amount", reason="expected integer"))
+            else:
+                if abs(amount_value) > 9007199254740991:
+                    violations.append(
+                        Violation(path="amount", reason="exceeds ±(2^53-1) integer cap")
+                    )
+                if amount_value < 0:
+                    violations.append(
+                        Violation(
+                            path="amount", reason=f"must be >= 0, got {amount_value}"
+                        )
+                    )
+            out["amount"] = amount_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        if value.amount < 0:
-            violations.append(
-                Violation(path="amount", reason=f"must be >= 0, got {value.amount}")
-            )
-        out["amount"] = value.amount
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SHOWCASE_LEDGER_VALUE_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5149,29 +6369,54 @@ class _ShowcaseLocationTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseLocation") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseLocation):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if len(value.city) < 1:
-            violations.append(
-                Violation(
-                    path="city", reason=f"must have length >= 1, got {len(value.city)}"
-                )
-            )
-        out["city"] = value.city
-        if value.geo is not None:
-            try:
-                out["geo"] = (
-                    _ShowcaseLocationGeoTransferTypeConverter().to_transfer_type(
-                        value.geo
+        city_value: typing.Any = runtime_value.city
+        if city_value is None:
+            violations.append(Violation(path="city", reason="required"))
+        else:
+            if not (isinstance(city_value, str)):
+                violations.append(Violation(path="city", reason="expected string"))
+            else:
+                if len(city_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="city",
+                            reason=f"must have length >= 1, got {len(city_value)}",
+                        )
                     )
-                )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "geo", error)
-        for key, entry in value.additional_properties.items():
+            out["city"] = city_value
+        geo_value: typing.Any = runtime_value.geo
+        if geo_value is not None:
+            geo_violation_count = len(violations)
+            if len(violations) == geo_violation_count:
+                try:
+                    out["geo"] = (
+                        _ShowcaseLocationGeoTransferTypeConverter().to_transfer_type(
+                            geo_value
+                        )
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "geo", error)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SHOWCASE_LOCATION_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5284,29 +6529,61 @@ class _ShowcaseLocationGeoTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseLocationGeo") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseLocationGeo):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if value.lat is not None:
-            if not (-1.7976931348623157e308 <= value.lat <= 1.7976931348623157e308):
-                violations.append(
-                    Violation(
-                        path="lat", reason=f"must be a finite number, got {value.lat}"
+        lat_value: typing.Any = runtime_value.lat
+        if lat_value is not None:
+            lat_violation_count = len(violations)
+            if not (
+                not isinstance(lat_value, bool) and isinstance(lat_value, (int, float))
+            ):
+                violations.append(Violation(path="lat", reason="expected number"))
+            else:
+                if not (-1.7976931348623157e308 <= lat_value <= 1.7976931348623157e308):
+                    violations.append(
+                        Violation(
+                            path="lat",
+                            reason=f"must be a finite number, got {lat_value}",
+                        )
                     )
-                )
-            out["lat"] = _binary64(value.lat)
-        if value.lon is not None:
-            if not (-1.7976931348623157e308 <= value.lon <= 1.7976931348623157e308):
-                violations.append(
-                    Violation(
-                        path="lon", reason=f"must be a finite number, got {value.lon}"
+            if len(violations) == lat_violation_count:
+                out["lat"] = _binary64(lat_value)
+        lon_value: typing.Any = runtime_value.lon
+        if lon_value is not None:
+            lon_violation_count = len(violations)
+            if not (
+                not isinstance(lon_value, bool) and isinstance(lon_value, (int, float))
+            ):
+                violations.append(Violation(path="lon", reason="expected number"))
+            else:
+                if not (-1.7976931348623157e308 <= lon_value <= 1.7976931348623157e308):
+                    violations.append(
+                        Violation(
+                            path="lon",
+                            reason=f"must be a finite number, got {lon_value}",
+                        )
                     )
-                )
-            out["lon"] = _binary64(value.lon)
-        for key, entry in value.additional_properties.items():
+            if len(violations) == lon_violation_count:
+                out["lon"] = _binary64(lon_value)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SHOWCASE_LOCATION_GEO_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5357,9 +6634,22 @@ class _ShowcaseMetadataTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseMetadata") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseMetadata):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
             out[key] = entry
         if len(out) > 3:
             violations.append(
@@ -5430,20 +6720,42 @@ class _ShowcaseRowsItemTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "ShowcaseRowsItem") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, ShowcaseRowsItem):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if len(value.cell) < 1:
-            violations.append(
-                Violation(
-                    path="cell", reason=f"must have length >= 1, got {len(value.cell)}"
-                )
+        cell_value: typing.Any = runtime_value.cell
+        if cell_value is None:
+            violations.append(Violation(path="cell", reason="required"))
+        else:
+            if not (isinstance(cell_value, str)):
+                violations.append(Violation(path="cell", reason="expected string"))
+            else:
+                if len(cell_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="cell",
+                            reason=f"must have length >= 1, got {len(cell_value)}",
+                        )
+                    )
+            out["cell"] = cell_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["cell"] = value.cell
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SHOWCASE_ROWS_ITEM_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5490,7 +6802,9 @@ class _GetShowcaseInputTransferTypeConverter(
 
         for key in raw:
             if key != "id":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return GetShowcaseInput(
@@ -5499,8 +6813,22 @@ class _GetShowcaseInputTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "GetShowcaseInput") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, GetShowcaseInput):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["id"] = value.id
+        id_value: typing.Any = runtime_value.id
+        if id_value is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            if not (isinstance(id_value, str)):
+                violations.append(Violation(path="id", reason="expected string"))
+            out["id"] = id_value
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
         return out
 
 
@@ -5572,23 +6900,61 @@ class _SquareTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Square") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Square):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if typing.cast("object", value.kind) not in ("square",):
-            violations.append(Violation(path="kind", reason='must equal "square"'))
-        out["kind"] = value.kind
-        if not (-1.7976931348623157e308 <= value.side <= 1.7976931348623157e308):
-            violations.append(
-                Violation(
-                    path="side", reason=f"must be a finite number, got {value.side}"
-                )
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            else:
+                if typing.cast("object", kind_value) not in ("square",):
+                    violations.append(
+                        Violation(path="kind", reason='must equal "square"')
+                    )
+            out["kind"] = kind_value
+        side_value: typing.Any = runtime_value.side
+        if side_value is None:
+            violations.append(Violation(path="side", reason="required"))
+        else:
+            side_violation_count = len(violations)
+            if not (
+                not isinstance(side_value, bool)
+                and isinstance(side_value, (int, float))
+            ):
+                violations.append(Violation(path="side", reason="expected number"))
+            else:
+                if not (
+                    -1.7976931348623157e308 <= side_value <= 1.7976931348623157e308
+                ):
+                    violations.append(
+                        Violation(
+                            path="side",
+                            reason=f"must be a finite number, got {side_value}",
+                        )
+                    )
+            if len(violations) == side_violation_count:
+                out["side"] = _binary64(side_value)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["side"] = _binary64(value.side)
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _SQUARE_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5670,23 +7036,54 @@ class _TextNoteTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "TextNote") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, TextNote):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if typing.cast("object", value.kind) not in ("text",):
-            violations.append(Violation(path="kind", reason='must equal "text"'))
-        out["kind"] = value.kind
-        if len(value.body) < 1:
-            violations.append(
-                Violation(
-                    path="body", reason=f"must have length >= 1, got {len(value.body)}"
-                )
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            else:
+                if typing.cast("object", kind_value) not in ("text",):
+                    violations.append(
+                        Violation(path="kind", reason='must equal "text"')
+                    )
+            out["kind"] = kind_value
+        body_value: typing.Any = runtime_value.body
+        if body_value is None:
+            violations.append(Violation(path="body", reason="required"))
+        else:
+            if not (isinstance(body_value, str)):
+                violations.append(Violation(path="body", reason="expected string"))
+            else:
+                if len(body_value) < 1:
+                    violations.append(
+                        Violation(
+                            path="body",
+                            reason=f"must have length >= 1, got {len(body_value)}",
+                        )
+                    )
+            out["body"] = body_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
             )
-        out["body"] = value.body
-        for key, entry in value.additional_properties.items():
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _TEXT_NOTE_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5726,30 +7123,31 @@ class _TokensTransferTypeConverter(
         raw = typing.cast("dict[str, typing.Any]", value)
         additional_properties: dict[str, str] = {}
         for key in raw:
+            path = _member_path(key)
             member: str = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not isinstance(member_raw, str):
-                violations.append(Violation(path=key, reason="expected string"))
+                violations.append(Violation(path=path, reason="expected string"))
             else:
                 member = member_raw
                 if len(member_raw) < 2:
                     violations.append(
                         Violation(
-                            path=key,
+                            path=path,
                             reason=f"must have length >= 2, got {len(member_raw)}",
                         )
                     )
                 if len(member_raw) > 8:
                     violations.append(
                         Violation(
-                            path=key,
+                            path=path,
                             reason=f"must have length <= 8, got {len(member_raw)}",
                         )
                     )
                 if _PATTERN_F242E3A159C2422C.search(member_raw) is None:
                     violations.append(
                         Violation(
-                            path=key,
+                            path=path,
                             reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(member_raw)}",
                         )
                     )
@@ -5760,28 +7158,45 @@ class _TokensTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Tokens") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Tokens):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
-            if len(entry) < 2:
-                violations.append(
-                    Violation(
-                        path=key, reason=f"must have length >= 2, got {len(entry)}"
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
+            if not (isinstance(entry, str)):
+                violations.append(Violation(path=path, reason="expected string"))
+            else:
+                if len(entry) < 2:
+                    violations.append(
+                        Violation(
+                            path=path, reason=f"must have length >= 2, got {len(entry)}"
+                        )
                     )
-                )
-            if len(entry) > 8:
-                violations.append(
-                    Violation(
-                        path=key, reason=f"must have length <= 8, got {len(entry)}"
+                if len(entry) > 8:
+                    violations.append(
+                        Violation(
+                            path=path, reason=f"must have length <= 8, got {len(entry)}"
+                        )
                     )
-                )
-            if _PATTERN_F242E3A159C2422C.search(entry) is None:
-                violations.append(
-                    Violation(
-                        path=key,
-                        reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(entry)}",
+                if _PATTERN_F242E3A159C2422C.search(entry) is None:
+                    violations.append(
+                        Violation(
+                            path=path,
+                            reason=f"must match pattern {_PATTERN_F242E3A159C2422C.pattern}, got {_quote(entry)}",
+                        )
                     )
-                )
             out[key] = entry
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
@@ -5887,31 +7302,74 @@ class _WidgetTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Widget") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Widget):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["id"] = value.id
-        if value.kind is not None:
-            out["kind"] = value.kind
-        out["name"] = value.name
-        if value.size is not None:
-            if abs(value.size) > 9007199254740991:
-                violations.append(
-                    Violation(path="size", reason="exceeds ±(2^53-1) integer cap")
+        id_value: typing.Any = runtime_value.id
+        if id_value is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            if not (isinstance(id_value, str)):
+                violations.append(Violation(path="id", reason="expected string"))
+            out["id"] = id_value
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is not None:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            out["kind"] = kind_value
+        name_value: typing.Any = runtime_value.name
+        if name_value is None:
+            violations.append(Violation(path="name", reason="required"))
+        else:
+            if not (isinstance(name_value, str)):
+                violations.append(Violation(path="name", reason="expected string"))
+            out["name"] = name_value
+        size_value: typing.Any = runtime_value.size
+        if size_value is not None:
+            if not (
+                not isinstance(size_value, bool)
+                and (
+                    isinstance(size_value, int)
+                    or (isinstance(size_value, float) and size_value.is_integer())
                 )
-            if value.size < 10:
-                violations.append(
-                    Violation(path="size", reason=f"must be >= 10, got {value.size}")
-                )
-            if value.size > 20:
-                violations.append(
-                    Violation(path="size", reason=f"must be <= 20, got {value.size}")
-                )
-            out["size"] = value.size
-        for key, entry in value.additional_properties.items():
+            ):
+                violations.append(Violation(path="size", reason="expected integer"))
+            else:
+                if abs(size_value) > 9007199254740991:
+                    violations.append(
+                        Violation(path="size", reason="exceeds ±(2^53-1) integer cap")
+                    )
+                if size_value < 10:
+                    violations.append(
+                        Violation(
+                            path="size", reason=f"must be >= 10, got {size_value}"
+                        )
+                    )
+                if size_value > 20:
+                    violations.append(
+                        Violation(
+                            path="size", reason=f"must be <= 20, got {size_value}"
+                        )
+                    )
+            out["size"] = size_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _WIDGET_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -5997,16 +7455,39 @@ class _WidgetBaseTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "WidgetBase") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, WidgetBase):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["id"] = value.id
-        if value.kind is not None:
-            out["kind"] = value.kind
-        for key, entry in value.additional_properties.items():
+        id_value: typing.Any = runtime_value.id
+        if id_value is None:
+            violations.append(Violation(path="id", reason="required"))
+        else:
+            if not (isinstance(id_value, str)):
+                violations.append(Violation(path="id", reason="expected string"))
+            out["id"] = id_value
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is not None:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            out["kind"] = kind_value
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _WIDGET_BASE_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -6063,15 +7544,15 @@ def _choices_value_from_transfer_type(
 
 
 def _choices_value_to_transfer_type(value: ChoicesValue) -> typing.Any:
+    runtime_value: typing.Any = value
     violations: list[Violation] = []
-    candidate = typing.cast("object", value)
-    if not (isinstance(candidate, Circle) or isinstance(candidate, Square)):
+    if not (isinstance(runtime_value, Circle) or isinstance(runtime_value, Square)):
         violations.append(Violation(path="", reason="expected one of: Circle, Square"))
     if violations:
         raise temporalio.converter.create_payload_validation_error(violations)
-    if isinstance(value, Circle):
-        return _CircleTransferTypeConverter().to_transfer_type(value)
-    return _SquareTransferTypeConverter().to_transfer_type(value)
+    if isinstance(runtime_value, Circle):
+        return _CircleTransferTypeConverter().to_transfer_type(runtime_value)
+    return _SquareTransferTypeConverter().to_transfer_type(runtime_value)
 
 
 def _note_from_transfer_type(
@@ -6110,17 +7591,17 @@ def _note_from_transfer_type(
 
 
 def _note_to_transfer_type(value: Note) -> typing.Any:
+    runtime_value: typing.Any = value
     violations: list[Violation] = []
-    candidate = typing.cast("object", value)
-    if not (isinstance(candidate, TextNote) or isinstance(candidate, LinkNote)):
+    if not (isinstance(runtime_value, TextNote) or isinstance(runtime_value, LinkNote)):
         violations.append(
             Violation(path="", reason="expected one of: TextNote, LinkNote")
         )
     if violations:
         raise temporalio.converter.create_payload_validation_error(violations)
-    if isinstance(value, TextNote):
-        return _TextNoteTransferTypeConverter().to_transfer_type(value)
-    return _LinkNoteTransferTypeConverter().to_transfer_type(value)
+    if isinstance(runtime_value, TextNote):
+        return _TextNoteTransferTypeConverter().to_transfer_type(runtime_value)
+    return _LinkNoteTransferTypeConverter().to_transfer_type(runtime_value)
 
 
 def _shape_from_transfer_type(
@@ -6153,15 +7634,15 @@ def _shape_from_transfer_type(
 
 
 def _shape_to_transfer_type(value: Shape) -> typing.Any:
+    runtime_value: typing.Any = value
     violations: list[Violation] = []
-    candidate = typing.cast("object", value)
-    if not (isinstance(candidate, Circle) or isinstance(candidate, Square)):
+    if not (isinstance(runtime_value, Circle) or isinstance(runtime_value, Square)):
         violations.append(Violation(path="", reason="expected one of: Circle, Square"))
     if violations:
         raise temporalio.converter.create_payload_validation_error(violations)
-    if isinstance(value, Circle):
-        return _CircleTransferTypeConverter().to_transfer_type(value)
-    return _SquareTransferTypeConverter().to_transfer_type(value)
+    if isinstance(runtime_value, Circle):
+        return _CircleTransferTypeConverter().to_transfer_type(runtime_value)
+    return _SquareTransferTypeConverter().to_transfer_type(runtime_value)
 
 
 def _showcase_segments_item_from_transfer_type(
@@ -6190,28 +7671,32 @@ def _showcase_segments_item_from_transfer_type(
 
 
 def _showcase_segments_item_to_transfer_type(value: ShowcaseSegmentsItem) -> typing.Any:
+    runtime_value: typing.Any = value
     violations: list[Violation] = []
-    if isinstance(value, str):
-        if len(value) < 2:
+    if isinstance(runtime_value, str):
+        if len(runtime_value) < 2:
             violations.append(
-                Violation(path="", reason=f"must have length >= 2, got {len(value)}")
+                Violation(
+                    path="", reason=f"must have length >= 2, got {len(runtime_value)}"
+                )
             )
-    if not isinstance(value, bool) and isinstance(value, int):
-        if abs(value) > 9007199254740991:
+    if not isinstance(runtime_value, bool) and isinstance(runtime_value, int):
+        if abs(runtime_value) > 9007199254740991:
             violations.append(
                 Violation(path="", reason="exceeds ±(2^53-1) integer cap")
             )
-        if value < 0:
-            violations.append(Violation(path="", reason=f"must be >= 0, got {value}"))
-    candidate = typing.cast("object", value)
+        if runtime_value < 0:
+            violations.append(
+                Violation(path="", reason=f"must be >= 0, got {runtime_value}")
+            )
     if not (
-        isinstance(candidate, str)
-        or (not isinstance(candidate, bool) and isinstance(candidate, int))
+        isinstance(runtime_value, str)
+        or (not isinstance(runtime_value, bool) and isinstance(runtime_value, int))
     ):
         violations.append(Violation(path="", reason="expected one of: string, integer"))
     if violations:
         raise temporalio.converter.create_payload_validation_error(violations)
-    return value
+    return runtime_value
 
 
 def _showcase_id_or_name_from_transfer_type(
@@ -6299,17 +7784,22 @@ def _showcase_detail_from_transfer_type(
 
 
 def _showcase_detail_to_transfer_type(value: ShowcaseDetailObject | str) -> typing.Any:
+    runtime_value: typing.Any = value
     violations: list[Violation] = []
-    candidate = typing.cast("object", value)
-    if not (isinstance(candidate, ShowcaseDetailObject) or isinstance(candidate, str)):
+    if not (
+        isinstance(runtime_value, ShowcaseDetailObject)
+        or isinstance(runtime_value, str)
+    ):
         violations.append(
             Violation(path="", reason="expected one of: ShowcaseDetailObject, string")
         )
     if violations:
         raise temporalio.converter.create_payload_validation_error(violations)
-    if isinstance(value, ShowcaseDetailObject):
-        return _ShowcaseDetailObjectTransferTypeConverter().to_transfer_type(value)
-    return value
+    if isinstance(runtime_value, ShowcaseDetailObject):
+        return _ShowcaseDetailObjectTransferTypeConverter().to_transfer_type(
+            runtime_value
+        )
+    return runtime_value
 
 
 def _showcase_shape_or_name_from_transfer_type(
@@ -6352,28 +7842,30 @@ def _showcase_shape_or_name_from_transfer_type(
 def _showcase_shape_or_name_to_transfer_type(
     value: Circle | Square | str,
 ) -> typing.Any:
+    runtime_value: typing.Any = value
     violations: list[Violation] = []
-    if isinstance(value, str):
-        if len(value) > 32:
+    if isinstance(runtime_value, str):
+        if len(runtime_value) > 32:
             violations.append(
-                Violation(path="", reason=f"must have length <= 32, got {len(value)}")
+                Violation(
+                    path="", reason=f"must have length <= 32, got {len(runtime_value)}"
+                )
             )
-    candidate = typing.cast("object", value)
     if not (
-        isinstance(candidate, Circle)
-        or isinstance(candidate, Square)
-        or isinstance(candidate, str)
+        isinstance(runtime_value, Circle)
+        or isinstance(runtime_value, Square)
+        or isinstance(runtime_value, str)
     ):
         violations.append(
             Violation(path="", reason="expected one of: Circle, Square, string")
         )
     if violations:
         raise temporalio.converter.create_payload_validation_error(violations)
-    if isinstance(value, Circle):
-        return _CircleTransferTypeConverter().to_transfer_type(value)
-    if isinstance(value, Square):
-        return _SquareTransferTypeConverter().to_transfer_type(value)
-    return value
+    if isinstance(runtime_value, Circle):
+        return _CircleTransferTypeConverter().to_transfer_type(runtime_value)
+    if isinstance(runtime_value, Square):
+        return _SquareTransferTypeConverter().to_transfer_type(runtime_value)
+    return runtime_value
 
 
 def _showcase_measurements_from_transfer_type(

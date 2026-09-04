@@ -104,7 +104,25 @@ public final class Room {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Room> {
         @Override
         public void serialize(Room value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
+            if (value.roomId == null) {
+                violations.add(new Violation("roomId", "required"));
+            }
+            if (value.displayName == null) {
+                violations.add(new Violation("displayName", "required"));
+            }
+            if (value.members != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.members.size(); validationIndex0++) {
+                    String validationValue0 = value.members.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("members" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
+            }
             java.util.Set<String> wireKeys = new java.util.LinkedHashSet<>();
             if (value.roomId != null) {
                 wireKeys.add("roomId");
@@ -122,7 +140,7 @@ public final class Room {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -144,8 +162,10 @@ public final class Room {
             }
             if (value.labels != null) {
                 gen.writeFieldName("labels");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.labels, gen);
+                    serializers.defaultSerializeValue(value.labels, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -157,8 +177,7 @@ public final class Room {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("labels"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.additionalProperties != null) {
@@ -172,6 +191,7 @@ public final class Room {
                 // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
                 throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
             }
+            pending.serialize(target);
         }
     }
 
@@ -189,6 +209,7 @@ public final class Room {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "displayName":
                     case "labels":

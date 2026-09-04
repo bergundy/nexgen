@@ -12,7 +12,10 @@ use crate::generator::proto::typescript::{
     model_typescript_interface_ref, model_typescript_type_id, typescript_replacement_type_name,
 };
 use crate::generator::render_request_plan;
-use crate::generator::{ExternalModelBackend, GeneratedFiles, GenerationMode, TsDateTimeTypes};
+use crate::generator::{
+    ExternalModelBackend, GeneratedFileMap, GeneratedFileOrigin, GeneratedFiles, GenerationMode,
+    TsDateTimeTypes,
+};
 use crate::language::Language;
 use crate::planning::{
     PlannedFamily, PlannedOperationResourceFieldBinding, PlannedOperationResourceReturn,
@@ -51,6 +54,21 @@ pub(in crate::generator) struct RenderedExternalModelFragments {
     pub(in crate::generator) value_exported_names: BTreeSet<String>,
 }
 
+/// Target-specific support files together with the exports their root barrel
+/// must expose. The contributing backend owns the export names and paths.
+#[derive(Debug, Default)]
+pub(in crate::generator) struct RenderedTypeScriptSupport {
+    pub(in crate::generator) files: BTreeMap<PathBuf, String>,
+    pub(in crate::generator) root_exports: Vec<String>,
+}
+
+impl RenderedTypeScriptSupport {
+    fn extend(&mut self, other: Self) {
+        self.files.extend(other.files);
+        self.root_exports.extend(other.root_exports);
+    }
+}
+
 impl RenderedExternalModelFragments {
     fn extend(&mut self, other: Self) {
         if !other.imports.is_empty() {
@@ -70,67 +88,55 @@ impl RenderedExternalModelFragments {
     }
 }
 
-pub(crate) fn render_tree_support_files(
-    branch: &ApiSpecBranch<PlannedFamily>,
-) -> BTreeMap<PathBuf, String> {
-    if !branch_has_json_models(branch) {
-        return BTreeMap::new();
-    }
-
-    BTreeMap::from([(
-        PathBuf::from("definitions.ts"),
-        typescript_json::render_support_file(),
-    )])
-}
-
 fn generate_tree(
     branch: &ApiSpecBranch<PlannedFamily>,
     support: &crate::SupportFiles,
     ts_date_time_types: TsDateTimeTypes,
-) -> Result<GeneratedFiles> {
-    let mode = crate::nexgen_config::current().mode;
-    let mut files = BTreeMap::new();
+) -> Result<TypeScriptGenerationResult> {
+    let mut files = GeneratedFileMap::default();
     let mut warnings = Vec::new();
-    let tree_support_files = render_tree_support_files(branch);
-    let has_json_runtime_module = mode != GenerationMode::NativeApi
-        && tree_support_files.contains_key(&PathBuf::from("definitions.ts"));
-    insert_branch_index_file(&mut files, branch, has_json_runtime_module)?;
-    insert_files(&mut files, tree_support_files)?;
+    let rendered_support = TypeScriptExternalModels::render_tree_support(branch);
+    if !rendered_support.files.is_empty() {
+        files.insert_multi(
+            rendered_support.files,
+            GeneratedFileOrigin::fixed("generated TypeScript JSON runtime"),
+        )?;
+    }
+    insert_branch_index_file(&mut files, branch, &rendered_support.root_exports)?;
     for node in branch.children.values() {
         generate_tree_node(node, support, ts_date_time_types, &mut files, &mut warnings)?;
     }
-    Ok(GeneratedFiles {
-        layout: crate::generator::GeneratedOutputLayout::Directory,
-        files,
-        warnings,
-    })
+    Ok(TypeScriptGenerationResult { files, warnings })
 }
 
 fn generate_tree_node(
     node: &ApiSpecNode<PlannedFamily>,
     support: &crate::SupportFiles,
     ts_date_time_types: TsDateTimeTypes,
-    files: &mut BTreeMap<PathBuf, String>,
+    files: &mut GeneratedFileMap,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
     match node {
         ApiSpecNode::Leaf(leaf) => {
             let support_fragments = support_fragments_for_plan(&leaf.spec, support);
-            let generated = generate_leaf(&leaf.spec, &support_fragments, ts_date_time_types)?;
+            let mut generated = generate_leaf(
+                &leaf.spec,
+                &support_fragments,
+                ts_date_time_types,
+                GeneratedFileOrigin::input_module(Language::TypeScript, &leaf.source_path),
+            )?;
             warnings.extend(generated.warnings);
             let prefix = leaf.module_path.to_path_buf();
-            for (path, mut contents) in generated.files {
-                if path == PathBuf::from("index.ts")
-                    && !typescript_module_has_import_or_export(&contents)
-                {
-                    contents.push_str("export {};\n");
-                }
-                insert_generated_file(files, prefix.join(path), contents)?;
+            if let Some(contents) = generated.files.contents_mut("index.ts")
+                && !typescript_module_has_import_or_export(contents)
+            {
+                contents.push_str("export {};\n");
             }
+            files.extend(generated.files.prefix(prefix)?)?;
             Ok(())
         }
         ApiSpecNode::Branch(branch) => {
-            insert_branch_index_file(files, branch, false)?;
+            insert_branch_index_file(files, branch, &[])?;
             for node in branch.children.values() {
                 generate_tree_node(node, support, ts_date_time_types, files, warnings)?;
             }
@@ -140,9 +146,9 @@ fn generate_tree_node(
 }
 
 fn insert_branch_index_file(
-    files: &mut BTreeMap<PathBuf, String>,
+    files: &mut GeneratedFileMap,
     branch: &ApiSpecBranch<PlannedFamily>,
-    has_json_runtime_module: bool,
+    additional_exports: &[String],
 ) -> Result<()> {
     let mut path = branch.module_path.to_path_buf();
     path.push("index.ts");
@@ -153,32 +159,18 @@ fn insert_branch_index_file(
         contents.push_str(name);
         contents.push_str("';\n");
     }
-    if has_json_runtime_module {
-        contents.push_str("export { payloadValidationError } from './definitions';\n");
-        contents.push_str("export type { Violation } from './definitions';\n");
+    for export in additional_exports {
+        contents.push_str(export);
+        contents.push('\n');
     }
-    insert_generated_file(files, path, contents)
-}
-
-fn insert_files(
-    files: &mut BTreeMap<PathBuf, String>,
-    generated: BTreeMap<PathBuf, String>,
-) -> Result<()> {
-    for (path, contents) in generated {
-        insert_generated_file(files, path, contents)?;
-    }
-    Ok(())
-}
-
-fn insert_generated_file(
-    files: &mut BTreeMap<PathBuf, String>,
-    path: PathBuf,
-    contents: String,
-) -> Result<()> {
-    if files.insert(path.clone(), contents).is_some() {
-        return Err(Error::GeneratedFileConflict { path });
-    }
-    Ok(())
+    files.insert(
+        path,
+        contents,
+        GeneratedFileOrigin::fixed(format!(
+            "generated TypeScript barrel for module `{}`",
+            branch.module_path.as_module_key()
+        )),
+    )
 }
 
 fn typescript_module_has_import_or_export(contents: &str) -> bool {
@@ -201,17 +193,6 @@ fn support_fragments_for_plan(
     }
 }
 
-fn branch_has_json_models(branch: &ApiSpecBranch<PlannedFamily>) -> bool {
-    branch.children.values().any(|node| match node {
-        ApiSpecNode::Leaf(leaf) => leaf
-            .spec
-            .external_types()
-            .map(|(_, binding)| binding)
-            .any(|binding| binding.json_model().is_some()),
-        ApiSpecNode::Branch(branch) => branch_has_json_models(branch),
-    })
-}
-
 #[derive(Debug, Default)]
 struct TypeScriptExternalModels {
     proto: typescript_proto::ModelBackend,
@@ -219,6 +200,12 @@ struct TypeScriptExternalModels {
 }
 
 impl TypeScriptExternalModels {
+    fn render_tree_support(branch: &ApiSpecBranch<PlannedFamily>) -> RenderedTypeScriptSupport {
+        let mut support = RenderedTypeScriptSupport::default();
+        support.extend(typescript_json::render_tree_support(branch));
+        support
+    }
+
     fn new(api_plan: &PlannedSpec, ts_date_time_types: TsDateTimeTypes) -> Result<Self> {
         let mut this = Self::default();
         this.json.ts_date_time_types = ts_date_time_types;
@@ -236,10 +223,10 @@ impl TypeScriptExternalModels {
             .render_model_wire_functions(output, model, planned_record)
     }
 
-    fn render_support_files(&self) -> Result<BTreeMap<PathBuf, String>> {
-        let mut files = BTreeMap::new();
-        files.extend(self.json.render_support_files()?);
-        Ok(files)
+    fn render_support(&self) -> Result<RenderedTypeScriptSupport> {
+        let mut support = RenderedTypeScriptSupport::default();
+        support.extend(self.json.render_support()?);
+        Ok(support)
     }
 
     /// The `TransferTypeConverter` instance a model reference converts through, if
@@ -730,6 +717,7 @@ impl<'a> ApiPlanner<'a> {
                             .alternate_type
                             .as_ref()
                             .map(typescript_authored_type_annotation),
+                        requirements: typescript_function_requirements(function),
                     })
                     .collect()
             })
@@ -767,6 +755,7 @@ impl<'a> ApiPlanner<'a> {
                             .alternate_type
                             .as_ref()
                             .map(typescript_authored_type_annotation),
+                        requirements: typescript_function_requirements(function),
                     })
                     .collect()
             })
@@ -1504,9 +1493,9 @@ impl<'a> ApiPlanner<'a> {
                 let mut resolved = self.resolve_planned_value_type(fallback);
                 if let Some(annotation) = type_name.for_language(Language::TypeScript) {
                     resolved.annotation = annotation.to_string();
-                    if annotation.contains("Long") {
-                        resolved.requirements.long = true;
-                    }
+                    resolved.requirements = TypeScriptRequirements {
+                        long: annotation == "Long",
+                    };
                 }
                 resolved
             }
@@ -1887,13 +1876,28 @@ pub(crate) fn generate(
     // tree-wide model registry the JSON backend consults for a cross-module
     // `oneOf` branch is populated here, before any leaf renders.
     typescript_json::set_tree_json_models(collect_tree_json_models(&tree.root));
-    match &tree.root {
+    let generated = match &tree.root {
         ApiSpecNode::Leaf(leaf) => {
             let support_fragments = support_fragments_for_plan(&leaf.spec, support);
-            generate_leaf(&leaf.spec, &support_fragments, ts_date_time_types)
+            generate_leaf(
+                &leaf.spec,
+                &support_fragments,
+                ts_date_time_types,
+                GeneratedFileOrigin::fixed("generated TypeScript package module"),
+            )
         }
         ApiSpecNode::Branch(branch) => generate_tree(branch, support, ts_date_time_types),
-    }
+    }?;
+    Ok(GeneratedFiles {
+        layout: crate::generator::GeneratedOutputLayout::Directory,
+        files: generated.files.into_files(),
+        warnings: generated.warnings,
+    })
+}
+
+struct TypeScriptGenerationResult {
+    files: GeneratedFileMap,
+    warnings: Vec<String>,
 }
 
 /// Every JSON model declared anywhere in the spec tree, keyed by `full_name`.
@@ -1929,7 +1933,8 @@ fn generate_leaf(
     api_plan: &PlannedSpec,
     support_fragments: &[SupportFragmentSpec],
     ts_date_time_types: TsDateTimeTypes,
-) -> Result<GeneratedFiles> {
+    module_origin: GeneratedFileOrigin,
+) -> Result<TypeScriptGenerationResult> {
     reject_support_namespaces(Language::TypeScript, support_fragments)?;
     let language_imports = collect_typescript_language_imports(api_plan);
     let mut planner = ApiPlanner::new(api_plan, ts_date_time_types)?;
@@ -1981,12 +1986,6 @@ fn generate_leaf(
         planner.resolve_message_value_conversion(&model_type);
     }
 
-    let requirements = collect_typescript_requirements(
-        planner.variants.values().collect::<Vec<_>>().as_slice(),
-        planner.models.values().collect::<Vec<_>>().as_slice(),
-        &services,
-    );
-
     let support_source = support_source(support_fragments);
     let model_fragments = planner.render_external_models()?;
 
@@ -1998,11 +1997,15 @@ fn generate_leaf(
         &planner.external_models,
         &model_fragments,
         &services,
-        &requirements,
         &language_imports,
         support_source.as_deref(),
         api_plan,
+        module_origin,
     )
+    .map(|files| TypeScriptGenerationResult {
+        files,
+        warnings: Vec::new(),
+    })
 }
 
 fn collect_typescript_language_imports(api_plan: &PlannedSpec) -> Vec<LanguageImportSpec> {
@@ -2612,6 +2615,31 @@ fn function_constraint(function: &FunctionFieldSpec<PlannedFamily>) -> String {
     )
 }
 
+fn typescript_function_requirements(
+    function: &FunctionFieldSpec<PlannedFamily>,
+) -> TypeScriptRequirements {
+    let mut requirements = TypeScriptRequirements::default();
+    match &function.args {
+        FunctionArgsSpec::Varargs { prefix, .. } => {
+            for arg in prefix {
+                collect_typescript_value_requirements(&arg.field_type, &mut requirements);
+            }
+        }
+        FunctionArgsSpec::Fixed(args) => {
+            for arg in args {
+                collect_typescript_value_requirements(&arg.field_type, &mut requirements);
+            }
+        }
+    }
+    if let FunctionResultSpec::Authored(result) = &function.result {
+        collect_typescript_value_requirements(result, &mut requirements);
+    }
+    if let Some(alternate_type) = &function.alternate_type {
+        collect_typescript_value_requirements(alternate_type, &mut requirements);
+    }
+    requirements
+}
+
 #[derive(Debug, Clone)]
 struct RenderedFunctionTypeDescriptor {
     value_type: String,
@@ -2935,6 +2963,7 @@ struct RenderedFunctionField {
     args: RenderedFunctionArgs,
     type_parameter_name: String,
     alternate_annotation: Option<String>,
+    requirements: TypeScriptRequirements,
 }
 
 #[derive(Debug, Clone)]
@@ -2961,6 +2990,7 @@ struct RenderedWithArgumentsField {
     type_parameter_name: String,
     args_type_parameter_name: String,
     alternate_annotation: Option<String>,
+    requirements: TypeScriptRequirements,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3026,10 +3056,9 @@ struct SupportExports {
     type_names: Vec<String>,
 }
 
-fn collect_typescript_requirements(
+fn collect_typescript_model_requirements(
     variants: &[&RenderedVariant],
     models: &[&RenderedModel],
-    services: &[RenderedService<'_>],
 ) -> TypeScriptRequirements {
     let mut requirements = TypeScriptRequirements::default();
     for variant in variants {
@@ -3041,20 +3070,39 @@ fn collect_typescript_requirements(
         for field in &model.fields {
             requirements.merge(&field.requirements);
         }
+        for function in &model.functions {
+            requirements.merge(&function.requirements);
+        }
+        for function in &model.with_arguments {
+            requirements.merge(&function.requirements);
+        }
     }
+    requirements
+}
+
+fn collect_typescript_resource_requirements(
+    services: &[RenderedService<'_>],
+) -> TypeScriptRequirements {
+    let mut requirements = TypeScriptRequirements::default();
     for service in services {
         for resource in &service.resources {
             for field in &resource.fields {
-                requirements.merge(&typescript_resource_field_requirements(&field.kind));
+                requirements.merge(&typescript_resource_field_requirements(
+                    &field.kind,
+                    field.function.as_ref(),
+                ));
             }
             for method in &resource.methods {
                 for param in &method.params {
-                    requirements.merge(&typescript_resource_field_requirements(&param.kind));
+                    requirements.merge(&typescript_resource_field_requirements(
+                        &param.kind,
+                        param.function.as_ref(),
+                    ));
                 }
                 if let Some(result) = &method.result
                     && let PlannedResourceMethodResultKind::Value(kind) = &result.kind
                 {
-                    requirements.merge(&typescript_resource_field_requirements(kind));
+                    requirements.merge(&typescript_resource_field_requirements(kind, None));
                 }
             }
         }
@@ -3071,12 +3119,14 @@ fn render_module_files(
     external_models: &TypeScriptExternalModels,
     model_fragments: &RenderedExternalModelFragments,
     services: &[RenderedService<'_>],
-    requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     support_source: Option<&str>,
     api_plan: &PlannedSpec,
-) -> Result<GeneratedFiles> {
+    module_origin: GeneratedFileOrigin,
+) -> Result<GeneratedFileMap> {
     let mode = crate::nexgen_config::current().mode;
+    let model_requirements = collect_typescript_model_requirements(variants, models);
+    let resource_requirements = collect_typescript_resource_requirements(services);
     let support_source = support_source.filter(|source| !source.trim().is_empty());
     let support_exports = support_source.map(support_exports);
     let module_model_names = model_fragments
@@ -3084,9 +3134,8 @@ fn render_module_files(
         .iter()
         .cloned()
         .collect();
-    let json_runtime_files = external_models.render_support_files()?;
-    let has_json_runtime_module = json_runtime_files.contains_key(&PathBuf::from("definitions.ts"));
-    let mut files = BTreeMap::<PathBuf, String>::new();
+    let rendered_support = external_models.render_support()?;
+    let mut files = GeneratedFileMap::default();
     let models_source = render_models_module(
         enums,
         flags,
@@ -3094,6 +3143,7 @@ fn render_module_files(
         models,
         external_models,
         model_fragments,
+        &model_requirements,
         language_imports,
         support_exports.as_ref(),
         api_plan,
@@ -3104,23 +3154,28 @@ fn render_module_files(
     // outright (TS2306, "is not a module").
     let has_models_module = !is_blank_generated_module(&models_source);
     files.insert(
-        "index.ts".into(),
+        "index.ts",
         if mode == GenerationMode::NativeApi {
-            render_index_module(services, &model_fragments.type_exported_names)
+            render_index_module(
+                services,
+                &model_fragments.type_exported_names,
+                &rendered_support.root_exports,
+            )
         } else {
             render_definitions_only_index_module(
                 services,
-                has_json_runtime_module,
                 has_models_module,
+                &rendered_support.root_exports,
             )
         },
-    );
+        module_origin.clone(),
+    )?;
     if has_models_module {
-        files.insert("models.ts".into(), models_source);
+        files.insert("models.ts", models_source, module_origin.clone())?;
     }
     if !services.is_empty() {
         files.insert(
-            "services.ts".into(),
+            "services.ts",
             render_service_module(
                 enums,
                 flags,
@@ -3128,16 +3183,16 @@ fn render_module_files(
                 models,
                 &module_model_names,
                 services,
-                requirements,
                 language_imports,
                 mode == GenerationMode::NativeApi,
                 api_plan,
             ),
-        );
+            module_origin.clone(),
+        )?;
     }
     if services.iter().any(|service| !service.resources.is_empty()) {
         files.insert(
-            "resources.ts".into(),
+            "resources.ts",
             render_resources_module(
                 enums,
                 flags,
@@ -3145,12 +3200,13 @@ fn render_module_files(
                 models,
                 &module_model_names,
                 services,
-                requirements,
+                &resource_requirements,
                 language_imports,
                 support_exports.as_ref(),
                 api_plan,
             ),
-        );
+            module_origin.clone(),
+        )?;
     }
     if mode == GenerationMode::NativeApi {
         for service in services {
@@ -3159,7 +3215,7 @@ fn render_module_files(
             }
             for operation in &service.operations {
                 files.insert(
-                    format!("operations/{}.ts", operation_file_name(operation)).into(),
+                    format!("operations/{}.ts", operation_file_name(operation)),
                     render_operation_module(
                         enums,
                         flags,
@@ -3169,20 +3225,31 @@ fn render_module_files(
                         services,
                         service,
                         operation,
-                        requirements,
                         language_imports,
                         support_exports.as_ref(),
                         api_plan,
                     ),
-                );
+                    GeneratedFileOrigin::operation(
+                        Language::TypeScript,
+                        service.name,
+                        operation.name,
+                    ),
+                )?;
             }
         }
     }
     if let Some(support_source) = support_source {
-        files.insert("support.ts".into(), render_support_module(support_source));
+        files.insert(
+            "support.ts",
+            render_support_module(support_source),
+            GeneratedFileOrigin::fixed("generated TypeScript support module"),
+        )?;
     }
-    files.extend(json_runtime_files);
-    Ok(GeneratedFiles::directory(files))
+    files.insert_multi(
+        rendered_support.files,
+        GeneratedFileOrigin::fixed("generated TypeScript external-model runtime"),
+    )?;
+    Ok(files)
 }
 
 fn support_source(support_fragments: &[SupportFragmentSpec]) -> Option<String> {
@@ -3292,20 +3359,13 @@ fn render_typescript_namespace_imports(
     }
 }
 
-fn render_typescript_default_type_import_if_used(
+fn render_typescript_requirement_imports(
     output: &mut String,
-    source: &str,
-    name: &str,
-    package: &str,
+    requirements: &TypeScriptRequirements,
 ) {
-    if !contains_identifier(source, name) {
-        return;
+    if requirements.long {
+        output.push_str("import type Long from 'long';\n");
     }
-    output.push_str("import type ");
-    output.push_str(name);
-    output.push_str(" from '");
-    output.push_str(package);
-    output.push_str("';\n");
 }
 
 fn contains_identifier(source: &str, identifier: &str) -> bool {
@@ -3441,8 +3501,8 @@ fn is_blank_generated_module(source: &str) -> bool {
 
 fn render_definitions_only_index_module(
     services: &[RenderedService<'_>],
-    has_json_runtime_module: bool,
     has_models_module: bool,
+    additional_exports: &[String],
 ) -> String {
     let mut output = String::new();
     output.push_str(GENERATED_HEADER);
@@ -3456,9 +3516,9 @@ fn render_definitions_only_index_module(
     if services.iter().any(|service| !service.resources.is_empty()) {
         output.push_str("export * from './resources';\n");
     }
-    if has_json_runtime_module {
-        output.push_str("export { payloadValidationError } from './definitions';\n");
-        output.push_str("export type { Violation } from './definitions';\n");
+    for export in additional_exports {
+        output.push_str(export);
+        output.push('\n');
     }
     output
 }
@@ -3470,6 +3530,7 @@ fn render_support_module(support_source: &str) -> String {
 fn render_index_module(
     services: &[RenderedService<'_>],
     model_type_names: &BTreeSet<String>,
+    additional_exports: &[String],
 ) -> String {
     let mut body = String::new();
     for service in services {
@@ -3529,6 +3590,10 @@ fn render_index_module(
                 .join(", "),
         );
         body.push_str(" } from './models';\n");
+    }
+    for export in additional_exports {
+        body.push_str(export);
+        body.push('\n');
     }
     render_generated_module(String::new(), body)
 }
@@ -3713,6 +3778,7 @@ fn render_models_module(
     models: &[&RenderedModel],
     external_models: &TypeScriptExternalModels,
     model_fragments: &RenderedExternalModelFragments,
+    requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     support_exports: Option<&SupportExports>,
     api_plan: &PlannedSpec,
@@ -3804,7 +3870,7 @@ fn render_models_module(
         &model_language_imports,
         &generated_value_imports,
     );
-    render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
+    render_typescript_requirement_imports(&mut imports, requirements);
     render_support_imports(&mut imports, support_exports, "./support", &body);
     if !model_fragments.imports.is_empty() {
         if !imports.is_empty() && !imports.ends_with('\n') {
@@ -3904,7 +3970,6 @@ fn render_service_module(
     models: &[&RenderedModel],
     external_model_names: &BTreeSet<String>,
     services: &[RenderedService<'_>],
-    _requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     include_native_api: bool,
     api_plan: &PlannedSpec,
@@ -3928,7 +3993,6 @@ fn render_service_module(
         language_imports,
         &[("nexus", "nexus-rpc"), ("workflow", "@temporalio/workflow")],
     );
-    render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
     // Operation type info references converter *values*, so they import alongside
     // (and before) the type-only model imports.
     render_value_imports(
@@ -3988,7 +4052,7 @@ fn render_resources_module(
     models: &[&RenderedModel],
     external_model_names: &BTreeSet<String>,
     services: &[RenderedService<'_>],
-    _requirements: &TypeScriptRequirements,
+    requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     support_exports: Option<&SupportExports>,
     api_plan: &PlannedSpec,
@@ -4007,7 +4071,7 @@ fn render_resources_module(
         language_imports,
         &[("workflow", "@temporalio/workflow")],
     );
-    render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
+    render_typescript_requirement_imports(&mut imports, requirements);
     render_type_imports(
         &mut imports,
         "./models",
@@ -4057,7 +4121,6 @@ fn render_operation_module(
     services: &[RenderedService<'_>],
     service: &RenderedService<'_>,
     operation: &RenderedOperation<'_>,
-    _requirements: &TypeScriptRequirements,
     language_imports: &[LanguageImportSpec],
     support_exports: Option<&SupportExports>,
     api_plan: &PlannedSpec,
@@ -4072,7 +4135,6 @@ fn render_operation_module(
         language_imports,
         &[("workflow", "@temporalio/workflow")],
     );
-    render_typescript_default_type_import_if_used(&mut imports, &body, "Long", "long");
     render_value_imports(&mut imports, "../services", &[service.attr_name.clone()]);
     let mut model_values = model_to_wire_function_names(models);
     model_values.push("requiredField".to_string());
@@ -5360,20 +5422,15 @@ fn typescript_resource_value_annotation(value: &PlannedType) -> String {
     }
 }
 
-fn typescript_resource_field_requirements(kind: &PlannedType) -> TypeScriptRequirements {
-    let mut requirements = TypeScriptRequirements::default();
-    match kind {
-        PlannedType::List(value) => {
-            collect_typescript_value_requirements(value, &mut requirements);
-        }
-        PlannedType::Map(key, value) => {
-            collect_typescript_value_requirements(key, &mut requirements);
-            collect_typescript_value_requirements(value, &mut requirements);
-        }
-        value => {
-            collect_typescript_value_requirements(value, &mut requirements);
-        }
+fn typescript_resource_field_requirements(
+    kind: &PlannedType,
+    function: Option<&FunctionFieldSpec<PlannedFamily>>,
+) -> TypeScriptRequirements {
+    if let Some(function) = function {
+        return typescript_function_requirements(function);
     }
+    let mut requirements = TypeScriptRequirements::default();
+    collect_typescript_value_requirements(kind, &mut requirements);
     requirements
 }
 
@@ -5385,7 +5442,13 @@ fn collect_typescript_value_requirements(
         PlannedType::Int(IntSpec::I64) => {
             requirements.long = true;
         }
-        PlannedType::Int(IntSpec::I32) => {}
+        PlannedType::Option(inner) | PlannedType::List(inner) => {
+            collect_typescript_value_requirements(inner, requirements);
+        }
+        PlannedType::Map(key, value) => {
+            collect_typescript_value_requirements(key, requirements);
+            collect_typescript_value_requirements(value, requirements);
+        }
         PlannedType::Tuple(items) => {
             for item in items {
                 collect_typescript_value_requirements(item, requirements);
@@ -5404,13 +5467,11 @@ fn collect_typescript_value_requirements(
             target: fallback,
             ..
         })) => {
-            if type_name
-                .for_language(Language::TypeScript)
-                .is_some_and(|type_name| type_name.contains("Long"))
-            {
-                requirements.long = true;
+            if let Some(annotation) = type_name.for_language(Language::TypeScript) {
+                requirements.long |= annotation == "Long";
+            } else {
+                collect_typescript_value_requirements(fallback, requirements);
             }
-            collect_typescript_value_requirements(fallback, requirements);
         }
         _ => {}
     }
@@ -6122,6 +6183,10 @@ fn is_typescript_keyword(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        TypeScriptRequirements, collect_typescript_value_requirements,
+        render_typescript_requirement_imports,
+    };
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
@@ -6136,8 +6201,27 @@ mod tests {
         generate_files_for_tree_with_mode_and_options, generate_source,
     };
     use crate::language::Language;
+    use crate::planning::PlannedType;
     use crate::spec::ApiSpecTree;
+    use crate::spec::IntSpec;
     use crate::spec::SupportFragmentSpec;
+
+    #[test]
+    fn requirement_imports_are_structural() {
+        let nested_long = PlannedType::List(Box::new(PlannedType::Option(Box::new(
+            PlannedType::Int(IntSpec::I64),
+        ))));
+        let mut requirements = TypeScriptRequirements::default();
+        collect_typescript_value_requirements(&nested_long, &mut requirements);
+
+        let mut imports = String::new();
+        render_typescript_requirement_imports(&mut imports, &requirements);
+        assert_eq!(imports, "import type Long from 'long';\n");
+
+        let mut imports = String::new();
+        render_typescript_requirement_imports(&mut imports, &TypeScriptRequirements::default());
+        assert!(imports.is_empty());
+    }
 
     fn sample_input_path(root: &std::path::Path) -> PathBuf {
         root.join("advanced/samples/inputs/workflow-service.wit")

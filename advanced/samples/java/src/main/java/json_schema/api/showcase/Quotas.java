@@ -63,19 +63,30 @@ public final class Quotas {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Quotas> {
         @Override
         public void serialize(Quotas value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
-            for (Map.Entry<String, Long> entry : value.additionalProperties.entrySet()) {
-                if (entry.getValue() < -SpecNumbers.INTEGER_CAP || entry.getValue() > SpecNumbers.INTEGER_CAP) {
-                    violations.add(new Violation(entry.getKey(), "exceeds \u00b1(2^53-1) integer cap"));
-                }
-                if (entry.getValue() < 0L) {
-                    violations.add(new Violation(entry.getKey(), "must be >= 0, got " + entry.getValue()));
-                }
-                if (entry.getValue() > 100L) {
-                    violations.add(new Violation(entry.getKey(), "must be <= 100, got " + entry.getValue()));
-                }
-                if (entry.getValue() % 5L != 0) {
-                    violations.add(new Violation(entry.getKey(), "must be a multiple of 5, got " + entry.getValue()));
+            if (value.additionalProperties == null) {
+                violations.add(new Violation("", "expected object"));
+            } else {
+                for (Map.Entry<String, Long> entry : value.additionalProperties.entrySet()) {
+                    if (entry.getValue() == null) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "explicit null not allowed"));
+                        continue;
+                    }
+                    if (entry.getValue() < -SpecNumbers.INTEGER_CAP || entry.getValue() > SpecNumbers.INTEGER_CAP) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "exceeds \u00b1(2^53-1) integer cap"));
+                    }
+                    if (entry.getValue() < 0L) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "must be >= 0, got " + entry.getValue()));
+                    }
+                    if (entry.getValue() > 100L) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "must be <= 100, got " + entry.getValue()));
+                    }
+                    if (entry.getValue() % 5L != 0) {
+                        violations.add(new Violation(Violation.memberPath(entry.getKey()), "must be a multiple of 5, got " + entry.getValue()));
+                    }
                 }
             }
             if (!violations.isEmpty()) {
@@ -87,6 +98,7 @@ public final class Quotas {
                 gen.writeNumberField(entry.getKey(), entry.getValue());
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -104,24 +116,25 @@ public final class Quotas {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 JsonNode element = node.get(key);
                 if (element.isNull()) {
-                    violations.add(new Violation(key, "explicit null not allowed"));
+                    violations.add(new Violation(path, "explicit null not allowed"));
                     continue;
                 }
-                Long parsed = SpecNumbers.specLong(element, key, violations);
+                Long parsed = SpecNumbers.specLong(element, path, violations);
                 if (parsed != null) {
                     if (parsed < -SpecNumbers.INTEGER_CAP || parsed > SpecNumbers.INTEGER_CAP) {
-                        violations.add(new Violation(key, "exceeds \u00b1(2^53-1) integer cap"));
+                        violations.add(new Violation(path, "exceeds \u00b1(2^53-1) integer cap"));
                     }
                     if (parsed < 0L) {
-                        violations.add(new Violation(key, "must be >= 0, got " + parsed));
+                        violations.add(new Violation(path, "must be >= 0, got " + parsed));
                     }
                     if (parsed > 100L) {
-                        violations.add(new Violation(key, "must be <= 100, got " + parsed));
+                        violations.add(new Violation(path, "must be <= 100, got " + parsed));
                     }
                     if (parsed % 5L != 0) {
-                        violations.add(new Violation(key, "must be a multiple of 5, got " + parsed));
+                        violations.add(new Violation(path, "must be a multiple of 5, got " + parsed));
                     }
                     additionalProperties.put(key, parsed);
                 }

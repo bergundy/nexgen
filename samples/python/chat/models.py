@@ -11,6 +11,7 @@ import temporalio.exceptions
 from ._definitions import (
     Violation,
     _collect,
+    _member_path,
     _parse_spec_integer,
     _transfer_type_convertible,
 )
@@ -47,7 +48,9 @@ class _GetRoomInputTransferTypeConverter(
 
         for key in raw:
             if key != "roomId":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return GetRoomInput(
@@ -56,8 +59,22 @@ class _GetRoomInputTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "GetRoomInput") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, GetRoomInput):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["roomId"] = value.room_id
+        room_id_value: typing.Any = runtime_value.room_id
+        if room_id_value is None:
+            violations.append(Violation(path="roomId", reason="required"))
+        else:
+            if not (isinstance(room_id_value, str)):
+                violations.append(Violation(path="roomId", reason="expected string"))
+            out["roomId"] = room_id_value
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
         return out
 
 
@@ -88,10 +105,11 @@ class _LabelsTransferTypeConverter(
             )
         additional_properties: dict[str, str] = {}
         for key in raw:
+            path = _member_path(key)
             member: str = typing.cast("typing.Any", None)
             member_raw = raw[key]
             if not isinstance(member_raw, str):
-                violations.append(Violation(path=key, reason="expected string"))
+                violations.append(Violation(path=path, reason="expected string"))
             else:
                 member = member_raw
             additional_properties[key] = member
@@ -101,9 +119,25 @@ class _LabelsTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Labels") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Labels):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        for key, entry in value.additional_properties.items():
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
+            if not (isinstance(entry, str)):
+                violations.append(Violation(path=path, reason="expected string"))
             out[key] = entry
         if len(out) > 50:
             violations.append(
@@ -194,7 +228,9 @@ class _MessageTransferTypeConverter(
                 and key != "replyToId"
                 and key != "priority"
             ):
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return Message(
@@ -206,20 +242,58 @@ class _MessageTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Message") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Message):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        if typing.cast("object", value.kind) not in ("text",):
-            violations.append(Violation(path="kind", reason='must equal "text"'))
-        out["kind"] = value.kind
-        out["body"] = value.body
-        if value.reply_to_id is not None:
-            out["replyToId"] = value.reply_to_id
-        if value._priority is not None:
-            if abs(value.priority) > 9007199254740991:
-                violations.append(
-                    Violation(path="priority", reason="exceeds ±(2^53-1) integer cap")
+        kind_value: typing.Any = runtime_value.kind
+        if kind_value is None:
+            violations.append(Violation(path="kind", reason="required"))
+        else:
+            if not (isinstance(kind_value, str)):
+                violations.append(Violation(path="kind", reason="expected string"))
+            else:
+                if typing.cast("object", kind_value) not in ("text",):
+                    violations.append(
+                        Violation(path="kind", reason='must equal "text"')
+                    )
+            out["kind"] = kind_value
+        body_value: typing.Any = runtime_value.body
+        if body_value is None:
+            violations.append(Violation(path="body", reason="required"))
+        else:
+            if not (isinstance(body_value, str)):
+                violations.append(Violation(path="body", reason="expected string"))
+            out["body"] = body_value
+        reply_to_id_value: typing.Any = runtime_value.reply_to_id
+        if reply_to_id_value is not None:
+            if not (isinstance(reply_to_id_value, str)):
+                violations.append(Violation(path="replyToId", reason="expected string"))
+            out["replyToId"] = reply_to_id_value
+        priority_value: typing.Any = runtime_value._priority
+        if priority_value is not None:
+            if not (
+                not isinstance(priority_value, bool)
+                and (
+                    isinstance(priority_value, int)
+                    or (
+                        isinstance(priority_value, float)
+                        and priority_value.is_integer()
+                    )
                 )
-            out["priority"] = value._priority
+            ):
+                violations.append(Violation(path="priority", reason="expected integer"))
+            else:
+                if abs(priority_value) > 9007199254740991:
+                    violations.append(
+                        Violation(
+                            path="priority", reason="exceeds ±(2^53-1) integer cap"
+                        )
+                    )
+            out["priority"] = priority_value
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -381,25 +455,77 @@ class _RoomTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "Room") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, Room):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["roomId"] = value.room_id
-        out["displayName"] = value.display_name
-        out["topic"] = value.topic
-        if value.members is not None:
-            out["members"] = value.members
-        if value.labels is not None:
-            try:
-                out["labels"] = _LabelsTransferTypeConverter().to_transfer_type(
-                    value.labels
+        room_id_value: typing.Any = runtime_value.room_id
+        if room_id_value is None:
+            violations.append(Violation(path="roomId", reason="required"))
+        else:
+            if not (isinstance(room_id_value, str)):
+                violations.append(Violation(path="roomId", reason="expected string"))
+            out["roomId"] = room_id_value
+        display_name_value: typing.Any = runtime_value.display_name
+        if display_name_value is None:
+            violations.append(Violation(path="displayName", reason="required"))
+        else:
+            if not (isinstance(display_name_value, str)):
+                violations.append(
+                    Violation(path="displayName", reason="expected string")
                 )
-            except temporalio.exceptions.ApplicationError as error:
-                _collect(violations, "labels", error)
-        for key, entry in value.additional_properties.items():
+            out["displayName"] = display_name_value
+        topic_value: typing.Any = runtime_value.topic
+        if topic_value is not None:
+            if not (isinstance(topic_value, str)):
+                violations.append(Violation(path="topic", reason="expected string"))
+        if topic_value is None:
+            out["topic"] = None
+        else:
+            out["topic"] = topic_value
+        members_value: typing.Any = runtime_value.members
+        if members_value is not None:
+            if not (isinstance(members_value, list)):
+                violations.append(Violation(path="members", reason="expected array"))
+            else:
+                checked_array_8 = typing.cast("list[typing.Any]", members_value)
+                for item_index_8, item_element_8 in enumerate(checked_array_8):
+                    if not (isinstance(item_element_8, str)):
+                        violations.append(
+                            Violation(
+                                path=f"members[{item_index_8}]",
+                                reason="expected string",
+                            )
+                        )
+            members_checked = typing.cast("list[typing.Any]", members_value)
+            out["members"] = members_checked
+        labels_value: typing.Any = runtime_value.labels
+        if labels_value is not None:
+            labels_violation_count = len(violations)
+            if len(violations) == labels_violation_count:
+                try:
+                    out["labels"] = _LabelsTransferTypeConverter().to_transfer_type(
+                        labels_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "labels", error)
+        additional_properties_value: typing.Any = runtime_value.additional_properties
+        if not isinstance(additional_properties_value, dict):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        checked_additional_properties = typing.cast(
+            "dict[str, typing.Any]", additional_properties_value
+        )
+        for key, entry in checked_additional_properties.items():
+            path = _member_path(key)
             if key in _ROOM_DECLARED:
                 violations.append(
                     Violation(
-                        path=key,
+                        path=path,
                         reason="additional property collides with declared property",
                     )
                 )
@@ -469,7 +595,9 @@ class _SendMessageInputTransferTypeConverter(
 
         for key in raw:
             if key != "roomId" and key != "message":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return SendMessageInput(
@@ -479,15 +607,32 @@ class _SendMessageInputTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "SendMessageInput") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, SendMessageInput):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
         violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["roomId"] = value.room_id
-        try:
-            out["message"] = _MessageTransferTypeConverter().to_transfer_type(
-                value.message
-            )
-        except temporalio.exceptions.ApplicationError as error:
-            _collect(violations, "message", error)
+        room_id_value: typing.Any = runtime_value.room_id
+        if room_id_value is None:
+            violations.append(Violation(path="roomId", reason="required"))
+        else:
+            if not (isinstance(room_id_value, str)):
+                violations.append(Violation(path="roomId", reason="expected string"))
+            out["roomId"] = room_id_value
+        message_value: typing.Any = runtime_value.message
+        if message_value is None:
+            violations.append(Violation(path="message", reason="required"))
+        else:
+            message_violation_count = len(violations)
+            if len(violations) == message_violation_count:
+                try:
+                    out["message"] = _MessageTransferTypeConverter().to_transfer_type(
+                        message_value
+                    )
+                except temporalio.exceptions.ApplicationError as error:
+                    _collect(violations, "message", error)
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return out
@@ -529,7 +674,9 @@ class _SendMessageOutputTransferTypeConverter(
 
         for key in raw:
             if key != "messageId":
-                violations.append(Violation(path=key, reason="unknown field"))
+                violations.append(
+                    Violation(path=_member_path(key), reason="unknown field")
+                )
         if violations:
             raise temporalio.converter.create_payload_validation_error(violations)
         return SendMessageOutput(
@@ -538,8 +685,22 @@ class _SendMessageOutputTransferTypeConverter(
 
     @typing_extensions.override
     def to_transfer_type(self, value: "SendMessageOutput") -> typing.Any:
+        runtime_value: typing.Any = value
+        if not isinstance(runtime_value, SendMessageOutput):
+            raise temporalio.converter.create_payload_validation_error(
+                [Violation(path="", reason="expected object")]
+            )
+        violations: list[Violation] = []
         out: dict[str, typing.Any] = {}
-        out["messageId"] = value.message_id
+        message_id_value: typing.Any = runtime_value.message_id
+        if message_id_value is None:
+            violations.append(Violation(path="messageId", reason="required"))
+        else:
+            if not (isinstance(message_id_value, str)):
+                violations.append(Violation(path="messageId", reason="expected string"))
+            out["messageId"] = message_id_value
+        if violations:
+            raise temporalio.converter.create_payload_validation_error(violations)
         return out
 
 

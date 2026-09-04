@@ -10,10 +10,12 @@ use std::cell::{Cell, RefCell};
 
 use crate::error::{Error, Result};
 use crate::generator::json_schema::build_json_name_manifest;
-use crate::generator::json_schema::register_cross_module_ref_names;
+use crate::generator::json_schema::{
+    bare_ref_target, register_cross_module_ref_names, violation_member_segment,
+};
 use crate::generator::typescript::{
-    RenderedExternalModelFragments, WireValueConversion, render_typescript_doc_comment,
-    typescript_generated_field_name,
+    RenderedExternalModelFragments, RenderedTypeScriptSupport, WireValueConversion,
+    render_typescript_doc_comment, typescript_generated_field_name,
 };
 use crate::generator::{ExternalModelBackend, TsDateTimeTypes};
 use crate::json_schema::format::TemporalKind;
@@ -80,6 +82,86 @@ fn code_point_length_fn() -> String {
 
 fn active_repr() -> TsDateTimeTypes {
     TS_DATE_TIME_TYPES.with(Cell::get)
+}
+
+fn value_schema_type_includes(schema: &Value, ty: &str) -> bool {
+    match schema.get("type") {
+        Some(Value::String(value)) => value == ty,
+        Some(Value::Array(values)) => values.iter().any(|value| value.as_str() == Some(ty)),
+        _ => false,
+    }
+}
+
+fn value_temporal_kind_direct(schema: &Value) -> Option<TemporalKind> {
+    if !value_schema_type_includes(schema, "string") {
+        return None;
+    }
+    schema
+        .get("format")
+        .and_then(Value::as_str)
+        .and_then(TemporalKind::from_name)
+}
+
+fn value_content_encoding_direct(schema: &Value) -> bool {
+    value_schema_type_includes(schema, "string")
+        && schema
+            .get("contentEncoding")
+            .and_then(Value::as_str)
+            .and_then(crate::json_schema::content_encoding::Encoding::from_name)
+            .is_some()
+}
+
+fn temporal_serializes_non_identity(kind: TemporalKind, repr: Option<TsDateTimeTypes>) -> bool {
+    match repr {
+        Some(repr) => matches!(
+            (kind, repr),
+            (TemporalKind::DateTime, TsDateTimeTypes::Date)
+                | (TemporalKind::DateTime, TsDateTimeTypes::Temporal)
+                | (TemporalKind::Date, TsDateTimeTypes::Temporal)
+                | (TemporalKind::Duration, TsDateTimeTypes::Temporal)
+        ),
+        // P15 is checked before a rendering mode is selected. Reserve an
+        // identifier if any supported mode can emit it, keeping the accepted
+        // namespace stable across `--date-time-types`.
+        None => !matches!(kind, TemporalKind::Time),
+    }
+}
+
+/// Whether the TypeScript wire serializer changes this schema's in-memory
+/// value. The emitter supplies its active temporal representation; P15 supplies
+/// `None` to ask whether any supported representation can change it. Keeping
+/// both callers on this predicate prevents ordinary assertion-only formats
+/// such as `email` from reserving helpers that are never emitted.
+pub(crate) fn schema_serializes_non_identity(
+    schema: &Value,
+    repr: Option<TsDateTimeTypes>,
+) -> bool {
+    if schema.get("$ref").and_then(Value::as_str).is_some() {
+        return true;
+    }
+    if let Some(kind) = value_temporal_kind_direct(schema) {
+        return temporal_serializes_non_identity(kind, repr);
+    }
+    if value_content_encoding_direct(schema) {
+        return true;
+    }
+    if let Some(branches) = schema.get("oneOf").and_then(Value::as_array)
+        && branches
+            .iter()
+            .any(|branch| value_schema_type_includes(branch, "null"))
+        && let Some(non_null) = branches
+            .iter()
+            .find(|branch| !value_schema_type_includes(branch, "null"))
+        && (non_null.get("$ref").and_then(Value::as_str).is_some()
+            || value_temporal_kind_direct(non_null).is_some()
+            || value_content_encoding_direct(non_null))
+    {
+        return schema_serializes_non_identity(non_null, repr);
+    }
+    value_schema_type_includes(schema, "array")
+        && schema
+            .get("items")
+            .is_some_and(|items| schema_serializes_non_identity(items, repr))
 }
 
 /// The materialized `TemporalKind` of a schema that is directly a temporal string
@@ -303,6 +385,35 @@ impl Schema {
             || self.unique_items == Some(true)
             || self.contains.is_some()
     }
+}
+
+fn ts_index_access(object: &str, key: &str) -> String {
+    format!("{object}[{}]", typescript_string_literal(key))
+}
+
+fn ts_has_own(object: &str, key: &str) -> String {
+    format!(
+        "Object.prototype.hasOwnProperty.call({object}, {})",
+        typescript_string_literal(key)
+    )
+}
+
+fn ts_member_conflicts_with_object_prototype(name: &str) -> bool {
+    matches!(
+        name,
+        "constructor"
+            | "hasOwnProperty"
+            | "isPrototypeOf"
+            | "propertyIsEnumerable"
+            | "toLocaleString"
+            | "toString"
+            | "valueOf"
+            | "__defineGetter__"
+            | "__defineSetter__"
+            | "__lookupGetter__"
+            | "__lookupSetter__"
+            | "__proto__"
+    )
 }
 
 fn ts_bound_literal(number: &serde_json::Number, is_integer: bool) -> String {
@@ -743,7 +854,7 @@ fn render_ts_property_name_checks(
         output.push_str(&format!("if ({condition}) {{\n"));
         output.push_str(&inner);
         output.push_str(&format!(
-            "  violations.push({{ path: key, reason: `invalid property name \"${{key}}\": {reason}` }});\n"
+            "  violations.push({{ path: {DEFINITIONS_NAMESPACE}.memberPath(key), reason: `invalid property name \"${{key}}\": {reason}` }});\n"
         ));
         output.push_str(&inner);
         output.push_str("}\n");
@@ -790,7 +901,7 @@ fn render_ts_property_name_checks(
         output.push_str(&format!("if (!{const_name}.test(key)) {{\n"));
         output.push_str(&inner);
         output.push_str(&format!(
-            "  violations.push({{ path: key, reason: `invalid property name \"${{key}}\": must match pattern {escaped}, got ${{JSON.stringify(key)}}` }});\n"
+            "  violations.push({{ path: {DEFINITIONS_NAMESPACE}.memberPath(key), reason: `invalid property name \"${{key}}\": must match pattern {escaped}, got ${{JSON.stringify(key)}}` }});\n"
         ));
         output.push_str(&inner);
         output.push_str("}\n");
@@ -810,7 +921,7 @@ fn render_ts_property_name_checks(
         output.push_str(&format!("!{const_name}.test(key)) {{\n"));
         output.push_str(&inner);
         output.push_str(&format!(
-            "  violations.push({{ path: key, reason: `invalid property name \"${{key}}\": must be a valid {}, got ${{JSON.stringify(key)}}` }});\n",
+            "  violations.push({{ path: {DEFINITIONS_NAMESPACE}.memberPath(key), reason: `invalid property name \"${{key}}\": must be a valid {}, got ${{JSON.stringify(key)}}` }});\n",
             check.name
         ));
         output.push_str(&inner);
@@ -833,17 +944,14 @@ fn render_ts_dependent_required(
         return;
     };
     for (trigger, deps) in dependent_required {
+        if deps.is_empty() {
+            continue;
+        }
         output.push_str(indent);
-        output.push_str(&format!(
-            "if ({obj_expr}[{}] !== undefined) {{\n",
-            typescript_string_literal(trigger)
-        ));
+        output.push_str(&format!("if ({}) {{\n", ts_has_own(obj_expr, trigger)));
         for dep in deps {
             output.push_str(indent);
-            output.push_str(&format!(
-                "  if ({obj_expr}[{}] === undefined) {{\n",
-                typescript_string_literal(dep)
-            ));
+            output.push_str(&format!("  if (!{}) {{\n", ts_has_own(obj_expr, dep)));
             output.push_str(indent);
             output.push_str(&format!(
                 "    violations.push({{ path: {}, reason: `property \"{dep}\" is required when \"{trigger}\" is present` }});\n",
@@ -859,9 +967,9 @@ fn render_ts_dependent_required(
 
 /// Renders a TypeScript literal for a scalar matcher value in the element's
 /// static type.
-fn ts_scalar_literal(value: &Value, element_ty: Option<&str>) -> String {
+fn ts_scalar_literal(value: &Value, integer: bool) -> String {
     match value {
-        Value::Number(number) => ts_bound_literal(number, element_ty == Some("integer")),
+        Value::Number(number) => ts_bound_literal(number, integer),
         _ => typescript_value_literal(value).unwrap_or_else(|_| "undefined".to_string()),
     }
 }
@@ -894,8 +1002,11 @@ fn scalar_matcher(schema: &Schema) -> ScalarMatcher {
 /// an empty condition set renders as the literal `true`.
 fn ts_matcher_condition(matcher: &Schema, elem: &str, element_ty: Option<&str>) -> String {
     let matcher = scalar_matcher(matcher);
-    let is_integer = element_ty == Some("integer")
-        || matcher.kind == Some(ScalarKind::Integer) && element_ty != Some("number");
+    let is_integer = match matcher.kind {
+        Some(ScalarKind::Number) => false,
+        Some(ScalarKind::Integer) => element_ty != Some("number"),
+        _ => element_ty == Some("integer"),
+    };
     // A matcher that declares no `type` still needs a runtime kind guard: the
     // raw wire array can hold anything, and an unguarded string/number predicate
     // either throws (`[...5]`) or silently coerces (`"9" >= 5`) instead of
@@ -919,14 +1030,14 @@ fn ts_matcher_condition(matcher: &Schema, elem: &str, element_ty: Option<&str>) 
     if let Some(value) = &matcher.const_value {
         parts.push(format!(
             "{elem} === {}",
-            ts_scalar_literal(value, element_ty)
+            ts_scalar_literal(value, is_integer)
         ));
     }
     if !matcher.enum_values.is_empty() {
         let alternatives = matcher
             .enum_values
             .iter()
-            .map(|value| format!("{elem} === {}", ts_scalar_literal(value, element_ty)))
+            .map(|value| format!("{elem} === {}", ts_scalar_literal(value, is_integer)))
             .collect::<Vec<_>>()
             .join(" || ");
         if !alternatives.is_empty() {
@@ -1183,17 +1294,11 @@ fn field_needs_serialize_check(schema: &Schema) -> bool {
             .any(field_needs_serialize_check);
     }
     match schema.ty.as_ref().and_then(Value::as_str) {
-        Some("string") => schema.has_string_constraints(),
+        Some("string") | Some("boolean") => true,
         // `number` always carries the wire-wide finiteness predicate, and
         // `integer` the ±(2^53−1) cap, even when the schema declares no bound.
         Some("number") | Some("integer") => true,
-        Some("array") => {
-            schema.has_array_constraints()
-                || schema
-                    .items
-                    .as_deref()
-                    .is_some_and(field_needs_serialize_check)
-        }
+        Some("array") => true,
         _ => false,
     }
 }
@@ -1320,7 +1425,53 @@ fn render_ts_field_checks(
     path_expr: &str,
     indent: &str,
 ) {
-    render_ts_field_checks_at_depth(output, schema, value_expr, path_expr, indent, 0);
+    render_ts_field_checks_at_depth(output, schema, value_expr, path_expr, indent, 0, true);
+}
+
+fn ts_serialize_type_check(schema: &Schema, value_expr: &str) -> Option<(String, &'static str)> {
+    if let Some(kind) = temporal_kind_direct(schema) {
+        let native = ts_temporal_type(kind, active_repr());
+        let predicate = match native {
+            "string" => format!("typeof {value_expr} === 'string'"),
+            "Date" => format!("{value_expr} instanceof Date"),
+            _ => format!("{value_expr} instanceof {native}"),
+        };
+        return Some((
+            predicate,
+            match kind {
+                TemporalKind::DateTime => "expected date-time",
+                TemporalKind::Date => "expected date",
+                TemporalKind::Time => "expected time",
+                TemporalKind::Duration => "expected duration",
+            },
+        ));
+    }
+    if content_encoding_direct(schema).is_some() {
+        return Some((
+            format!("{value_expr} instanceof Uint8Array"),
+            "expected bytes",
+        ));
+    }
+    match schema.ty.as_ref().and_then(Value::as_str) {
+        Some("string") => Some((
+            format!("typeof {value_expr} === 'string'"),
+            "expected string",
+        )),
+        Some("boolean") => Some((
+            format!("typeof {value_expr} === 'boolean'"),
+            "expected boolean",
+        )),
+        Some("number") => Some((
+            format!("typeof {value_expr} === 'number'"),
+            "expected number",
+        )),
+        Some("integer") => Some((
+            format!("typeof {value_expr} === 'number' && Number.isInteger({value_expr})"),
+            "expected integer",
+        )),
+        Some("array") => Some((format!("Array.isArray({value_expr})"), "expected array")),
+        _ => None,
+    }
 }
 
 fn render_ts_field_checks_at_depth(
@@ -1330,11 +1481,44 @@ fn render_ts_field_checks_at_depth(
     path_expr: &str,
     indent: &str,
     depth: usize,
+    check_type: bool,
 ) {
     // A nullability wrapper's constraints live on its non-null branch; the caller
     // has already guarded the value against `null`.
     if let Some(non_null) = nullable_non_null_schema(schema) {
-        render_ts_field_checks_at_depth(output, non_null, value_expr, path_expr, indent, depth);
+        render_ts_field_checks_at_depth(
+            output, non_null, value_expr, path_expr, indent, depth, check_type,
+        );
+        return;
+    }
+    if check_type && let Some((predicate, reason)) = ts_serialize_type_check(schema, value_expr) {
+        let inner_indent = format!("{indent}  ");
+        let mut body = String::new();
+        render_ts_field_checks_at_depth(
+            &mut body,
+            schema,
+            value_expr,
+            path_expr,
+            &inner_indent,
+            depth,
+            false,
+        );
+        output.push_str(indent);
+        output.push_str(&format!("if (!({predicate})) {{\n"));
+        output.push_str(indent);
+        output.push_str(&format!(
+            "  violations.push({{ path: {path_expr}, reason: '{reason}' }});\n"
+        ));
+        if body.is_empty() {
+            output.push_str(indent);
+            output.push_str("}\n");
+        } else {
+            output.push_str(indent);
+            output.push_str("} else {\n");
+            output.push_str(&body);
+            output.push_str(indent);
+            output.push_str("}\n");
+        }
         return;
     }
     if let Some(kind) = temporal_kind_direct(schema) {
@@ -1427,9 +1611,6 @@ fn render_ts_field_checks_at_depth(
             render_ts_numeric_checks(output, value_expr, path_expr, schema, indent, true);
         }
         Some("array") => {
-            if schema.has_array_constraints() {
-                render_ts_array_checks(output, value_expr, path_expr, schema, indent, depth, true);
-            }
             if let Some(items) = schema.items.as_deref()
                 && field_needs_serialize_check(items)
             {
@@ -1456,6 +1637,7 @@ fn render_ts_field_checks_at_depth(
                     &item_path,
                     &check_indent,
                     depth + 1,
+                    true,
                 );
                 if allows_null(items) {
                     output.push_str(&item_indent);
@@ -1463,6 +1645,9 @@ fn render_ts_field_checks_at_depth(
                 }
                 output.push_str(indent);
                 output.push_str("});\n");
+            }
+            if schema.has_array_constraints() {
+                render_ts_array_checks(output, value_expr, path_expr, schema, indent, depth, true);
             }
         }
         _ => {}
@@ -1515,7 +1700,7 @@ fn render_ts_serialize_property_check(
 ) {
     let field_name = property.ts_member_name(json_name);
     let value_expr = format!("value.{field_name}");
-    let path_expr = typescript_string_literal(json_name);
+    let path_expr = typescript_violation_path_literal(json_name);
     let guard_null = allows_null(property);
     let body_indent = if guard_null {
         format!("{indent}  ")
@@ -1581,6 +1766,10 @@ impl ModelBackend {
         json_type: &PlannedJsonType,
     ) -> String {
         ts_transfer_type_converter_name(&self.resolved_model_name(json_type))
+    }
+
+    pub(in crate::generator) fn render_support(&self) -> Result<RenderedTypeScriptSupport> {
+        Ok(rendered_support(self.render_support_files()?))
     }
 }
 
@@ -1654,7 +1843,7 @@ impl ExternalModelBackend<PlannedJsonType> for ModelBackend {
 
         Ok(BTreeMap::from([(
             PathBuf::from("definitions.ts"),
-            render_support_file(),
+            render_json_runtime_module(),
         )]))
     }
 
@@ -1682,8 +1871,40 @@ impl ExternalModelBackend<PlannedJsonType> for ModelBackend {
     }
 }
 
-pub(in crate::generator) fn render_support_file() -> String {
-    render_json_runtime_module()
+pub(in crate::generator) fn render_tree_support(
+    branch: &crate::spec::ApiSpecBranch<PlannedFamily>,
+) -> RenderedTypeScriptSupport {
+    if !branch_has_json_models(branch) {
+        return RenderedTypeScriptSupport::default();
+    }
+
+    rendered_support(BTreeMap::from([(
+        PathBuf::from("definitions.ts"),
+        render_json_runtime_module(),
+    )]))
+}
+
+fn rendered_support(files: BTreeMap<PathBuf, String>) -> RenderedTypeScriptSupport {
+    let root_exports = if files.is_empty() {
+        Vec::new()
+    } else {
+        vec!["export type { Violation } from './definitions';".to_string()]
+    };
+    RenderedTypeScriptSupport {
+        files,
+        root_exports,
+    }
+}
+
+fn branch_has_json_models(branch: &crate::spec::ApiSpecBranch<PlannedFamily>) -> bool {
+    branch.children.values().any(|node| match node {
+        crate::spec::ApiSpecNode::Leaf(leaf) => leaf
+            .spec
+            .external_types()
+            .map(|(_, binding)| binding)
+            .any(|binding| binding.json_model().is_some()),
+        crate::spec::ApiSpecNode::Branch(branch) => branch_has_json_models(branch),
+    })
 }
 
 fn root_typescript_runtime_module(module_path: &ModulePath) -> String {
@@ -1712,13 +1933,13 @@ fn render_external_models(
 
     render_ts_inline_union_serializers(&mut output, json_models)?;
 
-    for model in json_models {
+    for model in converter_dependency_order(json_models)? {
         output.push('\n');
         render_model_transfer_type_converter(&mut output, model, json_models)?;
     }
 
     Ok(RenderedExternalModelFragments {
-        imports: render_json_model_imports(runtime_import_module),
+        imports: render_json_model_imports(runtime_import_module, &output),
         body: output,
         type_exported_names: json_models
             .iter()
@@ -1731,13 +1952,59 @@ fn render_external_models(
     })
 }
 
+/// Orders converter value declarations by same-module bare-alias dependencies.
+///
+/// Type aliases themselves are hoisted by TypeScript, but the companion
+/// converters are `const` values: `aConverter = zConverter` executes at module
+/// initialization and cannot precede `zConverter`. Cross-module targets are
+/// imports and therefore already initialized; ordinary models have no ordering
+/// dependency here. The parser rejects alias cycles, while the defensive error
+/// below keeps a malformed planned graph from becoming a TDZ at runtime.
+fn converter_dependency_order<'a>(
+    models: &[&'a PlannedJsonType],
+) -> Result<Vec<&'a PlannedJsonType>> {
+    let local_names = models
+        .iter()
+        .map(|model| model.model_name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut emitted = BTreeSet::<String>::new();
+    let mut pending = models.to_vec();
+    let mut ordered = Vec::with_capacity(models.len());
+
+    while !pending.is_empty() {
+        let Some(index) = pending.iter().position(|model| {
+            let Some(reference) = bare_ref_target(model) else {
+                return true;
+            };
+            let target = reference_model_name(reference);
+            !local_names.contains(target.as_str()) || emitted.contains(&target)
+        }) else {
+            return Err(Error::InvalidJsonSchema {
+                path: PathBuf::from("<json-generator>"),
+                reason: format!(
+                    "bare-`$ref` alias converter cycle among {}; break the alias cycle by making one declaration a concrete schema",
+                    pending
+                        .iter()
+                        .map(|model| model.model_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
+        };
+        let model = pending.remove(index);
+        emitted.insert(model.model_name.clone());
+        ordered.push(model);
+    }
+    Ok(ordered)
+}
+
 /// The namespace under which every generated `models.ts` imports its sibling
 /// `definitions.ts` runtime module, so the generated file doesn't pollute its
 /// own module namespace with generic names (`payloadValidationError`, `collect`, …)
 /// that could collide with user-authored identifiers.
 const DEFINITIONS_NAMESPACE: &str = "__nexgenDefinitions";
 
-fn render_json_model_imports(runtime_import_module: &str) -> String {
+fn render_json_model_imports(runtime_import_module: &str, body: &str) -> String {
     let mut imports = String::new();
     // Every model gets a converter, so the SDK contract it implements is always
     // referenced. Type-only: nexus-rpc contributes no runtime code to `models.ts`.
@@ -1746,11 +2013,13 @@ fn render_json_model_imports(runtime_import_module: &str) -> String {
     // (TS 6's `esnext.temporal` lib) — no import required (P4).
     // `payloadValidationError`/`isPlainObject`/`Violation` are referenced by every
     // generated model's parser, so the import is always live.
-    imports.push_str("import * as ");
-    imports.push_str(DEFINITIONS_NAMESPACE);
-    imports.push_str(" from \"");
-    imports.push_str(runtime_import_module);
-    imports.push_str("\";\n");
+    if body.contains(DEFINITIONS_NAMESPACE) {
+        imports.push_str("import * as ");
+        imports.push_str(DEFINITIONS_NAMESPACE);
+        imports.push_str(" from \"");
+        imports.push_str(runtime_import_module);
+        imports.push_str("\";\n");
+    }
     imports
 }
 
@@ -3009,13 +3278,21 @@ fn ts_inline_union_serializer(
     let union = classify_ts_union(property, models)?;
     if !union.variants.iter().any(|variant| {
         variant.converter.is_some()
-            || (variant.is_array && serialize_expr(&variant.schema, "value") != "value")
+            || (variant.is_array
+                && schema_serializes_non_identity(
+                    &serde_json::to_value(&variant.schema)
+                        .expect("decoded TypeScript schema re-serializes"),
+                    Some(active_repr()),
+                ))
     }) {
         return None;
     }
     // Named off the union itself (`<Model><Property>`, the synthesized-name rule)
     // in the module's value namespace, which no generated type occupies.
-    let name = format!("serialize{model_name}{}", json_name.to_upper_camel_case());
+    let name = format!(
+        "serialize{model_name}{}",
+        property.ts_member_name(json_name).to_upper_camel_case()
+    );
     Some((name, union))
 }
 
@@ -3052,6 +3329,14 @@ fn render_ts_inline_union_serializers(
 }
 
 fn render_model_interface(output: &mut String, model: &PlannedJsonType) -> Result<()> {
+    if let Some(reference) = bare_ref_target(model) {
+        output.push_str("export type ");
+        output.push_str(&model.model_name);
+        output.push_str(" = ");
+        output.push_str(&reference_model_name(reference));
+        output.push_str(";\n");
+        return Ok(());
+    }
     let schema = decode_schema(model)?;
     if is_ts_union(&schema) {
         render_ts_schema_doc(output, "", &schema);
@@ -3063,15 +3348,24 @@ fn render_model_interface(output: &mut String, model: &PlannedJsonType) -> Resul
         return Ok(());
     }
     render_ts_schema_doc(output, "", &schema);
-    output.push_str("export interface ");
+    let use_type_alias = schema.properties.as_ref().is_some_and(|properties| {
+        properties.iter().any(|(json_name, property)| {
+            ts_member_conflicts_with_object_prototype(&property.ts_member_name(json_name))
+        })
+    });
+    output.push_str(if use_type_alias {
+        "export type "
+    } else {
+        "export interface "
+    });
     output.push_str(&model.model_name);
-    output.push_str(" {\n");
+    output.push_str(if use_type_alias { " = {\n" } else { " {\n" });
 
     if let Some(shape) = ts_map_shape(&schema)? {
         output.push_str("  additionalProperties: Record<string, ");
         output.push_str(&shape.value_annotation);
         output.push_str(">;\n");
-        output.push_str("}\n");
+        output.push_str(if use_type_alias { "};\n" } else { "}\n" });
         return Ok(());
     }
 
@@ -3099,7 +3393,7 @@ fn render_model_interface(output: &mut String, model: &PlannedJsonType) -> Resul
         output.push_str(">;\n");
     }
 
-    output.push_str("}\n");
+    output.push_str(if use_type_alias { "};\n" } else { "}\n" });
     Ok(())
 }
 
@@ -3135,6 +3429,18 @@ fn render_model_transfer_type_converter(
     model: &PlannedJsonType,
     models: &[&PlannedJsonType],
 ) -> Result<()> {
+    if let Some(reference) = bare_ref_target(model) {
+        output.push_str("export const ");
+        output.push_str(&ts_transfer_type_converter_name(&model.model_name));
+        output.push_str(": TransferTypeConverter<");
+        output.push_str(&model.model_name);
+        output.push_str("> = ");
+        output.push_str(&ts_transfer_type_converter_name(&reference_model_name(
+            reference,
+        )));
+        output.push_str(";\n");
+        return Ok(());
+    }
     let schema = decode_schema(model)?;
     if let Some(union) = classify_ts_union(&schema, models) {
         open_transfer_type_converter(output, &model.model_name);
@@ -3311,30 +3617,58 @@ fn render_model_serializer_body(
     // in-memory model and throw the aggregated payload-validation failure before emitting
     // the wire object — matching the parse path (both directions over one set of
     // check emitters).
+    // Guard through an `unknown` alias. Calling this type predicate directly on
+    // the typed model parameter narrows `value` to `Record<string, unknown>` in
+    // the remainder of the serializer, which erases the model member types.
+    output.push_str("  const candidate: unknown = value;\n");
+    output.push_str(&format!(
+        "  if (!{DEFINITIONS_NAMESPACE}.isPlainObject(candidate)) {{\n    throw {DEFINITIONS_NAMESPACE}.payloadValidationError([{{ path: '', reason: 'expected object' }}]);\n  }}\n"
+    ));
     let needs_validation = model_needs_serialize_validation(&schema)?;
     if needs_validation {
         output.push_str(&format!(
             "  const violations: {DEFINITIONS_NAMESPACE}.Violation[] = [];\n"
         ));
     }
-    output.push_str("  const out: Record<string, unknown> = {};\n");
+    output.push_str(
+        "  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;\n",
+    );
 
     if let Some(shape) = ts_map_shape(&schema)? {
+        output.push_str(&format!(
+            "  if (!{DEFINITIONS_NAMESPACE}.isPlainObject(value.additionalProperties)) {{\n    throw {DEFINITIONS_NAMESPACE}.payloadValidationError([{{ path: '', reason: 'expected object' }}]);\n  }}\n"
+        ));
         output.push_str(
-            "  for (const [key, entry] of Object.entries(value.additionalProperties ?? {})) {\n",
+            "  for (const [key, entry] of Object.entries(value.additionalProperties)) {\n",
         );
         // Every member is re-checked against `T` before emit (P12), keyed by its
         // own key — the same predicates the parse side ran.
         if let Some(value_schema) = &shape.value_schema {
-            render_ts_member_check(output, value_schema, "entry", "key", "    ");
+            if serialize_expr(value_schema, "entry") != "entry" {
+                output.push_str("    const memberViolationCount = violations.length;\n");
+            }
+            output.push_str(&format!(
+                "    const path = {DEFINITIONS_NAMESPACE}.memberPath(key);\n"
+            ));
+            render_ts_member_check(output, value_schema, "entry", "path", "    ");
         }
         // A typed member re-serializes through its own mapper; an untyped one
         // (`additionalProperties: true`) is carried verbatim (P13).
         let entry = match &shape.value_schema {
-            Some(value_schema) => serialize_expr_collecting(value_schema, "entry", "key"),
+            Some(value_schema) => serialize_expr_collecting(value_schema, "entry", "path"),
             None => "entry".to_string(),
         };
-        output.push_str(&format!("    out[key] = {entry};\n"));
+        if shape
+            .value_schema
+            .as_ref()
+            .is_some_and(|value_schema| serialize_expr(value_schema, "entry") != "entry")
+        {
+            output.push_str("    if (violations.length === memberViolationCount) {\n");
+            output.push_str(&format!("      out[key] = {entry};\n"));
+            output.push_str("    }\n");
+        } else {
+            output.push_str(&format!("    out[key] = {entry};\n"));
+        }
         output.push_str("  }\n");
         if needs_validation {
             let mut checks = String::new();
@@ -3363,7 +3697,7 @@ fn render_model_serializer_body(
             let value_expr = format!("value.{field_name}");
             // A union whose members need a transform goes through the module's
             // inline-union serializer; everything else is a plain expression.
-            let path_expr = typescript_string_literal(json_name);
+            let path_expr = typescript_violation_path_literal(json_name);
             let assignment =
                 match ts_inline_union_serializer(&model.model_name, json_name, property, models) {
                     Some((name, _)) => {
@@ -3377,22 +3711,84 @@ fn render_model_serializer_body(
                     None => serialize_expr_collecting(property, &value_expr, &path_expr),
                 };
             if required.contains(json_name) {
-                render_ts_serialize_property_check(output, json_name, property, "  ");
-                output.push_str("  out.");
-                output.push_str(json_name);
+                let requires_value = !allows_null(property);
+                let indent = if requires_value {
+                    output.push_str(&format!(
+                        "  if ({value_expr} === undefined || {value_expr} === null) {{\n    violations.push({{ path: {path_expr}, reason: 'required' }});\n  }} else {{\n"
+                    ));
+                    "    "
+                } else {
+                    "  "
+                };
+                let gates_conversion = assignment != value_expr;
+                let violation_count = format!("{field_name}ViolationCount");
+                if gates_conversion {
+                    output.push_str(indent);
+                    output.push_str(&format!("const {violation_count} = violations.length;\n"));
+                }
+                render_ts_serialize_property_check(output, json_name, property, indent);
+                let assignment_indent = if gates_conversion {
+                    output.push_str(indent);
+                    output.push_str(&format!(
+                        "if (violations.length === {violation_count}) {{\n"
+                    ));
+                    format!("{indent}  ")
+                } else {
+                    indent.to_string()
+                };
+                output.push_str(&assignment_indent);
+                output.push_str(&ts_index_access("out", json_name));
                 output.push_str(" = ");
                 output.push_str(&assignment);
                 output.push_str(";\n");
+                if gates_conversion {
+                    output.push_str(indent);
+                    output.push_str("}\n");
+                }
+                if requires_value {
+                    output.push_str("  }\n");
+                }
             } else {
                 output.push_str("  if (value.");
                 output.push_str(&field_name);
                 output.push_str(" !== undefined) {\n");
-                render_ts_serialize_property_check(output, json_name, property, "    ");
-                output.push_str("    out.");
-                output.push_str(json_name);
+                let rejects_null = !allows_null(property);
+                let indent = if rejects_null {
+                    output.push_str(&format!(
+                        "    if ({value_expr} === null) {{\n      violations.push({{ path: {path_expr}, reason: 'explicit null not allowed' }});\n    }} else {{\n"
+                    ));
+                    "      "
+                } else {
+                    "    "
+                };
+                let gates_conversion = assignment != value_expr;
+                let violation_count = format!("{field_name}ViolationCount");
+                if gates_conversion {
+                    output.push_str(indent);
+                    output.push_str(&format!("const {violation_count} = violations.length;\n"));
+                }
+                render_ts_serialize_property_check(output, json_name, property, indent);
+                let assignment_indent = if gates_conversion {
+                    output.push_str(indent);
+                    output.push_str(&format!(
+                        "if (violations.length === {violation_count}) {{\n"
+                    ));
+                    format!("{indent}  ")
+                } else {
+                    indent.to_string()
+                };
+                output.push_str(&assignment_indent);
+                output.push_str(&ts_index_access("out", json_name));
                 output.push_str(" = ");
                 output.push_str(&assignment);
                 output.push_str(";\n");
+                if gates_conversion {
+                    output.push_str(indent);
+                    output.push_str("}\n");
+                }
+                if rejects_null {
+                    output.push_str("    }\n");
+                }
                 output.push_str("  }\n");
             }
         }
@@ -3401,16 +3797,29 @@ fn render_model_serializer_body(
         output.push_str(
             "  for (const [key, entry] of Object.entries(value.additionalProperties ?? {})) {\n",
         );
+        output.push_str(&format!(
+            "    const path = {DEFINITIONS_NAMESPACE}.memberPath(key);\n"
+        ));
         output.push_str("    if (");
         output.push_str(&declared_fields_const_name(&model.model_name));
         output.push_str(".has(key)) {\n");
-        output.push_str("      violations.push({ path: key, reason: 'catch-all key collides with declared property' });\n");
+        output.push_str("      violations.push({ path, reason: 'catch-all key collides with declared property' });\n");
         output.push_str("      continue;\n");
         output.push_str("    }\n");
         if let Some(value_schema) = additional_properties_value_schema(&schema)? {
-            render_ts_member_check(output, &value_schema, "entry", "key", "    ");
-            let entry = serialize_expr_collecting(&value_schema, "entry", "key");
-            output.push_str(&format!("    out[key] = {entry};\n"));
+            let gates_conversion = serialize_expr(&value_schema, "entry") != "entry";
+            if gates_conversion {
+                output.push_str("    const memberViolationCount = violations.length;\n");
+            }
+            render_ts_member_check(output, &value_schema, "entry", "path", "    ");
+            let entry = serialize_expr_collecting(&value_schema, "entry", "path");
+            if gates_conversion {
+                output.push_str("    if (violations.length === memberViolationCount) {\n");
+                output.push_str(&format!("      out[key] = {entry};\n"));
+                output.push_str("    }\n");
+            } else {
+                output.push_str(&format!("    out[key] = {entry};\n"));
+            }
         } else {
             output.push_str("    out[key] = entry;\n");
         }
@@ -3442,12 +3851,17 @@ fn render_map_parser_body(output: &mut String, schema: &Schema, shape: &TsMapSha
     }
     output.push_str("  const additionalProperties: Record<string, ");
     output.push_str(&shape.value_annotation);
-    output.push_str("> = {};\n");
+    output.push_str("> = Object.create(null) as Record<string, ");
+    output.push_str(&shape.value_annotation);
+    output.push_str(">;\n");
     output.push_str("  for (const key of keys) {\n");
     match &shape.value_schema {
         // Untyped members are carried verbatim, `null` included (P13).
         None => output.push_str("    additionalProperties[key] = raw[key];\n"),
         Some(value_schema) => {
+            output.push_str(&format!(
+                "    const path = {DEFINITIONS_NAMESPACE}.memberPath(key);\n"
+            ));
             output.push_str("    let entry: ");
             output.push_str(&shape.value_annotation);
             output.push_str(" | undefined = undefined;\n");
@@ -3456,7 +3870,7 @@ fn render_map_parser_body(output: &mut String, schema: &Schema, shape: &TsMapSha
                 value_schema,
                 "raw[key]",
                 "entry",
-                "key",
+                "path",
                 "    ",
                 true,
             );
@@ -3496,39 +3910,29 @@ fn render_property_parser(
     output.push_str(&annotation);
     output.push_str(";\n");
 
+    let has_own = ts_has_own("raw", json_name);
+    let raw_access = ts_index_access("raw", json_name);
     if required {
         if allows_null(property) {
-            output.push_str("  if (raw.");
-            output.push_str(json_name);
-            output.push_str(" === undefined) {\n");
+            output.push_str(&format!("  if (!{has_own}) {{\n"));
         } else {
-            output.push_str("  if (raw.");
-            output.push_str(json_name);
-            output.push_str(" === undefined || raw.");
-            output.push_str(json_name);
-            output.push_str(" === null) {\n");
+            output.push_str(&format!("  if (!{has_own} || {raw_access} === null) {{\n"));
         }
-        output.push_str("    violations.push({ path: '");
-        output.push_str(json_name);
-        output.push_str("', reason: 'required' });\n");
+        output.push_str("    violations.push({ path: ");
+        output.push_str(&typescript_violation_path_literal(json_name));
+        output.push_str(", reason: 'required' });\n");
         output.push_str("  } else {\n");
         render_property_value_parser(output, model, models, json_name, property, &field_name)?;
         output.push_str("  }\n");
     } else {
         if allows_null(property) {
-            output.push_str("  if (raw.");
-            output.push_str(json_name);
-            output.push_str(" !== undefined) {\n");
+            output.push_str(&format!("  if ({has_own}) {{\n"));
         } else {
-            output.push_str("  if (raw.");
-            output.push_str(json_name);
-            output.push_str(" === null) {\n");
-            output.push_str("    violations.push({ path: '");
-            output.push_str(json_name);
-            output.push_str("', reason: 'explicit null not allowed' });\n");
-            output.push_str("  } else if (raw.");
-            output.push_str(json_name);
-            output.push_str(" !== undefined) {\n");
+            output.push_str(&format!("  if ({has_own} && {raw_access} === null) {{\n"));
+            output.push_str("    violations.push({ path: ");
+            output.push_str(&typescript_violation_path_literal(json_name));
+            output.push_str(", reason: 'explicit null not allowed' });\n");
+            output.push_str(&format!("  }} else if ({has_own}) {{\n"));
         }
         render_property_value_parser(output, model, models, json_name, property, &field_name)?;
         output.push_str("  }\n");
@@ -3545,8 +3949,8 @@ fn render_property_value_parser(
     property: &Schema,
     field_name: &str,
 ) -> Result<()> {
-    let raw_expr = format!("raw.{json_name}");
-    let path_expr = typescript_string_literal(json_name);
+    let raw_expr = ts_index_access("raw", json_name);
+    let path_expr = typescript_violation_path_literal(json_name);
     let materialized = is_materialized_property(property);
     if !materialized && let Some(const_value) = &property.const_value {
         let const_name = const_const_name(
@@ -4183,7 +4587,9 @@ fn render_closed_object_unknown_key_check(output: &mut String, fields: &[(String
         // A closed object with no declared properties rejects every member;
         // joining zero `key !== "…"` terms would emit `if () {`, which does not
         // parse (`additionalProperties.md` "Closed empty object" row).
-        output.push_str("    violations.push({ path: key, reason: 'unknown field' });\n");
+        output.push_str(&format!(
+            "    violations.push({{ path: {DEFINITIONS_NAMESPACE}.memberPath(key), reason: 'unknown field' }});\n"
+        ));
         output.push_str("  }\n\n");
         return;
     }
@@ -4196,7 +4602,9 @@ fn render_closed_object_unknown_key_check(output: &mut String, fields: &[(String
             .join(" && "),
     );
     output.push_str(") {\n");
-    output.push_str("      violations.push({ path: key, reason: 'unknown field' });\n");
+    output.push_str(&format!(
+        "      violations.push({{ path: {DEFINITIONS_NAMESPACE}.memberPath(key), reason: 'unknown field' }});\n"
+    ));
     output.push_str("    }\n");
     output.push_str("  }\n\n");
 }
@@ -4232,12 +4640,17 @@ fn render_open_object_collection(
         .unwrap_or_else(|| "unknown".to_string());
     output.push_str("  const additionalProperties: Record<string, ");
     output.push_str(&annotation);
-    output.push_str("> = {};\n");
+    output.push_str("> = Object.create(null) as Record<string, ");
+    output.push_str(&annotation);
+    output.push_str(">;\n");
     output.push_str("  for (const key of Object.keys(raw)) {\n");
     output.push_str("    if (!");
     output.push_str(&declared_fields_const_name(&model.model_name));
     output.push_str(".has(key)) {\n");
     if let Some(value_schema) = &value_schema {
+        output.push_str(&format!(
+            "      const path = {DEFINITIONS_NAMESPACE}.memberPath(key);\n"
+        ));
         output.push_str("      let entry: ");
         output.push_str(&annotation);
         output.push_str(" | undefined = undefined;\n");
@@ -4246,7 +4659,7 @@ fn render_open_object_collection(
             value_schema,
             "raw[key]",
             "entry",
-            "key",
+            "path",
             "      ",
             true,
         );
@@ -4289,6 +4702,12 @@ fn render_code_point_length_helper(output: &mut String) {
 }
 
 fn render_collect_helper(output: &mut String) {
+    output.push_str("export function memberPath(key: string): string {\n");
+    output.push_str(
+        r#"  return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) ? key : `["${key.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"]`;
+"#,
+    );
+    output.push_str("}\n\n");
     output.push_str(
         "export function collect(violations: Violation[], path: string, error: unknown): void {\n",
     );
@@ -4707,12 +5126,15 @@ fn const_const_name(
 }
 
 fn default_const_name(
-    model_name: &str,
+    _model_name: &str,
     field_name: &str,
-    models: &[&PlannedJsonType],
-    kind: ConstNameCollisionKind,
+    _models: &[&PlannedJsonType],
+    _kind: ConstNameCollisionKind,
 ) -> Result<String> {
-    const_name(model_name, field_name, models, kind, "DEFAULT_", "")
+    // This exported name must not depend on unrelated models in the run. The
+    // P15 manifest rejects a second DEFAULT_<FIELD> claimant and points at the
+    // declaring member's x-ts-name escape hatch.
+    Ok(format!("DEFAULT_{}", field_name.to_shouty_snake_case()))
 }
 
 /// Names a synthesized module-scope constant after the **emitted member
@@ -4721,9 +5143,9 @@ fn default_const_name(
 /// (P15, see specs/json-schema/features/default.md). The JSON name still selects
 /// the property; only the identifier is derived from the override.
 ///
-/// Uniqueness is counted over emitted identifiers too. Two members that recase
-/// alike collide here — and the override is what separates them, which it cannot
-/// do if the constant keeps deriving from the JSON name.
+/// Private `_CONST` bindings may use the model name to disambiguate within one
+/// module. Exported `DEFAULT_` bindings take the stable path above: another
+/// claimant rejects rather than changing an existing consumer-facing name.
 fn const_name(
     model_name: &str,
     member_ident: &str,
@@ -4817,7 +5239,14 @@ fn typescript_object_key(name: &str) -> String {
 }
 
 fn typescript_string_literal(value: &str) -> String {
-    format!("{value:?}")
+    serde_json::to_string(value)
+        .expect("a Rust string is always JSON-serializable")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+fn typescript_violation_path_literal(key: &str) -> String {
+    typescript_string_literal(&violation_member_segment(key))
 }
 
 fn typescript_value_literal(value: &Value) -> Result<String> {

@@ -50,6 +50,9 @@ Rationale (citing [[PRINCIPLES.md]]):
   so no language needs sum-type or conditional-shape machinery.
 
 Loader behavior:
+- The keyword requires `type: "object"`; a missing or different type rejects
+  at load time under **P7.1**, on the diagnostic shared with the other three
+  object-constraint keywords.
 - Value not an object → reject.
 - Any value not an array of unique strings → reject.
 - A trigger name or any dependent name not declared in [[properties]] →
@@ -61,7 +64,15 @@ Loader behavior:
 - A trigger name in [[required]] → **reject**: if the trigger is always
   present, its dependents are always required, so they belong in
   [[required]] directly. Keeps one canonical spelling.
-- Empty object / empty arrays → accepted (vacuous).
+- Empty object / empty arrays → accepted (vacuous). A vacuous entry asserts
+  nothing, so it emits **no** runtime check — not an empty one. An emitter whose
+  trigger header is written before its (empty) body has produced output the
+  target may not even parse.
+- A non-vacuous edge whose trigger or dependent is optional+nullable → reject.
+  Go, Java and Python collapse explicit `null` to absence while TypeScript does
+  not, so the presence predicate would otherwise differ after round-trip. Make
+  the named member non-nullable or remove the dependency. Bare `$ref` aliases
+  are followed when classifying nullability.
 
 ## Type mapping
 
@@ -75,8 +86,8 @@ dependent is also present.
 
 | Language | Strategy |
 |---|---|
-| Go | The cross-field check is a predicate in the shared `Validate`, which `UnmarshalJSON` calls after decoding the shadow: for each present trigger, each dependent's shadow must be non-`nil`; a missing one → `Violation{Path:dependent, Reason: fmt.Sprintf("property %q is required when %q is present", dependent, trigger)}`, collected into one `PayloadValidationError` application failure. |
-| TypeScript | the shared `Validate` predicate: for each present trigger key, each dependent must be `!== undefined`; a missing one → push ``Violation{path, reason: `property "${dependent}" is required when "${trigger}" is present`}``, throw one `PayloadValidationError` application failure. |
+| Go | `UnmarshalJSON` applies the cross-field predicate to the raw wire-key set: for each present trigger, each dependent must also be present; a missing one → `Violation{Path:dependent, Reason: fmt.Sprintf("property %q is required when %q is present", dependent, trigger)}`, collected into one `PayloadValidationError` application failure. `Validate` applies the same predicate to the key set `MarshalJSON` will write. |
+| TypeScript | the same predicate over the wire object's own keys inbound and the outbound key set on the way out; a missing dependent → push ``Violation{path, reason: `property "${dependent}" is required when "${trigger}" is present`}``, throw one `PayloadValidationError` application failure. |
 | Python | `from_transfer_type` reads the raw wire dict: for each present trigger, append `Violation(path=dependent, reason=f'property "{dependent}" is required when "{trigger}" is present')` per absent dependent, into the single generated `PayloadValidationError` application failure. The dependency map is a module-level private constant, alongside `_<MODEL>_DECLARED`. |
 | Java | in the per-POJO collecting deserializer (PRINCIPLES Java §5): over the parsed tree's present-key set, for each present trigger push a `Violation{path:dependent, "property \"" + dependent + "\" is required when \"" + trigger + "\" is present"}` per missing dependent into the single `PayloadValidationError` application failure. |
 
@@ -88,7 +99,11 @@ trigger will be emitted but a dependent is unset/omitted, serialize fails
 with the same `Violation{path:dependent, reason}` in the payload-validation
 application failure — symmetric with
 deserialize, where "present" means "on the wire." A dependent satisfied
-only by an omitted default does **not** count as present.
+only by an omitted default does **not** count as present. The member set is the
+whole wire object, extras included: on an open object a trigger or dependent
+carried in the [[additionalProperties]] catch-all is present, in both
+directions — a target that consults only declared fields will emit wire its own
+parser then rejects.
 
 ## Property-testing matrix
 
@@ -98,7 +113,7 @@ only by an omitted default does **not** count as present.
 |---|---|
 | Single dependency | `{type:object, properties:{a:{…},b:{…}}, dependentRequired:{"a":["b"]}}` |
 | Multiple dependents | `dependentRequired:{"a":["b","c"]}` |
-| Empty (no-op) | `dependentRequired:{}` |
+| Empty (no-op) | `dependentRequired:{}`, and a per-trigger empty list `{"a":[]}` — both emit no check |
 
 ### Rejected at load time (negative)
 
@@ -109,6 +124,7 @@ only by an omitted default does **not** count as present.
 | Undeclared trigger/dependent (P7.1) | trigger or dependent absent from [[properties]] |
 | Dependent already in `required` | `required:["b"], dependentRequired:{"a":["b"]}` |
 | Trigger in `required` | `required:["a"], dependentRequired:{"a":["b"]}` |
+| Optional nullable trigger/dependent | `properties:{a:{oneOf:[{type:string},{type:null}]},b:{type:string}}, dependentRequired:{a:[b]}` |
 
 ### Runtime fixtures (validator)
 
@@ -127,8 +143,16 @@ only by an omitted default does **not** count as present.
 - **[[dependentSchemas]]**: the subschema-applying sibling — **rejected**
   per **P6** (conditional shape doesn't lower). `dependentRequired` is
   the supported subset of conditional object logic.
-- **[[nullability]]**: independent — dependency is about presence, not
-  null-ness.
+- **[[nullability]]**: independent at the type level — dependency is about
+  presence, not null-ness. At load, however, a non-vacuous edge may not name an
+  optional nullable trigger or dependent: the Go/Java/Python presence collapse
+  would otherwise make the predicate differ after round-trip. Required nullable
+  members remain legal generally, but the existing canonicalization rules make
+  a required trigger or dependent redundant here.
+- **[[minProperties]] / [[maxProperties]]**: a trigger forces its whole
+  dependent set to be present at once, so a cap below that closure is
+  uninhabitable — reconciled by the count keywords, specified in
+  [[maxProperties]].
 
 ## Ecosystem variance
 
@@ -136,8 +160,8 @@ only by an omitted default does **not** count as present.
 |---|---|
 | JSON Schema 2020-12 | Native. |
 | OpenAPI 3.1 | Aligns with 2020-12. Native. |
-| OpenAPI 3.0 / Swagger 2.0 | No `dependentRequired`; draft-4..7 used `dependencies` (array form ≡ this). A `dependencies` array form → accept as `dependentRequired`; the schema form → reject (maps to [[dependentSchemas]]). |
-| draft-4..7 | `dependencies` (merged keyword) — split: array form supported here, schema form rejected. |
+| OpenAPI 3.0 / Swagger 2.0 | No `dependentRequired`; draft-4..7 used `dependencies`. The legacy keyword is outside this loader's 2020-12 vocabulary and **rejects at load with a rewrite fix-it** for the array form (`dependencies: {a: [b]}` → `dependentRequired: {a: [b]}`), matching [[exclusiveMaximum]]'s treatment of its own superseded draft form. The schema form has no supported lowering and rejects as [[dependentSchemas]] does, per **P6**. |
+| draft-4..7 | `dependencies` is rejected as a legacy keyword, **with the rewrite fix-it above** for the array form; its schema form has no supported lowering (see [[dependentSchemas]]). A bare "unknown schema keyword" diagnostic is **not** conformant here — the fix-it is the point. |
 
 ## See also
 

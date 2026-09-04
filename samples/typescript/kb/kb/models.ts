@@ -27,19 +27,25 @@ export const getCategoryTreeInputTransferTypeConverter =
       }
 
       let rootId: string = undefined as unknown as string;
-      if (raw.rootId === undefined || raw.rootId === null) {
+      if (
+        !Object.prototype.hasOwnProperty.call(raw, "rootId") ||
+        raw["rootId"] === null
+      ) {
         violations.push({ path: "rootId", reason: "required" });
       } else {
-        if (typeof raw.rootId !== "string") {
+        if (typeof raw["rootId"] !== "string") {
           violations.push({ path: "rootId", reason: "expected string" });
         } else {
-          rootId = raw.rootId;
+          rootId = raw["rootId"];
         }
       }
 
       for (const key of Object.keys(raw)) {
         if (key !== "rootId") {
-          violations.push({ path: key, reason: "unknown field" });
+          violations.push({
+            path: __nexgenDefinitions.memberPath(key),
+            reason: "unknown field",
+          });
         }
       }
 
@@ -51,8 +57,28 @@ export const getCategoryTreeInputTransferTypeConverter =
     }
 
     public toTransferType(value: GetCategoryTreeInput): unknown {
-      const out: Record<string, unknown> = {};
-      out.rootId = value.rootId;
+      const candidate: unknown = value;
+      if (!__nexgenDefinitions.isPlainObject(candidate)) {
+        throw __nexgenDefinitions.payloadValidationError([
+          { path: "", reason: "expected object" },
+        ]);
+      }
+      const violations: __nexgenDefinitions.Violation[] = [];
+      const out: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      if (value.rootId === undefined || value.rootId === null) {
+        violations.push({ path: "rootId", reason: "required" });
+      } else {
+        if (!(typeof value.rootId === "string")) {
+          violations.push({ path: "rootId", reason: "expected string" });
+        }
+        out["rootId"] = value.rootId;
+      }
+      if (violations.length) {
+        throw __nexgenDefinitions.payloadValidationError(violations);
+      }
       return out;
     }
   })();
@@ -68,19 +94,25 @@ export const getPageInputTransferTypeConverter =
       }
 
       let pageId: string = undefined as unknown as string;
-      if (raw.pageId === undefined || raw.pageId === null) {
+      if (
+        !Object.prototype.hasOwnProperty.call(raw, "pageId") ||
+        raw["pageId"] === null
+      ) {
         violations.push({ path: "pageId", reason: "required" });
       } else {
-        if (typeof raw.pageId !== "string") {
+        if (typeof raw["pageId"] !== "string") {
           violations.push({ path: "pageId", reason: "expected string" });
         } else {
-          pageId = raw.pageId;
+          pageId = raw["pageId"];
         }
       }
 
       for (const key of Object.keys(raw)) {
         if (key !== "pageId") {
-          violations.push({ path: key, reason: "unknown field" });
+          violations.push({
+            path: __nexgenDefinitions.memberPath(key),
+            reason: "unknown field",
+          });
         }
       }
 
@@ -92,8 +124,28 @@ export const getPageInputTransferTypeConverter =
     }
 
     public toTransferType(value: GetPageInput): unknown {
-      const out: Record<string, unknown> = {};
-      out.pageId = value.pageId;
+      const candidate: unknown = value;
+      if (!__nexgenDefinitions.isPlainObject(candidate)) {
+        throw __nexgenDefinitions.payloadValidationError([
+          { path: "", reason: "expected object" },
+        ]);
+      }
+      const violations: __nexgenDefinitions.Violation[] = [];
+      const out: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      if (value.pageId === undefined || value.pageId === null) {
+        violations.push({ path: "pageId", reason: "required" });
+      } else {
+        if (!(typeof value.pageId === "string")) {
+          violations.push({ path: "pageId", reason: "expected string" });
+        }
+        out["pageId"] = value.pageId;
+      }
+      if (violations.length) {
+        throw __nexgenDefinitions.payloadValidationError(violations);
+      }
       return out;
     }
   })();
@@ -109,30 +161,42 @@ export const putBlockOutputTransferTypeConverter =
       }
 
       let blockId: string = undefined as unknown as string;
-      if (raw.blockId === undefined || raw.blockId === null) {
+      if (
+        !Object.prototype.hasOwnProperty.call(raw, "blockId") ||
+        raw["blockId"] === null
+      ) {
         violations.push({ path: "blockId", reason: "required" });
       } else {
-        if (typeof raw.blockId !== "string") {
+        if (typeof raw["blockId"] !== "string") {
           violations.push({ path: "blockId", reason: "expected string" });
         } else {
-          blockId = raw.blockId;
+          blockId = raw["blockId"];
         }
       }
 
       let revision: number = undefined as unknown as number;
-      if (raw.revision === undefined || raw.revision === null) {
+      if (
+        !Object.prototype.hasOwnProperty.call(raw, "revision") ||
+        raw["revision"] === null
+      ) {
         violations.push({ path: "revision", reason: "required" });
       } else {
-        if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision)) {
+        if (
+          typeof raw["revision"] !== "number" ||
+          !Number.isSafeInteger(raw["revision"])
+        ) {
           violations.push({ path: "revision", reason: "expected integer" });
         } else {
-          revision = raw.revision;
+          revision = raw["revision"];
         }
       }
 
       for (const key of Object.keys(raw)) {
         if (key !== "blockId" && key !== "revision") {
-          violations.push({ path: key, reason: "unknown field" });
+          violations.push({
+            path: __nexgenDefinitions.memberPath(key),
+            reason: "unknown field",
+          });
         }
       }
 
@@ -144,13 +208,40 @@ export const putBlockOutputTransferTypeConverter =
     }
 
     public toTransferType(value: PutBlockOutput): unknown {
-      const violations: __nexgenDefinitions.Violation[] = [];
-      const out: Record<string, unknown> = {};
-      out.blockId = value.blockId;
-      if (!Number.isSafeInteger(value.revision)) {
-        violations.push({ path: "revision", reason: "exceeds ±(2^53-1) integer cap" });
+      const candidate: unknown = value;
+      if (!__nexgenDefinitions.isPlainObject(candidate)) {
+        throw __nexgenDefinitions.payloadValidationError([
+          { path: "", reason: "expected object" },
+        ]);
       }
-      out.revision = value.revision;
+      const violations: __nexgenDefinitions.Violation[] = [];
+      const out: Record<string, unknown> = Object.create(null) as Record<
+        string,
+        unknown
+      >;
+      if (value.blockId === undefined || value.blockId === null) {
+        violations.push({ path: "blockId", reason: "required" });
+      } else {
+        if (!(typeof value.blockId === "string")) {
+          violations.push({ path: "blockId", reason: "expected string" });
+        }
+        out["blockId"] = value.blockId;
+      }
+      if (value.revision === undefined || value.revision === null) {
+        violations.push({ path: "revision", reason: "required" });
+      } else {
+        if (!(typeof value.revision === "number" && Number.isInteger(value.revision))) {
+          violations.push({ path: "revision", reason: "expected integer" });
+        } else {
+          if (!Number.isSafeInteger(value.revision)) {
+            violations.push({
+              path: "revision",
+              reason: "exceeds ±(2^53-1) integer cap",
+            });
+          }
+        }
+        out["revision"] = value.revision;
+      }
       if (violations.length) {
         throw __nexgenDefinitions.payloadValidationError(violations);
       }

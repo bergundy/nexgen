@@ -106,7 +106,13 @@ public final class Block {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Block> {
         @Override
         public void serialize(Block value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
+            if (value.blockId == null) {
+                violations.add(new Violation("blockId", "required"));
+            }
             {
                 if (value.order < -SpecNumbers.INTEGER_CAP || value.order > SpecNumbers.INTEGER_CAP) {
                     violations.add(new Violation("order", "exceeds \u00b1(2^53-1) integer cap"));
@@ -126,8 +132,10 @@ public final class Block {
             }
             if (value.style != null) {
                 gen.writeFieldName("style");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.style, gen);
+                    serializers.defaultSerializeValue(value.style, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -139,14 +147,15 @@ public final class Block {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("style"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.page != null) {
                 gen.writeFieldName("page");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.page, gen);
+                    serializers.defaultSerializeValue(value.page, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -158,8 +167,7 @@ public final class Block {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("page"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             gen.writeEndObject();
@@ -167,6 +175,7 @@ public final class Block {
                 // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
                 throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
             }
+            pending.serialize(target);
         }
     }
 
@@ -183,6 +192,7 @@ public final class Block {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "blockId":
                     case "order":
@@ -191,7 +201,7 @@ public final class Block {
                     case "text":
                         break;
                     default:
-                        violations.add(new Violation(key, "unknown field"));
+                        violations.add(new Violation(path, "unknown field"));
                 }
             }
             String blockId = null;

@@ -28,7 +28,7 @@ reference fields carry `@Nullable` and required ones need no annotation
 (see PRINCIPLES Java §3):
 
 ```java
-@NullMarked
+// package-info.java: @NullMarked applies to the generated package.
 public final class User {
     private final long      id;        // required: integer
     private final @Nullable Long   nickname;  // optional: integer — null if absent
@@ -55,8 +55,9 @@ post-construction nullness (required → non-null; optional → may be
 null when the key is absent) and propagate it into the consumer's
 static null-analysis. Because generated source imports them,
 `org.jspecify:jspecify:1.0.0` must be on the compile classpath (normally
-`compileOnly` in Gradle or `provided` in Maven). They have CLASS retention and
-therefore require no runtime dependency (**P4**). They do **not** encode the
+`compileOnly` in Gradle or `provided` in Maven). JSpecify's annotations have
+runtime retention but enforce nothing at runtime; consumers that reflect over
+them must provide JSpecify themselves. They do **not** encode the
 wire-level nullable distinction — every optional reference field is `@Nullable`
 regardless of whether it is optional-non-nullable or optional+nullable.
 
@@ -93,18 +94,17 @@ as the motivating use case.
 tmp := int64(42)
 u := User{Nickname: &tmp}
 
-// 1.26+ (the convention we emit at call sites):
+// 1.26+ (a concise consumer call-site convention):
 u := User{Nickname: new(int64(42))}
 u := User{Nickname: new(req.Count)}        // arbitrary expressions work
 u := User{Nickname: new(yearsSince(t))}    // including function calls
 ```
 
-Generator constructors and builders prefer `new(expr)` for
-ergonomics. Go 1.26+ is **not** a hard requirement — on older
+The generator emits no Go model constructors or builders; this is consumer
+call-site guidance only. Go 1.26+ is **not** a hard requirement — on older
 toolchains the equivalent verbose form (`tmp := 42; u.Nickname = &tmp`)
 compiles correctly. The generated *user-facing* API surface is
-identical either way; only the call-site idiom shown in examples and
-emitted constructors differs.
+identical either way; only the consumer's call-site idiom differs.
 
 `[]T` for optional arrays: a `nil` slice and an empty slice are
 distinguishable in Go (`s == nil` vs `len(s) == 0`), so a pointer
@@ -128,7 +128,7 @@ interface User {
 |---|---|---|
 | any                 | `T`       | `T` with `?` on the field |
 
-Validator emits `if (parsed.x === undefined) ...` for required-presence
+Validator emits `if (raw.x === undefined) ...` for required-presence
 checks. We never use `T | null` for the optional-only case — `?`/
 `undefined` is the absence channel; `null` is a value reserved for the
 nullability convention (`x?: T | null` is the optional+nullable form).
@@ -191,6 +191,47 @@ This two-branch form is the **degenerate type-token case** of the general
 `oneOf` rule (the `null` token is the selector); [[oneOf]] owns the
 general treatment, and this doc owns this specific shape.
 
+### Which node owns a keyword — the wrapper or the branch
+
+The wrapper is a `oneOf`, so [[oneOf]]'s sibling rule governs every keyword
+written on it; this doc settles the one case [[oneOf]] delegates here,
+[[default]]. **Constraints belong on the non-null branch; `default` belongs on
+the wrapper.**
+
+| Keyword | Node it is authored on | On the other node |
+|---|---|---|
+| `type`, [[format]], [[contentEncoding]], [[const]]/[[enum]], [[pattern]], and every string, numeric, array and object bound | the **non-null branch** | wrapper → **load reject**, fix-it naming the branch ([[oneOf]]) |
+| [[default]] | the **wrapper** | branch → **load reject**, fix-it naming the wrapper |
+| annotations ([[title]], [[description]], [[comment]], [[examples]], [[deprecated]]) and `x-<lang>-name` | the wrapper or the non-null branch | — (the `null` branch takes no siblings at all — see Pattern acceptance rules) |
+
+A wrapper `default` lowers against the **resolved non-null branch's** type, not
+against the JSON kind of the default literal — the wrapper carries no scalar
+`type` of its own ([[default]] owns the lowering rule). The loader validates a
+wrapper default against that branch's `type`, `enum`, `format` and
+`contentEncoding`.
+
+The wrapper does **not** shield a nullable member from a check that reads the
+**property node's** keyword map — for a nullable member that node is the
+wrapper, not the branch. So [[default]]'s "`default` on a **required** member →
+reject" applies to a nullable member exactly as to a plain one, and moving the
+`default` onto a branch is a reject rather than a way around it.
+
+### The wrapper does not change what the branch requires
+
+The wrapper is a presence/nullness marker, not a new schema: the non-null
+branch lowers exactly as it would unwrapped.
+
+- Every package-level artifact the branch's constraints need is still emitted —
+  in Go the compiled-regex statics a [[pattern]], [[format]] or
+  [[contentEncoding]] assertion needs, whether the assertion sits on the branch
+  itself or on the elements or [[contains]] matcher of a branch that is an
+  array. Dropping them because the member is nullable leaves the package
+  referring to an undeclared identifier.
+- Where the collapse removes the pointer, no emitted traversal may dereference
+  the member. A nullable array is `[]T` with no wrapper (above), including as a
+  typed [[additionalProperties]] value, so its element loop ranges over the
+  value and not over `*value`.
+
 ### Pattern acceptance rules
 
 This doc recognizes a `oneOf` as the nullability pattern iff:
@@ -203,7 +244,9 @@ This doc recognizes a `oneOf` as the nullability pattern iff:
 
 Any other `oneOf` shape is [[oneOf]]'s domain — supported there when its
 branches are separable by a decidable selector (pairwise-disjoint JSON
-type kinds), otherwise rejected or deferred. A `null` branch among 3+
+type kinds), and **rejected** when they are not, since without a selector no
+deserializer can route the wire value. [[oneOf]] names the individual shapes it
+defers; a missing selector is not one of them. A `null` branch among 3+
 kinds is a **nullable union** — supported by [[oneOf]], reusing this doc's
 per-language nullable encoding over the union type (the `null` branch
 marks the field nullable; the non-null branches form the sum type).
@@ -295,6 +338,16 @@ against a generated marker instead of plain `None`.
 TypeScript enforces *and* preserves the distinction; Go, Java and Python
 enforce it at the boundary but collapse it in memory.
 
+**What the collapse is licensed for, and where that runs out.** P1 excepts the
+collapse from *value-level round-trip fidelity*, and only for Go, Java and
+Python — TypeScript is not in the exception because it does not collapse. P1
+excepts nothing from **validation semantics**. The strict subset therefore
+rejects presence-sensitive combinations that cannot survive the collapse: a
+positive [[minProperties]] floor beside any optional nullable declared member,
+and a non-vacuous [[dependentRequired]] edge whose trigger or dependent is
+optional nullable. This keeps the plain ergonomic representation above without
+admitting a schema whose accepted set changes by target or direction.
+
 ### Diagnostics
 
 Wire form → required generator output:
@@ -305,20 +358,23 @@ Wire form → required generator output:
 | `{type:"T", "nullable": true}` (OAS 3.0) | Reject. Diagnostic suggests `oneOf: [{type:"T"}, {type:"null"}]`. |
 | `oneOf` with `{type:"null"}` branch where field is in `required` | **Accept** — required+nullable (must be present, may be `null`). |
 | `oneOf` of 3+ branches with `{type:"null"}` among them | **Accept** — a nullable union ([[oneOf]]): the `null` branch marks the field nullable, the non-null branches (which must be pairwise-disjoint) form the sum type. |
+| A shape or constraint keyword on the **wrapper** | Reject. Fix-it names the non-null branch as the node that owns it. |
+| `default` on the **wrapper** | **Accept** — lowered against the resolved non-null branch's type. |
+| `default` on a **branch** | Reject. Fix-it names the wrapper as the node that owns it. |
 
 ## Validator implications
 
-Four schema states × four languages → twelve cells. The two axes are
+Four schema states × four languages → sixteen cells. The two axes are
 orthogonal: **presence** (required = reject absent; optional = accept
 absent) and **null acceptance** (non-nullable = reject `null`; nullable
 = accept `null`).
 
 | State | Java | Go | TS | Python |
 |---|---|---|---|---|
-| **Required, non-nullable** — must be present, must be T | type is `long`/`String`/etc.; emit `field == null` reject + type binding | type is `int64`/`string`/etc.; shadow `*T` field, reject on `nil` | type is `x: T`; emit `parsed.x === undefined \|\| parsed.x === null` reject | type is `x: T` with no default; converter rejects an absent key **and** a `null` token with `required` |
-| **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | strict-variant custom deserializer (see strategy below) | shadow `*json.RawMessage` with explicit `bytes.Equal(*raw, []byte("null"))` reject | `parsed.x === null` rejected; `=== undefined` OK | type is `x: T \| None = None`; converter branch over the raw dict rejects a key present with `None` (see strategy below) |
+| **Required, non-nullable** — must be present, must be T | type is `long`/`String`/etc.; collecting deserializer rejects an absent or null tree node | type is `int64`/`string`/etc.; raw-map lookup distinguishes absent from null | type is `x: T`; emit `raw.x === undefined \|\| raw.x === null` reject | type is `x: T` with no default; converter rejects an absent key **and** a `null` token with `required` |
+| **Optional, non-nullable** — absent OK, T OK, explicit `null` rejected | collecting deserializer's three-way tree-node branch (see strategy below) | raw-map `*json.RawMessage` lookup plus `isNull` | `raw.x === null` rejected; `=== undefined` OK | type is `x: T \| None = None`; converter branch over the raw dict rejects a key present with `None` (see strategy below) |
 | **Optional + nullable** — absent OK, `null` OK, T OK | type is `@Nullable Long`/`String`/etc.; no extra check beyond type binding | type is `*int64`/`*string`/etc.; no extra check beyond type binding | type is `x?: T \| null`; both `undefined` and `null` accepted | type is `x: T \| None = None`; both absent and `null` accepted, no extra check |
-| **Required + nullable** — must be present, `null` OK, T OK, absent rejected | base (non-strict) deserializer accepts `null`; presence enforced (`field`-present check / required-field machinery) | shadow `*json.RawMessage`; reject on absent (`nil` shadow), accept `null` token | type is `x: T \| null`; emit `parsed.x === undefined` reject; `null` accepted | type is `x: T \| None` with **no** default; converter rejects an absent key, accepts the `null` token as `None` |
+| **Required + nullable** — must be present, `null` OK, T OK, absent rejected | collecting deserializer accepts a null node and rejects an absent one | raw-map lookup rejects absence and accepts a null token | type is `x: T \| null`; emit `raw.x === undefined` reject; `null` accepted | type is `x: T \| None` with **no** default; converter rejects an absent key, accepts the `null` token as `None` |
 
 ## Serialize-side behavior
 
@@ -334,17 +390,18 @@ optional-non-nullable.
 | required | nullable | empty-value serialize action |
 |---|---|---|
 | optional | non-nullable | **omit** the key (emitting `null` is invalid; `Validate` also rejects an explicit in-memory `null` where the language can hold one) |
-| optional | nullable | **omit** (conservative) in Go/Java/Python; **faithful** in TS — omit if `undefined`, emit `null` if explicitly `null` |
-| required | non-nullable | cannot be empty — `Validate` rejects; always emit the value |
+| optional | nullable | **omit** (conservative) in Go/Java/Python; **faithful** in TS — omit if `undefined`, emit `null` if explicitly `null`. Presence-sensitive combinations that would observe the collapse reject at load — see the Collapse note |
+| required | non-nullable | cannot be empty — always emit the value. Where the language can hold an empty reference (Java `null`, Python `None`, TS `undefined`/`null`) `Validate` **rejects** it rather than omitting the key; a Go `nil` slice on a required array is written as `[]`, since Go has no non-nil empty-slice type (see [[items]]) |
 | required | nullable | **emit `key: null`** — omitting violates `required` |
 
 Per-language mechanism (all are *encode-adapter* concerns; the shared
 `Validate` runs first and is identical to the deserialize side):
 
-- **Go** — struct tags. Optional → `*T` with `,omitempty` (nil
-  omitted); required+nullable → `*T` **without** `omitempty` (nil →
-  `null`); required-non-nullable → bare value type. The type-alias
-  `MarshalJSON` lets the tags do the work.
+- **Go** — the generated `MarshalJSON` builds a
+  `map[string]json.RawMessage` key by key. Optional pointers are omitted when
+  nil; required+nullable pointers always write their key and encode nil as
+  `null`. Struct tags remain useful to readers and reflection-based tools but
+  are not consulted by the generated codec.
 - **TypeScript** — `toTransferType` omits `undefined`, emits `null`; the
   three-state gives faithful optional+nullable for free.
 - **Python** — the model's `to_transfer_type` builds the outgoing dict
@@ -391,12 +448,12 @@ collapses into the same three-way Go uses in `UnmarshalJSON`.
 
 ### Go
 
-The shadow struct uses `*json.RawMessage` for every field (not just
-numeric). Per field, the generated `UnmarshalJSON`:
+The generated `UnmarshalJSON` first reads a `map[string]json.RawMessage` and
+uses a per-key accessor returning `*json.RawMessage`. Per field:
 
-1. `shadow.Foo == nil`              → key absent
+1. `raw == nil`                     → key absent
    (required → emit error; optional → leave field zero)
-2. `bytes.Equal(*shadow.Foo, []byte("null"))` → explicit `null`
+2. `isNull(*raw)`                   → explicit `null`
    (optional-non-nullable → emit error; nullable → accept)
 3. otherwise                        → delegate to the type-specific
    runtime helper (e.g., `parseSpecInteger`)
@@ -406,9 +463,9 @@ numeric). Per field, the generated `UnmarshalJSON`:
 Natural three-way via `=== undefined` vs `=== null`:
 
 ```typescript
-if (parsed.x === null) {
+if (raw.x === null) {
     violations.push({ path: "x", reason: "explicit null not allowed" });
-} else if (parsed.x !== undefined) {
+} else if (raw.x !== undefined) {
     // validate value
 }
 ```
@@ -434,12 +491,13 @@ Go's and Java's:
 
 ```python
 if "nickname" in raw:                        # optional, non-nullable
-    if raw["nickname"] is None:
+    nickname_value_raw = raw["nickname"]
+    if nickname_value_raw is None:
         violations.append(
             Violation(path="nickname", reason="explicit null not allowed")
         )
     else:
-        nickname = _parse_spec_integer(raw["nickname"], "nickname", violations)
+        nickname = _parse_spec_integer(nickname_value_raw, "nickname", violations)
 ```
 
 The absent-vs-`None` distinction is available here because the converter

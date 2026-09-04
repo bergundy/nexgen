@@ -91,6 +91,9 @@ public final class ContactJava {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<ContactJava> {
         @Override
         public void serialize(ContactJava value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
             java.util.Set<String> wireKeys = new java.util.LinkedHashSet<>();
             if (value.email != null) {
@@ -105,7 +108,7 @@ public final class ContactJava {
             if (value.additionalProperties != null) {
                 for (String key : value.additionalProperties.keySet()) {
                     if (!wireKeys.add(key)) {
-                        violations.add(new Violation(key, "declared property key collision"));
+                        violations.add(new Violation(Violation.memberPath(key), "declared property key collision"));
                     }
                 }
             }
@@ -115,8 +118,8 @@ public final class ContactJava {
             if (wireKeys.size() > 3) {
                 violations.add(new Violation("", "must have at most 3 properties, got " + wireKeys.size()));
             }
-            if (value.shippingStreet != null) {
-                if (!(value.shippingZip != null)) {
+            if (wireKeys.contains("shippingStreet")) {
+                if (!(wireKeys.contains("shippingZip"))) {
                     violations.add(new Violation("shippingZip", "property \"shippingZip\" is required when \"shippingStreet\" is present"));
                 }
             }
@@ -141,6 +144,7 @@ public final class ContactJava {
                 }
             }
             gen.writeEndObject();
+            pending.serialize(target);
         }
     }
 
@@ -158,6 +162,7 @@ public final class ContactJava {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "email":
                     case "shippingStreet":

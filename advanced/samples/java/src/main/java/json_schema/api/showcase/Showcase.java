@@ -1527,10 +1527,11 @@ public final class Showcase {
     }
 
     /**
-     * Optional two-word phrase separated by whitespace (`^\S+\s\S+$`). Exercises the
-     * loader's `\s`/`\S` → ASCII-class normalization and the per-target `$` end-anchor
-     * rewrite (Python `\Z` / Java `\z`), so a Unicode space (NBSP) and a trailing
-     * newline are rejected consistently across all four languages.
+     * Optional two-word phrase separated by whitespace (`^&#92;S+&#92;s&#92;S+$`).
+     * Exercises the loader's `&#92;s`/`&#92;S` → ASCII-class normalization and the
+     * per-target `$` end-anchor rewrite (Python `&#92;Z` / Java `&#92;z`), so a Unicode
+     * space (NBSP) and a trailing newline are rejected consistently across all four
+     * languages.
      */
     public @Nullable String getPhrase() {
         return phrase;
@@ -2044,7 +2045,7 @@ public final class Showcase {
 
     /**
      * A pattern containing a bare dot, normalized to an explicit negated class so the
-     * four regex engines agree on line terminators (`\r`, U+0085, U+2028, U+2029),
+     * four regex engines agree on line terminators (`&#92;r`, U+0085, U+2028, U+2029),
      * which their native `.` does not.
      */
     public @Nullable String getWildcard() {
@@ -2247,8 +2248,31 @@ public final class Showcase {
     public static final class Serializer extends com.fasterxml.jackson.databind.JsonSerializer<Showcase> {
         @Override
         public void serialize(Showcase value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            JsonGenerator target = gen;
+            com.fasterxml.jackson.databind.util.TokenBuffer pending = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
+            gen = pending;
             List<Violation> violations = new ArrayList<>();
-            if (value.name != null) {
+            if (value.kind == null) {
+                violations.add(new Violation("kind", "required"));
+            }
+            if (value.revision == null) {
+                violations.add(new Violation("revision", "required"));
+            }
+            if (value.enabled == null) {
+                violations.add(new Violation("enabled", "required"));
+            }
+            if (value.status == null) {
+                violations.add(new Violation("status", "required"));
+            }
+            if (value.tier == null) {
+                violations.add(new Violation("tier", "required"));
+            }
+            if (value.scale == null) {
+                violations.add(new Violation("scale", "required"));
+            }
+            if (value.name == null) {
+                violations.add(new Violation("name", "required"));
+            } else {
                 int length = value.name.codePointCount(0, value.name.length());
                 if (length < 1) {
                     violations.add(new Violation("name", "must have length >= 1, got " + length));
@@ -2361,6 +2385,13 @@ public final class Showcase {
                 }
             }
             if (value.tags != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.tags.size(); validationIndex0++) {
+                    String validationValue0 = value.tags.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("tags" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
                 if (value.tags.size() < 1) {
                     violations.add(new Violation("tags", "must have at least 1 items, got " + value.tags.size()));
                 }
@@ -2369,6 +2400,13 @@ public final class Showcase {
                 }
             }
             if (value.aliases != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.aliases.size(); validationIndex0++) {
+                    String validationValue0 = value.aliases.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("aliases" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
                 java.util.Map<Object, Integer> seen = new java.util.HashMap<>();
                 for (int index = 0; index < value.aliases.size(); index++) {
                     Object element = value.aliases.get(index);
@@ -2381,9 +2419,16 @@ public final class Showcase {
                 }
             }
             if (value.roles != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.roles.size(); validationIndex0++) {
+                    String validationValue0 = value.roles.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("roles" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
                 int matchCount = 0;
                 for (String element : value.roles) {
-                    if (true && ("admin".equals(element))) {
+                    if (element != null && (true) && ("admin".equals(element))) {
                         matchCount++;
                     }
                 }
@@ -2406,7 +2451,23 @@ public final class Showcase {
             if (value.measurements != null) {
                 Measurements.validate(value.measurements, "measurements", violations);
             }
+            if (value.shapes != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.shapes.size(); validationIndex0++) {
+                    Shape validationValue0 = value.shapes.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("shapes" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
+            }
             if (value.segments != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.segments.size(); validationIndex0++) {
+                    ShowcaseSegmentsItem validationValue0 = value.segments.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("segments" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
                 for (int index = 0; index < value.segments.size(); index++) {
                     ShowcaseSegmentsItem.validate(value.segments.get(index), "segments" + "[" + index + "]", violations);
                 }
@@ -2414,7 +2475,9 @@ public final class Showcase {
             if (value.slots != null) {
                 for (int validationIndex0 = 0; validationIndex0 < value.slots.size(); validationIndex0++) {
                     String validationValue0 = value.slots.get(validationIndex0);
-                    if (validationValue0 != null) {
+                    if (validationValue0 == null) {
+                        continue;
+                    } else {
                         int nestedLength = validationValue0.codePointCount(0, validationValue0.length());
                         if (nestedLength < 2) {
                             violations.add(new Violation("slots" + "[" + validationIndex0 + "]", "must have length >= 2, got " + nestedLength));
@@ -2436,6 +2499,20 @@ public final class Showcase {
                         }
                     }
                 }
+                for (int validationIndex0 = 0; validationIndex0 < value.grid.size(); validationIndex0++) {
+                    List<Long> validationValue0 = value.grid.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("grid" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                        for (int validationIndex1 = 0; validationIndex1 < validationValue0.size(); validationIndex1++) {
+                            Long validationValue1 = validationValue0.get(validationIndex1);
+                            if (validationValue1 == null) {
+                                violations.add(new Violation("grid" + "[" + validationIndex0 + "]" + "[" + validationIndex1 + "]", "explicit null not allowed"));
+                            } else {
+                            }
+                        }
+                    }
+                }
             }
             if (value.numberGrid != null) {
                 for (int finiteIndex0 = 0; finiteIndex0 < value.numberGrid.size(); finiteIndex0++) {
@@ -2451,14 +2528,39 @@ public final class Showcase {
                         }
                     }
                 }
+                for (int validationIndex0 = 0; validationIndex0 < value.numberGrid.size(); validationIndex0++) {
+                    List<Double> validationValue0 = value.numberGrid.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("numberGrid" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                        for (int validationIndex1 = 0; validationIndex1 < validationValue0.size(); validationIndex1++) {
+                            Double validationValue1 = validationValue0.get(validationIndex1);
+                            if (validationValue1 == null) {
+                                violations.add(new Violation("numberGrid" + "[" + validationIndex0 + "]" + "[" + validationIndex1 + "]", "explicit null not allowed"));
+                            } else {
+                            }
+                        }
+                    }
+                }
             }
             if (value.links != null) {
                 for (int validationIndex0 = 0; validationIndex0 < value.links.size(); validationIndex0++) {
                     String validationValue0 = value.links.get(validationIndex0);
-                    if (validationValue0 != null) {
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("links" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
                         if (!java.util.regex.Pattern.compile("^(?:[A-Za-z][A-Za-z0-9+.-]*:(?://(?:(?:[A-Za-z0-9._~!$&'()*+,;=:-]|%[0-9A-Fa-f][0-9A-Fa-f])*@)?(?:(?:\\[(?:([0-9a-fA-F]{1,4}:){6}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|::([0-9a-fA-F]{1,4}:){5}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){4}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,1}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){3}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){2}([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:)([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])))|(([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4})?::[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::)\\]|\\[v[0-9A-Fa-f]+\\.[A-Za-z0-9._~!$&'()*+,;=:-]+\\])|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f][0-9A-Fa-f])*)(?::[0-9]*)?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*|/(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?|(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])+(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])*)*)?(?:\\?(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?(?:#(?:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f][0-9A-Fa-f])|[/?])*)?)\\z").matcher(validationValue0).find()) {
                             violations.add(new Violation("links" + "[" + validationIndex0 + "]", "must be a valid uri, got " + validationValue0));
                         }
+                    }
+                }
+            }
+            if (value.addresses != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.addresses.size(); validationIndex0++) {
+                    Address validationValue0 = value.addresses.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("addresses" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
                     }
                 }
             }
@@ -2469,12 +2571,39 @@ public final class Showcase {
                         TemporalSupport.checkDate(temporalValue0, "dates" + "[" + temporalIndex0 + "]", violations);
                     }
                 }
+                for (int validationIndex0 = 0; validationIndex0 < value.dates.size(); validationIndex0++) {
+                    LocalDate validationValue0 = value.dates.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("dates" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                        String nestedWire1 = TemporalSupport.formatDate(validationValue0);
+                    }
+                }
+            }
+            if (value.blobs != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.blobs.size(); validationIndex0++) {
+                    byte[] validationValue0 = value.blobs.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("blobs" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                        String nestedWire1 = Base64Support.formatBase64(validationValue0);
+                    }
+                }
             }
             if (value.metricOrLabel != null) {
                 MetricOrLabel.validate(value.metricOrLabel, "metricOrLabel", violations);
             }
             if (value.addressListOrLabel != null) {
                 AddressListOrLabel.validate(value.addressListOrLabel, "addressListOrLabel", violations);
+            }
+            if (value.rows != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.rows.size(); validationIndex0++) {
+                    ShowcaseRowsItem validationValue0 = value.rows.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("rows" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
             }
             if (value.nullableCount != null) {
                 if (value.nullableCount < -SpecNumbers.INTEGER_CAP || value.nullableCount > SpecNumbers.INTEGER_CAP) {
@@ -2496,6 +2625,13 @@ public final class Showcase {
                 }
             }
             if (value.nullableTags != null) {
+                for (int validationIndex0 = 0; validationIndex0 < value.nullableTags.size(); validationIndex0++) {
+                    String validationValue0 = value.nullableTags.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("nullableTags" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
                 if (value.nullableTags.size() < 1) {
                     violations.add(new Violation("nullableTags", "must have at least 1 items, got " + value.nullableTags.size()));
                 }
@@ -2519,9 +2655,16 @@ public final class Showcase {
                         }
                     }
                 }
+                for (int validationIndex0 = 0; validationIndex0 < value.integralMeasurements.size(); validationIndex0++) {
+                    Double validationValue0 = value.integralMeasurements.get(validationIndex0);
+                    if (validationValue0 == null) {
+                        violations.add(new Violation("integralMeasurements" + "[" + validationIndex0 + "]", "explicit null not allowed"));
+                    } else {
+                    }
+                }
                 int matchCount = 0;
                 for (Double element : value.integralMeasurements) {
-                    if (Double.isFinite(element) && element == Math.rint(element) && element >= -(double) SpecNumbers.INTEGER_CAP && element <= (double) SpecNumbers.INTEGER_CAP && (true)) {
+                    if (element != null && (Double.isFinite(element) && element == Math.rint(element) && element >= -(double) SpecNumbers.INTEGER_CAP && element <= (double) SpecNumbers.INTEGER_CAP) && (true)) {
                         matchCount++;
                     }
                 }
@@ -2653,8 +2796,10 @@ public final class Showcase {
             }
             if (value.idOrName != null) {
                 gen.writeFieldName("idOrName");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.idOrName, gen);
+                    serializers.defaultSerializeValue(value.idOrName, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2666,14 +2811,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("idOrName"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.mode != null) {
                 gen.writeFieldName("mode");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.mode, gen);
+                    serializers.defaultSerializeValue(value.mode, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2685,14 +2831,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("mode"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.payload != null) {
                 gen.writeFieldName("payload");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.payload, gen);
+                    serializers.defaultSerializeValue(value.payload, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2704,14 +2851,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("payload"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.detail != null) {
                 gen.writeFieldName("detail");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.detail, gen);
+                    serializers.defaultSerializeValue(value.detail, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2723,14 +2871,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("detail"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.shapeOrName != null) {
                 gen.writeFieldName("shapeOrName");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.shapeOrName, gen);
+                    serializers.defaultSerializeValue(value.shapeOrName, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2742,14 +2891,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("shapeOrName"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.measurements != null) {
                 gen.writeFieldName("measurements");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.measurements, gen);
+                    serializers.defaultSerializeValue(value.measurements, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2761,8 +2911,7 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("measurements"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.shapes != null) {
@@ -2773,8 +2922,10 @@ public final class Showcase {
                     if (nestedElement0 == null) {
                         gen.writeNull();
                     } else {
+                        com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer1 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                         try {
-                            serializers.defaultSerializeValue(nestedElement0, gen);
+                            serializers.defaultSerializeValue(nestedElement0, nestedBuffer1);
+                            nestedBuffer1.serialize(gen);
                         } catch (ApplicationFailure nested1) {
                             if (!"PayloadValidationError".equals(nested1.getType()) || nested1.getDetails().getSize() == 0) {
                                 throw nested1;
@@ -2786,8 +2937,7 @@ public final class Showcase {
                             for (Violation nestedViolation1 : nestedViolations1) {
                                 violations.add(nestedViolation1.withPathPrefix("shapes" + "[" + nestedIndex0 + "]"));
                             }
-                            // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                            throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                            gen.writeNull();
                         }
                     }
                 }
@@ -2801,8 +2951,10 @@ public final class Showcase {
                     if (nestedElement0 == null) {
                         gen.writeNull();
                     } else {
+                        com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer1 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                         try {
-                            serializers.defaultSerializeValue(nestedElement0, gen);
+                            serializers.defaultSerializeValue(nestedElement0, nestedBuffer1);
+                            nestedBuffer1.serialize(gen);
                         } catch (ApplicationFailure nested1) {
                             if (!"PayloadValidationError".equals(nested1.getType()) || nested1.getDetails().getSize() == 0) {
                                 throw nested1;
@@ -2814,8 +2966,7 @@ public final class Showcase {
                             for (Violation nestedViolation1 : nestedViolations1) {
                                 violations.add(nestedViolation1.withPathPrefix("segments" + "[" + nestedIndex0 + "]"));
                             }
-                            // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                            throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                            gen.writeNull();
                         }
                     }
                 }
@@ -2845,8 +2996,10 @@ public final class Showcase {
                     if (nestedElement0 == null) {
                         gen.writeNull();
                     } else {
+                        com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer1 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                         try {
-                            serializers.defaultSerializeValue(nestedElement0, gen);
+                            serializers.defaultSerializeValue(nestedElement0, nestedBuffer1);
+                            nestedBuffer1.serialize(gen);
                         } catch (ApplicationFailure nested1) {
                             if (!"PayloadValidationError".equals(nested1.getType()) || nested1.getDetails().getSize() == 0) {
                                 throw nested1;
@@ -2858,8 +3011,7 @@ public final class Showcase {
                             for (Violation nestedViolation1 : nestedViolations1) {
                                 violations.add(nestedViolation1.withPathPrefix("addresses" + "[" + nestedIndex0 + "]"));
                             }
-                            // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                            throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                            gen.writeNull();
                         }
                     }
                 }
@@ -2867,8 +3019,10 @@ public final class Showcase {
             }
             if (value.addressBook != null) {
                 gen.writeFieldName("addressBook");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.addressBook, gen);
+                    serializers.defaultSerializeValue(value.addressBook, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2880,8 +3034,7 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("addressBook"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.dates != null) {
@@ -2899,8 +3052,10 @@ public final class Showcase {
             }
             if (value.dateIndex != null) {
                 gen.writeFieldName("dateIndex");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.dateIndex, gen);
+                    serializers.defaultSerializeValue(value.dateIndex, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2912,8 +3067,7 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("dateIndex"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.blobs != null) {
@@ -2931,8 +3085,10 @@ public final class Showcase {
             }
             if (value.blobIndex != null) {
                 gen.writeFieldName("blobIndex");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.blobIndex, gen);
+                    serializers.defaultSerializeValue(value.blobIndex, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2944,14 +3100,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("blobIndex"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.metrics != null) {
                 gen.writeFieldName("metrics");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.metrics, gen);
+                    serializers.defaultSerializeValue(value.metrics, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2963,14 +3120,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("metrics"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.metricOrLabel != null) {
                 gen.writeFieldName("metricOrLabel");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.metricOrLabel, gen);
+                    serializers.defaultSerializeValue(value.metricOrLabel, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -2982,14 +3140,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("metricOrLabel"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.addressListOrLabel != null) {
                 gen.writeFieldName("addressListOrLabel");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.addressListOrLabel, gen);
+                    serializers.defaultSerializeValue(value.addressListOrLabel, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3001,14 +3160,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("addressListOrLabel"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.location != null) {
                 gen.writeFieldName("location");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.location, gen);
+                    serializers.defaultSerializeValue(value.location, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3020,14 +3180,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("location"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.audit != null) {
                 gen.writeFieldName("audit");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.audit, gen);
+                    serializers.defaultSerializeValue(value.audit, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3039,8 +3200,7 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("audit"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.rows != null) {
@@ -3051,8 +3211,10 @@ public final class Showcase {
                     if (nestedElement0 == null) {
                         gen.writeNull();
                     } else {
+                        com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer1 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                         try {
-                            serializers.defaultSerializeValue(nestedElement0, gen);
+                            serializers.defaultSerializeValue(nestedElement0, nestedBuffer1);
+                            nestedBuffer1.serialize(gen);
                         } catch (ApplicationFailure nested1) {
                             if (!"PayloadValidationError".equals(nested1.getType()) || nested1.getDetails().getSize() == 0) {
                                 throw nested1;
@@ -3064,8 +3226,7 @@ public final class Showcase {
                             for (Violation nestedViolation1 : nestedViolations1) {
                                 violations.add(nestedViolation1.withPathPrefix("rows" + "[" + nestedIndex0 + "]"));
                             }
-                            // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                            throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                            gen.writeNull();
                         }
                     }
                 }
@@ -3073,8 +3234,10 @@ public final class Showcase {
             }
             if (value.ledgerJava != null) {
                 gen.writeFieldName("ledger");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.ledgerJava, gen);
+                    serializers.defaultSerializeValue(value.ledgerJava, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3086,14 +3249,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("ledger"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.metadata != null) {
                 gen.writeFieldName("metadata");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.metadata, gen);
+                    serializers.defaultSerializeValue(value.metadata, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3105,14 +3269,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("metadata"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.quotas != null) {
                 gen.writeFieldName("quotas");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.quotas, gen);
+                    serializers.defaultSerializeValue(value.quotas, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3124,14 +3289,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("quotas"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.tokens != null) {
                 gen.writeFieldName("tokens");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.tokens, gen);
+                    serializers.defaultSerializeValue(value.tokens, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3143,14 +3309,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("tokens"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.nicknames != null) {
                 gen.writeFieldName("nicknames");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.nicknames, gen);
+                    serializers.defaultSerializeValue(value.nicknames, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3162,14 +3329,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("nicknames"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.choices != null) {
                 gen.writeFieldName("choices");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.choices, gen);
+                    serializers.defaultSerializeValue(value.choices, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3181,14 +3349,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("choices"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.extras != null) {
                 gen.writeFieldName("extras");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.extras, gen);
+                    serializers.defaultSerializeValue(value.extras, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3200,14 +3369,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("extras"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.shape != null) {
                 gen.writeFieldName("shape");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.shape, gen);
+                    serializers.defaultSerializeValue(value.shape, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3219,14 +3389,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("shape"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.note != null) {
                 gen.writeFieldName("note");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.note, gen);
+                    serializers.defaultSerializeValue(value.note, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3238,14 +3409,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("note"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.address != null) {
                 gen.writeFieldName("address");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.address, gen);
+                    serializers.defaultSerializeValue(value.address, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3257,14 +3429,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("address"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.labels != null) {
                 gen.writeFieldName("labels");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.labels, gen);
+                    serializers.defaultSerializeValue(value.labels, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3276,14 +3449,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("labels"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.settings != null) {
                 gen.writeFieldName("settings");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.settings, gen);
+                    serializers.defaultSerializeValue(value.settings, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3295,14 +3469,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("settings"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.attributes != null) {
                 gen.writeFieldName("attributes");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.attributes, gen);
+                    serializers.defaultSerializeValue(value.attributes, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3314,14 +3489,15 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("attributes"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.contact != null) {
                 gen.writeFieldName("contact");
+                com.fasterxml.jackson.databind.util.TokenBuffer nestedBuffer0 = new com.fasterxml.jackson.databind.util.TokenBuffer(gen.getCodec(), false);
                 try {
-                    serializers.defaultSerializeValue(value.contact, gen);
+                    serializers.defaultSerializeValue(value.contact, nestedBuffer0);
+                    nestedBuffer0.serialize(gen);
                 } catch (ApplicationFailure nested0) {
                     if (!"PayloadValidationError".equals(nested0.getType()) || nested0.getDetails().getSize() == 0) {
                         throw nested0;
@@ -3333,8 +3509,7 @@ public final class Showcase {
                     for (Violation nestedViolation0 : nestedViolations0) {
                         violations.add(nestedViolation0.withPathPrefix("contact"));
                     }
-                    // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
-                    throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
+                    gen.writeNull();
                 }
             }
             if (value.nullableCount != null) {
@@ -3371,6 +3546,7 @@ public final class Showcase {
                 // TODO: Use PayloadValidationException.newPayloadValidationException once it is available in an SDK release.
                 throw ApplicationFailure.newNonRetryableFailure("Payload validation failed", "PayloadValidationError", violations);
             }
+            pending.serialize(target);
         }
     }
 
@@ -3387,6 +3563,7 @@ public final class Showcase {
             Iterator<String> fieldNames = node.fieldNames();
             while (fieldNames.hasNext()) {
                 String key = fieldNames.next();
+                String path = Violation.memberPath(key);
                 switch (key) {
                     case "active":
                     case "address":
@@ -3472,7 +3649,7 @@ public final class Showcase {
                     case "wildcard":
                         break;
                     default:
-                        violations.add(new Violation(key, "unknown field"));
+                        violations.add(new Violation(path, "unknown field"));
                 }
             }
             Kind kind = null;

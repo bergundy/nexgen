@@ -14,7 +14,7 @@ use nexgen::spec::SupportFragmentSpec;
 use nexgen::{GenerateRequest, SupportFiles, generate_to_file};
 
 mod common;
-use common::json_input_path;
+use common::{json_input_path, write_bare_ref_alias_closure};
 
 const PRIMARY_EXAMPLE_ID: &str = "workflow-service";
 const START_WORKFLOW_EXAMPLE_ID: &str = "start-workflow";
@@ -115,6 +115,16 @@ $defs:
     properties:
       name: { type: string, minLength: 2 }
 "##;
+
+const UNION_ARRAY_ASSERTION_ONLY_SCHEMA: &str = r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: AssertionOnly
+type: object
+properties:
+  contacts:
+    oneOf:
+      - { type: array, items: { type: string, format: email } }
+      - { type: boolean }
+"#;
 
 /// `number` finiteness is an implicit wire constraint at every materialized
 /// position, including branches, nested elements, and typed-map members.
@@ -603,6 +613,19 @@ fn read_typescript_output_files(dir: &Path) -> BTreeMap<PathBuf, String> {
     files
 }
 
+fn assert_no_empty_else_blocks(files: &BTreeMap<PathBuf, String>) {
+    for (path, contents) in files {
+        let lines = contents.lines().collect::<Vec<_>>();
+        for pair in lines.windows(2) {
+            assert!(
+                pair[0].trim() != "} else {" || pair[1].trim() != "}",
+                "empty else block in {}",
+                path.display()
+            );
+        }
+    }
+}
+
 fn render_output_files(files: BTreeMap<PathBuf, String>) -> String {
     files
         .into_iter()
@@ -768,6 +791,7 @@ fn typescript_json_examples_render_expected_language_features() {
         let output_path = unique_output_path(&format!("typescript-json-{example_id}"));
         generate_formatted_json_typescript_output(&root, example_id, &output_path, false);
         let rendered = read_typescript_output_files(&output_path);
+        assert_no_empty_else_blocks(&rendered);
         if example_id == "showcase" {
             let all = rendered.values().cloned().collect::<Vec<_>>().join("\n");
             // Scalar defaults → emitted DEFAULT_<FIELD> module constants.
@@ -779,8 +803,8 @@ fn typescript_json_examples_render_expected_language_features() {
             // `x-ts-name` override (Stage 4): the interface member + (de)serialize
             // use the override while the wire key stays `legacyId`.
             assert!(all.contains("legacyIdTs?: string;"));
-            assert!(all.contains("legacyIdTs = raw.legacyId;"));
-            assert!(all.contains("out.legacyId = value.legacyIdTs;"));
+            assert!(all.contains("legacyIdTs = raw[\"legacyId\"];"));
+            assert!(all.contains("out[\"legacyId\"] = value.legacyIdTs;"));
             // A free-form object stays an anonymous `Record` — narrowed on the
             // object token as a union branch, and the sole member of the named
             // `Extras` interface.
@@ -847,6 +871,8 @@ fn typescript_json_examples_render_expected_language_features() {
             false,
             Some(repr),
         );
+        let rendered = read_typescript_output_files(&output_path);
+        assert_no_empty_else_blocks(&rendered);
         fs::remove_dir_all(output_path).unwrap();
     }
 }
@@ -857,6 +883,8 @@ fn typescript_json_api_examples_render_successfully() {
     for example_id in ["chat", "kb", "showcase", "temporal"] {
         let output_path = unique_output_path(&format!("typescript-json-api-{example_id}"));
         generate_formatted_json_typescript_output(&root, example_id, &output_path, true);
+        let rendered = read_typescript_output_files(&output_path);
+        assert_no_empty_else_blocks(&rendered);
         fs::remove_dir_all(output_path).unwrap();
     }
     for (output_id, repr) in [("temporal-date", "date"), ("temporal-temporal", "temporal")] {
@@ -868,6 +896,8 @@ fn typescript_json_api_examples_render_successfully() {
             true,
             Some(repr),
         );
+        let rendered = read_typescript_output_files(&output_path);
+        assert_no_empty_else_blocks(&rendered);
         fs::remove_dir_all(output_path).unwrap();
     }
 }
@@ -933,6 +963,69 @@ fn typescript_rejects_support_namespace() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("support namespace"));
+}
+
+#[test]
+fn typescript_generated_operation_path_collision_names_both_operations() {
+    let root = project_root();
+    let temp_dir = unique_output_path("typescript-operation-path-collision");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("operations-collision.wit");
+    fs::write(
+        &input_path,
+        r#"
+package temporal:collision@1.0.0;
+
+world system {
+  export first-service;
+  export second-service;
+}
+
+/// @nexus.endpoint "first"
+interface first-service {
+  record first-request { value: string }
+  collide: func(request: first-request);
+}
+
+/// @nexus.endpoint "second"
+interface second-service {
+  record second-request { value: string }
+  collide: func(request: second-request);
+}
+"#,
+    )
+    .unwrap();
+    let spec = nexgen::parser::load_api_spec_from_wit_for_language_with_inputs(
+        nexgen::language::Language::TypeScript,
+        &[input_path],
+    )
+    .unwrap();
+    let descriptors = nexgen::descriptors::DescriptorIndex::load(&descriptor_path(&root)).unwrap();
+    let error = generate_source(
+        nexgen::language::Language::TypeScript,
+        spec,
+        &descriptors,
+        &SupportFiles::default(),
+    )
+    .unwrap_err();
+    let nexgen::error::Error::GeneratedFileSourceConflict {
+        path,
+        first_source,
+        second_source,
+        remedy,
+    } = error
+    else {
+        panic!("expected generated-file source conflict, got {error}");
+    };
+    assert_eq!(path, PathBuf::from("operations/collide.ts"));
+    assert_eq!(first_source, "TypeScript operation `FirstService.Collide`");
+    assert_eq!(
+        second_source,
+        "TypeScript operation `SecondService.Collide`"
+    );
+    assert!(remedy.contains("operation `Collide` in service `FirstService`"));
+    assert!(remedy.contains("operation `Collide` in service `SecondService`"));
+    fs::remove_dir_all(temp_dir).unwrap();
 }
 
 #[test]
@@ -1162,7 +1255,9 @@ fn typescript_json_names_inline_object_union_branch() {
     ));
     // Parse and serialize both route the object token through the branch converter.
     assert!(
-        rendered.contains("detailPayloadObjectTransferTypeConverter.fromTransferType(raw.payload)")
+        rendered.contains(
+            "detailPayloadObjectTransferTypeConverter.fromTransferType(raw[\"payload\"])"
+        )
     );
     assert!(rendered.contains(
         "function serializeDetailPayload(value: DetailPayloadObject | string): unknown {"
@@ -1209,7 +1304,7 @@ fn typescript_json_validates_non_object_union_branch_constraints() {
     assert!(rendered.contains("if (codePoints < 3) {"));
     assert!(rendered.contains("if (!PATTERN_C182F89FDB221836.test((value as string))) {"));
     assert!(rendered.contains("if ((value as number) < 1) {"));
-    assert!(rendered.contains("if (raw.listOrName.length < 1) {"));
+    assert!(rendered.contains("if (raw[\"listOrName\"].length < 1) {"));
     assert!(rendered.contains("duplicate items: element at index ${index}"));
     assert!(rendered.contains(
         "if ((listOrName as \"auto\" | \"manual\") !== \"auto\" && (listOrName as \"auto\" | \"manual\") !== \"manual\") {"
@@ -1283,6 +1378,39 @@ fn typescript_json_recursively_converts_union_array_branches() {
 }
 
 #[test]
+fn typescript_json_does_not_emit_union_serializer_for_assertion_only_format() {
+    let temp_dir = unique_output_path("ts-json-union-array-assertion-only");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("probe.yaml");
+    fs::write(&input_path, UNION_ARRAY_ASSERTION_ONLY_SCHEMA).unwrap();
+    let output_path = temp_dir.join("probe");
+
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let rendered = fs::read_to_string(output_path.join("models.ts")).unwrap();
+
+    assert!(
+        rendered.contains("contacts?: string[] | boolean;"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("function serializeAssertionOnlyContacts"),
+        "{rendered}"
+    );
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
 fn typescript_json_rejects_non_finite_numbers_at_every_position() {
     let temp_dir = unique_output_path("ts-json-non-finite");
     fs::create_dir_all(&temp_dir).unwrap();
@@ -1305,7 +1433,7 @@ fn typescript_json_rejects_non_finite_numbers_at_every_position() {
     let rendered = fs::read_to_string(output_path.join("models.ts")).unwrap();
 
     for expected in [
-        "Number.isFinite(raw.scalar)",
+        "Number.isFinite(raw[\"scalar\"])",
         "Number.isFinite((choice as number))",
         "Number.isFinite(element1)",
         "`nested[${index}][${index1}]`",
@@ -1434,8 +1562,9 @@ fn typescript_json_guards_nullable_array_elements_during_serialize_validation() 
     let rendered = fs::read_to_string(output_path.join("models.ts")).unwrap();
 
     assert!(
-        rendered
-            .contains("value.slots.forEach((element, index) => {\n      if (element !== null) {"),
+        rendered.contains(
+            "value.slots.forEach((element, index) => {\n          if (element !== null) {"
+        ),
         "{rendered}"
     );
     assert!(
@@ -1484,6 +1613,51 @@ fn typescript_json_maps_element_position_unions() {
     assert!(rendered.contains("entriesValueTransferTypeConverter.toTransferType(entry)"));
     // Element nullability is the element's own concern, and parenthesized.
     assert!(rendered.contains("slots?: (string | null)[];"));
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn typescript_json_native_barrel_exports_violation_type_only() {
+    let temp_dir = unique_output_path("ts-json-native-runtime-exports");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("probe.yaml");
+    fs::write(
+        &input_path,
+        "$schema: https://json-schema.org/draft/2020-12/schema\ntype: object\nproperties:\n  value: { type: string }\n",
+    )
+    .unwrap();
+    let output_path = temp_dir.join("probe");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: nexgen::nexgen_config::NexgenConfig {
+            mode: nexgen::generator::GenerationMode::NativeApi,
+            ..Default::default()
+        },
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+    let index = fs::read_to_string(output_path.join("index.ts")).unwrap();
+    let models = fs::read_to_string(output_path.join("models.ts")).unwrap();
+    assert!(
+        !index.contains("export { payloadValidationError } from './definitions';"),
+        "{index}"
+    );
+    assert!(
+        index.contains("export type { Violation } from './definitions';"),
+        "{index}"
+    );
+    assert!(
+        models.contains("const candidate: unknown = value;"),
+        "{models}"
+    );
+    assert!(models.contains(".isPlainObject(candidate)"), "{models}");
+    assert!(!models.contains(".isPlainObject(value)"), "{models}");
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -1608,7 +1782,7 @@ fn typescript_json_cross_module_ts_name_override_moves_every_reference() {
         "import { renamedPageTransferTypeConverter } from '../content/page/models';",
         "import type { RenamedPage } from '../content/page/models';",
         "  page?: RenamedPage;",
-        "page = renamedPageTransferTypeConverter.fromTransferType(raw.page);",
+        "page = renamedPageTransferTypeConverter.fromTransferType(raw[\"page\"]);",
     ] {
         assert!(models.contains(expected), "{expected}\n{models}");
     }
@@ -1617,6 +1791,194 @@ fn typescript_json_cross_module_ts_name_override_moves_every_reference() {
         assert!(!services.contains(stale), "{stale}\n{services}");
         assert!(!models.contains(stale), "{stale}\n{models}");
     }
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn typescript_json_bare_ref_root_alias_typechecks_and_uses_target_converter() {
+    let temp_dir = unique_typescript_runtime_dir("ts-json-bare-ref-alias");
+    let input = write_bare_ref_alias_closure(temp_dir.path());
+    let output_path = temp_dir.path().join("output");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let alias = fs::read_to_string(output_path.join("alias/alternate/models.ts")).unwrap();
+    assert!(alias.contains("export type Alternate = Main;"), "{alias}");
+    assert!(
+        alias.contains(
+            "export const alternateTransferTypeConverter: TransferTypeConverter<Alternate> = mainTransferTypeConverter;"
+        ),
+        "{alias}"
+    );
+    assert!(!alias.contains("export interface Alternate"), "{alias}");
+    let target = fs::read_to_string(output_path.join("target/main/models.ts")).unwrap();
+    assert!(target.contains("export type Mirror = Main;"), "{target}");
+    assert!(!target.contains("export interface Mirror"), "{target}");
+    let service = fs::read_to_string(output_path.join("service/services.ts")).unwrap();
+    assert!(service.contains("Alternate"), "{service}");
+    assert!(
+        service.contains("alternateTransferTypeConverter"),
+        "{service}"
+    );
+    let holder = fs::read_to_string(output_path.join("service/models.ts")).unwrap();
+    assert!(holder.contains("item: Alternate;"), "{holder}");
+    assert!(
+        holder.contains("alternateTransferTypeConverter.fromTransferType"),
+        "{holder}"
+    );
+
+    let runtime = output_path.join("alias.test.ts");
+    fs::write(
+        &runtime,
+        r#"import { describe, expect, test } from "vitest";
+import { alternateTransferTypeConverter } from "./alias/alternate/models";
+
+describe("bare-ref alias", () => {
+  test("uses the target wire contract", () => {
+    expect(alternateTransferTypeConverter.fromTransferType({ value: "ok" })).toEqual({ value: "ok" });
+    expect(() => alternateTransferTypeConverter.fromTransferType({})).toThrow();
+  });
+});
+"#,
+    )
+    .unwrap();
+    typecheck_generated_typescript(&output_path, "bare-ref alias");
+    run_generated_typescript_test(temp_dir.path(), &runtime, "bare-ref alias");
+}
+
+#[test]
+fn typescript_json_same_module_alias_chain_orders_converter_values() {
+    let temp_dir = unique_typescript_runtime_dir("ts-json-same-module-alias-chain");
+    let input_path = temp_dir.path().join("chain.yaml");
+    fs::write(
+        &input_path,
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+title: Chain
+type: object
+additionalProperties: false
+required: [item, longItem]
+properties:
+  item: { $ref: "#/$defs/A" }
+  longItem: { $ref: "#/$defs/LongA" }
+$defs:
+  A: { $ref: "#/$defs/Z" }
+  Z: { $ref: "#/$defs/Target" }
+  LongA: { $ref: "#/$defs/LongM" }
+  LongM: { $ref: "#/$defs/LongZ" }
+  LongZ: { $ref: "#/$defs/Target" }
+  Target:
+    type: object
+    additionalProperties: false
+    required: [value]
+    properties:
+      value: { type: string }
+"##,
+    )
+    .unwrap();
+    let output_path = temp_dir.path().join("output");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let models = fs::read_to_string(output_path.join("models.ts")).unwrap();
+    let target = models
+        .find("export const targetTransferTypeConverter")
+        .expect("target converter");
+    let z = models
+        .find("export const zTransferTypeConverter")
+        .expect("Z converter");
+    let a = models
+        .find("export const aTransferTypeConverter")
+        .expect("A converter");
+    assert!(target < z && z < a, "{models}");
+    let long_z = models
+        .find("export const longZTransferTypeConverter")
+        .expect("LongZ converter");
+    let long_m = models
+        .find("export const longMTransferTypeConverter")
+        .expect("LongM converter");
+    let long_a = models
+        .find("export const longATransferTypeConverter")
+        .expect("LongA converter");
+    assert!(
+        target < long_z && long_z < long_m && long_m < long_a,
+        "{models}"
+    );
+
+    let runtime = output_path.join("alias-chain.test.ts");
+    fs::write(
+        &runtime,
+        r#"import { expect, test } from "vitest";
+import { aTransferTypeConverter, longATransferTypeConverter } from "./models";
+
+test("same-module alias chains delegate after initialization", () => {
+  expect(aTransferTypeConverter.fromTransferType({ value: "ok" })).toEqual({ value: "ok" });
+  expect(() => aTransferTypeConverter.fromTransferType({})).toThrow();
+  expect(longATransferTypeConverter.fromTransferType({ value: "long" })).toEqual({ value: "long" });
+});
+"#,
+    )
+    .unwrap();
+    typecheck_generated_typescript(&output_path, "same-module bare-ref alias chain");
+    run_generated_typescript_test(
+        temp_dir.path(),
+        &runtime,
+        "same-module bare-ref alias chain",
+    );
+}
+
+#[test]
+fn typescript_json_bare_ref_alias_cycle_rejects_without_ordering_loop() {
+    let temp_dir = unique_output_path("ts-json-bare-ref-alias-cycle");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("cycle.yaml");
+    fs::write(
+        &input_path,
+        r##"$schema: https://json-schema.org/draft/2020-12/schema
+title: Cycle
+$ref: "#/$defs/A"
+$defs:
+  A: { $ref: "#/$defs/Z" }
+  Z: { $ref: "#/$defs/A" }
+"##,
+    )
+    .unwrap();
+    let error = generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: temp_dir.join("output"),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .expect_err("alias cycle must reject");
+    let message = error.to_string();
+    assert!(
+        message.contains("cycle") || message.contains("recursion"),
+        "{message}"
+    );
     fs::remove_dir_all(temp_dir).unwrap();
 }
 
@@ -1838,7 +2200,7 @@ fn typescript_json_emits_complete_matchers_and_typed_mixed_extras() {
         "{rendered}"
     );
     assert!(
-        rendered.contains("parseTemporalDate(element, `${key}[${index}]`, violations)"),
+        rendered.contains("parseTemporalDate(element, `${path}[${index}]`, violations)"),
         "{rendered}"
     );
     assert!(
@@ -2027,7 +2389,7 @@ fn typescript_json_materializes_closed_values_and_nullable_defaults() {
         "export const DEFAULT_FALLBACK_BLOB = __nexgenDefinitions.base64ToBytes(\"aGk=\", '', [])!;",
         "must equal \"aGk=\"",
         "must be one of [\"2024-01-01\", \"2024-01-02\"]",
-        "base64ToBytes(raw.fixedBlob",
+        "base64ToBytes(raw[\"fixedBlob\"]",
         "bytesToBase64(value.fixedBlob)",
         "serializeTemporalDate(value.businessDay)",
     ] {
@@ -2136,9 +2498,9 @@ test("presence, closed scalars, and numeric boundaries agree both ways", () => {
   expect(value.mixed.additionalProperties.schedule?.[0]).toBeInstanceOf(Temporal.PlainDate);
 
   expect(violations(() => auditTransferTypeConverter.fromTransferType({ ...base, requiredPlain: undefined })))
-    .toEqual(expect.arrayContaining([{ path: "requiredPlain", reason: "required" }]));
+    .toEqual(expect.arrayContaining([{ path: "requiredPlain", reason: "expected string" }]));
   expect(violations(() => auditTransferTypeConverter.fromTransferType({ ...base, requiredNullable: undefined })))
-    .toEqual(expect.arrayContaining([{ path: "requiredNullable", reason: "required" }]));
+    .toEqual(expect.arrayContaining([{ path: "requiredNullable", reason: "expected string" }]));
   expect(violations(() => auditTransferTypeConverter.fromTransferType({ ...base, optionalPlain: null }))[0]?.reason)
     .toBe("explicit null not allowed");
   expect(violations(() => auditTransferTypeConverter.fromTransferType({ ...base, optionalDefault: null }))[0]?.reason)
@@ -2190,8 +2552,9 @@ test("contains, propertyNames, arrays, and typed-extra counts aggregate both way
   expect(violations(() => auditTransferTypeConverter.toTransferType({ ...value, checkedArray: ["ok", "ok", "x", "x"] }))).not.toHaveLength(0);
 
   for (const key of ["x", "bad key@example.com", "c@example.com"]) {
+    const segment = /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) ? `.${key}` : `["${key}"]`;
     expect(violations(() => auditTransferTypeConverter.fromTransferType({ ...base, names: { [key]: "x" } }))
-      .some(({ path }) => path === `names.${key}`)).toBe(true);
+      .some(({ path }) => path === `names${segment}`)).toBe(true);
   }
   expect(violations(() => auditTransferTypeConverter.toTransferType({
     ...value, names: { additionalProperties: { "c@example.com": "x" } },
@@ -2919,4 +3282,86 @@ test("an over-capacity fraction truncates instead of throwing", () => {{
         .unwrap();
         run_generated_typescript_test(temp_dir.path(), &runtime_test, &format!("{label} fraction"));
     }
+}
+
+#[test]
+fn typescript_json_uses_own_wire_keys_and_prototype_safe_maps() {
+    let temp_dir = unique_output_path("typescript-json-hostile-wire-keys");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("wire-keys.yaml");
+    fs::write(
+        &input_path,
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: WireKeys
+type: object
+required: [content-type]
+properties:
+  content-type: { type: string }
+additionalProperties: true
+"#,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("out");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let models = fs::read_to_string(output_path.join("models.ts")).unwrap();
+    assert!(models.contains("export interface WireKeys {"), "{models}");
+    assert!(
+        models.contains("Object.prototype.hasOwnProperty.call(raw, \"content-type\")"),
+        "{models}"
+    );
+    assert!(models.contains("raw[\"content-type\"]"), "{models}");
+    assert!(models.contains("out[\"content-type\"] ="), "{models}");
+    assert!(models.contains("Object.create(null)"), "{models}");
+    assert!(!models.contains("raw.content-type"), "{models}");
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn typescript_json_prose_and_wire_literals_do_not_trigger_long_import() {
+    let temp_dir = unique_output_path("typescript-json-description-long");
+    fs::create_dir_all(&temp_dir).unwrap();
+    let input_path = temp_dir.join("description.yaml");
+    fs::write(
+        &input_path,
+        r#"$schema: https://json-schema.org/draft/2020-12/schema
+title: Description
+description: Java emits Long here, but TypeScript does not use that type.
+type: object
+properties:
+  value: { type: integer }
+  marker: { type: string, const: Long }
+"#,
+    )
+    .unwrap();
+    let output_path = temp_dir.join("out");
+    generate_to_file(&GenerateRequest {
+        language: nexgen::language::Language::TypeScript,
+        input_paths: vec![input_path],
+        support_paths: Vec::new(),
+        descriptor_paths: Vec::new(),
+        output_path: output_path.clone(),
+        format: false,
+        config: Default::default(),
+        java_package_name: None,
+        ts_date_time_types: Default::default(),
+    })
+    .unwrap();
+
+    let models = fs::read_to_string(output_path.join("models.ts")).unwrap();
+    assert!(models.contains("Java emits Long here"), "{models}");
+    assert!(models.contains("\"Long\""), "{models}");
+    assert!(!models.contains("from 'long'"), "{models}");
+    fs::remove_dir_all(temp_dir).unwrap();
 }
